@@ -74,15 +74,18 @@ it.live(
         });
         const forks: Claude.ClaudeAgentSdkSessionForkInput[] = [];
         const offers: SDKUserMessage[] = [];
+        const crypto = yield* Crypto.Crypto;
+        const path = yield* Path.Path;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const adapter = Claude.makeClaudeAdapterV2({
-          crypto: yield* Crypto.Crypto,
+          crypto,
           instanceId: Claude.CLAUDE_DEFAULT_INSTANCE_ID,
           settings,
           environment: {},
           attachmentsDir,
           fileSystem,
-          path: yield* Path.Path,
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          path,
+          idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed(sourceSession),
             open: (input) =>
@@ -292,7 +295,7 @@ it.live(
           Effect.provide(
             makeOrchestratorV2ReplayLayerWithRegistry(
               { name: "claude-root-boundary", runtimePolicyOverride: { cwd } },
-              Registry.layerSingle(adapter),
+              Registry.layerFromAdaptersEffect(adapter.pipe(Effect.map((created) => [created]))),
               { configureMcp: false },
             ),
           ),

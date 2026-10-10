@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { CommandId, MessageId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -14,6 +15,7 @@ import { nativeOmpOrchestration as fixture } from "../../provider/testUtils/nati
 const dependencies = Layer.mergeAll(
   NodeServices.layer,
   allocatorLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-background-native-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),

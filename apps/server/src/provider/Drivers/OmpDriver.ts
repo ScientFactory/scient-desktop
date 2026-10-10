@@ -5,7 +5,7 @@ import {
   type ServerProviderVersionAdvisory,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -21,16 +21,18 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeOmpManagedRuntimeResolution } from "../../scient/providerLifecycle/OmpManagedRuntimeActions.ts";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
-import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
 import { ompTarget } from "../omp/OmpTarget.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
-import { ProviderDriverError } from "../Errors.ts";
-import { ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { checkOmpProviderStatus, makePendingOmpProvider } from "../OmpProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
@@ -59,10 +61,13 @@ export type OmpDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
+  | ProviderContinuationRequests.ProviderContinuationRequests
+  | ProviderLatestVersions.ProviderLatestVersions
   | OmpExecutableGate
   | Path.Path
-  | ProviderEventLoggers
+  | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;
 
@@ -74,12 +79,13 @@ export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers;
+      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const serverSettings = yield* ServerSettingsService;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const effectiveConfig = { ...config, enabled } satisfies OmpSettings;
       const home = effectiveConfig.homePath.trim();
       const profile = effectiveConfig.profile.trim();
@@ -90,9 +96,10 @@ export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
           detail: "Choose either an Oh My Pi home or a named profile, not both.",
         });
       }
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const processEnv = ompProcessEnvironment({
         instanceEnvironment: environment,
+        homeDirectory: yield* HostProcess.HomeDirectory,
         homePath: home,
         profile,
         platform,
@@ -155,7 +162,7 @@ export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
           runtime: managedRuntime.summary,
         },
       });
-      const orchestrationAdapter = makeOmpAdapterV2({
+      const orchestrationAdapter = yield* makeOmpAdapterV2({
         target: ompTarget,
         instanceId,
         settings: launchConfig,
@@ -167,8 +174,8 @@ export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
         serverConfig,
         makeProcess: makeRpcClient,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        idAllocator: yield* IdAllocatorV2,
-        continuations: yield* ProviderContinuationRequests,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        continuations: yield* ProviderContinuationRequests.ProviderContinuationRequests,
       });
       const textGeneration = yield* makeOmpTextGeneration(
         ompTarget,
@@ -229,6 +236,7 @@ export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
           Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
         );
       const snapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<OmpSettings> & {

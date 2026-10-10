@@ -256,7 +256,7 @@ export const withDroid = <A, E, R>(
         makeLayer([adapter]),
         {
           configureMcp: false,
-          layerDatabase: SqlitePersistenceMemory,
+          databaseLayer: SqlitePersistenceMemory,
           runEffectWorker: !options.manualWorker,
           layerServerConfig: Layer.succeed(Config.ServerConfig, config),
           responseStreamingMode: options.injectEvents ? "paragraph" : "turn",

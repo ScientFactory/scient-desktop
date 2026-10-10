@@ -19,7 +19,7 @@ import {
   ThreadId,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -32,10 +32,7 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 
 import { customModelProviderId, type ResolvedModelConnection } from "../../customModels.ts";
-import {
-  clearMcpProviderSession,
-  setMcpProviderSession,
-} from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { nativeOmpOrchestration } from "../testUtils/nativeOmpOrchestration.ts";
 import { McpSessionRegistry } from "../../mcp/McpSessionRegistry.ts";
 import * as ServerConfig from "../../config.ts";
@@ -289,9 +286,10 @@ const scopedRoot = (label: string) =>
   );
 
 const isolatedEnvironment = (root: string) =>
-  Effect.map(HostProcessPlatform, (platform) =>
+  Effect.map(HostProcess.Platform, (platform) =>
     ompQualifyEnvironment({
       platform,
+      homeDirectory: NodePath.join(root, "home"),
       agent: NodePath.join(root, "agent"),
       baseEnv: {
         PATH: `/usr/bin:/bin:${NodePath.dirname(binary ?? "/usr/bin/omp")}`,
@@ -410,7 +408,8 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           let client: OmpRpcProcess | undefined;
           let extensionPath: string | undefined;
           const threadId = ThreadId.make("omp-scient-live");
-          setMcpProviderSession({
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+          yield* mcpSessions.set({
             environmentId: EnvironmentId.make("environment-omp-live"),
             threadId,
             providerSessionId: "provider-omp-live",
@@ -419,7 +418,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             authorizationHeader: TOKEN,
             capabilities: new Set(["skills:read"]),
           });
-          yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
+          yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
 
           const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
           if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
@@ -514,7 +513,11 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           yield* adapter.close;
           expect(extensionPath && NodeFS.existsSync(extensionPath)).toBe(false);
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+        ),
+      ),
     180_000,
   );
 
@@ -549,7 +552,8 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           );
           let client: OmpRpcProcess | undefined;
           const threadId = ThreadId.make("omp-scient-live-shell");
-          setMcpProviderSession({
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+          yield* mcpSessions.set({
             environmentId: EnvironmentId.make("environment-omp-live"),
             threadId,
             providerSessionId: "provider-omp-live-shell",
@@ -558,7 +562,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             authorizationHeader: TOKEN,
             capabilities: new Set(["skills:read"]),
           });
-          yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
+          yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
 
           const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
           if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
@@ -647,7 +651,11 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           expect(mcp.rejected()).toBe(0);
           yield* adapter.close;
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+        ),
+      ),
     180_000,
   );
 
@@ -1007,6 +1015,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           Layer.mergeAll(
             NodeServices.layer,
             OmpExecutableGate.layer,
+            McpProviderSessions.layer,
             allocatorLayer,
             ServerConfig.layerTest(process.cwd(), { prefix: "scient-installed-subagent-" }).pipe(
               Layer.provide(NodeServices.layer),
@@ -1202,7 +1211,11 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
           }
           yield* adapter.close;
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+        ),
+      ),
     120_000,
   );
 });

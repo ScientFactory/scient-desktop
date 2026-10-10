@@ -19,7 +19,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -44,7 +44,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           prefix: "t3-claude-accept-edits-",
         });
         let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -79,13 +79,14 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           cwd: "/workspace",
         });
         const threadId = ThreadId.make("thread-claude-accept-edits");
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const capabilities = new Set([
           "documents:build",
           "compute:inventory",
           "skills:read",
         ] as const);
         if (granted) {
-          McpProviderSession.setMcpProviderSession({
+          yield* mcpSessions.set({
             environmentId: EnvironmentId.make("claude-native-awareness"),
             threadId,
             providerSessionId: "claude-native-awareness",
@@ -94,9 +95,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
             authorizationHeader: "Bearer synthetic-claude",
             capabilities,
           });
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-          );
+          yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         }
         const runtime = yield* adapter.openSession({
           threadId,
@@ -180,7 +179,11 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           decision: "accept",
         });
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

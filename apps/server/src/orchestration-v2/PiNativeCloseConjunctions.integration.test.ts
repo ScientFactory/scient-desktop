@@ -34,10 +34,12 @@ import { ProjectStoreV2 } from "./ProjectStore.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
   Config.layerTest(process.cwd(), { prefix: "pi-close-native-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -208,11 +210,16 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
         },
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       const registry = makeSingleLayer(adapter);
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
         { name: "pi-close-native-conjunction" },
         registry,
         {
           configureMcp: false,
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
+          ),
           runEffectWorker: false,
           providerSessionIdleTimeoutMs: 60_000,
           layerServerConfig: Layer.succeed(Config.ServerConfig, config),

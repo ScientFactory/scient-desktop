@@ -1,23 +1,27 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpClient } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { GrokDriver, makeGrokDriver } from "./driver.ts";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
-const layerTest = layerTestProviderHost({ runBackgroundWork: false }).pipe(
+const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(ProviderLatestVersions.layer),
   Layer.provideMerge(
     Layer.succeed(
       ProviderEventLoggers.ProviderEventLoggers,
@@ -37,7 +41,7 @@ const noSpawner = ChildProcessSpawner.make(() =>
 );
 
 // The `#!/bin/sh` stub below cannot be resolved as an executable on Windows.
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 it.layer(layerTest)("GrokDriver", (it) => {
   it.effect.skipIf(windowsHost)(
@@ -56,7 +60,7 @@ it.layer(layerTest)("GrokDriver", (it) => {
         const driver = makeGrokDriver<never, { readonly runtimeComposition: "app-owned" }>({
           resolveRuntime: (input) =>
             Effect.succeed({
-              effectiveConfig: { ...input.config, binaryPath, enabled: input.enabled },
+              effectiveConfig: { ...input.config, binaryPath, enabled: true },
               effectiveEnvironment: { ...input.hostEnvironment, GROK_HOME: grokHome },
               decorateSnapshot: (snapshot) => ({ ...snapshot, message: "managed runtime" }),
               composeInstance: (instance) =>
@@ -72,7 +76,11 @@ it.layer(layerTest)("GrokDriver", (it) => {
         });
 
         expect(instance.runtimeComposition).toBe("app-owned");
-        expect((yield* instance.snapshot.getSnapshot).message).toBe("managed runtime");
+        expect(instance.enabled).toBe(false);
+        const snapshot = yield* instance.snapshot.getSnapshot;
+        expect(snapshot.enabled).toBe(false);
+        expect(snapshot.instanceId).toBe(instance.instanceId);
+        expect(snapshot.message).toBe("managed runtime");
         const maintenance = yield* instance.snapshot.resolveMaintenance();
         expect(maintenance.update?.executable).toBe(binaryPath);
         expect(maintenance.update?.env?.GROK_HOME).toBe(grokHome);

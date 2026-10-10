@@ -282,7 +282,7 @@ it.live(
             { name: "migration-recovery-acceptance", runtimePolicyOverride: { cwd } },
             makeLayer([adapter]),
             {
-              layerDatabase: databaseLayer,
+              databaseLayer: databaseLayer,
               layerServerConfig: configLayer,
               runEffectWorker: false,
             },

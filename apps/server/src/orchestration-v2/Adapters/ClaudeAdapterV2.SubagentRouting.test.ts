@@ -10,6 +10,7 @@ import * as Queue from "effect/Queue";
 import { type ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   makeWakeHarness,
   makeResultFrame,
@@ -109,7 +110,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.continuationRequests[1]?.notification?.summary,
           `Command "${WAKE_TASK_DESCRIPTION}" finished`,
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -170,7 +175,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.continuationRequests[0]?.notification?.summary,
           `Command "${WAKE_TASK_DESCRIPTION}" finished`,
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -331,7 +340,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : [],
         );
         assert.deepEqual([...new Set(userRunItems)], ["assistant_message"]);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -437,7 +450,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           finalSubagent?.type === "subagent.updated" && finalSubagent.subagent.status,
           "completed",
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -514,7 +531,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "Part two.",
         ]);
         assert.deepEqual(routing.assistantTexts(harness.threadId), ["The auditor finished."]);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -575,7 +596,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : [],
         );
         assert.deepEqual(retryStatuses, ["running"]);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

@@ -27,6 +27,7 @@ import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import * as Claude from "../Adapters/ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
@@ -34,7 +35,7 @@ import { ConversationForkService } from "../scient-fork/ConversationForkService.
 import { historicalMessage, historyCost, selectHistory } from "../ScientHistoricalContext.ts";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { CLAUDE_MODEL_SELECTION } from "./fixtures/shared.ts";
 
@@ -61,7 +62,8 @@ it.live(
         let sessions = 0;
         const nativeSession = "00000000-0000-4000-8000-000000000971";
         const childSession = "00000000-0000-4000-8000-000000000972";
-        const adapter = Claude.makeClaudeAdapterV2({
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const adapter = yield* Claude.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: Claude.CLAUDE_DEFAULT_INSTANCE_ID,
           settings,
@@ -428,15 +430,23 @@ it.live(
           );
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               { name: "native-question-handoff" },
               Registry.layerSingle(adapter),
-              { configureMcp: false },
+              {
+                configureMcp: false,
+                mcpProviderSessionsLayer: Layer.succeed(
+                  McpProviderSessions.McpProviderSessions,
+                  mcpSessions,
+                ),
+              },
             ),
           ),
         );
       }).pipe(
-        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
         Effect.timeout("25 seconds"),
       ),
     ),

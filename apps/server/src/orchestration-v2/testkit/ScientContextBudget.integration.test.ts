@@ -23,7 +23,7 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../../mcp/ScientMcpInvocation.ts";
 import {
@@ -69,7 +69,7 @@ import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import { scientContextHandoffPolicy } from "../ScientContextHandoffPolicy.ts";
 import { deliverContextHandoffs } from "../ContextHandoffDelivery.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const skillRegistryLayer = McpSessionRegistry.layer.pipe(
@@ -393,6 +393,7 @@ it.live.each(
       const opened = yield* Deferred.make<void>();
       const releaseOpen = yield* Deferred.make<void>();
       const allocator = yield* IdAllocatorV2;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const adapters = [instanceId, targetSelection.instanceId]
         .filter((id, index, ids) => ids.indexOf(id) === index)
         .map((ownedInstance) => {
@@ -414,7 +415,7 @@ it.live.each(
                   yield* Deferred.await(releaseOpen);
                 }
                 if (skillRegistry && openInput.threadId === target) {
-                  const config = McpProviderSession.readMcpProviderSession(target);
+                  const config = yield* mcpSessions.read(target);
                   assert.ok(config);
                   skillToken = config.authorizationHeader.replace(/^Bearer\s+/, "");
                   beforeSkillScope = yield* skillRegistry.resolve(skillToken);
@@ -1210,10 +1211,14 @@ it.live.each(
         Effect.provide(
           ProjectionMaintenance.layer.pipe(
             Layer.provideMerge(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 { name, runtimePolicyOverride: { cwd } },
                 makeLayer(adapters),
                 {
+                  mcpProviderSessionsLayer: Layer.succeed(
+                    McpProviderSessions.McpProviderSessions,
+                    mcpSessions,
+                  ),
                   runEffectWorker: !test.olderAbsentPolicy,
                   ...(skillRegistry === undefined
                     ? {}
@@ -1243,6 +1248,10 @@ it.live.each(
           ),
         ),
       );
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer),
+      ),
+    ),
   ),
 );

@@ -4,7 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentFilePath } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -208,7 +208,7 @@ describe("resolveEnvironmentFileLink", () => {
   );
 
   // chmod cannot deny the superuser, and Windows has no POSIX permission bits.
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32" || process.getuid?.() === 0)(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
     "keeps a denied location as the link's file and never calls a partial search unique",
     () =>
       Effect.gen(function* () {
@@ -234,7 +234,7 @@ describe("resolveEnvironmentFileLink", () => {
 
   it.effect.skipIf(
     !symlinksSupported ||
-      HostProcessPlatform.defaultValue() === "win32" ||
+      HostProcess.Platform.defaultValue() === "win32" ||
       process.getuid?.() === 0,
   )("does not call a match unique while a same-named symlink cannot be inspected", () =>
     Effect.gen(function* () {
@@ -420,7 +420,7 @@ describe("resolveEnvironmentFileLink while the workspace changes", () => {
       }).pipe(Effect.provide(TestLayer), Effect.scoped),
   );
 
-  it.effect.skipIf(!symlinksSupported || HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
     "does not return a candidate that changed after it was seen",
     () =>
       Effect.gen(function* () {

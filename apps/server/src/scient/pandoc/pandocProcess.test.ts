@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -56,14 +56,14 @@ const runOnce = (input: {
   Effect.scoped(
     Effect.gen(function* () {
       const scratch = yield* makePandocScratch(input.scratchRoot).pipe(Effect.orDie);
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       return yield* runPandoc({
         pandoc: input.pandoc,
         args: ["--sandbox", "-f", "json", "-t", "docx"],
         stdin: new TextEncoder().encode(input.stdin ?? ""),
         scratch,
         limits: input.limits ?? LIMITS,
-        platform: yield* HostProcessPlatform,
+        platform: yield* HostProcess.Platform,
         hostEnvironment: { ...hostEnvironment, SCIENT_PARENT_SECRET: "FAKE-SECRET-ENV" },
         ...(input.stdoutPath === undefined ? {} : { stdoutPath: input.stdoutPath }),
       });
@@ -261,7 +261,7 @@ describe("runPandoc", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  if (HostProcessPlatform.defaultValue() !== "win32") {
+  if (HostProcess.Platform.defaultValue() !== "win32") {
     it.live("refuses an existing FIFO output target without waiting for a reader", () =>
       Effect.gen(function* () {
         const { directory, scratchRoot, fake, pidFile } = yield* harness;

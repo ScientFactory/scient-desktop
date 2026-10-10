@@ -18,7 +18,7 @@
  * The extraction runs behind this port so the installer can be tested without
  * a real archive.
  */
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -80,8 +80,8 @@ export function windowsSystemTarPath(env: NodeJS.ProcessEnv): string {
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
-  const environment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const environment = yield* HostProcess.Environment;
   // Everywhere but Windows the PATH `tar` is the right one: macOS ships
   // bsdtar as `tar`, and Linux only ever reads the `.tar.xz` asset.
   const command = platform === "win32" ? windowsSystemTarPath(environment) : "tar";

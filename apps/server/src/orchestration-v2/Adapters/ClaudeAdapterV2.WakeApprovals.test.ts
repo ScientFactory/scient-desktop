@@ -10,6 +10,7 @@ import * as Queue from "effect/Queue";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   makeWakeHarness,
   claudeSdkFrame,
@@ -242,7 +243,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             userRunItems.map((item) => item.type),
             ["assistant_message"],
           );
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -371,7 +376,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         const result = yield* Fiber.join(permission);
         assert.equal(result?.behavior, "allow");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -467,7 +476,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               event.message.text === STALE_TASK_NOTIFICATION_RESULT_TEXT,
           ),
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -546,7 +559,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
         assert.deepEqual(assistantTexts(), ["One.", "Two."]);
         assert.equal(harness.terminalEvents()[1]?.status, "failed");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

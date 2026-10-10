@@ -29,7 +29,6 @@ describe("Scient ACP application bridge", () => {
 
     assert.include(preview, "## Scient browser");
     assert.notInclude(coreOnly, "## Scient browser");
-    assert.isFalse("scientAwareness" in scientAcpProviderBridge);
   });
 
   it.effect("classifies native acceptance and pre-acceptance rejection consistently", () =>

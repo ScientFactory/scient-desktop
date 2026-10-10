@@ -14,12 +14,7 @@ import {
   ProviderInstanceId,
   type AntigravitySettings,
 } from "@t3tools/contracts";
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
@@ -45,15 +40,21 @@ import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import { AntigravityDriver, usesLegacyAntigravityBackend } from "./AntigravityDriver.ts";
+import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
+import {
+  AntigravityDriver,
+  antigravityCatalogMatching,
+  usesLegacyAntigravityBackend,
+} from "./AntigravityDriver.ts";
 import { bundledAntigravityAcpAsset } from "../../scient/providerLifecycle/antigravityAcpCatalog.ts";
 
-const hostPlatform = HostProcessPlatform.defaultValue();
+const hostPlatform = HostProcess.Platform.defaultValue();
 const windowsHost = hostPlatform === "win32";
 const decodeRequest = Schema.decodeEffect(
   Schema.fromJsonString(
@@ -131,8 +132,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const nodePath = yield* HostProcessExecutablePath;
-  const baseEnv = yield* HostProcessEnvironment;
+  const nodePath = yield* HostProcess.ExecutablePath;
+  const baseEnv = yield* HostProcess.Environment;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-driver-" });
   const instanceId = ProviderInstanceId.make(path.basename(root));
   const mockAgentPath = yield* path.fromFileUrl(
@@ -376,6 +377,7 @@ const openNative = Effect.fn("openFactoryAntigravityNative")(function* (
   suffix = "initial",
 ) {
   const cwd = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-native-" });
+  const sessions = yield* McpProviderSessions.McpProviderSessions;
   const threadId = ThreadId.make(`${h.instance.instanceId}:${suffix}`);
   const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
   const runtimePolicy = { runtimeMode: "full-access", interactionMode: "default", cwd } as const;
@@ -388,10 +390,7 @@ const openNative = Effect.fn("openFactoryAntigravityNative")(function* (
     authorizationHeader: `Bearer synthetic:${threadId}`,
     capabilities: new Set(["threads:read"] as const),
   };
-  yield* Effect.acquireRelease(
-    Effect.sync(() => McpProviderSession.setMcpProviderSession(mcp)),
-    () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-  );
+  yield* Effect.acquireRelease(sessions.set(mcp), () => sessions.clear(threadId));
   const session = yield* h.instance.orchestrationAdapter.openSession({
     threadId,
     providerSessionId: ProviderSessionId.make(`${threadId}:native`),
@@ -494,6 +493,8 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
   Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(ProviderLatestVersions.layer),
 );
 const testLayer = ProviderHostLive.layer.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
@@ -502,9 +503,69 @@ const testLayer = ProviderHostLive.layer.pipe(
 
 it.layer(testLayer)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
+    "classifies low, medium and high native variants by their Antigravity catalog family",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const draft = yield* h.instance.snapshot.getSnapshot;
+        const classified = ModelCatalog.applyModelCatalog(
+          {
+            ...draft,
+            models: ["low", "medium", "high"].flatMap((level) => [
+              {
+                slug: `gemini-current-${level}`,
+                name: `Current ${level}`,
+                isCustom: false,
+                isLegacy: true,
+                capabilities: null,
+              },
+              {
+                slug: `gemini-old-${level}`,
+                name: `Old ${level}`,
+                isCustom: false,
+                capabilities: null,
+              },
+            ]),
+          },
+          {
+            defaultChatModel: undefined,
+            models: [
+              {
+                slug: "gemini-current",
+                name: "Current",
+                status: "current",
+                capabilities: null,
+                adapter: null,
+                profileAdapter: null,
+              },
+              {
+                slug: "gemini-old",
+                name: "Old",
+                status: "legacy",
+                capabilities: null,
+                adapter: null,
+                profileAdapter: null,
+              },
+            ],
+          },
+          antigravityCatalogMatching,
+        );
+        expect(classified.models.map(({ slug, isLegacy }) => [slug, isLegacy === true])).toEqual([
+          ["gemini-current-low", false],
+          ["gemini-old-low", true],
+          ["gemini-current-medium", false],
+          ["gemini-old-medium", true],
+          ["gemini-current-high", false],
+          ["gemini-old-high", true],
+        ]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "awaits native target teardown before sign-in and logout while a peer survives and a turn respawns",
     () =>
       Effect.gen(function* () {
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
         const target = yield* makeHarness();
         const peer = yield* makeHarness();
         const targetNative = yield* openNative(target);
@@ -543,9 +604,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           yield* assertProcessesClosed(target, oldLaunches);
           for (const launch of nativeLaunches(peer))
             expect(yield* launch.handle.isRunning).toBe(true);
-          expect(McpProviderSession.readMcpProviderSession(peerNative.threadId)).toEqual(
-            peerNative.mcp,
-          );
+          expect(yield* sessions.read(peerNative.threadId)).toEqual(peerNative.mcp);
           authSpawnObserved = true;
         }).pipe(Effect.orDie);
         const connection = yield* actions.start("antigravity_google");
@@ -570,9 +629,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           yield* assertProcessesClosed(target, reopened);
           for (const launch of nativeLaunches(peer))
             expect(yield* launch.handle.isRunning).toBe(true);
-          expect(McpProviderSession.readMcpProviderSession(targetNative.threadId)).toEqual(
-            targetNative.mcp,
-          );
+          expect(yield* sessions.read(targetNative.threadId)).toEqual(targetNative.mcp);
           logoutSpawnObserved = true;
         }).pipe(Effect.orDie);
         const beforeLogout = (yield* target.readRequests).length;
@@ -587,9 +644,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         yield* assertProcessesClosed(target);
         yield* peerNative.turn(1);
         expect(nativeLaunches(peer)).toHaveLength(1);
-        expect(McpProviderSession.readMcpProviderSession(peerNative.threadId)).toEqual(
-          peerNative.mcp,
-        );
+        expect(yield* sessions.read(peerNative.threadId)).toEqual(peerNative.mcp);
       }).pipe(Effect.scoped),
   );
 
@@ -673,6 +728,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       `${operation} refuses credential mutation after defective native teardown without clearing the catalog`,
       () =>
         Effect.gen(function* () {
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
           const h = yield* makeHarness();
           const peer = yield* makeHarness();
           yield* openNative(h);
@@ -700,9 +756,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           const after = yield* h.instance.snapshot.getSnapshot;
           expect(after.models).toEqual(before.models);
           expect(after.auth).toEqual(before.auth);
-          expect(McpProviderSession.readMcpProviderSession(peerNative.threadId)).toEqual(
-            peerNative.mcp,
-          );
+          expect(yield* sessions.read(peerNative.threadId)).toEqual(peerNative.mcp);
           yield* peerNative.turn(1);
           expect(nativeLaunches(peer)).toHaveLength(1);
           h.controls.beforeRelease = Effect.void;
@@ -814,8 +868,8 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         expect(h.launches).toEqual([]);
       }).pipe(
         Effect.scoped,
-        Effect.provideService(HostProcessIsExecutable, true),
-        Effect.provideService(HostProcessEnvironment, { PATH: "" }),
+        Effect.provideService(HostProcess.IsExecutable, true),
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
       ),
   );
 

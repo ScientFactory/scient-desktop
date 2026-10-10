@@ -1,6 +1,6 @@
 /** Synthetic provider services using the application's fixture paths and attachment layout. */
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -25,4 +25,4 @@ export const layer = Layer.effect(
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
     });
   }),
-).pipe(Layer.provide(layerTestProviderHost()));
+).pipe(Layer.provide(TestProviderHost.layer()));

@@ -20,9 +20,9 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { buildPiRpcLaunch, resolvePiLaunchArgs } from "@t3tools/provider-pi/server";
+import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import { decodePiModelSlug } from "./model.ts";
 import { applyPiModelSelection } from "./modelSelection.ts";
 import type { PiRpcClient, PiRpcError, PiRpcSpawnOptions } from "./rpcClient.ts";

@@ -27,7 +27,10 @@ Releases up to 0.6.17 predate that rule and apply every fetched policy. The
 the Codex policies are split at `0.6.18` for that reason.
 
 Generic catalog data describes presentation and capabilities. Each provider owns
-its adapter schema and dispatch mappings. Claude uses the manifest for its entire
+its adapter schema and dispatch mappings. Providers never read the manifest
+itself: the server exposes each driver's entry through the
+[`ModelCatalog`](../../packages/provider-core/src/server/ModelCatalog.ts) port,
+and compatibility policies stay with the server. Claude uses the manifest for its entire
 built-in catalog. Adding a model with an existing capability profile is a JSON
 edit; a new profile is needed only for a new capability combination. Codex still
 gets its model list from its app server.

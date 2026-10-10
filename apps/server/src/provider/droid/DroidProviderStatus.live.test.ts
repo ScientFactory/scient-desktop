@@ -13,11 +13,14 @@ import { beforeAll } from "vite-plus/test";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { DroidDriver } from "../Drivers/DroidDriver.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "../ModelManifest.ts";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
@@ -64,11 +67,17 @@ const providerDependenciesLayer = Layer.mergeAll(
       Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
     ),
   ),
-  Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
+  Layer.succeed(
+    ProviderEventLoggers.ProviderEventLoggers,
+    ProviderEventLoggers.NoOpProviderEventLoggers,
+  ),
 ).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
+  Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
 );
 const layer = layerConfigConsistentTestProviderHost.pipe(
   Layer.provideMerge(providerDependenciesLayer),

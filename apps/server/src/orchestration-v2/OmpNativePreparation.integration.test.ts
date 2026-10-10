@@ -27,6 +27,7 @@ import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlit
 import { ompTarget } from "../provider/omp/OmpTarget.ts";
 import { scriptedOmpRpc } from "../provider/testUtils/scriptedOmpRpc.ts";
 import { makeOmpAdapterV2 } from "./Adapters/OmpAdapterV2.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
@@ -328,7 +329,7 @@ it.live(
           initial: { provider: "controlled", id: "model" },
           environment: { HOME: home },
         });
-        const adapter = makeOmpAdapterV2({
+        const adapter = yield* makeOmpAdapterV2({
           target: ompTarget,
           instanceId,
           settings: { binaryPath: "synthetic-omp", homePath: home },
@@ -369,6 +370,7 @@ it.live(
               };
             }),
         });
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const database = makeSqlitePersistenceLive(config.dbPath).pipe(
           Layer.provide(NodeServices.layer),
         );
@@ -376,9 +378,13 @@ it.live(
           { name: "omp-native-conjunction", runtimePolicyOverride: { cwd } },
           makeLayer([adapter]),
           {
-            layerDatabase: database,
+            databaseLayer: database,
             layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
             configureMcp: false,
+            mcpProviderSessionsLayer: Layer.succeed(
+              McpProviderSessions.McpProviderSessions,
+              mcpSessions,
+            ),
             runEffectWorker: false,
           },
         ).pipe(Layer.provideMerge(database));
@@ -614,6 +620,7 @@ it.live(
           Layer.mergeAll(
             NodeServices.layer,
             idAllocatorLayer,
+            McpProviderSessions.layer,
             ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-conjunction-" }).pipe(
               Layer.provide(NodeServices.layer),
             ),

@@ -22,6 +22,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
 import { EventStoreV2 } from "../../orchestration-v2/EventStore.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
@@ -38,6 +39,7 @@ const dependencies = Layer.mergeAll(
   NodeServices.layer,
   allocatorLayer,
   OmpExecutableGate.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-native-continuity-cli-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),

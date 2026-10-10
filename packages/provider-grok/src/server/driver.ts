@@ -9,10 +9,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as Scope from "effect/Scope";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeGrokTextGeneration } from "./textGeneration.ts";
@@ -24,6 +25,7 @@ import {
   checkGrokProviderStatus,
   enrichGrokSnapshot,
 } from "./status.ts";
+import { grokUsageReader } from "./usage.ts";
 import { readGrokAccount } from "./usageLimits.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
@@ -47,7 +49,7 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -86,6 +88,7 @@ export type GrokDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | ProviderLatestVersions.ProviderLatestVersions
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
@@ -135,7 +138,7 @@ export interface GrokDriverOptions<Requirements = never, Extension extends objec
 export interface GrokDriverFactory<
   Requirements = never,
   Extension extends object = {},
-> extends ProviderDriver<GrokSettings, GrokDriverEnv | Requirements> {
+> extends ProviderDriver<GrokSettings, GrokDriverEnv | Requirements, Path.Path> {
   readonly create: (
     input: ProviderDriverCreateInput<GrokSettings>,
   ) => Effect.Effect<
@@ -156,21 +159,23 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
     },
     configSchema: GrokSettings,
     defaultConfig: (): GrokSettings => decodeGrokSettings({}),
+    usage: grokUsageReader,
     create: (input) =>
       Effect.gen(function* () {
         const crypto = yield* Crypto.Crypto;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const httpClient = yield* HttpClient.HttpClient;
+        const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const host = yield* ProviderHost.ProviderHost;
-        const hostEnvironment = yield* HostProcessEnvironment;
+        const hostEnvironment = yield* HostProcess.Environment;
         const { cwd } = host.paths;
         const runtime: GrokRuntimeResolution<Requirements, Extension> = options.resolveRuntime
           ? yield* options.resolveRuntime({ ...input, hostEnvironment })
           : {
               effectiveConfig: { ...input.config, enabled: input.enabled },
-              effectiveEnvironment: mergeProviderInstanceEnvironment(
+              effectiveEnvironment: yield* mergeProviderInstanceEnvironment(
                 input.environment,
                 hostEnvironment,
               ),
@@ -256,7 +261,7 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
 
-        const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+        const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
         const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
           resolveMaintenance,
           getSettings: snapshotSettings.getSettings,
@@ -273,9 +278,10 @@ export function makeGrokDriver<Requirements = never, Extension extends object = 
                   maintenanceCapabilities,
                   enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
                   publishSnapshot,
-                  httpClient,
                 }),
               ),
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             ),
         }).pipe(
           Effect.mapError(

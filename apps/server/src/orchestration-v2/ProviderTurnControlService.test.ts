@@ -30,13 +30,13 @@ import { makeNativeSessionAdapterV2 } from "./Adapters/NativeSessionAdapterV2.ts
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import { skillReleaseKey } from "@scientfactory/scient-skills";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -187,7 +187,7 @@ it.effect(
         updatedAt: now,
         lastError: null,
       };
-      const runtime: ProviderAdapterV2SessionRuntime = {
+      const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
         instanceId: providerInstanceId,
         driver,
         providerSessionId: oldSessionId,
@@ -297,6 +297,7 @@ it.effect(
       const controlLayer = ProviderTurnControlService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
+            McpProviderSessions.layer,
             layerProjection,
             layerSessionManager,
             ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
@@ -391,6 +392,7 @@ it.effect(
       const release = BUILT_IN_SKILL_RELEASES[0]!;
       const selection = yield* Ref.make<ReadonlyArray<string>>([release.name]);
       const delivered = yield* Ref.make<ReadonlyArray<string>>([]);
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const runtime: ProviderAdapterV2SessionRuntime = {
         instanceId: providerInstanceId,
         driver,
@@ -420,6 +422,7 @@ it.effect(
         forkThread: () => Effect.die("unused fork"),
       };
       const dependencies = Layer.mergeAll(
+        Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
         ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
@@ -490,9 +493,9 @@ it.effect(
         }),
       );
       yield* Effect.acquireUseRelease(
-        Effect.sync(() => {
-          const previous = McpProviderSession.readMcpProviderSession(threadId);
-          McpProviderSession.setMcpProviderSession({
+        Effect.gen(function* () {
+          const previous = yield* mcpSessions.read(threadId);
+          yield* mcpSessions.set({
             environmentId: EnvironmentId.make("skill-steer-fixture"),
             threadId,
             providerInstanceId,
@@ -520,16 +523,13 @@ it.effect(
             Effect.provide(ProviderTurnControlService.layer.pipe(Layer.provide(dependencies))),
           ),
         (previous) =>
-          Effect.sync(() => {
-            if (previous === undefined) McpProviderSession.clearMcpProviderSession(threadId);
-            else McpProviderSession.setMcpProviderSession(previous);
-          }),
+          previous === undefined ? mcpSessions.clear(threadId) : mcpSessions.set(previous),
       );
       const texts = yield* Ref.get(delivered);
       assert.include(texts[0]!, "selected by the user");
       assert.notInclude(texts[1]!, "selected by the user");
       assert.include(texts[1]!, `$${release.name}`);
-    }),
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
 it.effect.each([
@@ -764,6 +764,7 @@ it.effect.each([
             providerTurns: [{ ...receipt, status: "completed" as const, completedAt: now }],
           }));
         const dependencies = Layer.mergeAll(
+          McpProviderSessions.layer,
           ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
             Layer.provide(NodeServices.layer),
           ),

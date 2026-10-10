@@ -35,11 +35,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
-import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
-import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
+import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
@@ -216,15 +212,7 @@ const ProjectCliCloneTrackerLive = ProjectCloneTracker.layer.pipe(
       Layer.provideMerge(GitVcsDriver.layer),
       Layer.provide(
         SourceControlProviderRegistry.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              AzureDevOpsCli.layer,
-              BitbucketApi.layer,
-              GitHubApi.layerWithDependencies,
-              GitLabCli.layer,
-              ForgejoCli.layer,
-            ),
-          ),
+          Layer.provide(BuiltInDrivers.layer),
           Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
         ),
       ),

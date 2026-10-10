@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, type HTMLAttributes } from "react";
 
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
 import { plotlyMountQueue } from "./plotlyMountQueue";
@@ -208,9 +209,9 @@ export const PlotlyView = forwardRef<PlotlyViewController, PlotlyViewProps>(func
 
   useEffect(() => {
     const host = hostRef.current;
-    if (host == null || typeof ResizeObserver === "undefined") return;
+    if (host == null) return;
 
-    const observer = new ResizeObserver((entries) => {
+    const stopResize = observeResize(host, (entries) => {
       const entry = entries[0];
       const nextWidth = entry?.contentRect.width ?? host.clientWidth;
       const nextHeight = entry?.contentRect.height ?? host.clientHeight;
@@ -235,9 +236,8 @@ export const PlotlyView = forwardRef<PlotlyViewController, PlotlyViewProps>(func
         }
       });
     });
-    observer.observe(host);
     return () => {
-      observer.disconnect();
+      stopResize();
       observedSizeRef.current = { height: null, width: null };
       if (resizeFrameRef.current != null) cancelAnimationFrame(resizeFrameRef.current);
       resizeFrameRef.current = null;

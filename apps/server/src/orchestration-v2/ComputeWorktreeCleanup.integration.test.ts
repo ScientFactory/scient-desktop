@@ -132,7 +132,7 @@ const testLayer = Layer.merge(
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "storage-cleanup-lifecycle" },
     ProviderAdapterRegistry.layerFromAdapters([]),
-    { layerDatabase: database, runEffectWorker: false },
+    { databaseLayer: database, runEffectWorker: false },
   ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -244,6 +244,7 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
       let completed = false;
 
       const removals: string[] = [];
+      const moves: string[][] = [];
       const settings = yield* Settings.ServerSettingsService.pipe(
         Effect.provide(
           Settings.layerTest({
@@ -259,7 +260,8 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
         ),
       );
       const changes = yield* PubSub.unbounded<ServerSettings>();
-      const cleanup = yield* StorageCleanup.make.pipe(
+      const cleanup = yield* StorageCleanup.StorageCleanup.pipe(
+        Effect.provide(StorageCleanup.layer),
         Effect.provide(
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, {
@@ -301,19 +303,43 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                 Effect.sync(() => ({
                   commitSha: "a".repeat(40),
                 })),
-              execute: () =>
-                Effect.succeed({
-                  exitCode: ChildProcessSpawner.ExitCode(0),
-                  stdout: "",
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
+              execute: (input) =>
+                Effect.gen(function* () {
+                  if (input.operation === "StorageCleanup.cleanupGit") {
+                    const args = [...input.args];
+                    assert.isFalse(args.includes("--force"));
+                    if (args[1] === "move") {
+                      assert.equal(args[0], "worktree");
+                      assert.lengthOf(args, 4);
+                      const source = args[2]!;
+                      const destination = args[3]!;
+                      assert.isFalse(yield* fs.exists(destination));
+                      assert.isTrue(yield* fs.exists(path.join(source, ".git")));
+                      yield* fs.rename(source, destination).pipe(Effect.orDie);
+                      moves.push(args);
+                    } else {
+                      const isolatedPath = moves[0]![3]!;
+                      assert.deepEqual(args, [
+                        "-c",
+                        "status.showUntrackedFiles=all",
+                        "worktree",
+                        "remove",
+                        isolatedPath,
+                      ]);
+                      assert.isFalse(yield* fs.exists(worktreePath));
+                      assert.isTrue(yield* fs.exists(path.join(isolatedPath, ".git")));
+                      removals.push(isolatedPath);
+                      yield* fs.remove(isolatedPath, { recursive: true }).pipe(Effect.orDie);
+                    }
+                  }
+                  return {
+                    exitCode: ChildProcessSpawner.ExitCode(0),
+                    stdout: "",
+                    stderr: "",
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                  };
                 }),
-              removeWorktree: (input) => {
-                assert.strictEqual(input.force, false);
-                removals.push(input.path);
-                return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
-              },
             }),
           ),
         ),
@@ -329,11 +355,11 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
         yield* Deferred.await(sweepRead);
         yield* cleanup.drain;
       });
-      yield* cleanup.start();
       yield* Deferred.await(initialRead);
       yield* cleanup.drain;
       assert.isTrue(yield* fs.exists(worktreePath));
       assert.deepStrictEqual(removals, []);
+      assert.deepStrictEqual(moves, []);
       completed = true;
       for (let claimedCount = 0; claimedCount < effects.length; claimedCount += 1) {
         const claimed = yield* outbox.claimNext({
@@ -364,13 +390,27 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
         yield* sweep();
         assert.isTrue(yield* fs.exists(worktreePath));
         assert.deepEqual(removals, []);
+        assert.deepEqual(moves, []);
         assert.lengthOf(closed, index);
         yield* Deferred.succeed(shutdownFinish[index]!, undefined);
         yield* Fiber.join(stopping);
         assert.lengthOf(closed, index + 1);
         yield* sweep();
         assert.equal(yield* fs.exists(worktreePath), index < 2);
-        assert.deepEqual(removals, index < 2 ? [] : [worktreePath]);
+        if (index < 2) {
+          assert.deepEqual(moves, []);
+          assert.deepEqual(removals, []);
+        } else {
+          assert.lengthOf(moves, 1);
+          const isolatedPath = moves[0]![3]!;
+          assert.deepEqual(moves, [["worktree", "move", worktreePath, isolatedPath]]);
+          assert.equal(path.dirname(path.dirname(isolatedPath)), path.dirname(worktreePath));
+          assert.match(path.basename(path.dirname(isolatedPath)), /^\.scient-cleanup-/);
+          assert.equal(path.basename(isolatedPath), "checkout");
+          assert.deepEqual(removals, [isolatedPath]);
+          assert.isFalse(yield* fs.exists(isolatedPath));
+          assert.isFalse(yield* fs.exists(path.dirname(isolatedPath)));
+        }
       }
     }).pipe(Effect.provide(testLayer), Effect.scoped, Effect.timeout("30 seconds")),
   );

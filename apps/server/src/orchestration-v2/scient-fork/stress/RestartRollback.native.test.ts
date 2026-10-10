@@ -33,7 +33,7 @@ it.live(
         );
         const runtime = nativeImportRuntimeTestLayer(inertRegistry, {
           ...runtimeOptions,
-          layerDatabase: persistence,
+          databaseLayer: persistence,
         });
         const frozen = yield* Effect.scoped(
           Effect.gen(function* () {

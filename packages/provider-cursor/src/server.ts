@@ -1,7 +1,6 @@
 /**
- * Cursor's server entry: the driver the server registers, its adapter
- * driver, the SDK runner layer the server provides once, and the keychain
- * token reader the usage scanner shares.
+ * Cursor's server entry: the driver the server registers and its adapter
+ * driver.
  *
  * @module provider-cursor/server
  */
@@ -25,4 +24,4 @@ export {
 export { parseCursorAboutOutput, type CursorAboutResult } from "./server/about.ts";
 export { runCursorAboutCommand, type CursorCliArgumentResolver } from "./server/status.ts";
 export { readCursorUsageLimits } from "./server/usageLimits.ts";
-export { CursorKeychainTimeoutError, readMacCursorAccessToken } from "./server/keychainToken.ts";
+export { CursorKeychainTimeoutError, CursorKeychainReadError } from "./server/CursorKeychain.ts";

@@ -28,15 +28,18 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { vi } from "vite-plus/test";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "../ModelManifest.ts";
 import { ServerConfig } from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { DroidDriver } from "./DroidDriver.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
@@ -54,6 +57,9 @@ const makeTestLayer = (settings: Parameters<typeof ServerSettingsService.layerTe
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(IdAllocator.layer),
       Layer.provideMerge(ProviderContinuationRequests.layer),
+      Layer.provideMerge(ModelManifest.layerTest),
+      Layer.provideMerge(ProviderLatestVersions.layer),
+      Layer.provideMerge(McpProviderSessions.layer),
       Layer.provideMerge(
         Layer.mock(BackgroundPolicy.BackgroundPolicy)({
           reportClientActivity: () => Effect.void,
@@ -95,9 +101,14 @@ const makeTestLayer = (settings: Parameters<typeof ServerSettingsService.layerTe
           ),
         ),
       ),
-      Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+      Layer.provideMerge(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
     ),
-    layerTestProviderHost({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+    TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
   );
 const testLayer = makeTestLayer();
 

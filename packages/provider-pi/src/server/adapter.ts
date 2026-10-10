@@ -23,8 +23,8 @@
  * Terminal-only decoration such as status, widget, title, and editor-text
  * updates has no matching T3 surface and is ignored.
  */
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import * as Context from "effect/Context";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   ProviderDriverKind,
   type ChatAttachment,
@@ -64,10 +64,10 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   expandPiSkillReference,
   parsePiCompactCommand,
@@ -77,7 +77,7 @@ import {
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { piContextErrorMessage } from "./contextError.ts";
 import {
   allocateFreshPiSessionFile,
@@ -446,10 +446,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   options: PiAdapterV2Options,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const agentScope = yield* AgentScope;
   const fileSystem = yield* FileSystem.FileSystem;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { continuationRequests } = options;
   const mapTurnStartError = (
     input: Pick<
@@ -493,9 +495,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
       const nativePath = path;
       const mcpSession =
-        input.configureMcp === false
-          ? undefined
-          : McpProviderSession.readMcpProviderSession(input.threadId);
+        input.configureMcp === false ? undefined : yield* mcpSessions.read(input.threadId);
       const provideCacheFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
         effect.pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -595,9 +595,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         freshSession === undefined || initialBindingComplete || Exit.isSuccess(exit)
           ? Effect.void
           : Scope.close(connectionScope, exit);
-      const connection: PiRpcConnection = yield* (options.makeConnection ?? makePiRpcConnection)({
+      const scopedLaunch = yield* agentScope.wrap({
         command: options.settings.binaryPath || "pi",
         args: [...launch.args, "--session", initialSessionFile],
+        name: "pi",
+        threadId: input.threadId,
+        env: launch.env,
+      });
+      const connection: PiRpcConnection = yield* (options.makeConnection ?? makePiRpcConnection)({
+        command: scopedLaunch.command,
+        args: scopedLaunch.args,
         cwd,
         env: launch.env,
       }).pipe(
@@ -1019,7 +1026,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           type: "turn_item.updated",
           driver: PI_PROVIDER,
           turnItem: makeProviderRetryTurnItem({
-            idAllocator,
             driver: PI_PROVIDER,
             threadId: turn.turnInput.threadId,
             runId: turn.turnInput.runId,
@@ -4023,6 +4029,7 @@ export type PiAdapterV2DriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
 
 export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2DriverEnv> = {
@@ -4031,13 +4038,12 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
   defaultConfig: (): PiSettings => DEFAULT_PI_SETTINGS,
   create: Effect.fn("PiAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<PiSettings>) {
-      const hostContext = yield* Effect.context<never>();
-      const hostEnvironment = Context.get(hostContext, HostProcessEnvironment);
+      const hostEnvironment = yield* HostProcess.Environment;
       const continuationRequests = yield* piContinuationRequestsIfProvided;
       return yield* makePiAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
-        environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         ...(continuationRequests === undefined ? {} : { continuationRequests }),
       });
     },

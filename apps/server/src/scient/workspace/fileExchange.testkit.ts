@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -9,8 +9,8 @@ import { afterAll } from "@effect/vitest";
 /** Native cases compile the shipped C source rather than silently depending on a developer binary. */
 export async function fileExchangeTestHelper() {
   if (
-    HostProcessPlatform.defaultValue() !== "darwin" &&
-    HostProcessPlatform.defaultValue() !== "linux"
+    HostProcess.Platform.defaultValue() !== "darwin" &&
+    HostProcess.Platform.defaultValue() !== "linux"
   )
     return undefined;
   const directory = await NodeFSP.mkdtemp(

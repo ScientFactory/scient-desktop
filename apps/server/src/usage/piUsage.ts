@@ -4,7 +4,7 @@ import * as NodeReadline from "node:readline";
 
 import type { PiUsageRow, UsageDay, UsageTokenTotals } from "@t3tools/contracts";
 
-import { EMPTY_TOTALS } from "./usageTranscripts.ts";
+import { EMPTY_TOTALS } from "@t3tools/provider-core/server/usage";
 import { listTranscriptFiles } from "./usageTranscriptReader.ts";
 
 function addTotals(a: UsageTokenTotals, b: UsageTokenTotals): UsageTokenTotals {

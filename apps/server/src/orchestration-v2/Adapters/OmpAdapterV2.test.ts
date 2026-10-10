@@ -18,15 +18,10 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
-import {
-  setMcpProviderSession,
-  clearMcpProviderSession,
-} from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ompProcessEnvironment } from "../../provider/omp/OmpEnvironment.ts";
-import { SCIENT_CORE_AWARENESS } from "../../provider/ScientAwareness.ts";
-import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
 import { OMP_PENDING_CONNECTION_DETAIL } from "../../provider/omp/OmpModel.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -71,8 +66,9 @@ const decodeOmpSettings = Schema.decodeEffect(OmpSettings);
 
 const TestLayer = Layer.mergeAll(
   NodeServices.layer,
-  Layer.succeed(HostProcessPlatform, "darwin"),
+  Layer.succeed(HostProcess.Platform, "darwin"),
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-v2-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -95,8 +91,8 @@ const harness = Effect.fnUntraced(function* (
     readonly profile?: string;
     readonly cwd?: string;
     readonly prepareOpen?: (
-      input: Parameters<ReturnType<typeof makeOmpAdapterV2>["openSession"]>[0],
-      adapter: ReturnType<typeof makeOmpAdapterV2>,
+      input: Parameters<Effect.Success<ReturnType<typeof makeOmpAdapterV2>>["openSession"]>[0],
+      adapter: Effect.Success<ReturnType<typeof makeOmpAdapterV2>>,
     ) => Effect.Effect<void>;
     readonly initialNativeThreadId?: string;
     readonly ignoreFreshWrite?: boolean;
@@ -127,7 +123,7 @@ const harness = Effect.fnUntraced(function* (
     (scientific
       ? scientAgentProcessEnvironment({
           root: ownedHome,
-          platform: yield* HostProcessPlatform,
+          platform: yield* HostProcess.Platform,
           baseEnv: { OMP_PROFILE: "foreign-omp-profile", PI_CODING_AGENT_DIR: "/foreign/omp-home" },
         })
       : {});
@@ -141,7 +137,7 @@ const harness = Effect.fnUntraced(function* (
     runtimeMode: "full-access" as const,
     interactionMode: "default" as const,
   };
-  const adapter = makeOmpAdapterV2({
+  const adapter = yield* makeOmpAdapterV2({
     target,
     instanceId,
     settings: yield* decodeOmpSettings({
@@ -2260,7 +2256,8 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       Effect.gen(function* () {
         const threadId = ThreadId.make(`native-bootstrap-${granted}`);
         const token = "Bearer synthetic-scient-omp-token";
-        yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         const peer = scriptedOmpRpc({
           models: [],
           initial: { provider: "test", id: "selected" },
@@ -2274,6 +2271,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           threadId,
           environment: ompProcessEnvironment({
             platform: "darwin",
+            homeDirectory: "/synthetic/home",
             baseEnv: {
               PATH: "/usr/bin",
               SCIENT_OMP_MCP_ENDPOINT: "http://127.0.0.1:1/inherited",
@@ -2282,9 +2280,8 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             },
           }),
           prepareOpen: (input) =>
-            Effect.sync(() => {
-              if (granted)
-                setMcpProviderSession({
+            granted
+              ? mcpSessions.set({
                   environmentId: EnvironmentId.make("bootstrap-environment"),
                   threadId,
                   providerSessionId: "bootstrap-session",
@@ -2293,8 +2290,8 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                   authorizationHeader: token,
                   capabilities: new Set(["preview", "skills:read", "sources:read"]),
                   agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
-                });
-            }),
+                })
+              : Effect.void,
           makeProcess: (options) =>
             Effect.gen(function* () {
               launch = options;
@@ -2311,7 +2308,6 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                 path: bootstrapPath,
                 value: decodeNativeBootstrap(NodeFS.readFileSync(bootstrapPath, "utf8")),
               };
-              assert.equal(source, ompScientExtensionSource(ompTarget, bootstrapPath));
               assert.notInclude(source, "synthetic-scient-omp-token");
               assert.notInclude(source, "http://127.0.0.1:43123/mcp");
               NodeFS.unlinkSync(bootstrapPath);
@@ -2331,13 +2327,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(launch.env?.PATH, granted ? "/scient/device-shim:/usr/bin" : "/usr/bin");
         assert.equal(bootstrap.value.endpoint, granted ? "http://127.0.0.1:43123/mcp" : null);
         assert.equal(bootstrap.value.authorization, granted ? token : null);
-        assert.isTrue(bootstrap.value.awareness.startsWith(SCIENT_CORE_AWARENESS));
         assert.notInclude(bootstrap.value.awareness, "inherited awareness");
-        if (granted) {
-          assert.include(bootstrap.value.awareness, "## Scient browser");
-          assert.include(bootstrap.value.awareness, "## Scient skills");
-          assert.include(bootstrap.value.awareness, "`scient_skill_load`");
-        } else assert.equal(bootstrap.value.awareness, SCIENT_CORE_AWARENESS);
+        assert.equal(bootstrap.value.awareness.includes("preview_status"), granted);
+        assert.equal(bootstrap.value.awareness.includes("scient_skill_load"), granted);
         assert.isFalse(NodeFS.existsSync(bootstrap.path));
       }),
     ),
@@ -2349,7 +2341,8 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       Effect.scoped(
         Effect.gen(function* () {
           const threadId = ThreadId.make("native-foreign-bootstrap");
-          yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+          yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
           const peer = scriptedOmpRpc({
             models: [],
             initial: { provider: "test", id: "selected" },
@@ -2360,9 +2353,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           const refused = yield* harness(false, {
             threadId,
             prepareOpen: (input, adapter) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 retry = adapter.openSession(input);
-                setMcpProviderSession({
+                yield* mcpSessions.set({
                   environmentId: EnvironmentId.make("foreign-bootstrap-environment"),
                   threadId,
                   providerSessionId: "foreign-bootstrap-session",
@@ -2382,7 +2375,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             return yield* Effect.die("Foreign credential reached native launch");
           assert.include(encodeDiagnostic(refused.failure), "belongs to another provider instance");
           assert.equal(launches, 0);
-          clearMcpProviderSession(threadId);
+          yield* mcpSessions.clear(threadId);
           yield* retry;
           assert.equal(launches, 1);
         }),

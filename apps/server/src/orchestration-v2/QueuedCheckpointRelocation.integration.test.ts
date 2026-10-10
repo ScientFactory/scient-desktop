@@ -59,7 +59,7 @@ const testLayer = makeOrchestratorV2ReplayLayerWithRegistry(
     },
   ]),
   {
-    layerDatabase: database,
+    databaseLayer: database,
     runEffectWorker: false,
     runtimePolicyLayer: policyLayer.pipe(Layer.orDie),
   },

@@ -3,7 +3,7 @@ import type {
   OrchestrationV2ContextHandoff,
   OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
-import type { ProviderAdapterV2HistoricalContext } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import {
   historyCost,
@@ -33,7 +33,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly importedMaterial?: "document" | "conversation";
     readonly sharedForkWorkspace?: boolean;
     readonly inject?: (
-      history: ProviderAdapterV2HistoricalContext,
+      history: ProviderAdapter.ProviderAdapterV2HistoricalContext,
     ) => Effect.Effect<boolean, InjectError>;
     readonly persist: (handoff: OrchestrationV2ContextHandoff) => Effect.Effect<void, PersistError>;
   }) {

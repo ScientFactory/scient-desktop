@@ -68,10 +68,10 @@ interface CaptureTarget {
 
 interface SettlementDependencies {
   readonly eventSink: EventSink.EventSinkV2Shape;
-  readonly ids: IdAllocator.IdAllocatorV2Shape;
+  readonly ids: IdAllocator.IdAllocatorV2["Service"];
   readonly projections: ProjectionStore.ProjectionStoreV2Shape;
   readonly makeCheckpointTurnItem: (input: {
-    readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+    readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
     readonly run: OrchestrationV2Run;
     readonly rootNode: OrchestrationV2ExecutionNode;
     readonly providerThread: OrchestrationV2ProviderThread;

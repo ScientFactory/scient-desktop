@@ -38,7 +38,7 @@ import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { ensureQueuedMessageBudget } from "../QueuedMessageBudget.ts";
 import { ConversationForkService } from "../scient-fork/ConversationForkService.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const instanceId = ProviderInstanceId.make("acp");
@@ -337,7 +337,7 @@ it.live.each(
         }
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name, runtimePolicyOverride: { cwd } },
             Registry.layerSingle(adapter),
             { configureMcp: false },

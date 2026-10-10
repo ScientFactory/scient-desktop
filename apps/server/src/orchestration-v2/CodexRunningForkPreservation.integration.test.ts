@@ -426,7 +426,7 @@ it.live(
               configureMcp: false,
               runEffectWorker: false,
               layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
-              layerDatabase: makeSqlitePersistenceLive(database).pipe(
+              databaseLayer: makeSqlitePersistenceLive(database).pipe(
                 Layer.provide(NodeServices.layer),
               ),
             },

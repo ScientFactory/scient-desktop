@@ -18,9 +18,10 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
-import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   makeWakeHarness,
   claudeSdkFrame,
@@ -95,7 +96,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const afterFailure = providerThreadRosterEvents(harness.events).at(-1);
         assert.deepEqual(afterFailure?.providerThread.pendingBackgroundTasks ?? [], []);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -118,7 +123,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             readonly queue: Queue.Queue<SDKMessage>;
           }> = [];
           const events: Array<ProviderAdapterV2Event> = [];
-          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
             crypto: yield* Crypto.Crypto,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -358,7 +363,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isFalse(yield* hasPendingBackgroundWorkForThread(providerThreadA));
           assert.isFalse(yield* hasPendingBackgroundWorkForThread(providerThreadB));
           assert.isFalse(yield* hasPendingBackgroundWork);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -373,7 +382,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const processQueues: Array<Queue.Queue<SDKMessage>> = [];
         const events: Array<ProviderAdapterV2Event> = [];
         const continuationRequests: Array<ProviderContinuationRequest> = [];
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -541,7 +550,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           () => events.filter((event) => event.type === "turn.terminal").length === 2,
           "second turn terminal",
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -559,7 +572,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
           const events: Array<ProviderAdapterV2Event> = [];
           const continuationRequests: Array<ProviderContinuationRequest> = [];
-          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
             crypto: yield* Crypto.Crypto,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -742,7 +755,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             "continuation request after retry",
           );
           assert.equal(continuationRequests[1]?.detail, "Retry build completed successfully");
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -755,7 +772,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           prefix: "t3-claude-v2-first-open-fail-",
         });
         const events: Array<ProviderAdapterV2Event> = [];
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -817,7 +834,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isTrue(Exit.isFailure(failedStart));
         // No live process ever existed: do not emit a fabricated empty roster.
         assert.lengthOf(providerThreadRosterEvents(events), 0);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

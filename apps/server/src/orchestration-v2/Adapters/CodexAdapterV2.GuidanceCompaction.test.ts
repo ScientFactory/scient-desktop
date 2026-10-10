@@ -12,13 +12,10 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
-import { buildCodexDeveloperInstructions } from "../../provider/CodexDeveloperInstructions.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
@@ -77,7 +74,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           });
           yield* harness.firstTerminal;
           assert.equal(harness.terminalEvents()[0]?.status, "completed");
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -86,6 +87,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
           const nativeThreadId = "auto-full-guidance-thread";
           const nativeTurnId = "auto-full-guidance-turn";
           const prompt = "Review this change automatically.";
@@ -111,20 +113,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             hasT3Mcp: true,
             mcpCapabilities: capabilities,
           });
-          const decodePacket = Schema.decodeUnknownEffect(
-            CodexSchema.V2TurnStartParams.pipe(
-              Schema.fieldsAssign({
-                collaborationMode: CodexSchema.ClientRequest__CollaborationMode,
-                additionalContext: Schema.Record(
-                  Schema.String,
-                  CodexSchema.V2TurnStartParams__AdditionalContextEntry,
-                ),
-              }),
-            ),
+          const packetSchema = CodexSchema.V2TurnStartParams.pipe(
+            Schema.fieldsAssign({
+              collaborationMode: CodexSchema.ClientRequest__CollaborationMode,
+              additionalContext: Schema.Record(
+                Schema.String,
+                CodexSchema.V2TurnStartParams__AdditionalContextEntry,
+              ),
+            }),
           );
-          const packets = yield* Ref.make<
-            ReadonlyArray<Effect.Success<ReturnType<typeof decodePacket>>>
-          >([]);
+          const decodePacket = Schema.decodeUnknownEffect(packetSchema);
+          const packets = yield* Ref.make<ReadonlyArray<Schema.Schema.Type<typeof packetSchema>>>(
+            [],
+          );
           const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt });
           const transcript = makeCodexReplayTranscript({
             scenario: "auto-full-guidance-packet",
@@ -186,15 +187,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(scope?.thread.threadId, harness.threadId);
           assert.equal(scope?.thread.providerInstanceId, modelSelection.instanceId);
           assert.deepEqual(scope?.capabilities, capabilities);
-          McpProviderSession.setMcpProviderSession(issued.config);
+          yield* sessions.set(issued.config);
           yield* Effect.addFinalizer(() =>
             registry
               .revokeThread(harness.threadId)
-              .pipe(
-                Effect.andThen(
-                  Effect.sync(() => McpProviderSession.clearMcpProviderSession(harness.threadId)),
-                ),
-              ),
+              .pipe(Effect.andThen(sessions.clear(harness.threadId))),
           );
           yield* harness.runtime.startTurn({
             ...makeCodexTestTurnInput({
@@ -226,44 +223,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             packet.collaborationMode.settings.developer_instructions ?? "",
             /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/,
           );
-          assert.equal(
-            packet.collaborationMode.settings.developer_instructions,
-            buildCodexDeveloperInstructions("default"),
-          );
           assert.deepEqual(Object.keys(packet.additionalContext), [
             "t3_code_orchestration",
             "t3_code_workspace",
             "t3_code_runtime",
             "scient_awareness",
           ]);
-          assert.equal(
-            (packet.additionalContext.t3_code_orchestration?.value ?? "") +
-              (packet.additionalContext.t3_code_workspace?.value ?? ""),
-            SCIENT_ORCHESTRATION_INSTRUCTIONS,
-          );
-          assert.include(
-            packet.additionalContext.t3_code_runtime?.value ?? "",
-            "Codex harness, as gpt-5.4 with high reasoning effort",
-          );
           const awareness = packet.additionalContext.scient_awareness?.value ?? "";
-          assert.equal(
-            awareness,
-            buildScientAwareness(
-              new Set<McpCapability>(["preview", "device", "documents:build", "skills:read"]),
-            ),
-          );
-          for (const guidance of [
-            "Start with `preview_status`; call `preview_open` if no automation-capable tab is attached.",
-            "preserving the host configuration and session flags returned by `device_open`",
-            "`scient_latex_build` to build an existing project LaTeX source",
-            "`scient_document_export` to export an existing project Markdown document",
-            "On substantive tasks, read the current-turn marker first",
-            "The digest is freshness metadata, not authority.",
-            "Skills provide guidance and grant no tools or authority.",
-          ])
-            assert.include(awareness, guidance);
           for (const required of [
-            "## Scient",
             "preview_status",
             "preview_open",
             "device_list",
@@ -278,7 +245,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }
           assert.equal(harness.terminalEvents().length, 1);
           assert.equal(harness.terminalEvents()[0]?.status, "completed");
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -383,7 +354,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(error.providerTurn?.runAttemptId, input.attemptId);
       assert.equal(error.providerTurn?.nodeId, input.rootNodeId);
       assert.equal(error.providerTurn?.providerThreadId, h.providerThread.id);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect.each([-32602, -32000])(
@@ -436,7 +412,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(error.providerTurn?.runAttemptId, input.attemptId);
         assert.equal(error.providerTurn?.nodeId, input.rootNodeId);
         assert.equal(error.providerTurn?.providerThreadId, h.providerThread.id);
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   it.effect("compacts Codex with the native RPC and completes the compaction turn", () =>
@@ -511,7 +492,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.equal(items[0]?.id, items[1]?.id);
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -62,8 +62,8 @@ const layerHost = ProviderHostLive.layer.pipe(
 );
 const layer = Layer.mergeAll(
   layerHost,
-  Layer.succeed(HostProcessPlatform, "linux"),
-  Layer.succeed(HostProcessArchitecture, "x64"),
+  Layer.succeed(HostProcess.Platform, "linux"),
+  Layer.succeed(HostProcess.Architecture, "x64"),
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>

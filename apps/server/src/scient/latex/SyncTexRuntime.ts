@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Native runtime receipts are verified at the server boundary.
 import * as NodeCrypto from "node:crypto";
 
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -64,8 +64,8 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
   const platformKey = syncTexRuntimePlatformKey(platform, architecture);
   const executable = executableName(platform);
 

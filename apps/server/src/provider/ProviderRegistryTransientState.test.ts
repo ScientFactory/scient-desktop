@@ -241,7 +241,7 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
 });
 
 const nextRegistryEmission = Effect.fn("ProviderRegistryTransientState.nextEmission")(function* (
-  registry: ProviderRegistry.ProviderRegistryShape,
+  registry: ProviderRegistry.ProviderRegistry["Service"],
 ) {
   const fiber = yield* registry.streamChanges.pipe(Stream.runHead, Effect.forkChild);
   yield* Effect.yieldNow;

@@ -4,7 +4,7 @@
  * extensions, skills, tools and persisted session state disabled.
  */
 import * as Effect from "effect/Effect";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { PiSettings } from "../settings.ts";
 import { makePiRpcClient } from "./rpcClient.ts";

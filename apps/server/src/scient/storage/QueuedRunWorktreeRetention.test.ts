@@ -11,7 +11,6 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -27,7 +26,6 @@ import {
 import { ServerConfig } from "../../config.ts";
 import { GitManager } from "../../git/GitManager.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
-import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
@@ -44,7 +42,7 @@ const testLayer = Layer.merge(
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "queued-run-worktree-retention" },
     ProviderAdapterRegistry.layerFromAdapters([]),
-    { layerDatabase: database, runEffectWorker: false },
+    { databaseLayer: database, runEffectWorker: false },
   ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -124,7 +122,6 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const sink = yield* EventSink.EventSinkV2;
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const worktreePath = path.join(yield* fs.realPath(config.worktreesDir), "feature");
       yield* fs.makeDirectory(worktreePath, { recursive: true });
@@ -162,8 +159,8 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
           ...scenario.runs.map(runCreated),
         ],
       });
-      const swept = yield* Deferred.make<void>();
       const removals: string[] = [];
+      const moves: string[][] = [];
       const settings = yield* Settings.ServerSettingsService.pipe(
         Effect.provide(
           Settings.layerTest({
@@ -178,17 +175,11 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
           }),
         ),
       );
-      const cleanup = yield* StorageCleanup.make.pipe(
+      const cleanup = yield* StorageCleanup.StorageCleanup.pipe(
+        Effect.provide(StorageCleanup.layer),
         Effect.provide(
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, settings),
-            Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-              ...projections,
-              getShellSnapshot: (options) =>
-                projections
-                  .getShellSnapshot(options)
-                  .pipe(Effect.tap(() => Deferred.succeed(swept, undefined))),
-            }),
             Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
             Layer.mock(TerminalManager)({
               subscribeMetadata: (listener) =>
@@ -210,26 +201,63 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                   aheadOfDefaultCount: 0,
                 }),
               resolveCommit: () => Effect.succeed({ commitSha: "a".repeat(40) }),
-              execute: () =>
-                Effect.succeed({
-                  exitCode: ChildProcessSpawner.ExitCode(0),
-                  stdout: "",
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
+              execute: (input) =>
+                Effect.gen(function* () {
+                  if (input.operation === "StorageCleanup.cleanupGit") {
+                    const args = [...input.args];
+                    assert.isFalse(args.includes("--force"));
+                    if (args[1] === "move") {
+                      assert.equal(args[0], "worktree");
+                      assert.lengthOf(args, 4);
+                      const source = args[2]!;
+                      const destination = args[3]!;
+                      assert.isFalse(yield* fs.exists(destination));
+                      assert.isTrue(yield* fs.exists(path.join(source, ".git")));
+                      yield* fs.rename(source, destination).pipe(Effect.orDie);
+                      moves.push(args);
+                    } else {
+                      const isolatedPath = moves[0]![3]!;
+                      assert.deepEqual(args, [
+                        "-c",
+                        "status.showUntrackedFiles=all",
+                        "worktree",
+                        "remove",
+                        isolatedPath,
+                      ]);
+                      assert.isFalse(yield* fs.exists(worktreePath));
+                      assert.isTrue(yield* fs.exists(path.join(isolatedPath, ".git")));
+                      removals.push(isolatedPath);
+                      yield* fs.remove(isolatedPath, { recursive: true }).pipe(Effect.orDie);
+                    }
+                  }
+                  return {
+                    exitCode: ChildProcessSpawner.ExitCode(0),
+                    stdout: "",
+                    stderr: "",
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                  };
                 }),
-              removeWorktree: (input) => {
-                removals.push(input.path);
-                return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
-              },
             }),
           ),
         ),
       );
-      yield* cleanup.start();
-      yield* Deferred.await(swept);
+      yield* cleanup.runNow;
       yield* cleanup.drain;
-      assert.deepStrictEqual(removals, scenario.kept ? [] : [worktreePath]);
+      if (scenario.kept) {
+        assert.deepStrictEqual(moves, []);
+        assert.deepStrictEqual(removals, []);
+      } else {
+        assert.lengthOf(moves, 1);
+        const isolatedPath = moves[0]![3]!;
+        assert.deepStrictEqual(moves, [["worktree", "move", worktreePath, isolatedPath]]);
+        assert.equal(path.dirname(path.dirname(isolatedPath)), path.dirname(worktreePath));
+        assert.match(path.basename(path.dirname(isolatedPath)), /^\.scient-cleanup-/);
+        assert.equal(path.basename(isolatedPath), "checkout");
+        assert.deepStrictEqual(removals, [isolatedPath]);
+        assert.isFalse(yield* fs.exists(isolatedPath));
+        assert.isFalse(yield* fs.exists(path.dirname(isolatedPath)));
+      }
       assert.strictEqual(yield* fs.exists(worktreePath), scenario.kept);
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );

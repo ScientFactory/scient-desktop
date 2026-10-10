@@ -26,7 +26,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProjectStore from "./ProjectStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterRegistry.ts";
@@ -159,7 +159,7 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
       // checkpoint capture) falls back to process.cwd(), the host repository.
       { name: `pi-observed-${name}`, runtimePolicyOverride: { cwd } },
       registry,
-      { layerDatabase: database, layerServerConfig: configLayer, runContinuationWorker: true },
+      { databaseLayer: database, layerServerConfig: configLayer, runContinuationWorker: true },
     );
     const result = yield* Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;

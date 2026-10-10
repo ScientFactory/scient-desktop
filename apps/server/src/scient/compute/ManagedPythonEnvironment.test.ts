@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { ComputeToolkitId } from "@scientfactory/compute";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -624,7 +624,7 @@ describe("ManagedPythonEnvironment", () => {
 
   it.effect("rejects a symlinked managed root without touching its target", () =>
     Effect.gen(function* () {
-      const hostPlatform = yield* HostProcessPlatform;
+      const hostPlatform = yield* HostProcess.Platform;
       if (hostPlatform === "win32") return;
       yield* Effect.promise(async () => {
         const paths = managedPythonEnvironmentPaths(computeDir);

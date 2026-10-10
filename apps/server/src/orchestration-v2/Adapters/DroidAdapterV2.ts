@@ -1,6 +1,6 @@
 import { ProviderDriverKind, type DroidSettings } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -209,7 +209,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
         : acpPermissionDisposition(policy, request),
     makeRuntime: (input) =>
       Effect.gen(function* () {
-        const platform = yield* HostProcessPlatform;
+        const platform = yield* HostProcess.Platform;
         const runtime = yield* options.makeRuntime({
           ...input,
           droidSettings: options.settings,

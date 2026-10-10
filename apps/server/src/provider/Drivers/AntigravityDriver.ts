@@ -1,6 +1,7 @@
 import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   NodeRuntimeUnavailableError,
@@ -18,7 +19,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { AcpError } from "effect-acp/errors";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import {
@@ -29,6 +30,7 @@ import { makeAntigravityAcpVoiceTranscriptCorrection } from "../../scient/voice/
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
   antigravityAuthLabel,
@@ -50,13 +52,13 @@ import {
   removeAntigravitySessionFiles,
 } from "../acp/AntigravitySessionFiles.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import * as ModelManifest from "../ModelManifest.ts";
+import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
@@ -77,15 +79,19 @@ import {
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
+export const antigravityCatalogMatching: ModelCatalog.CatalogMatching = {
+  family: (slug) => slug.replace(/-(low|medium|high)$/, ""),
+};
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
-  | ProviderHost
+  | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
-  | ModelManifest.ModelManifest
+  | McpProviderSessions.McpProviderSessions
+  | ModelCatalog.ModelCatalog
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig.ServerConfig
@@ -93,17 +99,22 @@ export type AntigravityDriverEnv =
   | LegacyAntigravityDriverEnv;
 
 /** Each instance owns its Google profile. Executable releases are shared by the environment. */
-export const AntigravityDriver: ScientProviderDriver<AntigravitySettings, AntigravityDriverEnv> = {
+export const AntigravityDriver: ScientProviderDriver<
+  AntigravitySettings,
+  AntigravityDriverEnv,
+  AntigravityUsage.AntigravityUsage
+> = {
   driverKind: DRIVER,
   metadata: { displayName: "Antigravity", supportsMultipleInstances: true },
   configSchema: AntigravitySettings,
   defaultConfig: () => decodeSettings({}),
+  usage: AntigravityUsage.antigravityUsageReader,
   create: (createInput) =>
     Effect.gen(function* () {
       const { instanceId, displayName, accentColor, environment, enabled, config } = createInput;
       const settings = { ...config, enabled } satisfies AntigravitySettings;
-      const platform = yield* HostProcessPlatform;
-      const arch = yield* HostProcessArchitecture;
+      const platform = yield* HostProcess.Platform;
+      const arch = yield* HostProcess.Architecture;
       if (
         usesLegacyAntigravityBackend({
           binaryPath: settings.binaryPath,
@@ -118,11 +129,12 @@ export const AntigravityDriver: ScientProviderDriver<AntigravitySettings, Antigr
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const installation = yield* AntigravityInstallation.AntigravityInstallation;
       const loggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const modelManifest = yield* ModelManifest.ModelManifest;
+      const modelCatalog = yield* ModelCatalog.ModelCatalog;
+      const currentCatalog = modelCatalog.current(DRIVER);
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -133,8 +145,12 @@ export const AntigravityDriver: ScientProviderDriver<AntigravitySettings, Antigr
         gcpLocation: settings.gcpLocation,
       };
       const authConfigIssue = antigravityAuthConfigIssue(auth);
-      const processEnvironment = mergeProviderInstanceEnvironment(environment);
-      const userHome = resolveAntigravityUserHome(yield* HostProcessPlatform, processEnvironment);
+      const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+      const userHome = resolveAntigravityUserHome(
+        yield* HostProcess.Platform,
+        processEnvironment,
+        yield* HostProcess.HomeDirectory,
+      );
       const directories = yield* resolveAntigravityInstanceDirectories(
         host.paths.stateDir,
         instanceId,
@@ -190,9 +206,11 @@ export const AntigravityDriver: ScientProviderDriver<AntigravitySettings, Antigr
       // The manifest supplies catalog labels and known generation metadata;
       // preserve the account's native legacy status for unlisted models.
       const classifyModels = (draft: ServerProviderDraft) =>
-        modelManifest.current.pipe(
-          Effect.flatMap((manifest) =>
-            stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER)),
+        currentCatalog.pipe(
+          Effect.map((catalog) =>
+            stampIdentity(
+              ModelCatalog.applyModelCatalog(draft, catalog, antigravityCatalogMatching),
+            ),
           ),
         );
 
@@ -381,7 +399,7 @@ export const AntigravityDriver: ScientProviderDriver<AntigravitySettings, Antigr
       // and version. The response below is synthetic: only agentInfo.version
       // is read from it. Sessions and manual refreshes still spawn.
       const probe = Effect.gen(function* () {
-        yield* modelManifest.refreshInBackground;
+        yield* modelCatalog.refreshInBackground;
         if (authConfigIssue !== null) {
           return yield* new ProviderSetupError({
             instanceId,
@@ -444,9 +462,7 @@ export const AntigravityDriver: ScientProviderDriver<AntigravitySettings, Antigr
             }),
         ),
       );
-      const defaultModel = modelManifest.current.pipe(
-        Effect.map((manifest) => ModelManifest.manifestDefaultModel(manifest, DRIVER)),
-      );
+      const defaultModel = currentCatalog.pipe(Effect.map((catalog) => catalog?.defaultChatModel));
       const orchestrationAdapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation,

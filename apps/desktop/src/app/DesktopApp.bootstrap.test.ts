@@ -25,6 +25,7 @@ import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopVoice from "./DesktopVoice.ts";
+import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
@@ -41,6 +42,7 @@ import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import * as BrowserImport from "../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
@@ -211,6 +213,16 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       Layer.mock(DesktopApplicationMenu.DesktopApplicationMenu, { configure: Effect.void }),
       Layer.mock(DesktopUpdates.DesktopUpdates, { configure: Effect.void }),
       Layer.mock(DesktopLinuxUrlHandler.DesktopLinuxUrlHandler, { register: Effect.void }),
+      Layer.mock(PreviewPasskeys.PreviewPasskeys, {
+        bridgeEnabled: false,
+        configure: Effect.void,
+        installSessionHandlers: () => {
+          throw new Error("Unexpected passkey session setup in bootstrap fixture");
+        },
+        attachGuest: () => {
+          throw new Error("Unexpected passkey guest attachment in bootstrap fixture");
+        },
+      }),
       Layer.succeed(DesktopPreReadyPlatform.DesktopPreReadyElectronOptions, {
         linux: null,
         linuxPasswordStoreCommandLine: null,
@@ -245,6 +257,7 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       }),
       Layer.mock(BrowserImport.BrowserImport, {}),
       Layer.mock(MacPermissions.MacPermissions, {}),
+      Layer.mock(DesktopWebLinks.DesktopWebLinks, {}),
     );
     const exit = yield* DesktopApp.program.pipe(Effect.provide(services), Effect.exit);
     return {

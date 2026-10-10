@@ -10,6 +10,7 @@ import {
 import type { ProviderAdapterTurnStartError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makePiDriver,
   type PiDriverEnv,
@@ -86,7 +87,10 @@ const resolvePiRuntime = (
     const effectiveConfig = {
       ...input.config,
       enabled: input.enabled,
-      binaryPath: expandHomePath(managedRuntime.effectiveBinaryPath),
+      binaryPath: expandHomePath(
+        managedRuntime.effectiveBinaryPath,
+        yield* HostProcess.HomeDirectory,
+      ),
     } satisfies PiSettings;
     const customModelClientFactory = yield* makePiCustomModelsClientFactory(
       serverSettings,

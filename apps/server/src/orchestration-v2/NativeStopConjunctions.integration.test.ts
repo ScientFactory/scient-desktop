@@ -39,6 +39,7 @@ import {
 } from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
@@ -64,7 +65,7 @@ const modelSelection = { instanceId, model: "claude-sonnet-4-6" };
 const threadId = ThreadId.make("stop:source");
 const peerId = ThreadId.make("stop:peer");
 const projectId = ProjectId.make("stop:project");
-const outer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer);
+const outer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer);
 const sourceReply = "Exact unfinished source reply α.\n\n";
 const peerReply = "Untouched peer reply β.\n\n";
 const hasOwnedReply = (p: OrchestrationV2ThreadProjection, text: string) => {
@@ -153,7 +154,7 @@ const makeFixture = Effect.fn("stopConjunction.fixture")(function* (
     }
   >();
 
-  const nativeAdapter = makeClaudeAdapterV2({
+  const nativeAdapter = yield* makeClaudeAdapterV2({
     crypto: yield* Crypto.Crypto,
     instanceId,
     settings: yield* decodeStopSettings({}),
@@ -376,17 +377,19 @@ emit({ kind: "ready" });
         })),
       ),
   };
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   let fixtureOrchestrator: OrchestratorV2["Service"] | undefined;
   const delegatedStops: Array<{ readonly threadId: ThreadId; readonly commandId: CommandId }> = [];
   const layer = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: scenario.name, runtimePolicyOverride: { cwd } },
     makeLayer([adapter]),
     {
-      layerDatabase: makeSqlitePersistenceLive(config.dbPath).pipe(
+      databaseLayer: makeSqlitePersistenceLive(config.dbPath).pipe(
         Layer.provide(NodeServices.layer),
       ),
       layerServerConfig: Layer.succeed(ServerConfig, config),
       configureMcp: false,
+      mcpProviderSessionsLayer: Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
       runEffectWorker: false,
       responseStreamingMode: "paragraph",
       threads: {

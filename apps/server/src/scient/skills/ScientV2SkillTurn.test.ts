@@ -26,6 +26,7 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { requireThreadScope, type McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../../mcp/ScientMcpInvocation.ts";
 import {
@@ -53,27 +54,29 @@ import * as ScientSkillSession from "./ScientSkillSession.ts";
 import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
 import { prepareScientV2SkillScope, prepareScientV2SkillTurn } from "./ScientV2SkillTurn.ts";
 
-const registryLayer = McpSessionRegistry.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      Layer.succeed(
-        HttpServer.HttpServer,
-        HttpServer.HttpServer.of({
-          address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
-          serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
-        }),
-      ),
-      Layer.succeed(
-        ServerEnvironment.ServerEnvironment,
-        ServerEnvironment.ServerEnvironment.of({
-          getEnvironmentId: Effect.succeed(EnvironmentId.make("empty-skill-scope-fixture")),
-          getDescriptor: Effect.die("No environment descriptor needed"),
-        }),
+const registryLayer = McpSessionRegistry.layer
+  .pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(
+          HttpServer.HttpServer,
+          HttpServer.HttpServer.of({
+            address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+            serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+          }),
+        ),
+        Layer.succeed(
+          ServerEnvironment.ServerEnvironment,
+          ServerEnvironment.ServerEnvironment.of({
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("empty-skill-scope-fixture")),
+            getDescriptor: Effect.die("No environment descriptor needed"),
+          }),
+        ),
       ),
     ),
-  ),
-);
+  )
+  .pipe(Layer.provideMerge(McpProviderSessions.layer));
 const emptyPolicy = { userSkills: [], projectSkills: [], trustedProjects: [] };
 const emptyPlanner = ScientSkillSession.layer.pipe(
   Layer.provide(
@@ -119,10 +122,9 @@ it.live.each(
         "---\nname: project-method\ndescription: Reviews bounded fixture evidence.\n---\n\n# Method\n\nPreserve the evidence.\n",
       );
       const allocator = yield* IdAllocatorV2;
-      const registry = Context.get(
-        yield* Layer.build(registryLayer),
-        McpSessionRegistry.McpSessionRegistry,
-      );
+      const registryContext = yield* Layer.build(registryLayer);
+      const registry = Context.get(registryContext, McpSessionRegistry.McpSessionRegistry);
+      const mcpSessions = Context.get(registryContext, McpProviderSessions.McpProviderSessions);
       const issued = yield* Queue.unbounded<{
         request: McpSessionRegistry.McpCredentialRequest;
         config: McpProviderSession.McpProviderSessionConfig;
@@ -167,7 +169,7 @@ it.live.each(
             assert.isTrue(input.configureMcp);
             assert.equal(input.threadId, threadId);
             assert.equal(input.modelSelection.instanceId, instanceId);
-            const config = McpProviderSession.readMcpProviderSession(input.threadId);
+            const config = yield* mcpSessions.read(input.threadId);
             assert.isDefined(config);
             const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
             const initial = yield* registry.resolve(token);
@@ -208,6 +210,10 @@ it.live.each(
           mcpSessionRegistryLayer: Layer.succeed(
             McpSessionRegistry.McpSessionRegistry,
             observedRegistry,
+          ),
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
           ),
           layerServerSettings: serverSettingsLayer,
           runEffectWorker: false,
@@ -395,13 +401,14 @@ it.effect.each([{ driver: "codex" }, { driver: "muse" }] as const)(
   ({ driver }) =>
     Effect.gen(function* () {
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const threadId = ThreadId.make(`structural-skill-suffix-${driver}`);
       const issued = yield* registry.issue({
         threadId,
         providerInstanceId: ProviderInstanceId.make(driver),
         capabilities: new Set(["skills:read"]),
       });
-      McpProviderSession.setMcpProviderSession(issued.config);
+      yield* mcpSessions.set(issued.config);
       const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
       const before = yield* registry.resolve(token);
       const baseText = "[Scient selected skills for this turn:\nauthored marker\n]";
@@ -423,7 +430,7 @@ it.effect.each([{ driver: "codex" }, { driver: "muse" }] as const)(
               diagnostics: [],
             }),
         }),
-        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+        Effect.ensuring(mcpSessions.clear(threadId)),
       );
       assert.equal(prepared.baseText, baseText);
       assert.equal(prepared.text, `${baseText}\n\n${prepared.runtimeInstruction}`);
@@ -449,6 +456,7 @@ it.effect.each([{ driver: "codex" }, { driver: "muse" }] as const)(
 it.effect("replaces incomplete empty authority without claiming a complete empty catalog", () =>
   Effect.gen(function* () {
     const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const threadId = ThreadId.make("incomplete-empty-skill-scope");
     const issued = yield* registry.issue({
       threadId,
@@ -456,7 +464,7 @@ it.effect("replaces incomplete empty authority without claiming a complete empty
       capabilities: new Set(["skills:read"]),
       skillScope: priorScope,
     });
-    McpProviderSession.setMcpProviderSession(issued.config);
+    yield* mcpSessions.set(issued.config);
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     const text = yield* prepareScientV2SkillTurn({
       threadId,
@@ -488,7 +496,7 @@ it.effect("replaces incomplete empty authority without claiming a complete empty
           ),
         ),
       ),
-      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      Effect.ensuring(mcpSessions.clear(threadId)),
     );
     assert.include(text, "scope for this turn is incomplete; emptiness cannot be inferred");
     assert.notInclude(text, "complete and empty");
@@ -564,6 +572,7 @@ it.effect.each(
 )("$caseTitle", ({ negative, forcedPlan }) =>
   Effect.gen(function* () {
     const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const threadId = ThreadId.make(`empty-skill-negative-${negative.driver}-${negative.label}`);
     const issued = yield* registry.issue({
       threadId,
@@ -571,7 +580,7 @@ it.effect.each(
       capabilities: new Set(negative.skillsGrant ? ["skills:read"] : []),
       skillScope: priorScope,
     });
-    if (negative.session) McpProviderSession.setMcpProviderSession(issued.config);
+    if (negative.session) yield* mcpSessions.set(issued.config);
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     const before = yield* registry.resolve(token);
     const text = yield* prepareScientV2SkillTurn({
@@ -589,7 +598,7 @@ it.effect.each(
               resolve: () => Effect.succeed(forcedPlan),
             }),
       ),
-      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      Effect.ensuring(mcpSessions.clear(threadId)),
     );
     assert.equal(text, "Untouched user request");
     assert.deepEqual(yield* registry.resolve(token), before);

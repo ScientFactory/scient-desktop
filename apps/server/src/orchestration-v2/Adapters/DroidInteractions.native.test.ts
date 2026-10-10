@@ -21,6 +21,7 @@ import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
 import { makeDroidAcpRuntime } from "../../provider/acp/DroidAcpSupport.ts";
 import { scriptedDroid } from "../../provider/testUtils/scriptedDroid.ts";
 import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
@@ -30,6 +31,7 @@ const decodeSettings = Schema.decodeEffect(DroidSettings);
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-interactions-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),

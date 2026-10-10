@@ -130,7 +130,7 @@ it.live.each(
         {
           configureMcp: false,
           runEffectWorker: false,
-          layerDatabase: SqlitePersistenceMemory,
+          databaseLayer: SqlitePersistenceMemory,
           threads: {
             // These recovery cases have no delegated children; retain real Stop delivery.
             stopDelegatedTasks: (input) =>
@@ -768,7 +768,7 @@ it.live(
         const layer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
           makeCodexProviderAdapterRegistryReplayLayer({ transcript: replayTranscript, driver }),
-          { configureMcp: false, runEffectWorker: false, layerDatabase: SqlitePersistenceMemory },
+          { configureMcp: false, runEffectWorker: false, databaseLayer: SqlitePersistenceMemory },
         ).pipe(Layer.provideMerge(SqlitePersistenceMemory));
         return yield* Effect.gen(function* () {
           const orchestrator = yield* OrchestratorV2;

@@ -8,7 +8,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import * as Effect from "effect/Effect";
 
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
-import { readMcpProviderSession } from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { validateProviderCurrentInput } from "../../orchestration-v2/ScientCurrentInput.ts";
 import { scientToolProjectionForProvider } from "../../provider/ScientToolProjection.ts";
 import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
@@ -34,7 +34,8 @@ export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
 }) {
   const planner = yield* ScientSkillSession.ScientSkillSessionPlanner;
   // A token is authority, not proof the configured provider can receive it.
-  const mcpSession = readMcpProviderSession(input.threadId);
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const mcpSession = yield* mcpSessions.read(input.threadId);
   const plan = yield* planner.resolve({
     provider: input.driver,
     mcpSessionAvailable:

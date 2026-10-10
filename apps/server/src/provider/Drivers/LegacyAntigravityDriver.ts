@@ -17,7 +17,7 @@ import {
   type ProviderConnectionMethod,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -32,9 +32,9 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { makeAntigravityTextGeneration } from "../../textGeneration/LegacyAntigravityTextGeneration.ts";
 import { makeLegacyAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/LegacyAntigravityAdapterV2.ts";
-import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderContinuationRequests } from "@t3tools/provider-core/server/continuationRequests";
-import { ProviderDriverError } from "../Errors.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   buildInitialAntigravityProviderSnapshot,
   checkAntigravityProviderStatus,
@@ -81,7 +81,8 @@ export type LegacyAntigravityDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
+  | ProviderContinuationRequests.ProviderContinuationRequests
   | Path.Path
   | PtyAdapter
   | ServerConfig
@@ -128,7 +129,7 @@ export const LegacyAntigravityDriver = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const ptyAdapter = yield* PtyAdapter;
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
@@ -138,7 +139,7 @@ export const LegacyAntigravityDriver = {
       // Do not let ambient Gemini/API-key variables silently change billing or
       // make an unauthenticated account appear connected.
       const processEnv = officialAntigravityAccountEnvironment(
-        mergeProviderInstanceEnvironment(environment),
+        yield* mergeProviderInstanceEnvironment(environment),
       );
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -190,8 +191,8 @@ export const LegacyAntigravityDriver = {
           fileSystem,
           path,
           serverConfig,
-          idAllocator: yield* IdAllocatorV2,
-          continuations: yield* ProviderContinuationRequests,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          continuations: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         }),
       );
       const orchestrationAdapter = nativeSessions.adapter;

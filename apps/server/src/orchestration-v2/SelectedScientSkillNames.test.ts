@@ -10,7 +10,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Layer from "effect/Layer";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
@@ -18,7 +18,7 @@ import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
@@ -40,15 +40,20 @@ const adapter = {
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("This suite never opens a provider process"),
-} as ProviderAdapterV2Shape;
+} satisfies ProviderAdapter.ProviderAdapterV2["Service"];
 const database = SqlitePersistenceMemory;
 const testLayer = Layer.mergeAll(
   database,
   ProjectionStore.layer.pipe(Layer.provide(database)),
+  McpProviderSessions.layer,
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "selected-scient-skill-names" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
-    { layerDatabase: database, runEffectWorker: false },
+    {
+      databaseLayer: database,
+      runEffectWorker: false,
+      mcpProviderSessionsLayer: McpProviderSessions.layer,
+    },
   ),
 );
 
@@ -94,8 +99,9 @@ const stubPlanner: ScientSkillSession.ScientSkillSessionPlannerShape = {
 const providerTextFor = (text: string, selectedScientSkillNames: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("thread:selected-skills");
-    const previous = McpProviderSession.readMcpProviderSession(threadId);
-    McpProviderSession.setMcpProviderSession({
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    const previous = yield* mcpSessions.read(threadId);
+    yield* mcpSessions.set({
       environmentId: EnvironmentId.make("selected-skills-fixture"),
       threadId,
       providerInstanceId: ProviderInstanceId.make("codex"),
@@ -113,10 +119,7 @@ const providerTextFor = (text: string, selectedScientSkillNames: ReadonlyArray<s
       selectedScientSkillNames,
     }).pipe(
       Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) McpProviderSession.clearMcpProviderSession(threadId);
-          else McpProviderSession.setMcpProviderSession(previous);
-        }),
+        previous === undefined ? mcpSessions.clear(threadId) : mcpSessions.set(previous),
       ),
     );
   }).pipe(Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, stubPlanner));
@@ -218,7 +221,8 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread:unsupported-selected-skills");
-      McpProviderSession.setMcpProviderSession({
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
         environmentId: EnvironmentId.make("selected-skills-fixture"),
         threadId,
         providerInstanceId: ProviderInstanceId.make("external-opencode"),
@@ -234,9 +238,10 @@ it.effect(
         projectRoot: undefined,
         text: "User request",
         selectedScientSkillNames: [explicit.name],
-      }).pipe(
-        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
-      );
+      }).pipe(Effect.ensuring(mcpSessions.clear(threadId)));
       assert.equal(text, "User request");
-    }).pipe(Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, stubPlanner)),
+    }).pipe(
+      Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, stubPlanner),
+      Effect.provide(McpProviderSessions.layer),
+    ),
 );

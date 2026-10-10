@@ -7,7 +7,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
 import { makePiRpcConnection } from "@t3tools/provider-pi/testing";
 import { binary, fixture, layer, serve, json, collect, ensure } from "./PiNativeTestHarness.ts";

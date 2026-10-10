@@ -48,7 +48,9 @@ import { applyProviderCompatibility } from "../providerCompatibility.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { layer as ProviderInstanceRegistryHydrationLive } from "../ProviderInstanceRegistryHydration.ts";
 import {
   mergeProviderSnapshot,
@@ -114,7 +116,15 @@ const TestHttpClientLive = Layer.merge(
       spawn: () => Effect.die("PTY must not start in provider registry tests"),
     }),
   ),
-).pipe(Layer.provideMerge(ModelManifest.layerTest));
+).pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      ModelManifest.layerTest,
+      ProviderLatestVersions.layer,
+      McpProviderSessions.layer,
+    ),
+  ),
+);
 
 const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
@@ -3092,7 +3102,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(ModelManifest.layerTest),
+            Layer.provideMerge(
+              Layer.mergeAll(
+                ModelManifest.layerTest,
+                ProviderLatestVersions.layer,
+                McpProviderSessions.layer,
+              ),
+            ),
             Layer.provideMerge(OmpExecutableGate.layer),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
             Layer.provideMerge(
@@ -3188,7 +3204,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(ModelManifest.layerTest),
+            Layer.provideMerge(
+              Layer.mergeAll(
+                ModelManifest.layerTest,
+                ProviderLatestVersions.layer,
+                McpProviderSessions.layer,
+              ),
+            ),
             Layer.provideMerge(OmpExecutableGate.layer),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
             Layer.provideMerge(
@@ -3297,7 +3319,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(ModelManifest.layerTest),
+            Layer.provideMerge(
+              Layer.mergeAll(
+                ModelManifest.layerTest,
+                ProviderLatestVersions.layer,
+                McpProviderSessions.layer,
+              ),
+            ),
             Layer.provideMerge(OmpExecutableGate.layer),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
             Layer.provideMerge(
@@ -3366,7 +3394,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                   ProviderEventLoggers.NoOpProviderEventLoggers,
                 ),
               ),
-              Layer.provideMerge(ModelManifest.layerTest),
+              Layer.provideMerge(
+                Layer.mergeAll(
+                  ModelManifest.layerTest,
+                  ProviderLatestVersions.layer,
+                  McpProviderSessions.layer,
+                ),
+              ),
               Layer.provideMerge(OmpExecutableGate.layer),
               Layer.provideMerge(ResetCreditCoordinator.layerTest),
               Layer.provideMerge(

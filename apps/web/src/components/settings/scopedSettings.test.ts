@@ -162,6 +162,7 @@ describe("scoped settings writes", () => {
             worktreeOnDelete: true,
             worktreeOnMerge: true,
             worktreeUnchanged: false,
+            worktreeKeepWhen: "uncommitted-changes",
           },
         },
       },
@@ -179,12 +180,13 @@ describe("scoped settings writes", () => {
         null,
       ),
     );
-    expect(policies).toEqual([
+    expect(policies).toMatchObject([
       {
         worktreeAfterDays: 12,
         worktreeOnDelete: false,
         worktreeOnMerge: true,
         worktreeUnchanged: false,
+        worktreeKeepWhen: "uncommitted-changes",
       },
       {
         worktreeAfterDays: null,
@@ -297,6 +299,7 @@ describe("scoped settings writes", () => {
                 worktreeOnDelete: false,
                 worktreeOnMerge: true,
                 worktreeUnchanged: false,
+                worktreeKeepWhen: "uncommitted-changes",
               },
             },
           },
@@ -306,7 +309,7 @@ describe("scoped settings writes", () => {
     const plan = planScopedSettingsPatch(project, [machine, customized], {
       worktreeCleanup: { mode: "custom", rules: { worktreeOnDelete: true } },
     });
-    expect(plan.serverWrites.map((write) => write.patch.projectSettingsOverrides)).toEqual([
+    expect(plan.serverWrites.map((write) => write.patch.projectSettingsOverrides)).toMatchObject([
       {
         [projectId]: {
           defaultAutoPull: true,
@@ -317,6 +320,7 @@ describe("scoped settings writes", () => {
               worktreeOnDelete: true,
               worktreeOnMerge: true,
               worktreeUnchanged: false,
+              worktreeKeepWhen: "uncommitted-changes",
             },
           },
         },

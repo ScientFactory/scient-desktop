@@ -13,6 +13,13 @@ project without Git or a hosted repository.
 [No project conversations](./thread-sidebar.md#threads-without-a-project) use plain
 scratch folders. They have no Git branch controls, checkpoints, or turn diffs.
 
+## Review turn changes
+
+A turn's changed files and diff show only the turn's own work. When a turn pulls, merges, or
+rebases, the files Git brought in are left out. A file stays in the list when the turn edited it,
+committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
+against your base branch. Restore still returns the complete saved workspace.
+
 ## Supported providers
 
 Scient works with the platforms your team already uses:
@@ -213,7 +220,21 @@ Control settings**.
    az login
    ```
 
----
+### GitCafe
+
+Install the GitCafe CLI and sign in:
+
+```bash
+bun install -g @gitcafe/cli
+cafe auth login --host https://git.cafe/api
+```
+
+Alternatively, set `CAFE_TOKEN` in the server's environment and restart it. The token is only
+sent to the host `CAFE_HOST` names, which is `git.cafe` unless you set it. Repositories on
+`staging.git.cafe` need their own login with `--host https://staging.git.cafe/api`.
+
+Line comments, reviewer requests, and labels are not available for GitCafe pull requests yet.
+Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
 
 ## Requirements and troubleshooting
 

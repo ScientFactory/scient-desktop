@@ -29,7 +29,7 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "../provider/ScientAwareness.ts";
@@ -175,6 +175,10 @@ it.live(
           yield* Layer.build(registryLayer),
           McpSessionRegistry.McpSessionRegistry,
         );
+        const mcpSessions = Context.get(
+          yield* Layer.build(McpProviderSessions.layer),
+          McpProviderSessions.McpProviderSessions,
+        );
         const threadId = ThreadId.make(name);
         const instanceId = ProviderInstanceId.make("opencode-custom-captured");
         const selection = {
@@ -277,7 +281,7 @@ it.live(
         });
         yield* Effect.gen(function* () {
           const { prompt, response } = yield* Queue.take(wireRequests);
-          const credential = McpProviderSession.readMcpProviderSession(threadId);
+          const credential = yield* mcpSessions.read(threadId);
           assert.ok(credential);
           const registeredMcp = yield* decodeRegisteredMcp(installedMcp);
           assert.equal(registeredMcp.config.url, credential.endpoint);
@@ -349,6 +353,7 @@ it.live(
             })
             .pipe(
               Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, ownedRuntime),
+              Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
               Effect.provideService(ProviderEventLoggers, NoOpProviderEventLoggers),
               Effect.provide(
                 ScientTestProviderHost.layer.pipe(
@@ -371,6 +376,10 @@ it.live(
           {
             layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
             configureMcp: true,
+            mcpProviderSessionsLayer: Layer.succeed(
+              McpProviderSessions.McpProviderSessions,
+              mcpSessions,
+            ),
             mcpSessionRegistryLayer: Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry),
           },
         ).pipe(Layer.provideMerge(skillLayer));

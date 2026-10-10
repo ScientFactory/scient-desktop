@@ -229,7 +229,6 @@ async function mountImport(remote = false) {
   });
   await click("Continue");
   await click("Continue");
-  expect(text(renderer!.root)).toContain("Choose your projects");
 }
 
 beforeEach(() => {

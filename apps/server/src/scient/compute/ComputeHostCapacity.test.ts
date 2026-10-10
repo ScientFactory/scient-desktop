@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -38,7 +38,7 @@ describe("compute host capacity", () => {
       yield* Effect.all(replacements);
     }).pipe(
       Effect.provide(layer),
-      Effect.provideService(HostProcessEnvironment, {
+      Effect.provideService(HostProcess.Environment, {
         SCIENT_COMPUTE_MAX_LIVE_SESSIONS: String(limit),
       }),
     ),
@@ -67,7 +67,7 @@ describe("compute host capacity", () => {
         yield* releaseBatch;
       }).pipe(
         Effect.provide(Layer.merge(sessions, batch)),
-        Effect.provideService(HostProcessEnvironment, { SCIENT_COMPUTE_MAX_LIVE_SESSIONS: "1" }),
+        Effect.provideService(HostProcess.Environment, { SCIENT_COMPUTE_MAX_LIVE_SESSIONS: "1" }),
       );
     },
   );
@@ -87,7 +87,7 @@ describe("compute host capacity", () => {
       yield* Effect.all(releases);
     }).pipe(
       Effect.provide(layer),
-      Effect.provideService(HostProcessEnvironment, { SCIENT_COMPUTE_MAX_LIVE_SESSIONS: value }),
+      Effect.provideService(HostProcess.Environment, { SCIENT_COMPUTE_MAX_LIVE_SESSIONS: value }),
     ),
   );
 });

@@ -19,11 +19,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
-import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
-import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -33,11 +29,11 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 
 import { cli } from "../binCli.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 // These force a failure with chmod, which Windows ignores for directories and
 // cannot use to make a file unreadable, so the failure never happens there.
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 // The full command tree requires these execution authorities even when a
 // fixture invokes another subcommand. Their state belongs to a scoped test profile.
@@ -49,15 +45,7 @@ const layerCliAuthority = Layer.mergeAll(
         Layer.provide(GitVcsDriver.layer),
         Layer.provide(
           SourceControlProviderRegistry.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                AzureDevOpsCli.layer,
-                BitbucketApi.layer,
-                GitHubApi.layerWithDependencies,
-                GitLabCli.layer,
-                ForgejoCli.layer,
-              ),
-            ),
+            Layer.provide(BuiltInDrivers.layer),
             Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
           ),
         ),

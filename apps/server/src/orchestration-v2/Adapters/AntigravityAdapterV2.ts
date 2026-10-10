@@ -5,7 +5,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -138,7 +138,7 @@ export function makeAntigravityAcpAdapterFlavor(
       // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
       // process by closing it, and the adapter respawns on the next turn.
       const scope = yield* Scope.fork(yield* Effect.scope);
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void).pipe(

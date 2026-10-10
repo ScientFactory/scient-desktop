@@ -10,14 +10,14 @@ import type {
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 
-import type { IdAllocatorV2DeriveShape } from "@t3tools/provider-core/server/IdAllocator";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 /** A failed attempt is retried as a fresh pending attempt; any other attempt starts as is. */
 export function queuedRunStartAttempt(input: {
   readonly queuedRun: OrchestrationV2Run;
   readonly previousAttempt: OrchestrationV2RunAttempt;
   readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt>;
-  readonly ids: Pick<IdAllocatorV2DeriveShape, "runAttempt">;
+  readonly ids: Pick<IdAllocator.IdAllocatorV2["Service"]["derive"], "runAttempt">;
 }): OrchestrationV2RunAttempt {
   const { queuedRun, previousAttempt } = input;
   const attemptOrdinal =

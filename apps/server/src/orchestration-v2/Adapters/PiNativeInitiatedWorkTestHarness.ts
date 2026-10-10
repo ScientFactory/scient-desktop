@@ -39,7 +39,7 @@ import * as ProviderInstances from "../../provider/ProviderInstanceRegistry.ts";
 import { OrchestratorProviderWorkDeferredError, OrchestratorV2 } from "../Orchestrator.ts";
 import type {
   ProviderAdapterV2Event,
-  ProviderAdapterV2Shape,
+  ProviderAdapterV2,
   ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { EventSinkV2 } from "../EventSink.ts";
@@ -49,9 +49,10 @@ import { layerFromAdaptersEffect as makeLayerEffect } from "../ProviderAdapterRe
 import {
   ProviderContinuationRequests,
   type ProviderContinuationRequest,
-} from "@t3tools/provider-core/server/continuationRequests";
+} from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
 import {
@@ -80,8 +81,8 @@ export interface PiNativeGenerationAdmissionProbe {
   readonly extensionPrelude?: (h: Effect.Success<ReturnType<typeof fixture>>) => string;
   readonly observeConnection?: (connection: PiRpcConnection) => void;
   readonly wrapOpen?: (
-    open: ReturnType<ProviderAdapterV2Shape["openSession"]>,
-  ) => ReturnType<ProviderAdapterV2Shape["openSession"]>;
+    open: ReturnType<ProviderAdapterV2["Service"]["openSession"]>,
+  ) => ReturnType<ProviderAdapterV2["Service"]["openSession"]>;
   readonly wrapRuntime?: (
     runtime: ProviderAdapterV2SessionRuntime,
   ) => ProviderAdapterV2SessionRuntime;
@@ -118,6 +119,7 @@ export const runNativeInitiatedWorkScenario = (
         "native-answer.txt": "Initial A\n",
       });
       const h = yield* fixture(`initiated-${scenario}`, cwd);
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const workspaceB = yield* checkpointWorkspace("pi-initiated-other", {
         "native-answer.txt": "Initial B\n",
       });
@@ -341,7 +343,7 @@ export default function(pi) {
           return [
             {
               ...adapter,
-              openSession: (input: Parameters<ProviderAdapterV2Shape["openSession"]>[0]) =>
+              openSession: (input: Parameters<ProviderAdapterV2["Service"]["openSession"]>[0]) =>
                 Effect.sync(() => opens++).pipe(
                   Effect.andThen(
                     probe?.wrapOpen?.(adapter.openSession(input)) ?? adapter.openSession(input),
@@ -379,11 +381,15 @@ export default function(pi) {
           ];
         }).pipe(Effect.provide(adapterServices)),
       );
-      const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
+      const runtime = ProviderReplayHarness.layerWithRegistry(
         { name: "pi-real-initiated" },
         registry,
         {
-          layerDatabase: database,
+          databaseLayer: database,
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
+          ),
           runtimePolicyLayer: policyLayer,
           configureMcp: restricted,
           mcpSessionRegistryLayer: Layer.succeed(

@@ -5,16 +5,16 @@
  */
 import type { ServerProvider, ServerSettings } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { PiSettings } from "../settings.ts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makePiTextGeneration } from "./textGeneration.ts";
@@ -68,6 +68,7 @@ export type PiDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | ProviderLatestVersions.ProviderLatestVersions
   | Path.Path
   | ProviderHost.ProviderHost;
 
@@ -144,12 +145,12 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const httpClient = yield* HttpClient.HttpClient;
-        // References have a default process.env value. Reading through the
-        // current context keeps host overrides while leaving this defaulted
-        // reference out of the required provider-driver environment.
-        const hostContext = yield* Effect.context<never>();
-        const hostEnvironment = Context.get(hostContext, HostProcessEnvironment);
-        const processEnv = mergeProviderInstanceEnvironment(input.environment, hostEnvironment);
+        const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+        const hostEnvironment = yield* HostProcess.Environment;
+        const processEnv = yield* mergeProviderInstanceEnvironment(
+          input.environment,
+          hostEnvironment,
+        );
         const runtime: PiRuntimeResolution<Requirements, Extension> = options.resolveRuntime
           ? yield* options.resolveRuntime({
               ...input,
@@ -264,9 +265,10 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
                   maintenanceCapabilities,
                   enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
                   publishSnapshot,
-                  httpClient,
                 }),
               ),
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             ),
         }).pipe(
           Effect.mapError(

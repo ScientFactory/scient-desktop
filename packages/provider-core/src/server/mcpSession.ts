@@ -32,30 +32,3 @@ export function withAgentDeviceEnvironment(
     ...(shimDir ? { PATH: basePath ? `${shimDir}${separator}${basePath}` : shimDir } : {}),
   };
 }
-
-const sessionsByThread = new Map<ThreadId, McpProviderSessionConfig>();
-
-export function setMcpProviderSession(config: McpProviderSessionConfig): void {
-  sessionsByThread.set(config.threadId, {
-    ...config,
-    capabilities: new Set(config.capabilities),
-  });
-}
-
-export function readMcpProviderSession(threadId: ThreadId): McpProviderSessionConfig | undefined {
-  const config = sessionsByThread.get(threadId);
-  return config
-    ? {
-        ...config,
-        capabilities: new Set(config.capabilities),
-      }
-    : undefined;
-}
-
-export function clearMcpProviderSession(threadId: ThreadId): void {
-  sessionsByThread.delete(threadId);
-}
-
-function clearAllMcpProviderSessions(): void {
-  sessionsByThread.clear();
-}

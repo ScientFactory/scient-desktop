@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Popover, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
+import { observeResize } from "~/lib/observeResize";
 
 export interface ScientImageDetailsValue {
   readonly src: string;
@@ -46,10 +47,7 @@ export function ScientImageDetails(props: {
     if (!pane) return;
     const measure = () => setPaneWidth(pane.getBoundingClientRect().width || null);
     measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(pane);
-    return () => observer.disconnect();
+    return observeResize(pane, measure);
   }, [props.anchor, boundary]);
 
   const submit = (event: FormEvent) => {

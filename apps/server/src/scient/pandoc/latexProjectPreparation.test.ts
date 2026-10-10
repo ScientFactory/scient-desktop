@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -281,7 +281,7 @@ describe("LaTeX project preparation", () => {
         NodeFS.writeFileSync(NodePath.join(project, "chapter.tex"), "Chapter.");
         NodeFS.writeFileSync(NodePath.join(project, "refs.bib"), "@article{a, title={A}}\n");
         const onWindows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-          effect.pipe(Effect.provideService(HostProcessPlatform, "win32"));
+          effect.pipe(Effect.provideService(HostProcess.Platform, "win32"));
 
         const prepared = yield* onWindows(
           prepareLatexProject(single, workspace, { path: single, revision: revisionOf(single) }),

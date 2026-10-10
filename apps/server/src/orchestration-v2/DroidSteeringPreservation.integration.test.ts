@@ -370,7 +370,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
       {
         configureMcp: false,
         runEffectWorker: false,
-        layerDatabase: databaseLayer,
+        databaseLayer: databaseLayer,
         runtimePolicyLayer: policyLayer,
         layerServerConfig: Layer.succeed(Config.ServerConfig, config),
         ...(name === "policy"

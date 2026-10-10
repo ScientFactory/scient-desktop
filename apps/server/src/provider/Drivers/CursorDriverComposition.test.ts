@@ -8,6 +8,12 @@ import {
 import { CursorAgentSdkRunner } from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import type { CursorDriverEnv } from "@t3tools/provider-cursor/server";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { Agent } from "@cursor/sdk";
+import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
+import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "../ModelManifest.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/http";
@@ -16,7 +22,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ManagedRuntimeCatalog from "../../scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import { CursorDriver, type CursorDriverCompositionEnv } from "./CursorDriverComposition.ts";
 import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const instanceId = ProviderInstanceId.make("cursor-scient-composition");
 const noApiKeyId = ProviderInstanceId.make("cursor-no-api-key");
@@ -28,9 +34,25 @@ const testLayer = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-cursor-composition-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
-  layerTestProviderHost({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
   ManagedRuntimeCatalog.layerTest,
   IdAllocator.layer,
+  ModelManifest.layerTest,
+  ProviderLatestVersions.layer,
+  McpProviderSessions.layer,
+  Layer.succeed(CursorKeychain.CursorKeychain, {
+    accessToken: Effect.die("Cursor composition must not read real Keychain credentials"),
+  }),
+  Layer.succeed(CursorSdk.CursorSdk, {
+    Agent: new Proxy(Agent, {
+      get() {
+        throw new Error("Cursor composition must not call the real SDK");
+      },
+    }),
+    createAgentPlatform: () => {
+      throw new Error("Cursor composition must not create a real SDK platform");
+    },
+  }),
   Layer.succeed(CursorAgentSdkRunner, {
     assertComplete: Effect.void,
     open: () => Effect.die("This registry composition test must not open a Cursor session"),

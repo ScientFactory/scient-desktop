@@ -36,7 +36,7 @@ import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const instanceId = ProviderInstanceId.make("acp");
@@ -410,7 +410,7 @@ it.live.each(
         );
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name, runtimePolicyOverride: { cwd } },
             makeLayer([adapter]),
             { configureMcp: false },

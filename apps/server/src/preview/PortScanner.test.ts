@@ -6,7 +6,7 @@ import {
   PREVIEW_URL_MAX_LENGTH,
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -45,7 +45,7 @@ const layerTestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
 });
 const TestOwnedLocalEndpointsLive = OwnedLocalEndpoints.layer;
 
-/** A host without `/proc`, so a missing `lsof` falls back to common ports. */
+/** A host without `/proc`, so a missing `lsof` leaves only configured URLs. */
 const layerNoProc = FileSystem.layerNoop({});
 
 const layerProbeFailure = (
@@ -58,7 +58,7 @@ const layerProbeFailure = (
       Layer.mergeAll(
         fileSystem,
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
-        Layer.succeed(HostProcessPlatform, "linux"),
+        Layer.succeed(HostProcess.Platform, "linux"),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
         TestOwnedLocalEndpointsLive,
       ),
@@ -70,7 +70,7 @@ const layerTestPortDiscovery = PortScanner.layer.pipe(
     Layer.mergeAll(
       layerNoProc,
       layerTestProcessRunner,
-      Layer.succeed(HostProcessPlatform, "win32"),
+      Layer.succeed(HostProcess.Platform, "win32"),
       FetchHttpClient.layer,
       TestOwnedLocalEndpointsLive,
     ),
@@ -160,6 +160,7 @@ const makeLsofScannerLayer = (input: {
   readonly listeners?: () => ReadonlyArray<{ readonly pid: number; readonly port: number }>;
   readonly fetch: typeof globalThis.fetch;
   readonly ownedLocalEndpointsLayer?: Layer.Layer<OwnedLocalEndpoints.OwnedLocalEndpointRegistry>;
+  readonly stdout?: () => string;
 }) =>
   PortScanner.layer.pipe(
     Layer.provide(
@@ -168,13 +169,15 @@ const makeLsofScannerLayer = (input: {
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
             Effect.succeed({
-              stdout: (
-                input.listeners?.() ?? [
-                  { pid: input.pid(), port: input.port?.() ?? LSOF_TEST_PORT },
-                ]
-              )
-                .map(({ pid, port }) => `p${pid}\ncnode\nn*:${port}\n`)
-                .join(""),
+              stdout:
+                input.stdout?.() ??
+                (
+                  input.listeners?.() ?? [
+                    { pid: input.pid(), port: input.port?.() ?? LSOF_TEST_PORT },
+                  ]
+                )
+                  .map(({ pid, port }) => `p${pid}\ncnode\nn*:${port}\n`)
+                  .join(""),
               stderr: "",
               code: null,
               timedOut: false,
@@ -184,7 +187,7 @@ const makeLsofScannerLayer = (input: {
               stderrInvalidUtf8: false,
             }),
         }),
-        Layer.succeed(HostProcessPlatform, "linux"),
+        Layer.succeed(HostProcess.Platform, "linux"),
         FetchHttpClient.layer.pipe(
           Layer.provide(Layer.succeed(FetchHttpClient.Fetch, input.fetch)),
         ),
@@ -215,33 +218,65 @@ const closeServer = (server: NodeNet.Server): Effect.Effect<void> =>
     server.close(() => resume(Effect.void));
   });
 
+const openCommonDevServer = Effect.fn("PortScannerTest.openCommonDevServer")(function* (
+  onConnection: (socket: NodeNet.Socket) => void,
+) {
+  const server = yield* openServer(0, onConnection);
+  const address = server?.address();
+  if (!server || !address || typeof address === "string") {
+    return yield* Effect.die(new Error("Could not open the preview scanner test listener"));
+  }
+  return { port: address.port, server };
+});
+
 const commonDevServer = Effect.acquireRelease(
-  openServer(0, (socket) => {
+  openCommonDevServer((socket) => {
     socket.once("data", () => {
       socket.end("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\n\r\nhello");
     });
-  }).pipe(
-    Effect.map((server) => {
-      if (server === null) throw new Error("Could not bind fixture");
-      const address = server.address();
-      if (address === null || typeof address === "string") throw new Error("No fixture port");
-      return { server, port: address.port };
-    }),
-  ),
+  }),
   ({ server }) => closeServer(server),
 );
 
-effectIt.layer(layerTestPortDiscovery)("Explicit Preview URLs without listener metadata", (it) => {
-  it.effect("checks an explicitly configured real web server", () =>
-    Effect.gen(function* () {
+const commonNonHttpServer = Effect.acquireRelease(
+  openCommonDevServer((socket) => {
+    socket.on("error", () => undefined);
+    socket.once("data", () => socket.end("MYSQL\r\n\r\n"));
+  }),
+  ({ server }) => closeServer(server),
+);
+
+/**
+ * Integration tests against a real TCP listener. We provide the Windows host
+ * platform with a failing listener probe so the tests exercise configured URLs
+ * without depending on `lsof` being installed.
+ */
+effectIt.layer(layerTestPortDiscovery)("PortDiscovery integration (configured URLs)", (it) => {
+  it.effect(
+    "scan() returns a configured HTTP server we just opened",
+    Effect.fn("PortScannerTest.scanFindsCommonDevServer")(function* () {
       const { port } = yield* commonDevServer;
       const scanner = yield* PortScanner.PortDiscovery;
-      const result = yield* scanner.scan([`http://127.0.0.1:${port}/`]);
-      expect(result[0]?.port).toBe(port);
+      const result = yield* scanner.scan([`http://localhost:${port}`]);
+      const found = result.find((server) => server.port === port);
+      expect(found).toBeDefined();
+      expect(found?.host).toBe("localhost");
     }),
   );
-  it.effect("retain broadcasts configured URLs only", () =>
-    Effect.gen(function* () {
+
+  it.effect(
+    "scan() excludes a listening port that does not speak HTTP",
+    Effect.fn("PortScannerTest.scanExcludesNonHttpServer")(function* () {
+      const { port } = yield* commonNonHttpServer;
+      const scanner = yield* PortScanner.PortDiscovery;
+      const result = yield* scanner.scan([`http://localhost:${port}`]);
+      expect(result.some((server) => server.port === port)).toBe(false);
+    }),
+  );
+
+  it.effect(
+    "retain drives an immediate broadcast to subscribers",
+    Effect.fn("PortScannerTest.retainBroadcastsImmediately")(function* () {
       const { port } = yield* commonDevServer;
       const received: number[] = [];
       const scanner = yield* PortScanner.PortDiscovery;
@@ -690,6 +725,49 @@ effectIt.effect("uses only explicit HTTPS and does not follow redirects while pr
     expect(servers).toHaveLength(1);
     expect(servers[0]?.url).toBe(`https://localhost:${LSOF_TEST_PORT}/`);
     expect(redirects).toEqual(["manual"]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("shared listeners affect ownership metadata, never probe authorization", () => {
+  const owned = `p1234\ncnode\nn[::1]:${LSOF_TEST_PORT}\n`;
+  const unowned = `p5678\ncrpc\nn127.0.0.1:${LSOF_TEST_PORT}\n`;
+  let stdout = unowned;
+  const requests: string[] = [];
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+    requests.push(String(input));
+    return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+  }) as typeof globalThis.fetch;
+  const layer = makeLsofScannerLayer({ pid: () => 1234, fetch: fetchFn, stdout: () => stdout });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.registerTerminalProcesses({
+      threadId: "scanner-thread",
+      terminalId: "scanner-terminal",
+      processIds: [1234],
+    });
+    expect(yield* scanner.scan()).toEqual([]);
+    stdout = `${owned}${unowned}`;
+    expect(yield* scanner.scan()).toEqual([]);
+    expect(requests).toEqual([]);
+    const url = `http://localhost:${LSOF_TEST_PORT}/`;
+    expect((yield* scanner.scan([url]))[0]?.terminal).toBeNull();
+    expect(requests).toEqual([url]);
+    yield* scanner.scan();
+
+    stdout = owned;
+    expect(yield* scanner.scan()).toEqual([]);
+    expect(requests).toEqual([url]);
+    expect((yield* scanner.scan([url]))[0]?.terminal?.terminalId).toBe("scanner-terminal");
+    expect(requests).toEqual([url, url]);
+
+    yield* scanner.unregisterTerminal({
+      threadId: "scanner-thread",
+      terminalId: "scanner-terminal",
+    });
+    expect((yield* scanner.scan([url]))[0]?.terminal).toBeNull();
+    expect(requests).toEqual([url, url]);
+    expect(yield* scanner.scan()).toEqual([]);
   }).pipe(Effect.provide(layer));
 });
 

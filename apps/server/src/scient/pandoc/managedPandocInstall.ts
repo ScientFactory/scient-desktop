@@ -7,7 +7,7 @@
  * Nothing outside that directory is ever written, and no Pandoc found on the
  * computer's PATH is ever used.
  */
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -120,8 +120,8 @@ export const readManagedPandocInstall = Effect.fn("scient.pandoc.readManagedPand
     const config = yield* ServerConfig.ServerConfig;
     const manifest = yield* PandocManifestRef;
     const lookup = resolvePandocAsset(
-      yield* HostProcessPlatform,
-      yield* HostProcessArchitecture,
+      yield* HostProcess.Platform,
+      yield* HostProcess.Architecture,
       manifest,
     );
     if (!lookup.supported) return null;

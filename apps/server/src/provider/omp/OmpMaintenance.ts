@@ -2,18 +2,17 @@ import { isSupportedOmpMajor } from "@scientfactory/provider-runtime";
 import type { ServerProviderVersionAdvisory } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveCommandPath } from "@t3tools/shared/shell";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   formatProviderUpdateCommand,
   homebrewOwnershipFromCommandPath,
   makeManualOnlyProviderMaintenanceCapabilities,
-  ProviderVersionCache,
   type ProviderMaintenanceCapabilitiesResolver,
   type ProviderMaintenanceResolutionContext,
 } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -41,7 +40,6 @@ export const OMP_LATEST_RELEASE_URL =
   "https://api.github.com/repos/can1357/oh-my-pi/releases/latest";
 
 const LATEST_VERSION_TIMEOUT = "4 seconds";
-const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1000;
 const LATEST_VERSION_MAX_BYTES = 1024 * 1024;
 
 const ReleaseTag = Schema.Struct({ tag_name: Schema.String });
@@ -169,18 +167,6 @@ const fetchLatest = (url: string, parse: (body: string) => string | null) =>
     Effect.orElseSucceed(() => null),
   );
 
-/** A cached success is reused; a failed lookup is never cached, so it is retried. */
-const cachedLatest = (url: string, parse: (body: string) => string | null) =>
-  Effect.gen(function* () {
-    const cache = yield* ProviderVersionCache;
-    const now = DateTime.toEpochMillis(yield* DateTime.now);
-    const cached = cache.get(url);
-    if (cached?.version && cached.expiresAt > now) return cached.version;
-    const version = yield* fetchLatest(url, parse);
-    if (version) cache.set(url, { version, expiresAt: now + LATEST_VERSION_CACHE_TTL_MS });
-    return version;
-  });
-
 const primarySource = (
   channel: OmpInstallChannel,
 ): { readonly url: string; readonly parse: (body: string) => string | null } | null => {
@@ -207,9 +193,16 @@ export const resolveOmpLatestVersion = Effect.fn("resolveOmpLatestVersion")(func
 ) {
   const primary = primarySource(installation.channel);
   if (!primary) return null;
-  const version = yield* cachedLatest(primary.url, primary.parse);
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  const version = yield* latestVersions.cached(
+    primary.url,
+    fetchLatest(primary.url, primary.parse),
+  );
   if (version || primary.url === OMP_LATEST_RELEASE_URL) return version;
-  return yield* cachedLatest(OMP_LATEST_RELEASE_URL, parseOmpReleaseVersion);
+  return yield* latestVersions.cached(
+    OMP_LATEST_RELEASE_URL,
+    fetchLatest(OMP_LATEST_RELEASE_URL, parseOmpReleaseVersion),
+  );
 });
 
 /** Nix has no `omp update`; every other channel's `omp update` delegates to its owner. */

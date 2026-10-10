@@ -17,7 +17,7 @@ import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { McpSessionRegistry } from "../../mcp/McpSessionRegistry.ts";
 import * as McpRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
-import { readMcpProviderSession } from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ComputeMcpGateway } from "../../mcp/toolkits/compute/ComputeMcpGateway.ts";
 import { WorkspaceBindingResolver } from "../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { workspaceResolverForTest } from "../../scient/projectScope/WorkspaceBindingTestUtils.ts";
@@ -51,6 +51,7 @@ const testLayer = McpRegistry.layer.pipe(
       OmpExecutableGate.layer,
       environment,
       allocatorLayer,
+      McpProviderSessions.layer,
       NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: 0 }),
       ServerConfig.layerTest(process.cwd(), { prefix: "scient-native-mcp-authority-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -225,7 +226,8 @@ describe.runIf(ompQualifyBinary)("installed native OMP MCP authority", () => {
                   (row) => row.role === "assistant" && row.text.includes("INVENTORY_ACCEPTED"),
                 ),
               ).toBe(true);
-              const credential = readMcpProviderSession(f.threadId);
+              const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+              const credential = yield* mcpSessions.read(f.threadId);
               if (!credential) return yield* Effect.die("Missing native MCP credential");
               expect(credential.providerInstanceId).toBe(instanceId);
               const manager = yield* ProviderSessionManagerV2;
@@ -233,7 +235,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP MCP authority", () => {
                 providerSessionId: completed.providerSessions[0]!.id,
                 reason: "manual_shutdown",
               });
-              expect(readMcpProviderSession(f.threadId)).toBeUndefined();
+              expect(yield* mcpSessions.read(f.threadId)).toBeUndefined();
               const client = yield* HttpClient.HttpClient;
               const rejected = yield* client.post(credential.endpoint, {
                 headers: {

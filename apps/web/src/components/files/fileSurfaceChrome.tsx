@@ -197,7 +197,7 @@ export function FileSurfaceMessage(props: {
         {props.details ? (
           <div className="flex w-full flex-col items-center scient-reading-micro">
             <Collapsible className="flex w-full flex-col items-center">
-              <CollapsibleTrigger className="group inline-flex items-center gap-1 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+              <CollapsibleTrigger className="group inline-flex items-center gap-1 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                 <ChevronRightIcon
                   className="size-3 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
                   aria-hidden="true"

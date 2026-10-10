@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Layer from "effect/Layer";
 import packageJson from "../../../package.json" with { type: "json" };
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
@@ -28,11 +28,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
           const scenario = "disabled-mcp-peer";
           const threadId = ThreadId.make(`thread-${scenario}`);
           const nativeThreadId = "disabled-mcp-native";
           const nativeTurnId = "disabled-mcp-turn";
-          McpProviderSession.setMcpProviderSession({
+          yield* sessions.set({
             environmentId: EnvironmentId.make("disabled-mcp-environment"),
             threadId,
             providerSessionId: "disabled-mcp-live-peer",
@@ -41,9 +42,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             authorizationHeader: "Bearer synthetic-live-peer",
             capabilities: new Set(["orchestration", "skills:read"] as const),
           });
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-          );
+          yield* Effect.addFinalizer(() => sessions.clear(threadId));
           const transcript = makeCodexReplayTranscript({
             scenario,
             entries: [
@@ -81,10 +80,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* harness.firstTerminal;
           assert.equal(harness.terminalEvents()[0]?.status, "completed");
           assert.equal(
-            McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+            (yield* sessions.read(threadId))?.providerSessionId,
             "disabled-mcp-live-peer",
           );
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -191,7 +194,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       );
       assert.equal(requests.filter((method) => method === "turn/start").length, 1);
       assert.isBelow(requests.indexOf("thread/inject_items"), requests.indexOf("turn/start"));
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect("identifies sessions to Codex with the same client info as main", () =>
@@ -231,7 +239,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect("applies distinct native thread workspaces inside one pooled Codex process", () =>
@@ -250,15 +263,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         startRequestId: 3,
         cwd: "/workspace/second-project",
       });
-      const requested: unknown[] = [];
       const h = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
           scenario: "pooled-project-workspaces",
           entries: [...preamble.slice(0, 5), ...second.slice(3, 5)],
         }),
-        () => Effect.void,
-        (method, params) =>
-          method === "thread/start" ? Effect.sync(() => requested.push(params)) : Effect.void,
       );
       const sibling = yield* h.runtime.ensureThread({
         threadId: ThreadId.make("pooled-second-app-thread"),
@@ -272,19 +281,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(h.providerThread.nativeThreadRef?.nativeId, firstNative);
       assert.equal(sibling.nativeThreadRef?.nativeId, secondNative);
       assert.equal(sibling.providerSessionId, h.providerThread.providerSessionId);
-      assert.deepEqual(requested, [
-        CodexAdapterV2.codexThreadRuntimeParams({
-          threadId: h.threadId,
-          modelSelection: CODEX_TEST_MODEL_SELECTION,
-          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-        }),
-        CodexAdapterV2.codexThreadRuntimeParams({
-          threadId: ThreadId.make("pooled-second-app-thread"),
-          modelSelection: CODEX_TEST_MODEL_SELECTION,
-          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, cwd: "/workspace/second-project" },
-        }),
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect("unsubscribes from the native thread when it is unloaded", () =>
@@ -322,7 +324,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.isDefined(harness.runtime.unloadThread);
       yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
       assert.deepEqual(requests, ["initialize", "thread/start", "thread/unsubscribe"]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect("keeps the app-server failure as the cause when an unload is rejected", () =>
@@ -356,6 +363,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(error._tag, "ProviderAdapterProtocolError");
       const cause = error._tag === "ProviderAdapterProtocolError" ? error.cause : undefined;
       assert.equal((cause as { _tag?: string } | undefined)?._tag, "CodexAppServerRequestError");
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 });

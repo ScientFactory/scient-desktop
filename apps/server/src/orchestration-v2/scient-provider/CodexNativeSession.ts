@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
-import type { IdAllocatorV2Shape } from "@t3tools/provider-core/server/IdAllocator";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2TurnInput,
@@ -113,7 +113,7 @@ const isCodexRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
  */
 export const makeCodexStartReceipts = (input: {
   readonly driver: ProviderDriverKind;
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
 }) => {
   const rootStartReceipts = new Map<
     ProviderAdapterV2TurnInput,

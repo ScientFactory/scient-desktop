@@ -16,7 +16,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import { HttpServer } from "effect/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -62,6 +62,7 @@ const testLayer = Layer.mergeAll(
   sinkLayer,
   mcpLayer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ThreadCommandExecutor.layer,
   NodeServices.layer,
 );
@@ -154,13 +155,13 @@ const seedThread = Effect.fnUntraced(function* (h: NativeHarness, instanceId: ty
   return input;
 });
 
-const credentialFor = (threadId: ThreadId) =>
-  Effect.gen(function* () {
-    const config = McpProviderSession.readMcpProviderSession(threadId);
-    if (config === undefined)
-      return yield* Effect.die("Expected a freshly issued native MCP credential");
-    return config.authorizationHeader.replace(/^Bearer\s+/, "");
-  });
+const credentialFor = Effect.fnUntraced(function* (threadId: ThreadId) {
+  const sessions = yield* McpProviderSessions.McpProviderSessions;
+  const config = yield* sessions.read(threadId);
+  if (config === undefined)
+    return yield* Effect.die("Expected a freshly issued native MCP credential");
+  return config.authorizationHeader.replace(/^Bearer\s+/, "");
+});
 
 it.layer(testLayer)("Registry retirement through the actual native session manager", (it) => {
   it.effect("reuses the same normalized workspace without replacing native ownership", () =>

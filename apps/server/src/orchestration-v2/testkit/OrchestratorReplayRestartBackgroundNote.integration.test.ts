@@ -174,7 +174,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
 
   const before = yield* Effect.scoped(
     runOrchestratorV2ProviderReplayScenario(scenario("before-restart", phase1Steps), harness, {
-      layerDatabase: layerDatabase,
+      databaseLayer: layerDatabase,
     }),
   );
   const settled = projectionFor(before, SCENARIO);
@@ -192,7 +192,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     }).pipe(
       Effect.provide(
         ProviderReplayHarness.layerProviderReplay(restartScenario, harness, {
-          layerDatabase: layerDatabase,
+          databaseLayer: layerDatabase,
           recoverOnStartup: true,
           continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
         }),
@@ -209,7 +209,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
 
   const after = yield* Effect.scoped(
     runOrchestratorV2ProviderReplayScenario(scenario("after-restart", phase2Steps), harness, {
-      layerDatabase: layerDatabase,
+      databaseLayer: layerDatabase,
       continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
     }),
   );

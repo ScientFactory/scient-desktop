@@ -104,7 +104,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import { HttpServer } from "effect/http";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
-import { readMcpProviderSession } from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import * as ScientSkillRegistry from "../scient/skills/ScientSkillRegistry.ts";
@@ -223,7 +223,7 @@ const withNativeQueue = <A, E, R>(
     readonly existingThread?: boolean;
     readonly databaseLayer?: NonNullable<
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
-    >["layerDatabase"];
+    >["databaseLayer"];
     readonly serverConfigLayer?: NonNullable<
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
     >["layerServerConfig"];
@@ -264,6 +264,7 @@ const withNativeQueue = <A, E, R>(
         [];
       let startupRefusals = 0;
       const allocator = yield* IdAllocatorV2;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const scope = yield* Scope.Scope;
       const offered = yield* Queue.unbounded<NativeOffer>();
       const steering = yield* Queue.unbounded<ProviderAdapterV2SteerInput>();
@@ -483,6 +484,10 @@ const withNativeQueue = <A, E, R>(
         ]).pipe((registry) => withProviderEnabled(registry, options.providerEnabled)),
         {
           configureMcp: options.mcpSessionRegistryLayer !== undefined,
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
+          ),
           ...(options.mcpSessionRegistryLayer
             ? { mcpSessionRegistryLayer: options.mcpSessionRegistryLayer }
             : {}),
@@ -561,7 +566,7 @@ const withNativeQueue = <A, E, R>(
                 delegatedStops.push({ threadId: input.threadId, commandId: input.commandId });
               }),
           },
-          ...(options.databaseLayer === undefined ? {} : { layerDatabase: options.databaseLayer }),
+          ...(options.databaseLayer === undefined ? {} : { databaseLayer: options.databaseLayer }),
           ...(options.serverConfigLayer === undefined
             ? {}
             : { layerServerConfig: options.serverConfigLayer }),
@@ -653,7 +658,11 @@ const withNativeQueue = <A, E, R>(
           releaseInterrupt: Deferred.succeed(interruptReleased, undefined).pipe(Effect.asVoid),
         });
       }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(threadCommandExecutorLayer))));
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
 const send = (
@@ -3818,7 +3827,9 @@ it.live(
             assert.equal(delivered.runId, foreground.input.runId);
             assert.equal(delivered.message.messageId, messageId);
             assert.equal(delivered.message.creationSource, "mobile");
-            const credential = readMcpProviderSession(threadId);
+            const credential = yield* (yield* McpProviderSessions.McpProviderSessions).read(
+              threadId,
+            );
             assert.ok(credential);
             const scope = yield* (yield* McpSessionRegistry.McpSessionRegistry).resolve(
               credential.authorizationHeader.replace(/^Bearer\s+/, ""),

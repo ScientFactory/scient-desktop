@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -276,7 +276,7 @@ describe("securePandocDocument", () => {
       NodeFS.writeFileSync(NodePath.join(project, "plot.png"), PNG_BYTES);
       const files = { baseDirectory: project, allowRoots: [project] };
       const markdown = yield* captureWordImages(["plot.png"], files).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
       );
       expect(markdown.get("plot.png")).toEqual({ ok: false, refusal: "unverifiable-platform" });
       // The rest of the document still converts; the image becomes a labelled placeholder.
@@ -291,7 +291,7 @@ describe("securePandocDocument", () => {
       const latex = yield* captureWordImages(["plot.png"], {
         ...files,
         requireVerifiedReads: true,
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.flip);
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"), Effect.flip);
       expect(latex.reason).toBe("unverifiable-platform");
       // Where the read is bound to the checked file (this host), both callers read it.
       const bound = yield* captureWordImages(["plot.png"], {

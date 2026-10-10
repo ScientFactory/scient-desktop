@@ -18,8 +18,11 @@ import {
 import { ProviderAdapterTurnStartError } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "./ModelManifest.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -186,13 +189,16 @@ const testLayer = Layer.mergeAll(
   ),
   ServerSettings.layerTest(),
   ManagedRuntimeCatalog.layerTest,
-  layerTestProviderHost({
+  TestProviderHost.layer({
     cwd: "/machine",
     settings: { ...DEFAULT_SERVER_SETTINGS, enableProviderUpdateChecks: false },
     runBackgroundWork: false,
   }).pipe(Layer.provide(NodeServices.layer)),
   IdAllocator.layer,
-  Layer.succeed(HostProcessEnvironment, {}),
+  ModelManifest.layerTest,
+  ProviderLatestVersions.layer,
+  McpProviderSessions.layer,
+  Layer.succeed(HostProcess.Environment, {}),
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("Disabled Pi must not make an HTTP request")),
@@ -404,7 +410,7 @@ it.layer(testLayer)("PiDriver production composition", (it) => {
               catalogs,
             }),
           ),
-          Effect.provideService(HostProcessEnvironment, {
+          Effect.provideService(HostProcess.Environment, {
             PI_TOKEN: "synthetic-pi-session-token",
           }),
         );

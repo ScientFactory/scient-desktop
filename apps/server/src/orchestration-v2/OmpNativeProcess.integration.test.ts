@@ -10,7 +10,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -31,7 +31,7 @@ import {
   layer as idAllocatorLayer,
 } from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -77,7 +77,7 @@ const dependencies = Layer.mergeAll(
   ),
 );
 
-describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "controlled OMP POSIX subprocess",
   () => {
     it.live.each(
@@ -131,7 +131,7 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
               instanceId,
               config.stateDir,
             );
-            const adapter = makeOmpAdapterV2({
+            const adapterOptions = {
               target: ompTarget,
               instanceId,
               settings: { binaryPath: executable, homePath: home },
@@ -149,7 +149,7 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
               idAllocator: yield* IdAllocatorV2,
               continuations: { offer: () => Effect.void },
               makeProcess,
-            });
+            };
             let fixtureOrchestrator: OrchestratorV2["Service"] | undefined;
             const delegatedStops: Array<{
               readonly threadId: ThreadId;
@@ -157,7 +157,11 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
             }> = [];
             const runtimeLayer = makeOrchestratorV2ReplayLayerWithRegistry(
               { name: `omp-default-process-${interrupted}`, runtimePolicyOverride: { cwd } },
-              makeLayer([adapter]),
+              makeLayerEffect(
+                Effect.gen(function* () {
+                  return [yield* makeOmpAdapterV2(adapterOptions)];
+                }),
+              ),
               {
                 configureMcp: false,
                 threads: {

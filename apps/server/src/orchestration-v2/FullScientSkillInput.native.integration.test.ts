@@ -45,7 +45,7 @@ import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath, parseThreadSegmentFromAttachmentId } from "../attachmentStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { requireThreadScope, type McpInvocationScope } from "../mcp/McpInvocationContext.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../mcp/ScientMcpInvocation.ts";
 import {
@@ -151,6 +151,10 @@ const runConjunction = () =>
         yield* Layer.build(skillRegistryLayer),
         McpSessionRegistry.McpSessionRegistry,
       );
+      const mcpSessions = Context.get(
+        yield* Layer.build(McpProviderSessions.layer),
+        McpProviderSessions.McpProviderSessions,
+      );
       const instanceId = ProviderInstanceId.make("codex");
       const threadId = ThreadId.make(name);
       const selection = { instanceId, model: "gpt-5.4" };
@@ -241,7 +245,7 @@ const runConjunction = () =>
             case "turn/start": {
               const params = yield* decodeTurnStart(frame.params);
               nativeOffers.push(params);
-              const session = McpProviderSession.readMcpProviderSession(threadId);
+              const session = yield* mcpSessions.read(threadId);
               assert.ok(session);
               const token = session.authorizationHeader.replace(/^Bearer\s+/, "");
               const scope = yield* registry.resolve(token);
@@ -271,7 +275,7 @@ const runConjunction = () =>
       const settings = yield* decodeSettings({
         binaryPath: process.execPath,
       });
-      const adapter = makeCodexAdapterV2({
+      const adapter = yield* makeCodexAdapterV2({
         instanceId,
         settings,
         environment: {},
@@ -291,7 +295,7 @@ const runConjunction = () =>
               }),
             ),
         },
-      });
+      }).pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
       const citationData = {
         version: 1 as const,
         environmentId: EnvironmentId.make("source-env"),
@@ -385,6 +389,10 @@ const runConjunction = () =>
             {
               layerServerConfig: configLayer,
               configureMcp: true,
+              mcpProviderSessionsLayer: Layer.succeed(
+                McpProviderSessions.McpProviderSessions,
+                mcpSessions,
+              ),
               mcpSessionRegistryLayer: Layer.succeed(
                 McpSessionRegistry.McpSessionRegistry,
                 registry,
@@ -637,7 +645,7 @@ const runConjunction = () =>
           type: "image",
           url: `data:image/png;base64,${Buffer.from(imageBytes).toString("base64")}`,
         });
-        const session = McpProviderSession.readMcpProviderSession(threadId);
+        const session = yield* mcpSessions.read(threadId);
         assert.ok(session);
         const scope = yield* registry.resolve(
           session.authorizationHeader.replace(/^Bearer\s+/, ""),

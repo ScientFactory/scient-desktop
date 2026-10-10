@@ -36,7 +36,8 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { makePiAdapterV2, type PiAdapterV2Options } from "@t3tools/provider-pi/testing";
 import { makePiRpcConnection, type PiRpcRecord } from "@t3tools/provider-pi/testing";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
 
@@ -48,7 +49,8 @@ const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
   serverConfigLayer,
-  layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+  McpProviderSessions.layer,
 );
 
 const decodeJsonLine = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));

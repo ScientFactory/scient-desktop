@@ -22,7 +22,8 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../mcp/ScientMcpInvocation.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
@@ -363,6 +364,7 @@ it.effect("ProviderSessionManagerV2 cleans up an open interrupted mid-handshake"
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-interrupted-open");
@@ -390,7 +392,7 @@ it.effect("ProviderSessionManagerV2 cleans up an open interrupted mid-handshake"
       // for it revoked.
       assert.equal((yield* Ref.get(state)).closeCount, 1);
       assert.isUndefined(yield* registry.resolve(token!));
-      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      assert.isUndefined(yield* mcpSessions.read(threadId));
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
 
       // Nothing of the interrupted open is left behind: the next open starts a
@@ -448,6 +450,7 @@ it.effect(
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-interrupted-hung-open");
         const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -472,7 +475,7 @@ it.effect(
 
         // The session cleanup already ran, ahead of the stuck close.
         assert.isUndefined(yield* registry.resolve(token!));
-        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        assert.isUndefined(yield* mcpSessions.read(threadId));
         assert.equal((yield* Ref.get(state)).closeCount, 0);
 
         // A timed-out physical close must not release the session generation.
@@ -1015,6 +1018,7 @@ it.effect(
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-mcp");
         const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -1146,7 +1150,7 @@ it.effect(
         assert.equal(unavailable._tag, "ScientSkillToolError");
 
         yield* manager.close(providerSessionId);
-        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        assert.isUndefined(yield* mcpSessions.read(threadId));
         assert.isUndefined(yield* registry.resolve(token!));
       });
 
@@ -1239,7 +1243,7 @@ function runIdleThreadUnloadScenario(
   name: string,
   scenario: (input: {
     readonly state: Ref.Ref<TestProviderRuntimeState>;
-    readonly manager: ProviderSessionManager.ProviderSessionManagerV2Shape;
+    readonly manager: ProviderSessionManager.ProviderSessionManagerV2["Service"];
     readonly providerSessionId: ProviderSessionId;
     readonly threadA: ThreadId;
     readonly threadB: ThreadId;

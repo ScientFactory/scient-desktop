@@ -38,7 +38,7 @@ import type {
   ScientLatexResolveResult,
   ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -427,8 +427,8 @@ export const make = Effect.gen(function* () {
   const syncTex = yield* LatexSyncTex;
   const packageInstaller = yield* LatexPackageInstaller;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
-  const hostEnvironment = yield* HostProcessEnvironment;
-  const pathDelimiter = (yield* HostProcessPlatform) === "win32" ? ";" : ":";
+  const hostEnvironment = yield* HostProcess.Environment;
+  const pathDelimiter = (yield* HostProcess.Platform) === "win32" ? ";" : ":";
   const entriesRef = yield* Ref.make(new Map<string, LatexBuildEntry>());
   const evidenceRef = yield* Ref.make(new Map<string, LatexEvidenceCacheEntry>());
   // Monotonic across the process; only `requestBuild` hands one out.

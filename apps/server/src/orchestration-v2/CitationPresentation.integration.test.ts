@@ -198,7 +198,7 @@ it.live(
           }),
           {
             layerServerConfig: Layer.succeed(ServerConfig, config),
-            layerDatabase: database,
+            databaseLayer: database,
             configureMcp: false,
             runEffectWorker: true,
           },

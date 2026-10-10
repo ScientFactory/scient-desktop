@@ -918,7 +918,7 @@ it.live(
         const beforeLayer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
           CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(before),
-          { layerDatabase: databaseLayer, configureMcp: false },
+          { databaseLayer, configureMcp: false },
         );
         const accepted = yield* Effect.scoped(
           Effect.gen(function* () {
@@ -966,7 +966,7 @@ it.live(
         const afterLayer = makeOrchestratorV2ReplayLayerWithRegistry(
           { name, runtimePolicyOverride: { cwd } },
           CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(after),
-          { layerDatabase: databaseLayer, configureMcp: false, recoverOnStartup: true },
+          { databaseLayer, configureMcp: false, recoverOnStartup: true },
         );
         yield* Effect.scoped(
           Effect.gen(function* () {

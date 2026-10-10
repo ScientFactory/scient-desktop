@@ -18,7 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ProviderHost from "./ProviderHost.ts";
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
 import { retainUnavailableAgentModels } from "./snapshotProbe.ts";
-import type { ServerProviderShape } from "./snapshot.ts";
+import type { ManagedServerProvider } from "./snapshot.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
@@ -39,7 +39,7 @@ function withUsageLimits(
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
-  readonly resolveMaintenance: ServerProviderShape["resolveMaintenance"];
+  readonly resolveMaintenance: ManagedServerProvider["resolveMaintenance"];
   readonly getSettings: Effect.Effect<Settings, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
@@ -55,7 +55,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshOnInterval?: boolean;
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
 }): Effect.fn.Return<
-  ServerProviderShape,
+  ManagedServerProvider,
   ServerSettingsError,
   Scope.Scope | ProviderHost.ProviderHost
 > {
@@ -159,14 +159,32 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
+        // A failed read keeps the last good limits only for the same account,
+        // and they keep the workspace they were read for.
+        const previous = state.snapshot.auth;
+        const differs = (a: string | undefined, b: string | undefined) =>
+          a !== undefined && b !== undefined && a !== b;
+        // Limits read without a workspace cannot be attributed to a new one.
+        const switchedAccount =
+          differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
+          (probedSnapshot.auth.workspaceId !== undefined &&
+            probedSnapshot.auth.workspaceId !== previous.workspaceId);
+        const usageLimits = switchedAccount
+          ? probedSnapshot.usageLimits
+          : resolveUsageLimitsAfterProbe({
+              published: state.snapshot.usageLimits,
+              probed: probedSnapshot.usageLimits,
+            });
+        const workspaceId =
+          usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
+        const retainedSnapshot = input.haveSettingsChanged(previousSettings, nextSettings)
+          ? probedSnapshot
+          : retainUnavailableAgentModels(state.snapshot, probedSnapshot);
         const snapshot = withUsageLimits(
-          input.haveSettingsChanged(previousSettings, nextSettings)
-            ? probedSnapshot
-            : retainUnavailableAgentModels(state.snapshot, probedSnapshot),
-          resolveUsageLimitsAfterProbe({
-            published: state.snapshot.usageLimits,
-            probed: probedSnapshot.usageLimits,
-          }),
+          workspaceId && !retainedSnapshot.auth.workspaceId
+            ? { ...retainedSnapshot, auth: { ...retainedSnapshot.auth, workspaceId } }
+            : retainedSnapshot,
+          usageLimits,
         );
         return [
           { snapshot, generation },
@@ -187,7 +205,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
    * `usageLimits` on whatever snapshot is published and leave the enrichment
    * generation alone, so an in-flight enrichment still lands.
    */
-  const applyUsageLimits: ServerProviderShape["applyUsageLimits"] = (update) =>
+  const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = (update) =>
     Effect.gen(function* () {
       const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
         const usageLimits = applyUsageLimitsUpdate({
@@ -295,5 +313,5 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
-  } satisfies ServerProviderShape;
+  } satisfies ManagedServerProvider;
 });

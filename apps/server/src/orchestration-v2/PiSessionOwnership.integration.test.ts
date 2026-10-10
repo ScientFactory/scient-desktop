@@ -39,6 +39,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Ingestor from "./ProviderEventIngestor.ts";
 import { layerSingle as makeSingleLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2, layerWithOptions } from "./ProviderSessionManager.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 function processIsLive(pid: number): boolean {
   try {
@@ -62,6 +63,7 @@ const sink = EventSink.layer.pipe(Layer.provide(Layer.merge(stores, SqlitePersis
 const fixtureServices = Layer.mergeAll(
   Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer),
   IdAllocator.layer,
+  McpProviderSessions.layer,
   Config.layerTest(process.cwd(), { prefix: "pi-native-owner-" }).pipe(
     Layer.provide(Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer)),
   ),

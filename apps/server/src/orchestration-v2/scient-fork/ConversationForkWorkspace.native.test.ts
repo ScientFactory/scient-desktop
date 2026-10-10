@@ -862,9 +862,7 @@ it.live("late SQL admission failure releases only the just-published snapshot", 
         assert.equal(yield* fsRead(cwd, "evidence.txt"), "version 3");
       }).pipe(
         Effect.provide(
-          makeRuntime(gitLayer, { layerDatabase: databaseLayer }).pipe(
-            Layer.provideMerge(databaseLayer),
-          ),
+          makeRuntime(gitLayer, { databaseLayer }).pipe(Layer.provideMerge(databaseLayer)),
         ),
       );
     }).pipe(Effect.timeout("25 seconds")),
@@ -993,7 +991,7 @@ it.live(
         const databaseLayer = makeSqlitePersistenceLive(
           NodePath.join(profile, "statev2.sqlite"),
         ).pipe(Layer.provide(NodeServices.layer));
-        const runtime = makeRuntime(gitLayer, { layerDatabase: databaseLayer }).pipe(
+        const runtime = makeRuntime(gitLayer, { databaseLayer }).pipe(
           Layer.provideMerge(databaseLayer),
         );
         const orphan = "refs/t3/checkpoints/orphan/turn/0-attempt";

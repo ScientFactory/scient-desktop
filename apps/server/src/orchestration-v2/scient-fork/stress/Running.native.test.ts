@@ -217,7 +217,7 @@ it.live.each([false, true])(
             configureMcp: false,
             runEffectWorker: false,
             responseStreamingMode: "paragraph",
-            layerDatabase: sqlite,
+            databaseLayer: sqlite,
           },
         ).pipe(Layer.provideMerge(sqlite));
         yield* Effect.gen(function* () {

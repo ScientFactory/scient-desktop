@@ -5,10 +5,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, expect } from "@effect/vitest";
 import { ProviderInstanceId, type CustomModelProtocol } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { makePiDriver } from "@t3tools/provider-pi/server";
 import { PiSettings } from "@t3tools/provider-pi/settings";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,8 +28,9 @@ const binary = process.env.SCIENT_PI_TEST_BINARY;
 const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodePiSettings = Schema.decodeSync(PiSettings);
 const piDriverTestLayer = Layer.mergeAll(
-  layerTestProviderHost({ runBackgroundWork: false }),
+  TestProviderHost.layer({ runBackgroundWork: false }),
   IdAllocator.layer,
+  McpProviderSessions.layer,
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("Unexpected HTTP")),
@@ -531,7 +533,7 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
           expect(auth).not.toContain("literal");
           expect(yield* fs.exists(root + "/profile/models.json")).toBe(false);
         }),
-      ).pipe(Effect.provide(piDriverTestLayer), Effect.provideService(HostProcessEnvironment, {})),
+      ).pipe(Effect.provide(piDriverTestLayer), Effect.provideService(HostProcess.Environment, {})),
     // The Intel macOS runner needs more than 45 seconds to exercise every
     // credential form twice through the real Pi executable.
     { timeout: 90_000 },

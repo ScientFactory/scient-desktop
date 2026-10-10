@@ -9,16 +9,19 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { OmpDriver } from "./OmpDriver.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "../ModelManifest.ts";
 
 const testLayer = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), {
@@ -27,8 +30,16 @@ const testLayer = Layer.mergeAll(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(IdAllocator.layer),
     Layer.provideMerge(ProviderContinuationRequests.layer),
+    Layer.provideMerge(ModelManifest.layerTest),
+    Layer.provideMerge(ProviderLatestVersions.layer),
+    Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(OmpExecutableGate.layer),
-    Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    ),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -51,7 +62,7 @@ const testLayer = Layer.mergeAll(
       ),
     ),
   ),
-  layerTestProviderHost({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
 );
 
 const noSpawn = ChildProcessSpawner.make(() =>

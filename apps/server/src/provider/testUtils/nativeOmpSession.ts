@@ -28,10 +28,14 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type {
+  ProviderAdapterV2,
   ProviderAdapterV2Event,
   ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
-import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
+import {
+  makeOmpAdapterV2,
+  type OmpAdapterV2Options,
+} from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
 import type { EventNdjsonLogger } from "../EventNdjsonLogger.ts";
 import type { OmpTarget } from "../omp/OmpTarget.ts";
 
@@ -40,7 +44,7 @@ const decodeSettings = Schema.decodeEffect(OmpSettings);
 /** Real native OMP conversation ownership for isolated transport and CLI fixtures. */
 export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly root: string;
-  readonly adapter?: ReturnType<typeof makeOmpAdapterV2>;
+  readonly adapter?: ProviderAdapterV2["Service"];
   readonly eventQueueByteLimit?: number;
   readonly eventQueueItemLimit?: number;
   readonly cwd?: string;
@@ -55,8 +59,8 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly modelSelection: ModelSelection;
   readonly resumeProviderThread?: OrchestrationV2ProviderThread;
   readonly nativeEventLogger?: EventNdjsonLogger;
-  readonly continuations?: Parameters<typeof makeOmpAdapterV2>[0]["continuations"];
-  readonly makeProcess: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
+  readonly continuations?: OmpAdapterV2Options["continuations"];
+  readonly makeProcess: OmpAdapterV2Options["makeProcess"];
 }) {
   const consumerScope = yield* Effect.scope;
   const scope = yield* Scope.make();
@@ -66,7 +70,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
     const allocator = yield* IdAllocator.IdAllocatorV2;
     const adapter =
       input.adapter ??
-      makeOmpAdapterV2({
+      (yield* makeOmpAdapterV2({
         ...(input.eventQueueByteLimit === undefined
           ? {}
           : { eventQueueByteLimit: input.eventQueueByteLimit }),
@@ -95,7 +99,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
         makeProcess: input.makeProcess,
         ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
         continuations: input.continuations ?? { offer: () => Effect.void },
-      });
+      }));
     const policy = {
       cwd: input.cwd ?? input.root,
       runtimeMode: "full-access" as const,

@@ -968,7 +968,7 @@ it.live.each(
                 }),
               }),
               layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
-              layerDatabase: persistence,
+              databaseLayer: persistence,
             },
           ),
         );

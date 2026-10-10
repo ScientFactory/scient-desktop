@@ -1,7 +1,7 @@
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -16,7 +16,7 @@ describe("durable atomic text replacement", () => {
   it.effect("flushes contents before rename, retains mode and cleans temporary files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const directory = yield* fs.makeTempDirectoryScoped();
       const target = `${directory}/document.md`;
       const operations: string[] = [];
@@ -109,7 +109,7 @@ describe("durable atomic text replacement", () => {
         contents: "replacement",
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, observed),
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.forkChild,
       );
       yield* Deferred.await(firstRename);
@@ -156,7 +156,7 @@ describe("durable atomic text replacement", () => {
           contents: "replacement",
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, failing),
-          Effect.provideService(HostProcessPlatform, platform),
+          Effect.provideService(HostProcess.Platform, platform),
           Effect.exit,
         );
         expect(outcome._tag).toBe("Failure");
@@ -191,7 +191,7 @@ describe("durable atomic text replacement", () => {
         contents: "replacement",
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, failing),
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.exit,
         Effect.forkChild,
       );
@@ -231,7 +231,7 @@ describe("durable atomic text replacement", () => {
         contents: "replacement",
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, failing),
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.forkChild,
       );
       yield* Deferred.await(firstRename);

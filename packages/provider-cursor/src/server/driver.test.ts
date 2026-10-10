@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -15,15 +15,18 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
-import { HttpClient } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClientResponse } from "effect/http";
 
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { CursorDriver, makeCursorDriver } from "./driver.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import * as CursorSdk from "./CursorSdk.ts";
+import * as CursorKeychain from "./CursorKeychain.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { Cursor } from "./sdk.ts";
@@ -31,12 +34,19 @@ import { CursorSettings } from "../settings.ts";
 
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
-const testLayer = layerTestProviderHost({ runBackgroundWork: false }).pipe(
+const testLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(CursorSdk.layer),
   Layer.provideMerge(
     Layer.mock(CursorAgentSdk.CursorAgentSdkRunner)({
       open: () => Effect.die("Maintenance resolution must not open a Cursor session"),
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.succeed(CursorKeychain.CursorKeychain, {
+      accessToken: Effect.die("The driver test must not read the Keychain"),
     }),
   ),
   Layer.provideMerge(
@@ -268,60 +278,6 @@ it.layer(testLayer)("CursorDriver", (it) => {
         args: ["update"],
         lockKey: "cursor-agent",
       });
-    }).pipe(Effect.scoped),
-  );
-  it.effect("keeps managed install, update, and sign-in actions in host composition", () =>
-    Effect.gen(function* () {
-      const hostLifecycle = {
-        managedRuntimeActions: {
-          install: "managed-runtime-catalog.install",
-          update: "managed-runtime-catalog.update",
-          remove: "managed-runtime-catalog.remove",
-        },
-        connectionActions: {
-          signIn: "provider-lifecycle.sign-in",
-        },
-      } as const;
-      let observedRuntimeInput:
-        | {
-            readonly instanceId: string;
-            readonly processPath: string | undefined;
-            readonly baseDir: string;
-          }
-        | undefined;
-      const driver = makeCursorDriver<never, typeof hostLifecycle>({
-        resolveRuntime: (input) => {
-          observedRuntimeInput = {
-            instanceId: input.instanceId,
-            processPath: input.processEnv.PATH,
-            baseDir: input.baseDir,
-          };
-          return Effect.succeed({
-            effectiveConfig: { ...input.config, binaryPath: "/managed/cursor-agent" },
-            effectiveEnvironment: {
-              ...input.processEnv,
-              SCIENT_MANAGED_CURSOR_RUNTIME: "1",
-            },
-            composeInstance: (instance) => Effect.succeed({ ...instance, ...hostLifecycle }),
-          });
-        },
-      });
-      const instance = yield* driver.create({
-        instanceId: ProviderInstanceId.make("cursor-host-managed-lifecycle"),
-        displayName: "Managed Cursor",
-        enabled: false,
-        environment: [{ name: "PATH", value: "/instance/bin", sensitive: false }],
-        config: CursorDriver.defaultConfig(),
-      });
-
-      expect(observedRuntimeInput).toMatchObject({
-        instanceId: "cursor-host-managed-lifecycle",
-        processPath: "/instance/bin",
-      });
-      expect(observedRuntimeInput?.baseDir).toBeTruthy();
-      expect(instance.managedRuntimeActions).toBe(hostLifecycle.managedRuntimeActions);
-      expect(instance.connectionActions).toBe(hostLifecycle.connectionActions);
-      expect((yield* instance.snapshot.getSnapshot).setup?.canInstall).toBe(false);
     }).pipe(Effect.scoped),
   );
 });

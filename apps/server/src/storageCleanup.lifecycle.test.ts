@@ -129,6 +129,7 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
       const completionRead = yield* Deferred.make<void>();
       let completed = false;
       let headReads = 0;
+      let isolatedPath: string | undefined;
       const removals: string[] = [];
       const settings = yield* Settings.ServerSettingsService.pipe(
         Effect.provide(
@@ -144,7 +145,8 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
           }),
         ),
       );
-      const cleanup = yield* StorageCleanup.make.pipe(
+      const cleanup = yield* StorageCleanup.StorageCleanup.pipe(
+        Effect.provide(StorageCleanup.layer),
         Effect.provide(
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, settings),
@@ -186,24 +188,37 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
                     : "a"
                   ).repeat(40),
                 })),
-              execute: () =>
-                Effect.succeed({
-                  exitCode: ChildProcessSpawner.ExitCode(0),
-                  stdout: protection === "ignored" ? ".env\0" : "",
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
+              execute: (input) =>
+                Effect.gen(function* () {
+                  if (input.args[0] === "worktree" && input.args[1] === "move") {
+                    assert.isFalse(input.args.includes("--force"));
+                    isolatedPath = input.args[3]!;
+                    yield* fs.rename(input.args[2]!, isolatedPath).pipe(Effect.orDie);
+                  }
+                  if (input.args.includes("remove")) {
+                    assert.isFalse(input.args.includes("--force"));
+                    const target = input.args.at(-1)!;
+                    removals.push(target);
+                    yield* fs.remove(target, { recursive: true }).pipe(Effect.orDie);
+                  }
+                  return {
+                    exitCode: ChildProcessSpawner.ExitCode(0),
+                    stdout:
+                      input.operation === "StorageCleanup.localChanges" && protection === "dirty"
+                        ? " M tracked.txt\0"
+                        : input.operation === "StorageCleanup.ignoredFiles" &&
+                            protection === "ignored"
+                          ? ".env\0"
+                          : "",
+                    stderr: "",
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                  };
                 }),
-              removeWorktree: (input) => {
-                assert.strictEqual(input.force, false);
-                removals.push(input.path);
-                return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
-              },
             }),
           ),
         ),
       );
-      yield* cleanup.start();
       yield* Deferred.await(initialRead);
       yield* cleanup.drain;
       assert.isTrue(yield* fs.exists(worktreePath));
@@ -239,12 +254,17 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
       yield* cleanup.drain;
       assert.deepStrictEqual(
         removals,
-        protection === "none" || protection === "cancelled" ? [worktreePath] : [],
+        protection === "none" || protection === "cancelled" ? [isolatedPath] : [],
       );
       assert.strictEqual(
         yield* fs.exists(worktreePath),
         protection !== "none" && protection !== "cancelled",
       );
+      if (isolatedPath !== undefined) {
+        assert.notStrictEqual(isolatedPath, worktreePath);
+        assert.isFalse(yield* fs.exists(isolatedPath));
+        assert.isFalse(yield* fs.exists(path.dirname(isolatedPath)));
+      }
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });

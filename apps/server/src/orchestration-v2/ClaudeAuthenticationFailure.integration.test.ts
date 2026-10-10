@@ -25,7 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
-import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { layer as ProviderRegistryLive } from "../provider/ProviderRegistry.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
@@ -44,6 +44,7 @@ const settings = Schema.decodeUnknownSync(ClaudeSettings)({});
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-native-claude-auth-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -74,126 +75,128 @@ it.effect.each(
     const invalidations = new Map<ProviderInstanceId, number>();
     const closes = new Map<ThreadId, number>();
     let ordinal = 0;
-    const makeInstance = (instanceId: ProviderInstanceId): ProviderInstance => {
-      const snapshot: ServerProvider = {
-        instanceId,
-        driver: Claude.CLAUDE_PROVIDER,
-        status: "ready",
-        enabled: true,
-        installed: true,
-        auth: { status: "authenticated", required: true, label: `Account ${instanceId}` },
-        checkedAt: "2026-10-04T00:00:00.000Z",
-        version: "synthetic-native-sdk",
-        models: [],
-        slashCommands: [],
-        skills: [],
-        connection: { methods: ["claude_subscription"], canDisconnect: true, operation: null },
-      };
-      const adapter = Claude.makeClaudeAdapterV2({
-        crypto,
-        instanceId,
-        settings,
-        environment: {},
-        attachmentsDir: config.attachmentsDir,
-        fileSystem: fs,
-        path,
-        idAllocator: ids,
-        queryRunner: {
-          allocateSessionId: Effect.sync(() => `native-auth-${++ordinal}`),
-          open: (input) =>
-            Effect.gen(function* () {
-              const messages = yield* Queue.unbounded<SDKMessage>();
-              return {
-                setPermissionMode: () =>
-                  Effect.die("Permission-mode mutation is outside this fixture."),
-                messages: Stream.fromQueue(messages),
-                offer: (message) => {
-                  if (instanceId === peerInstanceId)
-                    return Deferred.succeed(peerStarted, undefined).pipe(Effect.asVoid);
-                  const result: SDKResultMessage = {
-                    type: "result",
-                    subtype: "error_during_execution",
-                    is_error: true,
-                    duration_ms: 1,
-                    duration_api_ms: 1,
-                    num_turns: 1,
-                    stop_reason: null,
-                    total_cost_usd: 0,
-                    modelUsage: {},
-                    permission_denials: [],
-                    usage: {
-                      input_tokens: 1,
-                      output_tokens: 0,
-                      cache_creation_input_tokens: 0,
-                      cache_read_input_tokens: 0,
-                      cache_creation: {
-                        ephemeral_1h_input_tokens: 0,
-                        ephemeral_5m_input_tokens: 0,
+    const makeInstance = (instanceId: ProviderInstanceId) =>
+      Effect.gen(function* () {
+        const snapshot: ServerProvider = {
+          instanceId,
+          driver: Claude.CLAUDE_PROVIDER,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated", required: true, label: `Account ${instanceId}` },
+          checkedAt: "2026-10-04T00:00:00.000Z",
+          version: "synthetic-native-sdk",
+          models: [],
+          slashCommands: [],
+          skills: [],
+          connection: { methods: ["claude_subscription"], canDisconnect: true, operation: null },
+        };
+        const adapter = yield* Claude.makeClaudeAdapterV2({
+          crypto,
+          instanceId,
+          settings,
+          environment: {},
+          attachmentsDir: config.attachmentsDir,
+          fileSystem: fs,
+          path,
+          idAllocator: ids,
+          queryRunner: {
+            allocateSessionId: Effect.sync(() => `native-auth-${++ordinal}`),
+            open: (input) =>
+              Effect.gen(function* () {
+                const messages = yield* Queue.unbounded<SDKMessage>();
+                return {
+                  setPermissionMode: () =>
+                    Effect.die("Permission-mode mutation is outside this fixture."),
+                  messages: Stream.fromQueue(messages),
+                  offer: (message) => {
+                    if (instanceId === peerInstanceId)
+                      return Deferred.succeed(peerStarted, undefined).pipe(Effect.asVoid);
+                    const result: SDKResultMessage = {
+                      type: "result",
+                      subtype: "error_during_execution",
+                      is_error: true,
+                      duration_ms: 1,
+                      duration_api_ms: 1,
+                      num_turns: 1,
+                      stop_reason: null,
+                      total_cost_usd: 0,
+                      modelUsage: {},
+                      permission_denials: [],
+                      usage: {
+                        input_tokens: 1,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                        cache_creation: {
+                          ephemeral_1h_input_tokens: 0,
+                          ephemeral_5m_input_tokens: 0,
+                        },
+                        inference_geo: "us",
+                        iterations: [],
+                        server_tool_use: { web_fetch_requests: 0, web_search_requests: 0 },
+                        service_tier: "standard",
+                        speed: "standard",
                       },
-                      inference_geo: "us",
-                      iterations: [],
-                      server_tool_use: { web_fetch_requests: 0, web_search_requests: 0 },
-                      service_tier: "standard",
-                      speed: "standard",
-                    },
-                    errors: [reason],
-                    uuid: "00000000-0000-4000-8000-000000000909",
-                    session_id: input.options.sessionId ?? input.options.resume,
-                    ...(message.uuid === undefined ? {} : { user_message_uuid: message.uuid }),
-                    terminal_reason: "api_error",
-                  };
-                  return Queue.offer(messages, result).pipe(Effect.asVoid);
-                },
-                setModel: () => Effect.void,
-                interrupt: Effect.void,
-                close: Effect.sync(() => {
-                  closes.set(input.threadId, (closes.get(input.threadId) ?? 0) + 1);
-                }).pipe(
-                  Effect.andThen(
-                    input.threadId === badThreadId
-                      ? Deferred.succeed(closed, undefined)
-                      : Effect.void,
+                      errors: [reason],
+                      uuid: "00000000-0000-4000-8000-000000000909",
+                      session_id: input.options.sessionId ?? input.options.resume,
+                      ...(message.uuid === undefined ? {} : { user_message_uuid: message.uuid }),
+                      terminal_reason: "api_error",
+                    };
+                    return Queue.offer(messages, result).pipe(Effect.asVoid);
+                  },
+                  setModel: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.sync(() => {
+                    closes.set(input.threadId, (closes.get(input.threadId) ?? 0) + 1);
+                  }).pipe(
+                    Effect.andThen(
+                      input.threadId === badThreadId
+                        ? Deferred.succeed(closed, undefined)
+                        : Effect.void,
+                    ),
                   ),
-                ),
-              };
-            }),
-          forkSession: () => Effect.die("Auth fixture never forks native history"),
-          subagentLaunchToolUseId: () => Effect.succeed(null),
-          assertComplete: Effect.void,
-        },
-      });
-      return {
-        instanceId,
-        driverKind: Claude.CLAUDE_PROVIDER,
-        displayName: undefined,
-        enabled: true,
-        continuationIdentity: {
-          driverKind: Claude.CLAUDE_PROVIDER,
-          continuationKey: `claude:${instanceId}`,
-        },
-        snapshot: {
-          getSnapshot: Effect.succeed(snapshot),
-          refresh: Effect.succeed(snapshot),
-          streamChanges: Stream.empty,
-          applyUsageLimits: () => Effect.void,
-          resolveMaintenance: () =>
-            Effect.succeed(
-              makeManualOnlyProviderMaintenanceCapabilities({
-                provider: Claude.CLAUDE_PROVIDER,
-                packageName: null,
+                };
               }),
-            ),
-        },
-        invalidateCaches: Effect.sync(() => {
-          invalidations.set(instanceId, (invalidations.get(instanceId) ?? 0) + 1);
-        }),
-        orchestrationAdapter: adapter,
-        get textGeneration(): never {
-          throw new Error("Auth proof must not generate auxiliary text");
-        },
-      };
-    };
-    const instances = [makeInstance(badInstanceId), makeInstance(peerInstanceId)];
+            forkSession: () => Effect.die("Auth fixture never forks native history"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        return {
+          instanceId,
+          driverKind: Claude.CLAUDE_PROVIDER,
+          displayName: undefined,
+          enabled: true,
+          continuationIdentity: {
+            driverKind: Claude.CLAUDE_PROVIDER,
+            continuationKey: `claude:${instanceId}`,
+          },
+          snapshot: {
+            getSnapshot: Effect.succeed(snapshot),
+            refresh: Effect.succeed(snapshot),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: Claude.CLAUDE_PROVIDER,
+                  packageName: null,
+                }),
+              ),
+          },
+          invalidateCaches: Effect.sync(() => {
+            invalidations.set(instanceId, (invalidations.get(instanceId) ?? 0) + 1);
+          }),
+          orchestrationAdapter: adapter,
+          get textGeneration(): never {
+            throw new Error("Auth proof must not generate auxiliary text");
+          },
+        };
+      });
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    const instances = [yield* makeInstance(badInstanceId), yield* makeInstance(peerInstanceId)];
     const instanceLayer = Layer.succeed(ProviderInstances.ProviderInstanceRegistry, {
       getInstance: (id) => Effect.succeed(instances.find((instance) => instance.instanceId === id)),
       listInstances: Effect.succeed(instances),
@@ -231,7 +234,14 @@ it.effect.each(
     const replay = makeOrchestratorV2ReplayLayerWithRegistry(
       { name: "native-claude-revoked-auth" },
       ProviderAdapters.layerFromProviderInstanceRegistry.pipe(Layer.provide(instanceLayer)),
-      { providerRegistryLayer: snapshots, configureMcp: false },
+      {
+        providerRegistryLayer: snapshots,
+        configureMcp: false,
+        mcpProviderSessionsLayer: Layer.succeed(
+          McpProviderSessions.McpProviderSessions,
+          mcpSessions,
+        ),
+      },
     );
     yield* Effect.gen(function* () {
       const registry = yield* ProviderRegistry.ProviderRegistry;

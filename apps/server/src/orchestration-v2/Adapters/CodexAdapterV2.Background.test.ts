@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcessSpawner, ChildProcess } from "effect/process";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
@@ -207,7 +208,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           assert.lengthOf(harness.terminalEvents(), 1);
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -351,7 +356,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 assert.lengthOf(harness.terminalEvents(), 1);
                 assert.equal(harness.terminalEvents()[0]?.status, "completed");
                 assert.lengthOf(harness.continuationRequests, 0);
-              }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+              }).pipe(
+                Effect.provide(
+                  Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+                ),
+              ),
             ),
         },
         ...(terminated === true
@@ -732,7 +741,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.lengthOf(harness.continuationRequests, 0);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.terminalEvents(), 1);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -1013,7 +1026,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           cursor: transcript.entries.length,
           failure: null,
         });
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ).pipe(Effect.tap(() => Effect.sync(() => assert.equal(sessionCloses, 1))));
   });
 });

@@ -4,11 +4,11 @@ import { ProviderInstanceEnvironment, ProviderInstanceId } from "@t3tools/contra
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import {
-  NoOpProviderEventLoggers,
-  ProviderEventLoggers,
-} from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "./ModelManifest.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -41,10 +41,16 @@ it.effect(
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          layerTestProviderHost({ runBackgroundWork: false }),
+          TestProviderHost.layer({ runBackgroundWork: false }),
           ServerSettings.layerTest(),
           IdAllocator.layer,
-          Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
+          ModelManifest.layerTest,
+          ProviderLatestVersions.layer,
+          McpProviderSessions.layer,
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
           Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
             inspect: () => Effect.die("A disabled agent must not be inspected"),
             resolve: () => Effect.die("A disabled agent must not be installed"),

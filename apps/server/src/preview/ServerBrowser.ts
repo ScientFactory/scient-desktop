@@ -53,11 +53,7 @@ import * as Result from "effect/Result";
 import * as Base64Url from "effect/encoding/Base64Url";
 import { publishBrowserPdfExport } from "../scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import type { GeneratedDocumentStore } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
@@ -495,7 +491,7 @@ const CLIPBOARD_SCRIPT = `(() => {
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const host = { platform: yield* HostProcessPlatform, arch: yield* HostProcessArchitecture };
+  const host = { platform: yield* HostProcess.Platform, arch: yield* HostProcess.Architecture };
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   const environment = yield* ServerEnvironment.ServerEnvironment;
@@ -2390,7 +2386,7 @@ const make = Effect.gen(function* () {
   yield* manager.events.pipe(Stream.runForEach(mirrorManagerEvent), Effect.forkScoped);
   // Whoever runs the server learns the fix before anyone opens a tab.
   if (
-    !PreviewBrowserHost.sandboxDisabled(yield* HostProcessEnvironment) &&
+    !PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment) &&
     (yield* PreviewBrowserHost.sandboxBlocked)
   ) {
     yield* Effect.logWarning(

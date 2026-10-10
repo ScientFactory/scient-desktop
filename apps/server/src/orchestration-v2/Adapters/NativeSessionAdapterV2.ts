@@ -41,7 +41,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import type { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
-import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 const encodeNativeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -184,7 +184,7 @@ export interface NativeSessionAdapterV2Options {
 /** Maps real native session lifetimes and events directly to V2 entities, never through V1. */
 export function makeNativeSessionAdapterV2(
   options: NativeSessionAdapterV2Options,
-): ProviderAdapter.ProviderAdapterV2Shape {
+): ProviderAdapter.ProviderAdapterV2["Service"] {
   const { driver, idAllocator } = options;
   const queueBudget = makeNativeEventQueueBudget(options.eventQueueLimits);
   const ref = (nativeId: string) => ({ driver, nativeId, strength: "strong" as const });

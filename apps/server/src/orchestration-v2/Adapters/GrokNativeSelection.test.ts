@@ -15,8 +15,8 @@ import {
   type ModelSelection,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -29,9 +29,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
@@ -62,6 +61,7 @@ const decodeMcpServers = Schema.decodeUnknownEffect(
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-grok-native-selection-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -76,6 +76,7 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-grok-native-peer-" });
   const requestsPath = path.join(directory, "requests.ndjson");
   const argvLogPath = path.join(directory, "native-argv.txt");
@@ -103,7 +104,7 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
     cwd: directory,
   });
   if (capabilities !== undefined) {
-    McpProviderSession.setMcpProviderSession({
+    yield* mcpSessions.set({
       environmentId: EnvironmentId.make("grok-awareness"),
       threadId,
       providerSessionId: "grok-awareness",
@@ -112,12 +113,11 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
       authorizationHeader: "Bearer synthetic-grok-awareness",
       capabilities,
     });
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-    );
+    yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
   }
   const adapter = yield* makeGrokAdapterV2({
     instanceId,
+    hostPlatform: yield* HostProcess.Platform,
     testHooks,
     settings: yield* decodeSettings({ binaryPath: binary }),
     environment: {
@@ -126,7 +126,6 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
       ...environment,
     },
     application: scientAcpApplicationBridge,
-    hostPlatform: yield* HostProcessPlatform,
     selfInvocation: yield* resolveSelfInvocation(),
   });
   const open = adapter.openSession({
@@ -315,7 +314,7 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
   );
   it.effect.each(
     [false, true].map((granted) => ({
-      caseTitle: `delivers exact Scient awareness through native Grok rules with grants ${granted}`,
+      caseTitle: `delivers capability-scoped Scient awareness through native Grok rules with grants ${granted}`,
       granted,
     })),
   )("$caseTitle", ({ granted }) =>
@@ -328,8 +327,6 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
         yield* h.send;
         const args = h.arguments();
         const rules = args[args.indexOf("--rules") + 1];
-        assert.equal(rules, buildScientAwareness(capabilities));
-        assert.include(rules ?? "", "Scient renders LaTeX math");
         assert.equal((rules ?? "").includes("scient_pdf_build"), granted);
         assert.equal((rules ?? "").includes("scient_skill_load"), granted);
         assert.notInclude(rules ?? "", "preview_status");

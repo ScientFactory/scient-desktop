@@ -80,6 +80,7 @@ import {
   type RuntimeInstructionsInput,
   // SCIENT-FORK:END
 } from "@t3tools/provider-core/server/runtimeInstructions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -92,7 +93,7 @@ import {
   backgroundWorkNotification,
   type BackgroundWorkReport,
 } from "@t3tools/provider-core/server/notification";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   makeSubagentChildThread,
@@ -853,6 +854,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const crypto = yield* Crypto.Crypto;
   const driver = OPENCODE_PROVIDER;
@@ -880,7 +882,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
   });
 
   const openSession = Effect.fn("OpenCode2Adapter.openSession")(function* (
-    input: Parameters<ProviderAdapter.ProviderAdapterV2Shape["openSession"]>[0],
+    input: Parameters<ProviderAdapter.ProviderAdapterV2["Service"]["openSession"]>[0],
     initial: {
       readonly connection: OpenCode2Server.OpenCode2Connection;
       readonly scope: Scope.Closeable;
@@ -3292,12 +3294,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
+      const mcpSession =
+        configureMcp && !connection.external
+          ? yield* mcpSessions.read(turnInput.threadId)
+          : undefined;
       const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
       const name = yield* mcpServerNameFor(turnInput.threadId);
       // An external server may not reach T3's MCP endpoint, as with 1.x.
       const wanted = mcpRegistrationForOpenCode2Turn({
         configureMcp,
-        threadId: turnInput.threadId,
+        session: mcpSession,
         external: connection.external,
         name,
         directory,

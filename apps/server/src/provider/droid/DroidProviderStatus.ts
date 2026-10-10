@@ -36,7 +36,7 @@ import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 
 const MAX_RECOVERY_BACKOFF_MILLIS = 3_600_000;
 
@@ -81,14 +81,14 @@ function withSignedOutBinary(
 
 export const makeDroidProviderStatus = Effect.fn("makeDroidProviderStatus")(function* (input: {
   /** Managed snapshot whose own periodic refresh is off; `refresh` runs a full probe. */
-  readonly provider: ServerProviderShape;
+  readonly provider: ManagedServerProvider;
   /** `droid --version`: none when the command failed or timed out. */
   readonly probeVersion: Effect.Effect<Option.Option<string | null>>;
   readonly refreshInterval: Effect.Effect<Duration.Input>;
   readonly hasDemand: Effect.Effect<boolean>;
 }): Effect.fn.Return<
   {
-    readonly provider: ServerProviderShape;
+    readonly provider: ManagedServerProvider;
     readonly reportAccountRejected: (message: string) => Effect.Effect<void>;
     /** Call with each full probe's result; a successful probe clears a rejection. */
     readonly observeProbe: (snapshot: ServerProvider) => Effect.Effect<void>;

@@ -62,7 +62,7 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
         wire.push({ phase: `${phase}.released` });
       });
     let allocated = 0;
-    const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       crypto: yield* Crypto.Crypto,
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CLAUDE_SETTINGS,

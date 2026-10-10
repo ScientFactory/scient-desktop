@@ -15,16 +15,21 @@ import * as CodexInstallation from "../CodexInstallation.ts";
 import { CodexAppServerClientFactory } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ClaudeAgentSdkQueryRunner } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CursorAgentSdkRunner } from "@t3tools/provider-cursor/server/CursorAgentSdk";
+import { Agent } from "@cursor/sdk";
+import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
+import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ClaudeDriver } from "./ClaudeDriver.ts";
 import { CodexDriver } from "./CodexDriver.ts";
 import { CursorDriver } from "@t3tools/provider-cursor/server";
 import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { PtyAdapter } from "@t3tools/shared/PtyAdapter";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { PiDriver } from "@t3tools/provider-pi/server";
 import { OmpDriver } from "./OmpDriver.ts";
@@ -40,6 +45,25 @@ const baseLayer = ServerConfig.layerTest(process.cwd(), {
 const providerDependenciesLayer = baseLayer.pipe(
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(
+    Layer.succeed(CursorKeychain.CursorKeychain, {
+      accessToken: Effect.die("Continuation identity must not read real Keychain credentials"),
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.succeed(CursorSdk.CursorSdk, {
+      Agent: new Proxy(Agent, {
+        get() {
+          throw new Error("Continuation identity must not call the real SDK");
+        },
+      }),
+      createAgentPlatform: () => {
+        throw new Error("Continuation identity must not create a real SDK platform");
+      },
+    }),
+  ),
   Layer.provideMerge(OmpExecutableGate.layer),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(baseLayer))),
@@ -58,7 +82,12 @@ const providerDependenciesLayer = baseLayer.pipe(
       getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000007")),
     }),
   ),
-  Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+  Layer.provideMerge(
+    Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
+  ),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy)({ shouldRunScopeWork: () => Effect.succeed(false) }),
   ),

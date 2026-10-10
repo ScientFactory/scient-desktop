@@ -45,6 +45,7 @@ import { PiDriver, type PiCompositionRequirements } from "./PiDriverComposition.
 // SCIENT-FORK:START Scient Muse application composition
 import { MuseDriver } from "./MuseDriverComposition.ts";
 // SCIENT-FORK:END Scient Muse application composition
+import type { ProviderUsageReaderEnv } from "@t3tools/provider-core/server/driver";
 
 /**
  * Union of infrastructure services required to construct any built-in
@@ -85,3 +86,17 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   ScientAgentDriver,
   MuseDriver,
 ].toSorted((left, right) => compareProviderDriverKinds(left.driverKind, right.driverKind));
+
+/** Services the built-in usage readers need. */
+export type BuiltInUsageReadersEnv =
+  | ProviderUsageReaderEnv<typeof ClaudeDriver>
+  | ProviderUsageReaderEnv<typeof CodexDriver>
+  | ProviderUsageReaderEnv<typeof GrokDriver>
+  | ProviderUsageReaderEnv<typeof OpenCodeDriver>
+  | ProviderUsageReaderEnv<typeof AntigravityDriver>
+  | ProviderUsageReaderEnv<typeof CursorDriver>;
+
+/** Transcript readers precede scan readers; first duplicates win aggregation. */
+export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
+  AnyProviderDriver<BuiltInDriversEnv, BuiltInUsageReadersEnv>
+> = [ClaudeDriver, CodexDriver, GrokDriver, OpenCodeDriver, AntigravityDriver, CursorDriver];

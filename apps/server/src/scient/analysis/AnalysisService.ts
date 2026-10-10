@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import { inspectScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   AnalysisOperationError,
   type AnalysisArtifactId,
@@ -199,8 +199,8 @@ const make = Effect.gen(function* () {
   const observeOperation = yield* makeOperationAnalytics;
   const runtimeAdapters = yield* AnalysisRuntimeAdapters;
   const crypto = yield* Crypto.Crypto;
-  const hostEnvironment = yield* HostProcessEnvironment;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const hostPlatform = yield* HostProcess.Platform;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;

@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { scientServerAllowedScriptsValue } from "@t3tools/shared/scientRelease";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -22,7 +22,7 @@ const Started = Schema.Struct({
 });
 const decodeStarted = Schema.decodeUnknownSync(Schema.fromJsonString(Started));
 
-describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "remote runner process ownership",
   () => {
     it.live.each(["npx", "npm"] as const)(
@@ -169,7 +169,7 @@ if (args.includes("--package")) {
   },
 );
 
-describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "remote stop process ownership",
   () => {
     it.live.each(["graceful", "timeout", "external"] as const)(
@@ -294,7 +294,7 @@ server.listen(0, "127.0.0.1", () => {
   },
 );
 
-describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "remote runner install diagnostics",
   () => {
     const decodeArguments = Schema.decodeUnknownSync(

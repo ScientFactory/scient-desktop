@@ -3,7 +3,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   type DeviceServiceState,
@@ -289,7 +289,8 @@ import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import * as GitHubApi from "./sourceControl/GitHubApi.ts";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -832,7 +833,7 @@ const buildAppUnderTest = (options?: {
       ),
     );
     const serviceLauncherClientLayer = ServiceLauncherClient.layer.pipe(
-      Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
+      Layer.provide(Layer.succeed(HostProcess.Environment, {})),
     );
     const workspaceBindingResolverLayer = Layer.succeed(
       WorkspaceBindingResolver.WorkspaceBindingResolver,
@@ -1384,7 +1385,13 @@ const buildAppUnderTest = (options?: {
             ? FetchHttpClient.layer
             : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
         ),
-        Layer.provide(GitHubApi.layerWithDependencies.pipe(Layer.provideMerge(VcsProcess.layer))),
+        Layer.provide(
+          GitHubApi.layerWithDependencies.pipe(
+            Layer.provide(ServerSourceControlHost.layer),
+            Layer.provide(VcsDriverRegistry.layer),
+            Layer.provideMerge(VcsProcess.layer),
+          ),
+        ),
         Layer.provide(gitVcsDriverLayer),
         Layer.provide(serverSettingsLayer),
         Layer.provide(ThreadCommandExecutor.layer),
@@ -2200,7 +2207,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const beforeOpenPath = path.join(staticDir, "before-open.txt");
       const afterOpenPath = path.join(staticDir, "after-open.txt");
       const afterOpenSnapshotPath = path.join(staticDir, "after-open-snapshot.txt");
-      const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+      const windowsHost = HostProcess.Platform.defaultValue() === "win32";
       const original = "original bytes";
       const replacement = "replacement bytes with a different size";
       for (const filePath of [beforeOpenPath, afterOpenPath]) {
@@ -8071,7 +8078,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const commandCalls = yield* Ref.make(0);
       const hostResources = yield* HostResources.make().pipe(
-        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provide(
           Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
             string: () =>
@@ -8100,7 +8107,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const started = yield* Deferred.make<void>();
       const commandCalls = yield* Ref.make(0);
       const hostResources = yield* HostResources.make().pipe(
-        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provide(
           Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
             string: () =>
@@ -9261,7 +9268,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   );
 
   // chmod cannot deny the superuser, and Windows has no POSIX permission bits.
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32" || process.getuid?.() === 0)(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
     "reports an unreadable file as a permission failure",
     () =>
       Effect.gen(function* () {
@@ -9300,7 +9307,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("reports workspace root stat failures without relabeling them as missing", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) === "win32") return;
+      if ((yield* HostProcess.Platform) === "win32") return;
 
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

@@ -34,7 +34,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../../config.ts";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -44,7 +44,7 @@ import {
   type OrchestratorV2ProviderReplayHarness,
 } from "../testkit/ProviderReplayHarness.ts";
 import { PI_PROVIDER, PiAdapterV2Driver } from "@t3tools/provider-pi/server";
-import { piInstanceStateRoot } from "../../provider/pi/PiSessionFile.ts";
+import { piInstanceStateRoot } from "@t3tools/provider-pi/testing";
 import {
   PiReplaySessionBinding,
   reconcilePiBoundLaunchProtocol,
@@ -490,7 +490,7 @@ export function layer<E, R>(input: {
     Layer.provide(input.spawner),
     Layer.provide(
       Layer.mergeAll(
-        layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         layerServerConfig,
         NodeServices.layer,
         IdAllocator.layer,

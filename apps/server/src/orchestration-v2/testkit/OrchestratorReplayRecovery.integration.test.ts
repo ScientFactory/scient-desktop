@@ -133,7 +133,7 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
   const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
     splitAfterFirstIdle(materialized);
   const options = {
-    layerDatabase: SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
+    databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
   };
   const harness = {
     ...CursorOrchestratorReplayHarness,
@@ -237,7 +237,7 @@ describe("orchestrator replay recovery", () => {
               CodexAdapterV2Testkit.layer({ transcript, driver }),
           };
           const options = {
-            layerDatabase: SqlitePersistence.layerFromPath(dbPath).pipe(
+            databaseLayer: SqlitePersistence.layerFromPath(dbPath).pipe(
               Layer.provide(NodeServices.layer),
             ),
           };
@@ -337,7 +337,7 @@ describe("orchestrator replay recovery", () => {
           splitAfterFirstIdle(materialized);
         const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
         const options = {
-          layerDatabase: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
+          databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
             Layer.provide(NodeServices.layer),
           ),
         };

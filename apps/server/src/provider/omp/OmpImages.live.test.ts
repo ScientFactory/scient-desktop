@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { nativeOmpSession } from "../testUtils/nativeOmpSession.ts";
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
@@ -280,7 +281,11 @@ describe.runIf(binary)("real Oh My Pi image attachments", () => {
           expect(large[1]).toEqual({ imageParts: 2, toolResult: true });
           yield* session.close;
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+        ),
+      ),
     180_000,
   );
 });

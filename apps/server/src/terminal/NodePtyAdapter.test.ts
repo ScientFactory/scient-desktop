@@ -1,9 +1,10 @@
 import * as NodeEvents from "node:events";
 import * as NodeNet from "node:net";
+import type * as NodePty from "node-pty";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -59,15 +60,16 @@ function preparePendingProcess() {
 
 const spawnInput = { shell: "powershell.exe", cwd: ".", cols: 80, rows: 24, env: {} };
 
-vi.mock("node-pty", () => ({ spawn }));
+const fakeNodePty = { spawn } as unknown as typeof NodePty;
 
 const layerTestFor = (platform: NodeJS.Platform = "win32") =>
   NodePtyAdapter.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
-        Layer.succeed(HostProcessPlatform, platform),
-        Layer.succeed(HostProcessArchitecture, "x64"),
+        Layer.succeed(HostProcess.Platform, platform),
+        Layer.succeed(HostProcess.Architecture, "x64"),
+        Layer.succeed(NodePtyAdapter.NodePtyModuleLoaderRef, () => Promise.resolve(fakeNodePty)),
       ),
     ),
   );
@@ -250,7 +252,10 @@ it.effect("preserves a caller-provided TERM in the spawn env on win32", () =>
 it.effect("reports native module load failures as structured startup defects", () =>
   Effect.gen(function* () {
     const cause = new Error("native binding could not be loaded");
-    const exit = yield* NodePtyAdapter.make(() => Promise.reject(cause)).pipe(Effect.exit);
+    const exit = yield* NodePtyAdapter.make().pipe(
+      Effect.provideService(NodePtyAdapter.NodePtyModuleLoaderRef, () => Promise.reject(cause)),
+      Effect.exit,
+    );
 
     assert.isTrue(Exit.isFailure(exit));
     if (Exit.isFailure(exit)) {
@@ -268,8 +273,8 @@ it.effect("reports native module load failures as structured startup defects", (
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
-        Layer.succeed(HostProcessPlatform, "win32"),
-        Layer.succeed(HostProcessArchitecture, "x64"),
+        Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.Architecture, "x64"),
       ),
     ),
   ),

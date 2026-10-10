@@ -32,7 +32,7 @@ import {
   type ProviderAdapterV2Event,
   ProviderAdapterOpenSessionError,
 } from "@t3tools/provider-core/server/ProviderAdapter";
-import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 
@@ -326,7 +326,7 @@ export const makeCodexReplayHarness = (
     const continuationRequests: Array<ProviderContinuationRequest> = [];
     const transcripts = [transcript, ...(options.additionalSessions ?? [])];
     let sessionOrdinal = 0;
-    const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
+    const clientFactory: CodexAdapterV2.CodexAppServerClientFactory["Service"] = {
       open: (openInput) => {
         const sessionTranscript = transcripts[sessionOrdinal++];
         if (!sessionTranscript) return Effect.die("Unexpected native Codex session open");
@@ -366,7 +366,7 @@ export const makeCodexReplayHarness = (
         );
       },
     };
-    const adapter = CodexAdapterV2.makeCodexAdapterV2({
+    const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
       crypto: yield* Crypto.Crypto,
       instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
       settings: settings ?? DEFAULT_CODEX_SETTINGS,

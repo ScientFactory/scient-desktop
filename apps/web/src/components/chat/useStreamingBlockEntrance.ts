@@ -1,4 +1,5 @@
 import { type RefObject, useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { observeResize } from "~/lib/observeResize";
 import { motionClock } from "./motionClock";
 
 /**
@@ -155,7 +156,7 @@ export function useStreamingBlockEntrance(
       frame = null;
       if (revealing.delete(messageId)) notifyReveal();
       mutations.disconnect();
-      resizes.disconnect();
+      stopResize();
       root.removeEventListener("load", onContentChange, true);
       reducedMotion?.removeEventListener?.("change", onMotionPreference);
     };
@@ -209,13 +210,12 @@ export function useStreamingBlockEntrance(
     const mutations = new MutationObserver(onContentChange);
     mutations.observe(root, { childList: true, subtree: true, characterData: true });
     // The revealed height changes every frame; only a new width reflows the text.
-    const resizes = new ResizeObserver(() => {
+    const stopResize = observeResize(root, () => {
       const next = root.getBoundingClientRect().width;
       if (Math.abs(next - width) < 0.5) return;
       width = next;
       onContentChange();
     });
-    resizes.observe(root);
     // Images and diagrams inside the answer change its height when they load.
     root.addEventListener("load", onContentChange, true);
     reducedMotion?.addEventListener?.("change", onMotionPreference);

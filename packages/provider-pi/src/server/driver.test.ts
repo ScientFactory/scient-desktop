@@ -10,27 +10,32 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type { PiSettings } from "../settings.ts";
 import { PiDriver } from "./driver.ts";
 
 const layerTest = Layer.mergeAll(
-  layerTestProviderHost({
+  TestProviderHost.layer({
     cwd: "/machine",
     settings: { ...DEFAULT_SERVER_SETTINGS, enableProviderUpdateChecks: false },
     runBackgroundWork: false,
   }),
   IdAllocator.layer,
+  McpProviderSessions.layer,
+  ProviderLatestVersions.layer,
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("Unexpected HTTP")),
   ),
-  Layer.succeed(HostProcessEnvironment, {}),
+  Layer.succeed(HostProcess.Environment, {}),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const decodeRequest = Schema.decodeSync(
@@ -125,7 +130,7 @@ const create = (
     environment: [{ name: "PI_CODING_AGENT_DIR", value: "/isolated-pi", sensitive: false }],
     enabled,
     config: { ...PiDriver.defaultConfig(), binaryPath: "custom-pi", ...config },
-  }).pipe(Effect.provideService(HostProcessEnvironment, hostEnvironment));
+  }).pipe(Effect.provideService(HostProcess.Environment, hostEnvironment));
 
 it.layer(layerTest)("PiDriver workspace discovery", (it) => {
   it.effect("keeps each workspace's skills and commands separate from the machine catalog", () =>
@@ -174,7 +179,7 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
       );
       assert.equal(workspaceLaunch!.options.env?.PI_CODING_AGENT_DIR, "/isolated-pi");
       assert.equal(workspaceLaunch!.options.env?.HOST_ONLY_VALUE, "preserved-from-host");
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessEnvironment, {})),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Environment, {})),
   );
 
   it.effect("does not run a disabled provider's workspace probe", () =>
@@ -189,7 +194,7 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
       const workspace = yield* instance.snapshotForCwd!("/first");
       assert.isFalse(workspace.enabled);
       assert.deepEqual(workspace.skills, []);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessEnvironment, {})),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Environment, {})),
   );
 
   it.effect(
@@ -209,7 +214,7 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
           (yield* instance.snapshot.getSnapshot).skills.map((skill) => skill.name),
           ["personal"],
         );
-      }).pipe(Effect.scoped, Effect.provideService(HostProcessEnvironment, {})),
+      }).pipe(Effect.scoped, Effect.provideService(HostProcess.Environment, {})),
   );
 
   it.effect("times out workspace discovery that needs interactive input", () =>
@@ -224,6 +229,6 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
       const error = yield* Fiber.join(probe);
       assert.equal(error._tag, "ProviderDriverError");
       assert.include(error.detail, "workspace commands");
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessEnvironment, {})),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Environment, {})),
   );
 });

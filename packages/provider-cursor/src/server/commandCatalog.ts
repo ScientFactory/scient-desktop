@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
-import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 
 interface AvailableCommand {
   readonly name: string;
@@ -14,7 +14,7 @@ interface AvailableCommand {
 
 /** Session command catalogs stay scoped to their workspace across health refreshes. */
 export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(function* (
-  provider: ServerProviderShape,
+  provider: ManagedServerProvider,
 ) {
   const workspaces = yield* SubscriptionRef.make<NonNullable<ServerProvider["workspaceSnapshots"]>>(
     [],
@@ -98,6 +98,6 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
         provider.streamChanges.pipe(Stream.map(() => undefined)),
         SubscriptionRef.changes(workspaces).pipe(Stream.map(() => undefined)),
       ).pipe(Stream.mapEffect(() => getSnapshot)),
-    } satisfies ServerProviderShape,
+    } satisfies ManagedServerProvider,
   };
 });

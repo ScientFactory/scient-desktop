@@ -24,12 +24,12 @@ import { makeProviderAuthService } from "../provider/ProviderAuthService.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import type { ProviderAuthController } from "../provider/ProviderAuthService.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { type ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
@@ -110,6 +110,7 @@ it.effect(
           const eventSink = yield* EventSink.EventSinkV2;
           const ids = yield* IdAllocator.IdAllocatorV2;
           const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
           const threadId = ThreadId.make("retained-close-failed");
           const id = yield* ids.allocate.providerSession({
             providerInstanceId: modelSelection.instanceId,
@@ -126,7 +127,7 @@ it.effect(
           });
           yield* manager.open({ threadId, providerSessionId: id, modelSelection, runtimePolicy });
           const mcp = yield* McpSessionRegistry.McpSessionRegistry;
-          const credential = McpProviderSession.readMcpProviderSession(threadId);
+          const credential = yield* mcpSessions.read(threadId);
           assert.isDefined(credential);
           const token = credential!.authorizationHeader.replace(/^Bearer\s+/, "");
           assert.isDefined(yield* mcp.resolve(token));
@@ -137,7 +138,7 @@ it.effect(
           process.kill(Number(native.child.pid), 0);
           assert.isTrue(Option.isNone(yield* manager.get(id)));
           assert.isUndefined(yield* mcp.resolve(token));
-          assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+          assert.isUndefined(yield* mcpSessions.read(threadId));
           assert.isTrue(
             Option.isNone(
               yield* manager.resolveMcpInvocationPolicy({
@@ -192,9 +193,9 @@ const retainedIndependentId = ProviderInstanceId.make("codex-independent");
 
 const runRetainedCloseTest = <E>(
   test: (context: {
-    manager: ProviderSessionManager.ProviderSessionManagerV2Shape;
-    projections: ProjectionStore.ProjectionStoreV2Shape;
-    events: EventSink.EventSinkV2Shape;
+    manager: ProviderSessionManager.ProviderSessionManagerV2["Service"];
+    projections: ProjectionStore.ProjectionStoreV2["Service"];
+    events: EventSink.EventSinkV2["Service"];
     state: Ref.Ref<TestProviderRuntimeState>;
     open: (
       thread: string,
@@ -203,11 +204,12 @@ const runRetainedCloseTest = <E>(
     ) => Effect.Effect<{
       id: ProviderSessionId;
       threadId: ThreadId;
-      runtime: ProviderAdapterV2SessionRuntime;
+      runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
       native: RetainedCloseChild;
     }>;
     auth: Awaited<Effect.Success<typeof makeProviderAuthService>>;
-    registry: McpSessionRegistry.McpSessionRegistryShape;
+    registry: McpSessionRegistry.McpSessionRegistry["Service"];
+    mcpSessions: McpProviderSessions.McpProviderSessions["Service"];
     mutations: string[];
   }) => Effect.Effect<void, E, Scope.Scope>,
   options: {
@@ -221,7 +223,9 @@ const runRetainedCloseTest = <E>(
       const state = yield* Ref.make(emptyState);
       const parent = yield* Effect.scope;
       const children = new Map<ProviderInstanceId, RetainedCloseChild[]>();
-      const adapters = [modelSelection.instanceId, retainedPeerId, retainedIndependentId].map(
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const adapters = yield* Effect.forEach(
+        [modelSelection.instanceId, retainedPeerId, retainedIndependentId],
         (instanceId) => {
           const owned: RetainedCloseChild[] = [];
           children.set(instanceId, owned);
@@ -242,22 +246,7 @@ const runRetainedCloseTest = <E>(
           });
         },
       );
-      const adapterRegistryLayer = Layer.succeed(
-        ProviderAdapterRegistry.ProviderAdapterRegistryV2,
-        {
-          get: (id: ProviderInstanceId) => {
-            const adapter = adapters.find((adapter) => adapter.instanceId === id);
-            return adapter
-              ? Effect.succeed(adapter)
-              : Effect.fail(
-                  new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({
-                    instanceId: id,
-                  }),
-                );
-          },
-          list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
-        },
-      );
+      const adapterRegistryLayer = ProviderAdapterRegistry.layerFromAdapters(adapters);
       const mutations: string[] = [];
       const authState: ProviderAuthState = {
         phase: "idle",
@@ -381,7 +370,17 @@ const runRetainedCloseTest = <E>(
           const native = children.get(instanceId)!.at(-1)!;
           return { id, threadId, runtime, native };
         }, Effect.orDie);
-        yield* test({ manager, projections, events, state, open, auth, registry, mutations }).pipe(
+        yield* test({
+          manager,
+          projections,
+          events,
+          state,
+          open,
+          auth,
+          registry,
+          mcpSessions,
+          mutations,
+        }).pipe(
           Effect.ensuring(
             Effect.gen(function* () {
               yield* options.finishProbe ?? Effect.void;
@@ -397,11 +396,15 @@ const runRetainedCloseTest = <E>(
             state,
             idleTimeoutMs: options.idleTimeoutMs ?? 60000,
             adapterRegistryLayer,
+            mcpProviderSessionsLayer: Layer.succeed(
+              McpProviderSessions.McpProviderSessions,
+              mcpSessions,
+            ),
           }),
         ),
       );
     }),
-  ).pipe(Effect.provide(NodeServices.layer));
+  ).pipe(Effect.provide(McpProviderSessions.layer), Effect.provide(NodeServices.layer));
 
 it.effect(
   "ProviderSessionManagerV2 retained close survives interrupted waiters and joins one actual child close",
@@ -538,7 +541,8 @@ it.effect.each([false, true])(
         const first = yield* ctx.open(`retained-timeout-${lateFailure}`);
         yield* Ref.set(first.native.fail, lateFailure);
         const registry = ctx.registry;
-        const credential = McpProviderSession.readMcpProviderSession(first.threadId)!;
+        const mcpSessions = ctx.mcpSessions;
+        const credential = (yield* mcpSessions.read(first.threadId))!;
         const token = credential.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.isDefined(yield* registry.resolve(token));
         const released = yield* ctx.events
@@ -562,7 +566,7 @@ it.effect.each([false, true])(
         );
         assert.lengthOf(yield* Fiber.join(released), 1);
         assert.isUndefined(yield* registry.resolve(token));
-        assert.isUndefined(McpProviderSession.readMcpProviderSession(first.threadId));
+        assert.isUndefined(yield* mcpSessions.read(first.threadId));
         assert.equal(
           (yield* ctx.projections.getThreadProjection(first.threadId)).providerSessions.at(-1)
             ?.status,

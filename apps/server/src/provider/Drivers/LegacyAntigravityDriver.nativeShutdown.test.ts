@@ -22,7 +22,7 @@ import {
   type OrchestrationV2ProviderThread,
   type ChatAttachment,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -44,7 +44,9 @@ import { ChildProcessSpawner } from "effect/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ModelManifest from "../ModelManifest.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
@@ -52,12 +54,12 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderEventIngestor from "../../orchestration-v2/ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../ProviderRegistry.ts";
@@ -69,7 +71,7 @@ import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost
 
 const first = ProviderInstanceId.make("legacy-agy-shutdown-target");
 const second = ProviderInstanceId.make("legacy-agy-shutdown-peer");
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const mockAgentPath = NodePath.join(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../../../scripts/agy-stream-mock.ts",
@@ -114,6 +116,9 @@ const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(ThreadCommandExecutor.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
+  Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -397,7 +402,10 @@ const harness = Effect.fn("LegacyShutdown.harness")(function* () {
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
     Effect.provideService(FileSystem.FileSystem, observedFs),
     Effect.provideService(PtyAdapter, pty),
-    Effect.provideService(ProviderEventLoggers, NoOpProviderEventLoggers),
+    Effect.provideService(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
   );
   const target = yield* registered.registry.getInstance(first);
   const peer = yield* registered.registry.getInstance(second);
@@ -647,14 +655,15 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
         } as const;
         yield* Effect.gen(function* () {
           const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
           configured.observations.isReleased = (id) =>
             manager.get(id).pipe(Effect.map(Option.isNone), Effect.orDie);
           const old = yield* manager.open(target.input);
           const other = yield* manager.open(peer.input);
           expect(old.mcpSessionInjection).toBe(false);
           expect(other.mcpSessionInjection).toBe(false);
-          expect(McpProviderSession.readMcpProviderSession(target.input.threadId)).toBeUndefined();
-          expect(McpProviderSession.readMcpProviderSession(peer.input.threadId)).toBeUndefined();
+          expect(yield* sessions.read(target.input.threadId)).toBeUndefined();
+          expect(yield* sessions.read(peer.input.threadId)).toBeUndefined();
           yield* turn(old, target, 1, [attachment]);
           yield* turn(other, peer, 1, [attachment]);
           const oldThread = yield* old.ensureThread(target.input);
@@ -755,11 +764,12 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
         );
         yield* Effect.gen(function* () {
           const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
           const opening = yield* manager.open(target.input).pipe(Effect.exit, Effect.forkChild);
           yield* Deferred.await(entered);
           expect(h.staging.filter((item) => item.instanceId === first)).toHaveLength(1);
           expect(h.launches).toHaveLength(0);
-          expect(McpProviderSession.readMcpProviderSession(target.input.threadId)).toBeUndefined();
+          expect(yield* sessions.read(target.input.threadId)).toBeUndefined();
           yield* h.target.connectionActions!.disconnect.pipe(Effect.scoped);
           yield* Deferred.succeed(gate, undefined);
           expect(Exit.isFailure(yield* Fiber.join(opening))).toBe(true);
@@ -767,7 +777,7 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           expect(h.launches).toHaveLength(0);
           expect(yield* h.readRequests(first)).toEqual([]);
           expect(Option.isNone(yield* manager.get(target.input.providerSessionId))).toBe(true);
-          expect(McpProviderSession.readMcpProviderSession(target.input.threadId)).toBeUndefined();
+          expect(yield* sessions.read(target.input.threadId)).toBeUndefined();
           expect(yield* h.fs.exists(h.accounts.get(first)!)).toBe(false);
         }).pipe(Effect.provide(configured.layer), Effect.scoped);
       }).pipe(Effect.scoped),

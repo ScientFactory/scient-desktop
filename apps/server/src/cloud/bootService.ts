@@ -1,8 +1,4 @@
-import {
-  HostProcessExecutablePath,
-  HostProcessPlatform,
-  HostProcessUserId,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -13,7 +9,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { HttpClient } from "effect/http";
 import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -98,13 +93,22 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
     "KillMode=mixed",
-    // Agent tool calls run as children of the server, so they share this cgroup.
-    // With the systemd default of OOMPolicy=stop, the kernel killing one greedy
-    // child stops the whole unit: the server, every live agent, and the user's
-    // connection. Keep running and let Restart=always cover the main process.
+    // Agents and terminals run in their own scopes in a sibling app.slice slice
+    // (see process/agentScope.ts). Short helper commands still share this
+    // cgroup, and with the systemd default of OOMPolicy=stop, the kernel
+    // killing one of them stops the whole unit. Keep running and let
+    // Restart=always cover the main process.
     "OOMPolicy=continue",
     "Restart=always",
     "RestartSec=5",
+    // The agents slice is a sibling in app.slice, so these weights keep the
+    // server responsive while agents saturate CPU or disk.
+    "CPUWeight=1000",
+    "IOWeight=1000",
+    // systemd-oomd only honors this when the cgroup it watches is owned by the
+    // same user. Distros watch user-1000.slice, which root owns, so there it is
+    // ignored. The agent scopes are what keep oomd off the server.
+    "ManagedOOMPreference=avoid",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,
     `StandardError=append:${escapeSystemdSpecifiers(plan.logPath)}`,
     "",
@@ -530,9 +534,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
 }) {
-  const hostExecPath = yield* HostProcessExecutablePath;
-  const platform = yield* HostProcessPlatform;
-  const uid = yield* HostProcessUserId;
+  const hostExecPath = yield* HostProcess.ExecutablePath;
+  const platform = yield* HostProcess.Platform;
+  const uid = yield* HostProcess.UserId;
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;

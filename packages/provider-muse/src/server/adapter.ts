@@ -22,6 +22,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -43,6 +44,7 @@ import {
   type RuntimeInstructionsInput,
   // SCIENT-FORK:END
 } from "@t3tools/provider-core/server/runtimeInstructions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import {
   MuseApproval,
@@ -79,7 +81,7 @@ import {
   backgroundWorkNotification,
   type BackgroundWorkReport,
 } from "@t3tools/provider-core/server/notification";
-import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { museItemStatus, museToolPresentation } from "./itemPresentation.ts";
@@ -257,6 +259,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const providerHost = yield* ProviderHost.ProviderHost;
   const fileSystem = yield* FileSystem.FileSystem;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const agentScope = yield* AgentScope;
 
   const protocolError = (detail: string, payload?: unknown) =>
     new ProviderAdapter.ProviderAdapterProtocolError({
@@ -1378,19 +1382,26 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const epoch = ++hostEpoch;
         // SCIENT-FORK:START — explicit MCP opt-out also withholds device environment authority.
         const mcpSession =
-          input.configureMcp === false
-            ? undefined
-            : McpProviderSession.readMcpProviderSession(input.threadId);
+          input.configureMcp === false ? undefined : yield* mcpSessions.read(input.threadId);
         // SCIENT-FORK:END
+        const environment = McpProviderSession.withAgentDeviceEnvironment(
+          options.environment,
+          mcpSession,
+        );
+        const launch = yield* agentScope.wrap({
+          command: options.settings.binaryPath || "muse",
+          args: [],
+          name: "muse",
+          threadId: input.threadId,
+          env: environment,
+        });
         const created = yield* Effect.acquireRelease(
           createMuseSdkHostEffect(
             {
-              binaryPath: options.settings.binaryPath || "muse",
+              binaryPath: launch.command,
+              launchArgs: launch.args,
               cwd,
-              environment: McpProviderSession.withAgentDeviceEnvironment(
-                options.environment,
-                mcpSession,
-              ),
+              environment,
               runtimeMode: input.runtimePolicy.runtimeMode,
             },
             options.createHost,
@@ -1497,9 +1508,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           nativeSessionId = requestedId ?? host.connection.mintCommandId();
           // SCIENT-FORK:START — session configuration follows the host's explicit MCP opt-out.
           const mcpSession =
-            input.configureMcp === false
-              ? undefined
-              : McpProviderSession.readMcpProviderSession(args.threadId);
+            input.configureMcp === false ? undefined : yield* mcpSessions.read(args.threadId);
           // SCIENT-FORK:END
           if (mcpSession && !host.initializeResult.grantedCapabilities.includes("sessionMcp"))
             return yield* protocolError(

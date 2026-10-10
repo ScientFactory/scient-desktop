@@ -25,12 +25,15 @@ const remove = (env: NodeJS.ProcessEnv, name: string): void => {
  * internals, the instance environment on top, loopback exempt from any proxy),
  * then without the session directory Scient sets per process. Scient adds
  * nothing back: its generated extensions receive their secrets in bootstrap
- * files (`OmpExtensionBootstrap`), never here. An instance home or profile
- * replaces its inherited counterparts, so OMP's own precedence (a named
- * profile beats the agent directory) cannot silently override the instance
- * setting. OMP spawns never merge the server's environment (`extendEnv: false`).
+ * files (`OmpExtensionBootstrap`), never here. An instance home is expanded
+ * against the caller's host home directory, not the child environment's HOME.
+ * An instance home or profile replaces its inherited counterparts, so OMP's
+ * own precedence (a named profile beats the agent directory) cannot silently
+ * override the instance setting. OMP spawns never merge the server's environment
+ * (`extendEnv: false`).
  */
 export const ompProcessEnvironment = (input: {
+  readonly homeDirectory: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly instanceEnvironment?: ProviderInstanceEnvironment | undefined;
   readonly homePath?: string | undefined;
@@ -49,7 +52,7 @@ export const ompProcessEnvironment = (input: {
     remove(env, OMP_PROFILE_ENV);
     remove(env, OMP_LEGACY_PROFILE_ENV);
     remove(env, OMP_AGENT_DIR_ENV);
-    env[OMP_AGENT_DIR_ENV] = expandHomePath(home);
+    env[OMP_AGENT_DIR_ENV] = expandHomePath(home, input.homeDirectory);
   } else if (profile) {
     remove(env, OMP_LEGACY_PROFILE_ENV);
     remove(env, OMP_AGENT_DIR_ENV);

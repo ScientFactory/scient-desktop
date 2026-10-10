@@ -21,8 +21,6 @@ export class ProviderInstanceNotFoundError extends Schema.TaggedError<ProviderIn
   }
 }
 
-export { ProviderDriverError } from "@t3tools/provider-core/server/errors";
-
 /**
  * ProviderWorkspaceMissingError - The session's working directory no longer
  * exists on disk, so no provider process can start in it.

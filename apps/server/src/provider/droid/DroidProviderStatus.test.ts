@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import { makeDroidProviderStatus } from "./DroidProviderStatus.ts";
 
 const snapshot = (overrides: Partial<ServerProvider> = {}): ServerProvider =>
@@ -31,7 +31,7 @@ const fixture = (initial: ServerProvider, versions: Array<Option.Option<string |
   let fullProbes = 0;
   let versionChecks = 0;
   let lastVersion: Option.Option<string | null> = Option.none();
-  const provider: ServerProviderShape = {
+  const provider: ManagedServerProvider = {
     resolveMaintenance: () => Effect.die("unused"),
     applyUsageLimits: () => Effect.void,
     getSnapshot: Effect.sync(() => current),

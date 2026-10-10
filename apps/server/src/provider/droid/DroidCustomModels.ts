@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The pure custom-model ID fingerprint retains its persisted identity.
 import * as NodeCrypto from "node:crypto";
 import { customModelImageInput, droidAdaptiveClaudeLevels } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { preferredReasoningLevel } from "@t3tools/shared/model";
 import type {
   CustomModel,
@@ -354,7 +354,7 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const runBudgetStore = makeDroidRunBudgetStore();
   const readPolicy: ReadDroidOrgHookPolicy =
     readOrgHookPolicy ?? ((input) => readDroidOrgHookPolicy({ ...input, platform }));

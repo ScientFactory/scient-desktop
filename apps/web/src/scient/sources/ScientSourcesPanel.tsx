@@ -120,7 +120,7 @@ export function MetadataReviewIndicator(props: {
         render={
           <button
             type="button"
-            className="rounded-full text-amber-600 outline-none hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-ring dark:text-amber-400 dark:hover:text-amber-300"
+            className="rounded-full text-amber-600 outline-none hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:text-amber-400 dark:hover:text-amber-300"
             aria-label="Metadata needs review"
             onClick={(event) => {
               event.stopPropagation();
@@ -1155,7 +1155,7 @@ export function ScientSourcesPanel(props: {
                       render={
                         <button
                           type="button"
-                          className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                           onClick={() => openSourceDetails(record.sourceId)}
                         >
                           <SourceJournalIcon

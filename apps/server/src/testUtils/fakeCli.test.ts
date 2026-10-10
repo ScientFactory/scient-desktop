@@ -3,11 +3,11 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { expect, it } from "vite-plus/test";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 
-it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "runs a quoted fixture path without ambient PATH",
   () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fake cli's fixture-"));

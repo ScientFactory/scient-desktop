@@ -34,7 +34,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { customModelSecretName } from "./customModels.ts";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -631,7 +631,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         customModelSecretName(saved.connections[0]!.credentialId!) +
         ".bin";
       const stat = yield* fs.stat(keyFile);
-      if ((yield* HostProcessPlatform) !== "win32") assert.equal(stat.mode & 0o777, 0o600);
+      if ((yield* HostProcess.Platform) !== "win32") assert.equal(stat.mode & 0o777, 0o600);
       yield* service.updateSettings({ enableProviderUpdateChecks: false });
       assert.deepEqual((yield* service.getSettings).customModels, saved);
       yield* service.removeCustomModel({ revision: 1, connectionId: "fixture" });

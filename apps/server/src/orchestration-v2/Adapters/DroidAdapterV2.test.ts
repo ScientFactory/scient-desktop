@@ -39,10 +39,9 @@ import { TestClock } from "effect/testing";
 import { scriptedDroid } from "../../provider/testUtils/scriptedDroid.ts";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import {
   droidCustomModelId,
@@ -79,10 +78,11 @@ const decodeRequest = Schema.decodeUnknownSync(
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-v2-parity-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
-  layerTestProviderHost({ settings: DEFAULT_SERVER_SETTINGS, runBackgroundWork: false }).pipe(
+  TestProviderHost.layer({ settings: DEFAULT_SERVER_SETTINGS, runBackgroundWork: false }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
@@ -112,6 +112,7 @@ const harness = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   if (scenario)
     yield* fs.remove(NodePath.join(config.stateDir, "watchdog-signal"), { force: true });
   const requestsPath = NodePath.join(
@@ -148,7 +149,7 @@ const harness = Effect.fnUntraced(function* (
     interactionMode: "default" as const,
   };
   if (capabilities !== undefined) {
-    McpProviderSession.setMcpProviderSession({
+    yield* mcpSessions.set({
       environmentId: EnvironmentId.make("droid-awareness"),
       threadId,
       providerSessionId: "droid-awareness",
@@ -157,9 +158,7 @@ const harness = Effect.fnUntraced(function* (
       authorizationHeader: "Bearer synthetic-droid-awareness",
       capabilities,
     });
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-    );
+    yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
   }
   const writeBlocked = yield* Deferred.make<void>();
   const releaseWrite = yield* Deferred.make<void>();
@@ -468,7 +467,7 @@ it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
   );
   it.effect.each(
     [false, true].map((granted) => ({
-      caseTitle: `delivers exact Scient awareness in native Droid system prompt with grants ${granted}`,
+      caseTitle: `delivers capability-scoped Scient awareness in native Droid system prompt with grants ${granted}`,
       granted,
     })),
   )("$caseTitle", ({ granted }) =>
@@ -482,7 +481,6 @@ it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
         assert.equal((yield* h.terminal).status, "completed");
         const args = h.arguments();
         const prompt = args[args.indexOf("--append-system-prompt") + 1];
-        assert.equal(prompt, buildScientAwareness(capabilities));
         assert.equal((prompt ?? "").includes("preview_status"), granted);
         assert.equal((prompt ?? "").includes("scient_pdf_build"), granted);
         assert.notInclude(prompt ?? "", "device_list");

@@ -6,9 +6,9 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   createProviderVersionAdvisory,
-  ProviderVersionCache,
   type ProviderMaintenanceResolutionContext,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import { droidMaintenance, piMaintenance, withDroidReleaseVersion } from "./piDroidMaintenance.ts";
@@ -115,7 +115,7 @@ it.layer(NodeServices.layer)("Pi/Droid maintenance", (it) => {
         expect(requests).toBe(1);
       }).pipe(
         Effect.provideService(HttpClient.HttpClient, client),
-        Effect.provideService(ProviderVersionCache, new Map()),
+        Effect.provide(ProviderLatestVersions.layer),
       );
     }),
   );
@@ -131,7 +131,7 @@ it.layer(NodeServices.layer)("Pi/Droid maintenance", (it) => {
             ),
           ),
         ),
-        Effect.provideService(ProviderVersionCache, new Map()),
+        Effect.provide(ProviderLatestVersions.layer),
       );
       expect(result.latestVersion).toBeNull();
       expect(result.update).toEqual(capabilities.update);

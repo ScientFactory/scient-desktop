@@ -27,12 +27,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
@@ -46,7 +47,7 @@ export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEven
   {
     providerSessionId: ProviderSessionId,
     threadId: ThreadId,
-    providerEvent: ProviderAdapterV2Event,
+    providerEvent: ProviderAdapter.ProviderAdapterV2Event,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -98,7 +99,7 @@ export const layerAnalytics = Layer.effect(
 );
 
 function providerTurnAnalyticsProperties(input: {
-  readonly driver: ProviderAdapterV2Event["driver"];
+  readonly driver: ProviderAdapter.ProviderAdapterV2Event["driver"];
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly context?: ProviderTurnAnalyticsContext;
 }): Readonly<Record<string, unknown>> {
@@ -262,7 +263,7 @@ export interface ProviderEventIngestInput {
   readonly runId?: RunId;
   readonly nodeId?: NodeId;
   readonly rawEventId?: RawEventId;
-  readonly event: ProviderAdapterV2Event;
+  readonly event: ProviderAdapter.ProviderAdapterV2Event;
   readonly analyticsContext?: ProviderTurnAnalyticsContext;
 }
 
@@ -323,6 +324,7 @@ export const layer: Layer.Layer<
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const analytics = yield* ProviderTurnAnalytics;
     const reconciliation = yield* AttachmentReservationReconciliation;
+    const agentScope = yield* AgentScope;
     const completedTurnAnalytics = new Set<string>();
 
     const makeDomainEvent = (
@@ -672,12 +674,16 @@ export const layer: Layer.Layer<
               return dismissed;
             }
             const occurredAt = yield* DateTime.now;
+            // A turn that failed because systemd killed the agent's scope for
+            // memory would otherwise read as a plain provider crash.
+            const failure = (yield* agentScope.oomKilled(input.threadId))
+              ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
+              : input.event.failure;
             return [
               ...dismissed,
               yield* makeDomainEvent(input, {
                 type: "turn-item.updated",
                 payload: makeProviderFailureTurnItem({
-                  idAllocator,
                   driver: input.event.driver,
                   threadId: input.threadId,
                   runId: input.runId ?? null,
@@ -685,7 +691,7 @@ export const layer: Layer.Layer<
                   providerThreadId: input.event.providerThreadId,
                   providerTurnId: input.event.providerTurnId,
                   itemOrdinal: input.event.failureItemOrdinal,
-                  failure: input.event.failure,
+                  failure,
                   ...(input.event.retry === undefined ? {} : { retry: input.event.retry }),
                   ...(input.event.retryStartedAt === undefined
                     ? {}

@@ -5,9 +5,11 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
@@ -91,7 +93,10 @@ const observe = Effect.fnUntraced(function* (
 });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  effect.pipe(
+    Effect.scoped,
+    Effect.provide(Layer.mergeAll(NodeServices.layer, McpProviderSessions.layer)),
+  );
 
 describe("native OMP lifecycle", () => {
   it.live("Stops an accepted native OMP prompt before agent_start exactly once", () =>

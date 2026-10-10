@@ -23,7 +23,7 @@ import {
   ThreadId,
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isLoopbackHost, LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -40,7 +40,9 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+// SCIENT-FORK:START compute-endpoint-authority
 import { OwnedLocalEndpointRegistry } from "../localEndpoints/OwnedLocalEndpointRegistry.ts";
+// SCIENT-FORK:END compute-endpoint-authority
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -208,14 +210,20 @@ const parseLsofOutput = (
       if (portMatch == null) continue;
       const url = `http://localhost:${portMatch}`;
       const key = `localhost:${portMatch}`;
-      if (seen.has(key)) continue;
+      const terminal = pid === null ? null : (terminalByProcessId.get(pid) ?? null);
+      const existing = seen.get(key);
+      // Shared listeners do not provide unambiguous terminal ownership metadata.
+      if (existing) {
+        if (terminal === null) seen.set(key, { ...existing, terminal: null });
+        continue;
+      }
       seen.set(key, {
         host: "localhost",
         port: portMatch,
         url,
         processName,
         pid,
-        terminal: pid === null ? null : (terminalByProcessId.get(pid) ?? null),
+        terminal,
       });
     }
   }
@@ -251,14 +259,20 @@ const parseWindowsListenerOutput = (
     const pid = Number(pidRaw);
     if (!Number.isInteger(port) || port <= 0 || port >= 65536) continue;
     const normalizedPid = Number.isInteger(pid) && pid > 0 ? pid : null;
-    if (seen.has(port)) continue;
+    const terminal =
+      normalizedPid === null ? null : (terminalByProcessId.get(normalizedPid) ?? null);
+    const existing = seen.get(port);
+    if (existing) {
+      if (terminal === null) seen.set(port, { ...existing, terminal: null });
+      continue;
+    }
     seen.set(port, {
       host: "localhost",
       port,
       url: `http://localhost:${port}`,
       processName: processNameRaw?.trim() || null,
       pid: normalizedPid,
-      terminal: normalizedPid === null ? null : (terminalByProcessId.get(normalizedPid) ?? null),
+      terminal,
     });
   }
   return [...seen.values()].toSorted((left, right) => left.port - right.port);
@@ -331,8 +345,10 @@ const isCommandNotFound = (error: ProcessRunner.ProcessSpawnError): boolean =>
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
+  // SCIENT-FORK:START compute-endpoint-authority
   const ownedLocalEndpoints = yield* OwnedLocalEndpointRegistry;
+  // SCIENT-FORK:END compute-endpoint-authority
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -388,7 +404,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   /**
    * Linux listeners from `/proc/net/tcp{,6}`, for hosts without `lsof`. Null
-   * when neither file is readable, so discovery falls back to common ports.
+   * when neither file is readable, so only configured URLs are probed.
    */
   const scanProcListeners = Effect.fn("PortDiscovery.scanProcListeners")(function* (
     terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner>,
@@ -423,15 +439,20 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const seen = new Map<number, DiscoveredLocalServer>();
     for (const { port, inode } of listeners) {
       const owner = owners.get(inode) ?? null;
+      const terminal = owner === null ? null : (terminalByProcessId.get(owner.pid) ?? null);
       const existing = seen.get(port);
-      if (existing && (existing.pid !== null || owner === null)) continue;
+      if (existing && (existing.pid !== null || owner === null)) {
+        if (terminal === null) seen.set(port, { ...existing, terminal: null });
+        continue;
+      }
       seen.set(port, {
         host: "localhost",
         port,
         url: `http://localhost:${port}`,
         processName: owner?.processName ?? null,
         pid: owner?.pid ?? null,
-        terminal: owner === null ? null : (terminalByProcessId.get(owner.pid) ?? null),
+        // A replaced listener had no known owner, so the port stays unowned.
+        terminal: existing ? null : terminal,
       });
     }
     return [...seen.values()].toSorted((left, right) => left.port - right.port);
@@ -440,6 +461,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const probeWebUrl = Effect.fn("PortDiscovery.probeWebUrl")(function* (url: string) {
     const parsed = new URL(url);
     const port = urlPort(parsed);
+    // SCIENT-FORK:START compute-endpoint-authority — hold revocation guard across HTTP traffic.
     const probe = yield* ownedLocalEndpoints.runLoopbackTcpProbe(
       port,
       Effect.gen(function* () {
@@ -476,6 +498,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }),
     );
     return probe._tag === "protected" ? null : probe.value;
+    // SCIENT-FORK:END compute-endpoint-authority
   });
 
   const makeWebProbeGroups = (
@@ -521,9 +544,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const ownershipAtStart = yield* ownedLocalEndpoints.snapshot;
     const cached = yield* Ref.get(webProbeCacheRef);
     const authorizedKeys = new Set(configuredUrls.map(webProbeCacheKey));
+    // SCIENT-FORK:START explicit-url-authority — passive ownership is metadata, not permission.
     const groups = makeWebProbeGroups(servers, configuredUrls).filter(
       (group) => !ownershipAtStart.protectedLoopbackTcpPorts.has(group.server.port),
     );
+    // SCIENT-FORK:END explicit-url-authority
     const getProbe = Effect.fn("PortDiscovery.getProbe")(function* (
       url: string,
       pid: number | null,
@@ -599,10 +624,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const scanUnlocked = Effect.fn("PortDiscovery.scanUnlocked")(function* (
     configuredUrls: ReadonlyArray<string>,
   ) {
+    // SCIENT-FORK:START explicit-url-authority
     // Positive authority: no URL means no traffic, on any platform. In
     // particular, another Scient instance's private sockets cannot be inferred
     // from this backend's in-memory registry. Do not probe unknown listeners.
     if (configuredUrls.length === 0) return yield* probeWebServers([], []);
+    // SCIENT-FORK:END explicit-url-authority
     const state = yield* Ref.get(stateRef);
     const terminalByProcessId = new Map<number, TerminalProcessOwner>();
     for (const registration of state.terminalProcesses.values()) {
@@ -620,7 +647,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           args: ["-NoProfile", "-NonInteractive", "-Command", command],
           timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
           maxOutputBytes: 1024 * 1024,
-          outputMode: "truncate",
         })
         .pipe(
           Effect.map((result) => parseWindowsListenerOutput(result.stdout, terminalByProcessId)),
@@ -645,8 +671,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         command: "lsof",
         args: ["-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn"],
         timeout: Duration.millis(LSOF_TIMEOUT_MS),
+        // Partial output could hide another app's listener on an owned port.
         maxOutputBytes: 1024 * 1024,
-        outputMode: "truncate",
       })
       .pipe(
         Effect.map((result) => parseLsofOutput(result.stdout, terminalByProcessId)),

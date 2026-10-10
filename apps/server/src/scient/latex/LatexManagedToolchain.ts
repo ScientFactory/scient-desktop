@@ -19,11 +19,7 @@ import * as NodeCrypto from "node:crypto";
 
 import type { ScientLatexManagedInstallState } from "@t3tools/contracts";
 import { ScientLatexManagedInstallFailureReason } from "@t3tools/contracts";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -185,9 +181,9 @@ export const make = Effect.gen(function* () {
   const toolchain = yield* LatexToolchain;
   const packageInstaller = yield* LatexPackageInstaller;
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
+  const hostEnvironment = yield* HostProcess.Environment;
   const pathDelimiter = platform === "win32" ? ";" : ":";
   const assetLookup = resolveTinyTexAsset(platform, architecture, manifest);
   const asset = assetLookup.supported ? assetLookup.asset : null;

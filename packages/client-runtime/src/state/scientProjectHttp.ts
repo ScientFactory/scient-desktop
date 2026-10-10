@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -22,7 +22,7 @@ export const inspectEnvironmentScientProject = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/projects/inspect"),
+    url: (urls) => urls.inspect(),
     timeoutMs: input.timeoutMs ?? DEFAULT_SCIENT_PROJECT_REQUEST_TIMEOUT_MS,
     group: "scientProject",
     request: ({ client, headers }) => client.inspect({ headers, payload: { root: input.root } }),
@@ -44,7 +44,7 @@ export const initializeEnvironmentScientProject = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/projects/initialize"),
+    url: (urls) => urls.initialize(),
     timeoutMs: input.timeoutMs ?? DEFAULT_SCIENT_PROJECT_REQUEST_TIMEOUT_MS,
     group: "scientProject",
     request: ({ client, headers }) =>

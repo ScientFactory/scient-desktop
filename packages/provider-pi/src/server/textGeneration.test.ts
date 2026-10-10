@@ -10,6 +10,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { PiRpcCommandError, type PiRpcClient, type PiRpcSpawnOptions } from "./rpcClient.ts";
 import type { PiRpcEvent, PiRpcState, PiThinkingLevel } from "./rpcSchema.ts";

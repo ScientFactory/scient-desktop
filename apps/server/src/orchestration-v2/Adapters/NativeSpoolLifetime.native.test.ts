@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -18,6 +19,7 @@ import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 
 const TestLayer = Layer.mergeAll(
   allocatorLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-spool-manager-" }),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { OMP_ISOLATED_ARGS } from "./OmpRpcProcess.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
@@ -396,7 +397,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             ),
           ).toEqual([]);
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+        ),
+      ),
     120_000,
   );
 
@@ -468,7 +473,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           );
           yield* session.close;
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+        ),
+      ),
     180_000,
   );
 });

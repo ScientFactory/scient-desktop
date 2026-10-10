@@ -8,7 +8,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -19,9 +19,9 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
 import type { AcpAdapterV2ApplicationBridge } from "@t3tools/provider-acp/server/adapter";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
@@ -464,7 +464,7 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
     : snapshot;
 });
 
-export type AcpRegistryDriverEnv = AcpRegistryAdapterV2DriverEnv | ProviderHost;
+export type AcpRegistryDriverEnv = AcpRegistryAdapterV2DriverEnv | ProviderHost.ProviderHost;
 
 export interface AcpRegistryDriverOptions {
   /** App-owned ACP receipt, awareness, and pre-acceptance policy callbacks. */
@@ -508,8 +508,8 @@ export function makeAcpRegistryDriver(
         }
         const crypto = yield* Crypto.Crypto;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const hostEnvironment = yield* HostProcessEnvironment;
-        const host = yield* ProviderHost;
+        const hostEnvironment = yield* HostProcess.Environment;
+        const host = yield* ProviderHost.ProviderHost;
         const continuationIdentity = defaultProviderContinuationIdentity({
           driverKind: DRIVER_KIND,
           instanceId,
@@ -524,7 +524,10 @@ export function makeAcpRegistryDriver(
           // SCIENT-FORK:END
         };
         const effectiveConfig = { ...config, enabled } satisfies AcpRegistrySettings;
-        const processEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);
+        const processEnvironment = yield* mergeProviderInstanceEnvironment(
+          environment,
+          hostEnvironment,
+        );
         const orchestrationAdapter = yield* adapterDriver
           .create({
             instanceId,
@@ -648,7 +651,7 @@ export function makeAcpRegistryDriver(
             }
             return { provider: enriched, generation: cacheState.generation };
           });
-        const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+        const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
         const snapshot = yield* makeManagedServerProvider<
           ProviderSnapshotSettings<AcpRegistrySettings>
         >({

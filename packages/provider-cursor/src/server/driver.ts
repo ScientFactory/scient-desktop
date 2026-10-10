@@ -15,10 +15,10 @@ import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
 import { ChildProcessSpawner } from "effect/process";
 import type * as Scope from "effect/Scope";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeCursorTextGeneration } from "./textGeneration.ts";
@@ -60,20 +60,18 @@ import * as CursorCredentialStore from "./credentialStore.ts";
 import { readCursorUsageLimits } from "./usageLimits.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import * as CursorSdk from "./CursorSdk.ts";
+import * as CursorKeychain from "./CursorKeychain.ts";
+import * as CursorUsageAccounts from "./CursorUsageAccounts.ts";
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
-const DEFAULT_MAINTENANCE = {
-  resolve: () =>
-    Effect.succeed(
-      makeManualOnlyProviderMaintenanceCapabilities({
-        provider: DRIVER_KIND,
-        packageName: null,
-      }),
-    ),
-};
+const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
+  provider: DRIVER_KIND,
+  packageName: null,
+});
 
 export type CursorDriverEnv =
   | CursorAdapterV2DriverEnv
@@ -82,6 +80,8 @@ export type CursorDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
+  | CursorSdk.CursorSdk
+  | CursorKeychain.CursorKeychain
   | ProviderHost.ProviderHost;
 
 export interface CursorRuntimeResolverInput extends ProviderDriverCreateInput<CursorSettings> {
@@ -134,7 +134,11 @@ export interface CursorDriverOptions<Requirements = never, Extension extends obj
 export interface CursorDriverFactory<
   Requirements = never,
   Extension extends object = {},
-> extends ProviderDriver<CursorSettings, CursorDriverEnv | Requirements> {
+> extends ProviderDriver<
+  CursorSettings,
+  CursorDriverEnv | Requirements,
+  CursorUsageAccounts.CursorUsageAccounts
+> {
   readonly create: (
     input: ProviderDriverCreateInput<CursorSettings>,
   ) => Effect.Effect<
@@ -155,6 +159,22 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
     },
     configSchema: CursorSettings,
     defaultConfig: (): CursorSettings => decodeCursorSettings({}),
+    // One account source per environment: the host's Cursor CLI login.
+    usage: {
+      kind: "scan",
+      provider: "cursor",
+      scan: ({ settings, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
+        CursorUsageAccounts.CursorUsageAccounts.pipe(
+          Effect.flatMap((accounts) =>
+            accounts.scan({
+              keychainUsageEnabled: settings.cursorKeychainUsageEnabled,
+              windowStartMs,
+              retentionCutoffMs,
+              awaitRefresh,
+            }),
+          ),
+        ),
+    },
     create: (input) =>
       Effect.gen(function* () {
         const host = yield* ProviderHost.ProviderHost;
@@ -162,10 +182,13 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
         const path = yield* Path.Path;
         const httpClient = yield* HttpClient.HttpClient;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const crypto = yield* Crypto.Crypto;
+        const keychain = yield* CursorKeychain.CursorKeychain;
         const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-        const hostEnvironment = yield* HostProcessEnvironment;
-        const processEnv = mergeProviderInstanceEnvironment(input.environment, hostEnvironment);
+        const hostEnvironment = yield* HostProcess.Environment;
+        const processEnv = yield* mergeProviderInstanceEnvironment(
+          input.environment,
+          hostEnvironment,
+        );
         const runtime: CursorRuntimeResolution<Requirements, Extension> = options.resolveRuntime
           ? yield* options.resolveRuntime({
               ...input,
@@ -357,27 +380,26 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(CursorKeychain.CursorKeychain, keychain),
           Effect.map(stampSnapshot),
           Effect.provide(CursorSdkCatalog.layer),
         );
 
-        const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-          resolveProviderMaintenanceCapabilitiesEffect(
-            runtime.maintenanceResolver ?? DEFAULT_MAINTENANCE,
-            {
-              ...(effectiveConfig.binaryPath === undefined
-                ? {}
-                : { binaryPath: effectiveConfig.binaryPath }),
-              env: effectiveEnvironment,
-            },
-          ).pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
-          ),
-        );
-        const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+        const resolveMaintenance = runtime.maintenanceResolver
+          ? yield* makeCachedProviderMaintenanceResolution(
+              resolveProviderMaintenanceCapabilitiesEffect(runtime.maintenanceResolver, {
+                ...(effectiveConfig.binaryPath === undefined
+                  ? {}
+                  : { binaryPath: effectiveConfig.binaryPath }),
+                env: effectiveEnvironment,
+              }).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              ),
+            )
+          : () => Effect.succeed(MAINTENANCE_CAPABILITIES);
+        const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
         const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CursorSettings>>(
           {
             resolveMaintenance,

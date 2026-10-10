@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -37,7 +37,7 @@ export const listEnvironmentScientThreadQueue = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/list"),
+    url: (urls) => urls.list(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientThreadQueue",
     request: ({ client, headers }) =>
@@ -70,8 +70,7 @@ export const enqueueEnvironmentScientThreadQueueItem = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/enqueue"),
+    url: (urls) => urls.enqueue(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientThreadQueue",
     request: ({ client, headers }) =>
@@ -104,7 +103,7 @@ export const removeEnvironmentScientThreadQueueItem = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/remove"),
+    url: (urls) => urls.remove(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientThreadQueue",
     request: ({ client, headers }) =>
@@ -135,7 +134,7 @@ export const updateEnvironmentScientThreadQueueItem = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/update"),
+    url: (urls) => urls.update(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientThreadQueue",
     request: ({ client, headers }) =>
@@ -169,8 +168,7 @@ export const reorderEnvironmentScientThreadQueue = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/reorder"),
+    url: (urls) => urls.reorder(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientThreadQueue",
     request: ({ client, headers }) =>
@@ -194,8 +192,7 @@ export const controlEnvironmentScientThreadQueue = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/control"),
+    url: (urls) => urls.control(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientThreadQueue",
     request: ({ client, headers }) =>

@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   makeWakeHarness,
   makeResultFrame,
@@ -53,7 +54,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(turns.at(-1)?.nativeAcceptance, "unknown");
         assert.isTrue(turns.every((turn) => turn.acceptedAt === undefined));
         assert.lengthOf(h.offeredMessages, 1);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   it.effect.each([
@@ -196,7 +201,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             "owned child replay projection",
           );
         }
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -315,7 +324,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
         for (const item of latest.values()) assert.notInclude(item.text, "secret-signature");
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   for (const terminalReason of ["aborted_tools", "aborted_streaming"] as const) {
@@ -389,7 +403,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             );
           }
           assert.lengthOf(harness.terminalEvents(), 1);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
     );
   }
@@ -450,7 +468,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect(
@@ -522,6 +545,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             cacheCreationTokens: 0,
           });
         }
-      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 });

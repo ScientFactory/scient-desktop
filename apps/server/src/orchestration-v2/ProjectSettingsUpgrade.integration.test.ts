@@ -1,6 +1,7 @@
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { assert, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -160,6 +161,7 @@ const makeRuntimeLayer = (dbPath: string) => {
       }),
     ),
     Layer.provide(McpSessionRegistryTestkit.layer),
+    Layer.provide(McpProviderSessions.layer),
     Layer.provideMerge(SqlitePersistence.layerFromPath(dbPath)),
     Layer.provide(layerCheckpointStore),
     Layer.provide(layerServerConfig),

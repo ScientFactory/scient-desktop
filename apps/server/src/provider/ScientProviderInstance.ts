@@ -27,7 +27,10 @@ export interface ScientProviderInstance extends ProviderInstance {
 }
 
 /** Driver SPI for server-owned implementations that expose Scient actions. */
-export type ScientProviderDriver<Config, R = never> = Omit<ProviderDriver<Config, R>, "create"> & {
+export type ScientProviderDriver<Config, R = never, UsageR = never> = Omit<
+  ProviderDriver<Config, R, UsageR>,
+  "create"
+> & {
   readonly create: (
     input: ProviderDriverCreateInput<Config>,
   ) => Effect.Effect<ScientProviderInstance, ProviderDriverError, R | Scope.Scope>;

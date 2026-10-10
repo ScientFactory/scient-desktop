@@ -24,6 +24,7 @@ import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makePiAdapterV2, type PiAdapterV2Options } from "@t3tools/provider-pi/testing";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 export const binary = process.env.SCIENT_PI_TEST_BINARY;
 export const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -33,6 +34,7 @@ export const decodeRecord = Schema.decodeUnknownSync(
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-pi-real-v2-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),

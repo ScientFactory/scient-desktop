@@ -15,7 +15,7 @@ import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -66,7 +66,7 @@ const resolveGrokRuntime = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const processEnvironment = mergeProviderInstanceEnvironment(
+    const processEnvironment = yield* mergeProviderInstanceEnvironment(
       input.environment,
       input.hostEnvironment,
     );
@@ -161,8 +161,8 @@ export const AcpRegistryDriver = {
   create: (input) =>
     Effect.gen(function* () {
       const host = yield* ProviderHost;
-      const hostEnvironment = yield* HostProcessEnvironment;
-      const processEnvironment = mergeProviderInstanceEnvironment(
+      const hostEnvironment = yield* HostProcess.Environment;
+      const processEnvironment = yield* mergeProviderInstanceEnvironment(
         input.environment,
         hostEnvironment,
       );

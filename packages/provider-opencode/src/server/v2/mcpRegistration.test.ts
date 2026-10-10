@@ -2,14 +2,15 @@ import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { mcpRegistrationForOpenCode2Turn } from "./mcpRegistration.ts";
 
 const threadId = ThreadId.make("thread:opencode2-mcp-registration");
 
-it.effect("does not read or register a valid thread credential when the session disables MCP", () =>
+it.effect("does not register a valid thread credential when the session disables MCP", () =>
   Effect.gen(function* () {
-    McpProviderSession.setMcpProviderSession({
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    yield* mcpSessions.set({
       environmentId: EnvironmentId.make("environment:opencode2-mcp-registration"),
       threadId,
       providerSessionId: ProviderSessionId.make("session:opencode2-mcp-registration"),
@@ -18,27 +19,26 @@ it.effect("does not read or register a valid thread credential when the session 
       authorizationHeader: "Bearer valid-thread-credential",
       capabilities: new Set(["skills:read"]),
     });
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-    );
+    yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
 
     assert.isUndefined(
       mcpRegistrationForOpenCode2Turn({
         configureMcp: false,
-        threadId,
+        session: yield* mcpSessions.read(threadId),
         external: false,
         name: "scient-thread",
         directory: "/workspace",
       }),
     );
-  }),
+  }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
 it.effect(
   "uses the credential for an enabled local session and never injects it into external servers",
   () =>
     Effect.gen(function* () {
-      McpProviderSession.setMcpProviderSession({
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
         environmentId: EnvironmentId.make("environment:opencode2-mcp-registration"),
         threadId,
         providerSessionId: ProviderSessionId.make("session:opencode2-mcp-registration"),
@@ -47,13 +47,11 @@ it.effect(
         authorizationHeader: "Bearer valid-thread-credential",
         capabilities: new Set(["skills:read"]),
       });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-      );
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
 
       const registration = mcpRegistrationForOpenCode2Turn({
         configureMcp: true,
-        threadId,
+        session: yield* mcpSessions.read(threadId),
         external: false,
         name: "scient-thread",
         directory: "/workspace",
@@ -68,11 +66,11 @@ it.effect(
       assert.isUndefined(
         mcpRegistrationForOpenCode2Turn({
           configureMcp: true,
-          threadId,
+          session: yield* mcpSessions.read(threadId),
           external: true,
           name: "scient-thread",
           directory: "/workspace",
         }),
       );
-    }),
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
 );

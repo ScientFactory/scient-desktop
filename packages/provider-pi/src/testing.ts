@@ -15,3 +15,4 @@ export {
   type PiRpcSpawnOptions,
 } from "./server/rpc.ts";
 export { makePiMcpExtensionSource } from "./server/mcpExtensionSource.ts";
+export { piInstanceStateRoot } from "./server/sessionFile.ts";

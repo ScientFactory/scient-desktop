@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type ExecutionProcessPort } from "@scientfactory/execution";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -259,7 +259,7 @@ describe("MATLAB Engine host inspection", () => {
       }));
       const inspect = yield* makeMatlabEngineInspector().pipe(
         Effect.provideService(ExecutionProcess, processes.port),
-        Effect.provideService(HostProcessEnvironment, {
+        Effect.provideService(HostProcess.Environment, {
           PATH: "/usr/bin",
           GH_TOKEN: "must-not-reach-runtime",
         }),
@@ -298,7 +298,7 @@ describe("MATLAB Engine host inspection", () => {
       }));
       const inspect = yield* makeMatlabEngineInspector().pipe(
         Effect.provideService(ExecutionProcess, processes.port),
-        Effect.provideService(HostProcessEnvironment, { PATH: "/usr/bin" }),
+        Effect.provideService(HostProcess.Environment, { PATH: "/usr/bin" }),
       );
 
       const failure = yield* Effect.flip(inspect(installation.executable));
@@ -315,7 +315,7 @@ describe("MATLAB Engine host inspection", () => {
       }));
       const inspect = yield* makeMatlabEngineInspector().pipe(
         Effect.provideService(ExecutionProcess, processes.port),
-        Effect.provideService(HostProcessEnvironment, { PATH: "/usr/bin" }),
+        Effect.provideService(HostProcess.Environment, { PATH: "/usr/bin" }),
       );
 
       const failure = yield* Effect.flip(inspect(installation.executable));

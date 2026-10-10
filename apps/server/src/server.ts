@@ -1,5 +1,6 @@
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
@@ -28,8 +29,8 @@ import { wordDiagramRequestBodyLayer } from "./scient/pandoc/wordDiagramBodyLimi
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
+import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
-import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -41,20 +42,18 @@ import { launchV2AnalyticsEventObservers } from "./telemetry/AnalyticsEventObser
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ResetCreditCoordinator from "./provider/resetCreditCoordinator.ts";
-import * as ProviderEventLoggers from "./provider/ProviderEventLoggers.ts";
 import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import * as OmpExecutableGate from "./provider/omp/OmpExecutableGate.ts";
+import * as EventNdjsonLogger from "./provider/EventNdjsonLogger.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ProviderHostLive from "./provider/ProviderHostLive.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
-import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
-import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
-import * as GitHubApi from "./sourceControl/GitHubApi.ts";
-import * as GitLabCli from "./sourceControl/GitLabCli.ts";
-import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
+import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -105,7 +104,7 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
-import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as Observability from "./observability/Observability.ts";
@@ -156,7 +155,10 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
-import * as CursorUsageReader from "./usage/cursorUsageReader.ts";
+import * as AntigravityUsage from "./provider/Drivers/AntigravityUsage.ts";
+import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
+import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
+import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -220,6 +222,29 @@ const layerPtyAdapter = Layer.unwrap(
     }
   }),
 );
+// One rotating store behind both logger views, so driver instances never race
+// its rotation. Diagnostics must not block startup: a store that cannot open
+// degrades to the no-op loggers.
+const layerProviderEventLoggers = Layer.effect(
+  ProviderEventLoggers.ProviderEventLoggers,
+  Effect.gen(function* () {
+    const { providerEventLogPath } = yield* ServerConfig.ServerConfig;
+    const attribution = yield* ResourceAttribution.ResourceAttribution;
+    const store = yield* EventNdjsonLogger.makeEventNdjsonLogStore(providerEventLogPath, {
+      attribution,
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(error.message, { error }).pipe(
+          Effect.annotateLogs({ scope: "provider-observability" }),
+          Effect.as(undefined),
+        ),
+      ),
+    );
+    if (!store) return ProviderEventLoggers.NoOpProviderEventLoggers;
+    yield* Effect.addFinalizer(() => store.close());
+    return { native: store.logger("native"), canonical: store.logger("canonical") };
+  }),
+);
 
 const layerServerSettings = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
@@ -255,8 +280,20 @@ const layerBackground = BackgroundPolicy.layer.pipe(
 );
 
 const layerUsage = UsageService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      AntigravityUsage.layer,
+      CursorUsageAccounts.layer.pipe(
+        Layer.provide(
+          Layer.effect(
+            CursorAccountReader.CursorAccountReader,
+            CursorAccountReader.make({ productName: "Scient" }),
+          ).pipe(Layer.provide(CursorKeychain.layer)),
+        ),
+      ),
+    ).pipe(Layer.provide(ProviderHostLive.layer.pipe(Layer.provide(ServerSecretStore.layer)))),
+  ),
   Layer.provide(layerServerSettings),
-  Layer.provide(CursorUsageReader.layer),
 );
 
 const layerResourceDiagnostics = Layer.mergeAll(
@@ -337,15 +374,7 @@ const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.l
 const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer));
 
 const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      AzureDevOpsCli.layer,
-      BitbucketApi.layer,
-      GitHubApi.layerWithDependencies,
-      GitLabCli.layer,
-      ForgejoCli.layer,
-    ),
-  ),
+  Layer.provideMerge(SourceControlBuiltInDrivers.layer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(layerVcsDriverRegistry),
 );
@@ -355,32 +384,21 @@ const layerRepositoryIdentityResolver = Layer.effect(
   Effect.gen(function* () {
     const registry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
     return yield* RepositoryIdentityResolver.make({
+      // Each host that can refine an identity gets a turn; the first one that changes it wins.
       refine: Effect.fn(function* (identity: RepositoryIdentity) {
-        const remote = ForgejoCli.parseForgejoRemote(identity.locator.remoteUrl);
-        if (
-          !remote ||
-          !identity.rootPath ||
-          (identity.provider !== undefined &&
-            identity.provider !== "unknown" &&
-            identity.provider !== "forgejo")
-        )
-          return identity;
-        const handle = yield* registry.resolveHandle({
-          cwd: identity.rootPath,
-          context: {
-            provider: { kind: "unknown", name: "Unknown", baseUrl: "" },
-            remoteName: identity.locator.remoteName,
-            remoteUrl: identity.locator.remoteUrl,
-          },
-        });
-        if (handle.context?.provider.kind !== "forgejo") return identity;
-        const baseUrl = handle.context.provider.baseUrl.replace(/\/+$/, "");
-        const basePath = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
-        const path =
-          !remote.ssh && basePath && remote.path.startsWith(`${basePath}/`)
-            ? remote.path.slice(basePath.length + 1)
-            : remote.path;
-        return { ...identity, provider: "forgejo", webUrl: `${baseUrl}/${path}` };
+        for (const kind of SourceControlBuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS.map(
+          (driver) => driver.kind,
+        )) {
+          const provider = yield* registry.get(kind);
+          if (provider.refineRepositoryIdentity === undefined) continue;
+          const refined = yield* provider.refineRepositoryIdentity({
+            identity,
+            resolveContext: (input) =>
+              registry.resolveHandle(input).pipe(Effect.map((handle) => handle.context)),
+          });
+          if (refined !== identity) return refined;
+        }
+        return identity;
       }),
     });
   }),
@@ -609,9 +627,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
-  Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
-    Layer.provide(ProjectionStoreV2.layer),
-  ),
+  StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   layerThreadPullRequestWorker,
   Layer.effectDiscard(
     Effect.gen(function* () {
@@ -645,9 +661,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(ScientSkillsLayerLive),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(layerServerSettings),
-  // The asset route uses the registry's GitHub credential for private PR media.
+  // The asset route uses the registry's GitHub credential for private PR media, which the
+  // built-in drivers' layer provides alongside the registry.
   Layer.provideMerge(layerSourceControlProviderRegistry),
-  Layer.provideMerge(GitHubApi.layerWithDependencies),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
@@ -676,23 +692,16 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // Search, prepare, status inspection, and turn launch share one registry
   // cache so every client and provider instance sees the same prepared agents.
   Layer.provideMerge(AcpRegistrySupport.layerFromHost.pipe(Layer.provide(ProviderHostLive.layer))),
-  // Shared native/canonical NDJSON writers used by both the per-instance
-  // V2 drivers and the orchestration runtime. Provide resource attribution so
-  // the rewritten telemetry pipeline can account for logical NDJSON writes.
-  // Provided once at the runtime level so every consumer sees the same
-  // logger instances.
-  // Repo-owned remote data is process-scoped: model classification and
-  // qualified managed-runtime releases refresh independently of any one
-  // provider instance or request lifetime.
+  // Process-scoped catalogs and loggers are shared by every driver and runtime.
   Layer.provideMerge(
     Layer.mergeAll(
-      ProviderEventLoggers.layer,
-      ModelManifest.layer,
+      layerProviderEventLoggers,
+      ModelManifest.layerModelCatalog.pipe(Layer.provideMerge(ModelManifest.layer)),
       ManagedRuntimeCatalog.layer,
-      // One Oh My Pi executable gate per server: every OMP process and every
-      // managed OMP activation reserves its executable here.
       OmpExecutableGate.layer,
       ResetCreditCoordinator.layer,
+      ProviderLatestVersions.layer,
+      McpProviderSessions.layer,
     ),
   ),
   // Catalog publication is independent from provider construction. Project
@@ -735,9 +744,11 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 
 const layerRuntimeBaseDependencies = layerRuntimeCoreDependencies.pipe(
   // Misc.
+  // Usage reads provider history through the ProviderHost, which needs the
+  // background policy below it.
+  Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
-  Layer.provideMerge(layerUsage),
   Layer.provideMerge(TraceDiagnostics.layer),
   // Scient's first-party analytics runtime is disabled by default. Activation
   // remains a separately reviewed product/privacy decision.
@@ -840,7 +851,7 @@ const layerMakeServer = Layer.unwrap(
     const routesReady = yield* Deferred.make<void>();
     const layerLauncher = ServiceLauncherClient.layer;
 
-    yield* fixPath();
+    yield* fixPath({ shellEnvironmentPrepared: config.shellEnvironmentPrepared });
 
     const layerHttpListening = Layer.effectDiscard(
       Effect.gen(function* () {
@@ -1208,6 +1219,8 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(FetchHttpClient.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
       Layer.provide(VcsProcess.layer),
+      // Every agent and terminal spawn reads this, so it sits below everything.
+      Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
     );
   }),

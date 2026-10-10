@@ -44,17 +44,15 @@ import { OrchestratorV2 } from "../Orchestrator.ts";
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "../ProjectionStore.ts";
-import {
-  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
-  makeReplayServerConfig,
-} from "./ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const threadId = ThreadId.make("thread:native-reading-identity");
 const instanceId = ProviderInstanceId.make("claude-native-reading");
 const modelSelection = { instanceId, model: "claude-sonnet-4-6" };
 const nativeId = "00000000-0000-4000-8000-000000000001";
-const outer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer);
+const outer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer);
 
 const waitFor = Effect.fn("nativeReading.waitFor")(function* (
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
@@ -147,8 +145,10 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const allocator = yield* IdAllocatorV2;
-  const config = yield* Effect.acquireRelease(makeReplayServerConfig("native-reading"), (config) =>
-    fs.remove(config.baseDir, { recursive: true, force: true }).pipe(Effect.orDie),
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const config = yield* Effect.acquireRelease(
+    ProviderReplayHarness.makeReplayServerConfig("native-reading"),
+    (config) => fs.remove(config.baseDir, { recursive: true, force: true }).pipe(Effect.orDie),
   );
   const cwd = yield* checkpointWorkspace("native-reading");
   const databaseLayer = makeSqlitePersistenceLive(config.dbPath).pipe(
@@ -171,7 +171,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
     yield* Queue.offer(sdkMessages, message);
     yield* Deferred.await(receipt);
   });
-  const nativeAdapter = makeClaudeAdapterV2({
+  const nativeAdapter = yield* makeClaudeAdapterV2({
     crypto: yield* Crypto.Crypto,
     instanceId,
     settings: yield* Schema.decodeEffect(ClaudeSettings)({}),
@@ -275,11 +275,12 @@ function onPrompt(message) {
         })),
       ),
   };
-  const layer = makeOrchestratorV2ReplayLayerWithRegistry(
+  const layer = ProviderReplayHarness.layerWithRegistry(
     { name: "native-reading", runtimePolicyOverride: { cwd } },
     makeLayer([adapter]),
     {
-      layerDatabase: databaseLayer,
+      mcpProviderSessionsLayer: Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
+      databaseLayer,
       configureMcp: false,
       responseStreamingMode: "paragraph",
       layerServerConfig: Layer.succeed(ServerConfig, config),

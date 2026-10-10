@@ -26,16 +26,11 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import type {
-  ProviderAdapterV2Event,
-  ProviderAdapterV2InterruptInput,
-  ProviderAdapterV2Shape,
-  ProviderAdapterV2TurnInput,
-} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -63,10 +58,10 @@ const stopEarlierBackgroundWork = ({
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("background-work-stop");
-      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
-      const started: ProviderAdapterV2TurnInput[] = [];
-      const interrupts: ProviderAdapterV2InterruptInput[] = [];
-      const adapter: ProviderAdapterV2Shape = {
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
+      const interrupts: ProviderAdapter.ProviderAdapterV2InterruptInput[] = [];
+      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
         getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),

@@ -5,19 +5,20 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import {
@@ -25,14 +26,8 @@ import {
   OPENCODE_2_WORKSPACE_RESPONSES,
   replayOpenCodeServer,
 } from "./probeResponses.fixture.ts";
-import {
-  OpenCodeDriver,
-  makeOpenCodeDriver,
-  openCodeAdapterOptions,
-  openCodeUpdateFor,
-  type OpenCodeDriverOptions,
-} from "./driver.ts";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const serverStarts: Array<string> = [];
 const reachedServer = (operation: string) =>
@@ -51,11 +46,13 @@ const openCode2Runtime = {
   runOpenCodeCommand: () => Effect.succeed({ stdout: "opencode v2.0.18\n", stderr: "", code: 0 }),
   startOpenCodeServerProcess: () => reachedServer("start"),
   connectToOpenCodeServer: () => reachedServer("connect"),
-} as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+} as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"];
 
 const layer = Layer.mergeAll(
   IdAllocator.layer,
-  layerTestProviderHost(),
+  McpProviderSessions.layer,
+  ProviderLatestVersions.layer,
+  TestProviderHost.layer(),
   Layer.succeed(
     ProviderEventLoggers.ProviderEventLoggers,
     ProviderEventLoggers.NoOpProviderEventLoggers,
@@ -73,39 +70,6 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
-
-it("forwards host runtime guidance to both protocol adapters and V1 receipt mapping to V1", () => {
-  const runtimeGuidance = (_capabilities: ReadonlySet<string> | undefined) => "host guidance";
-  const orchestrationSystemPrompt = (_hasMcp: boolean) => "host orchestration";
-  const runtimeInstructions = (_input: { readonly harness: string }) => "host runtime";
-  const mapTurnStartError: NonNullable<OpenCodeDriverOptions["mapTurnStartError"]> = (
-    input,
-    cause,
-  ) =>
-    new ProviderAdapter.ProviderAdapterTurnStartError({
-      driver: ProviderDriverKind.make("opencode"),
-      threadId: input.threadId,
-      providerThreadId: input.providerThread.id,
-      runId: input.runId,
-      cause,
-    });
-  const options = openCodeAdapterOptions({
-    runtimeGuidance,
-    orchestrationSystemPrompt,
-    runtimeInstructions,
-    mapTurnStartError,
-  });
-
-  assert.strictEqual(options.v1.runtimeGuidance, runtimeGuidance);
-  assert.strictEqual(options.v1.orchestrationSystemPrompt, orchestrationSystemPrompt);
-  assert.strictEqual(options.v1.runtimeInstructions, runtimeInstructions);
-  assert.strictEqual(options.v1.mapTurnStartError, mapTurnStartError);
-  assert.strictEqual(options.v2.runtimeGuidance, runtimeGuidance);
-  assert.strictEqual(options.v2.orchestrationSystemPrompt, orchestrationSystemPrompt);
-  assert.strictEqual(options.v2.runtimeInstructions, runtimeInstructions);
-  assert.isUndefined((options.v2 as { readonly mapTurnStartError?: unknown }).mapTurnStartError);
-  assert.strictEqual(makeOpenCodeDriver().driverKind, OpenCodeDriver.driverKind);
-});
 
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
@@ -194,7 +158,7 @@ const resolveUpdate = (generation: "v1" | "v2", binaryPath: string) =>
     Effect.provide(NodeServices.layer),
   );
 
-it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "updates an npm-global OpenCode 2 install as @opencode/cli and a 1.x one as opencode-ai",
   () =>
     Effect.gen(function* () {
@@ -249,10 +213,12 @@ const changingRuntime = {
     ),
   startOpenCodeServerProcess: () => reachedServer("start"),
   connectToOpenCodeServer: () => reachedServer("connect"),
-} as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+} as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"];
 const layerUpdate = Layer.mergeAll(
   IdAllocator.layer,
-  layerTestProviderHost(),
+  McpProviderSessions.layer,
+  ProviderLatestVersions.layer,
+  TestProviderHost.layer(),
   Layer.succeed(
     ProviderEventLoggers.ProviderEventLoggers,
     ProviderEventLoggers.NoOpProviderEventLoggers,
@@ -279,7 +245,7 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "offers no package update for an unknown version and follows a changed one on a fresh read",
     () =>
       Effect.gen(function* () {

@@ -199,7 +199,7 @@ export const startUnlessStopRequested = (
   currentAttemptRunning: Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>,
   input: {
     readonly projectionStore: ProjectionStore.ProjectionStoreV2Shape;
-    readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+    readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
     readonly threadId: ThreadId;
     readonly runId: RunId;
   },
@@ -231,7 +231,7 @@ export const startUnlessStopRequested = (
 export const pendingStartCancellation =
   (deps: {
     readonly projectionStore: ProjectionStore.ProjectionStoreV2Shape;
-    readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+    readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
     readonly providerSessions: ProviderSessionManager.ProviderSessionManagerV2Shape;
   }) =>
   (input: {
