@@ -75,7 +75,8 @@ it("shows a light, wrapping full-path card only over the shortened path", async 
   expect(popup.scrollWidth).toBeLessThanOrEqual(popup.clientWidth + 1);
   await expect
     .poll(() => popup.getBoundingClientRect().width)
-    .toBeLessThanOrEqual(window.innerWidth);
+    .toBeLessThanOrEqual(Math.min(300, window.innerWidth));
+  expect(popup.clientHeight).toBeGreaterThan(parseFloat(getComputedStyle(popup).lineHeight) * 2);
   await userEvent.keyboard("{Escape}");
   await expect.element(page.getByRole("tooltip")).not.toBeInTheDocument();
 });

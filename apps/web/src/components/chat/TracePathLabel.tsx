@@ -36,8 +36,15 @@ export function TracePathLabel({
         {path.label}
       </TooltipTrigger>
       {path.suffix}
-      <TooltipPopup variant="code" side="top" align="start" role="tooltip" id={popupId}>
-        <span className="block max-w-[min(28rem,calc(var(--available-width)-1rem-2px))]">
+      <TooltipPopup
+        variant="code"
+        size="compact"
+        side="top"
+        align="start"
+        role="tooltip"
+        id={popupId}
+      >
+        <span className="block max-w-[min(17rem,calc(var(--available-width)-1rem-2px))]">
           {path.fullPath}
         </span>
       </TooltipPopup>
