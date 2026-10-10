@@ -5,6 +5,17 @@ that page in the desktop's Chromium. It is the PDF path of the
 [conversation export and document conversion design](./scient-conversation-export-import-proposal.md);
 there is one PDF path, not one per source.
 
+## Document host ownership
+
+Controlled rendering uses the separate authenticated `documents.hostConnect` /
+`documents.hostRespond` rail. `DocumentHostBroker` acquires independent broker state;
+interactive browser assignment cannot capture document requests. The desktop client
+advertises the operations its bridge actually supports and consumes every request
+from a direct subscription, independently of React rendering. Connection generations
+fence responses and cancel retired work. This rail can present a PDF or LaTeX surface
+without creating an interactive browser tab. Server-owned live Browser-tab PDF export
+is a separate path and does not provide this document renderer.
+
 ## Flow
 
 1. **Capture (server).** The server reads the source once and writes a _capture_: the document

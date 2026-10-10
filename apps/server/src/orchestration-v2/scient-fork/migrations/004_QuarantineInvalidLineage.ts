@@ -18,7 +18,7 @@ import { ThreadForkAttachmentCopy } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 const AttachmentCopiesJson = Schema.fromJsonString(Schema.Array(ThreadForkAttachmentCopy));
 const decodeAttachmentCopies = Schema.decodeUnknownOption(AttachmentCopiesJson);

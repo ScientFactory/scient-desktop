@@ -15,7 +15,7 @@ const surfaceSource = NodeFS.readFileSync(
   "utf8",
 );
 const automationHostSource = NodeFS.readFileSync(
-  new URL("../../components/preview/PreviewAutomationHosts.tsx", import.meta.url),
+  new URL("../documentExport/documentHost.tsx", import.meta.url),
   "utf8",
 );
 const surfaceStyles = NodeFS.readFileSync(new URL("./scient-latex.css", import.meta.url), "utf8");
@@ -68,9 +68,9 @@ describe("Scient LaTeX file-preview seam", () => {
   });
 
   it("opens successful agent builds on the resolved LaTeX root surface", () => {
-    expect(automationHostSource).toContain('request.operation === "documentLatexPresent"');
+    expect(automationHostSource).toContain('case "documentLatexPresent"');
     expect(automationHostSource).toContain(
-      "openFile(threadRef, input.rootSourcePath, undefined, {",
+      "openFile(threadRef, request.input.rootSourcePath, undefined, {",
     );
     expect(automationHostSource).toContain('latexPreviewMode: "split"');
   });

@@ -79,35 +79,7 @@ export function providerSettingsLifecyclePresentation(
       busy: true,
     };
   }
-  if (!provider.enabled) {
-    return {
-      kind: "disabled",
-      statusLabel: "Disabled",
-      detail: "Hidden from new conversations.",
-      ...action({ kind: "manage", label: "Manage" }),
-      busy: false,
-    };
-  }
-  if (provider.probePending === true) {
-    return {
-      kind: "checking",
-      statusLabel: null,
-      detail: null,
-      ...NO_ACTION,
-      busy: true,
-    };
-  }
-
   const runtimeOperation = provider.connection?.runtime?.operation ?? null;
-  if (runtimeOperation?.status === "failed") {
-    return {
-      kind: "failed",
-      statusLabel: "Setup failed",
-      detail: runtimeOperation.message,
-      ...action({ kind: "manage", label: "Failed" }),
-      busy: false,
-    };
-  }
   if (runtimeOperation && isActiveProviderRuntimeOperation(runtimeOperation)) {
     const label = runtimeOperation.waitingForIdle
       ? "Waiting"
@@ -131,6 +103,33 @@ export function providerSettingsLifecyclePresentation(
       ...action({ kind: "continue", label }),
       busy: true,
       ...(downloadPercent !== undefined ? { downloadPercent } : {}),
+    };
+  }
+  if (!provider.enabled) {
+    return {
+      kind: "disabled",
+      statusLabel: "Disabled",
+      detail: "Hidden from new conversations.",
+      ...action({ kind: "manage", label: "Manage" }),
+      busy: false,
+    };
+  }
+  if (provider.probePending === true) {
+    return {
+      kind: "checking",
+      statusLabel: null,
+      detail: null,
+      ...NO_ACTION,
+      busy: true,
+    };
+  }
+  if (runtimeOperation?.status === "failed") {
+    return {
+      kind: "failed",
+      statusLabel: "Setup failed",
+      detail: runtimeOperation.message,
+      ...action({ kind: "manage", label: "Failed" }),
+      busy: false,
     };
   }
   if (

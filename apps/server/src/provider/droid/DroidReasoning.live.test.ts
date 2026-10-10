@@ -1,12 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 import { beforeAll } from "vite-plus/test";
-import { qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
+import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Path, Redacted, Stream, Schema } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import {
@@ -35,7 +35,7 @@ it.effect.skipIf(!binary)(
           NodeHttp.createServer(async (request, response) => {
             if (!request.url?.includes("chat/completions")) {
               response.writeHead(200, { "content-type": "application/json" });
-              response.end("{}");
+              response.end(factoryFixtureBody(request.url));
               return;
             }
             let body = "";

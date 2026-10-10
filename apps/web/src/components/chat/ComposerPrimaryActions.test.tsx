@@ -21,6 +21,7 @@ function renderPendingActions(isRunning: boolean) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
+      canOperateThread: true,
       pendingAction: {
         questionIndex: 0,
         isLastQuestion: true,
@@ -49,6 +50,7 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
+      canOperateThread: true,
       pendingAction: null,
       isRunning: true,
       canInterrupt: true,
@@ -73,6 +75,7 @@ function renderSendButton(sendDisabledReason: string | null = null) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
+      canOperateThread: true,
       pendingAction: null,
       isRunning: false,
       canInterrupt: false,
@@ -146,10 +149,10 @@ describe("ComposerPrimaryActions", () => {
     expect(markup).toContain('type="submit"');
   });
 
-  it("labels the idle submit button as send, not queue", () => {
+  it("labels the idle button as submit, not queue", () => {
     const markup = renderSendButton();
 
-    expect(markup).toContain('aria-label="Send message"');
+    expect(markup).toContain('aria-label="Submit message"');
     expect(markup).not.toContain('aria-label="Queue message"');
   });
 

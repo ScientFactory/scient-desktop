@@ -19,7 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   buildPiRpcLaunch,
@@ -70,7 +70,7 @@ export const makePiRunJson = (run: {
       | "generateThreadTitle";
     cwd: string;
     prompt: string;
-    outputSchemaJson: S;
+    outputSchema: S;
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.scoped(
@@ -256,7 +256,7 @@ export const makePiRunJson = (run: {
             detail: "Pi returned empty output.",
           });
         // oxlint-disable-next-line t3code/no-inline-schema-compile -- The caller supplies a distinct output schema per generation request.
-        return yield* Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson))(
+        return yield* Schema.decodeEffect(Schema.fromJsonString(input.outputSchema))(
           extractJsonObject(raw),
         );
       }).pipe(
@@ -272,13 +272,12 @@ export const makePiRunJson = (run: {
       ),
     ).pipe(
       Effect.timeout(Duration.millis(options.timeoutMs ?? PI_TEXT_GENERATION_TIMEOUT_MS)),
-      Effect.catchTag(
-        "TimeoutError",
-        () =>
+      Effect.catchTags({
+        TimeoutError: () =>
           new TextGenerationError({
             operation: input.operation,
             detail: "Pi text generation timed out.",
           }),
-      ),
+      }),
     );
 };

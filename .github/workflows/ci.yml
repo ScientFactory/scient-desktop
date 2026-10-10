@@ -160,11 +160,38 @@ jobs:
       real_kernel: ${{ needs.compute_changes.outputs.real_kernel != 'false' }}
       managed_python: ${{ needs.compute_changes.outputs.managed_python != 'false' }}
 
+  windows_packaging_changes:
+    name: Windows Packaging Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: .github/scripts
+      - name: Test Windows qualification gate
+        run: node --test .github/scripts/windows-packaging-ci-gate.test.mjs
+      - name: Detect Windows packaging changes
+        id: detect
+        run: node .github/scripts/windows-packaging-ci-gate.mjs detect
+
+  windows_packaging:
+    needs: windows_packaging_changes
+    if: ${{ !cancelled() && needs.windows_packaging_changes.outputs.changed != 'false' }}
+    uses: ./.github/workflows/windows-packaging.yml
+
+  remote_server_packaging:
+    needs: windows_packaging_changes
+    if: ${{ !cancelled() && needs.windows_packaging_changes.outputs.changed != 'false' }}
+    uses: ./.github/workflows/remote-server-packaging.yml
+
   # Keep the already-required check name. Native failures must block it, while
   # unrelated PRs may skip native qualification only after a successful diff.
   test:
     name: Test
-    needs: [test_workspaces, compute_changes, compute_native]
+    needs: [test_workspaces, compute_changes, compute_native, windows_packaging_changes, windows_packaging, remote_server_packaging]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -178,7 +205,13 @@ jobs:
           DETECTION_RESULT: ${{ needs.compute_changes.result }}
           COMPUTE_CHANGED: ${{ needs.compute_changes.outputs.changed }}
           NATIVE_RESULT: ${{ needs.compute_native.result }}
-        run: node .github/scripts/compute-ci-gate.mjs check
+          WINDOWS_DETECTION_RESULT: ${{ needs.windows_packaging_changes.result }}
+          WINDOWS_CHANGED: ${{ needs.windows_packaging_changes.outputs.changed }}
+          WINDOWS_NATIVE_RESULT: ${{ needs.windows_packaging.result }}
+          REMOTE_SERVER_RESULT: ${{ needs.remote_server_packaging.result }}
+        run: |
+          node .github/scripts/compute-ci-gate.mjs check
+          node .github/scripts/windows-packaging-ci-gate.mjs check
 
   # Split the web unit suite across runners so it does not compete with
   # other packages in `test`. Measure the speedup in CI; sharding does not
@@ -290,6 +323,9 @@ jobs:
       - name: Seal Compute candidate metadata
         run: node apps/server/scripts/compute-recipes.ts seal
 
+      - name: Install Chromium for server browser integration tests
+        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+
       - name: Test
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
@@ -346,7 +382,11 @@ jobs:
   transfer-report:
     name: Transfer report artifact
     needs: test_server
+    # On Blacksmith like every other job here: the GitHub-hosted queue is shared
+    # with the PR bots and can leave this job waiting until it is abandoned,
+    # which fails `Check` on an otherwise green run.
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Require transfer measurements
         uses: actions/download-artifact@v8

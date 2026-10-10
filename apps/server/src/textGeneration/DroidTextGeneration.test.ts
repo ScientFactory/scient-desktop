@@ -114,28 +114,31 @@ function readJsonRpcRequests(
 }
 
 it.layer(DroidTextGenerationTestLayer)("DroidTextGeneration", (it) => {
-  for (const output of ["", '{"title":"Parseable but incomplete"}']) {
-    it.effect(`rejects token-limited background output (${output || "empty"})`, () =>
-      withFakeAcpDroid(
-        {
-          T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
-          T3_ACP_TOKEN_LIMIT: "1",
-          T3_ACP_PROMPT_RESPONSE_TEXT: output,
-        },
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const error = yield* Effect.flip(
-              textGeneration.generateThreadTitle({
-                cwd: process.cwd(),
-                message: "test",
-                modelSelection: createModelSelection(ProviderInstanceId.make("droid"), "default"),
-              }),
-            );
-            expect(error.errorReason).toBe("token_limit");
-          }),
-      ),
-    );
-  }
+  it.effect.each(
+    ["", '{"title":"Parseable but incomplete"}'].map((output) => ({
+      caseTitle: `rejects token-limited background output (${output || "empty"})`,
+      output,
+    })),
+  )("$caseTitle", ({ output }) =>
+    withFakeAcpDroid(
+      {
+        T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
+        T3_ACP_TOKEN_LIMIT: "1",
+        T3_ACP_PROMPT_RESPONSE_TEXT: output,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "test",
+              modelSelection: createModelSelection(ProviderInstanceId.make("droid"), "default"),
+            }),
+          );
+          expect(error.errorReason).toBe("token_limit");
+        }),
+    ),
+  );
   it.effect("spawns droid exec --output-format acp and applies the requested model first", () => {
     const requestLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-droid-text-log-"),
@@ -691,46 +694,52 @@ it.layer(DroidTextGenerationTestLayer)("DroidTextGeneration", (it) => {
 
   // Droid 0.228.0 acknowledges `set_config_option` with `{}` and reports the
   // applied level in a later `config_option_update`; only that report confirms.
-  for (const [name, env] of [
-    ["acknowledges without reporting", { T3_ACP_DROID_EMPTY_CONFIG_RESPONSE: "1" }],
-    [
-      "reports another level",
-      { T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1", T3_ACP_DROID_AUTONOMY_LOCKED: "1" },
-    ],
-  ] as const) {
-    it.effect(`fails closed when Droid ${name} for read-only autonomy`, () => {
-      const requestLogDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3code-droid-text-unconfirmed-"),
-      );
-      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
-      return withFakeAcpDroid(
-        {
-          ...env,
-          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-          T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ title: "Must not be generated" }),
-        },
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const error = yield* Effect.flip(
-              textGeneration.generateThreadTitle({
-                cwd: process.cwd(),
-                message: "title",
-                modelSelection: createModelSelection(ProviderInstanceId.make("droid"), "default"),
-              }),
-            );
-            expect(error.detail).toContain("read-only");
-            const requests = readJsonRpcRequests(requestLogPath);
-            expect(requests.some((request) => request.method === "session/set_config_option")).toBe(
-              true,
-            );
-            expect(requests.some((request) => request.method === "session/prompt")).toBe(false);
-          }),
-      ).pipe(
-        // The confirmation deadline runs on the real clock.
-        TestClock.withLive,
-      );
-    });
-  }
+  it.effect.each(
+    (
+      [
+        ["acknowledges without reporting", { T3_ACP_DROID_EMPTY_CONFIG_RESPONSE: "1" }],
+        [
+          "reports another level",
+          { T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1", T3_ACP_DROID_AUTONOMY_LOCKED: "1" },
+        ],
+      ] as const
+    ).map(([name, env]) => ({
+      caseTitle: `fails closed when Droid ${name} for read-only autonomy`,
+      name,
+      env,
+    })),
+  )("$caseTitle", ({ name, env }) => {
+    const requestLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-droid-text-unconfirmed-"),
+    );
+    const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+    return withFakeAcpDroid(
+      {
+        ...env,
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ title: "Must not be generated" }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "title",
+              modelSelection: createModelSelection(ProviderInstanceId.make("droid"), "default"),
+            }),
+          );
+          expect(error.detail).toContain("read-only");
+          const requests = readJsonRpcRequests(requestLogPath);
+          expect(requests.some((request) => request.method === "session/set_config_option")).toBe(
+            true,
+          );
+          expect(requests.some((request) => request.method === "session/prompt")).toBe(false);
+        }),
+    ).pipe(
+      // The confirmation deadline runs on the real clock.
+      TestClock.withLive,
+    );
+  });
 
   it.effect("extracts the JSON object when Droid wraps it in conversational text", () =>
     withFakeAcpDroid(

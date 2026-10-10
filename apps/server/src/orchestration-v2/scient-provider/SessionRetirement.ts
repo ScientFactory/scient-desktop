@@ -1,3 +1,6 @@
+import * as Cause from "effect/Cause";
+import * as Schedule from "effect/Schedule";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
@@ -129,8 +132,45 @@ export const makeSessionRetirement = <
             });
           yield* steps.releaseConsumer(entry);
           yield* retireCredentials;
-          yield* steps.writeSession(entry, input);
-          yield* steps.writeRequests(entry, input).pipe(entry.requestEventPermit.withPermits(1));
+          yield* Effect.all(
+            [
+              Effect.exit(steps.writeSession(entry, input)),
+              Effect.exit(
+                steps.writeRequests(entry, input).pipe(entry.requestEventPermit.withPermits(1)),
+              ),
+            ],
+            { concurrency: 1 },
+          ).pipe(
+            Effect.flatMap((exits) => {
+              const failures = exits.filter(Exit.isFailure);
+              return failures.length === 0
+                ? Effect.void
+                : Effect.failCause(
+                    failures
+                      .slice(1)
+                      .reduce(
+                        (combined, exit) => Cause.combine(combined, exit.cause),
+                        failures[0]!.cause,
+                      ),
+                  );
+            }),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.failCause(cause)
+                : Effect.logWarning("orchestration-v2.provider-session-release-records-failed", {
+                    providerSessionId: input.providerSessionId,
+                    cause,
+                  }).pipe(Effect.andThen(Effect.failCause(cause))),
+            ),
+            Effect.retry({
+              schedule: Schedule.exponential("1 second").pipe(
+                Schedule.modifyDelay(({ duration }) =>
+                  Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                ),
+              ),
+            }),
+            Effect.orDie,
+          );
           // A timeout retires logical authority; this same physical close remains owned.
           const result = Option.isSome(observed)
             ? observed.value

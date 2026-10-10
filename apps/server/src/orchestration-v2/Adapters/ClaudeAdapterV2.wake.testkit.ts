@@ -1,5 +1,6 @@
 import type { SDKMessage, SDKResultMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -219,6 +220,9 @@ const makeWakeHarnessWithOptions = (options?: {
       yield* Deferred.await(processed);
     });
     const offeredMessages: Array<SDKUserMessage> = [];
+    const permissionModeChanges: Array<
+      ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"]
+    > = [];
     const continuationRequests: Array<ProviderContinuationRequest> = [];
     const terminalReceipts =
       yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
@@ -232,6 +236,7 @@ const makeWakeHarnessWithOptions = (options?: {
       attachmentsDir,
       fileSystem,
       path: yield* Path.Path,
+      crypto: yield* Crypto.Crypto,
       idAllocator,
       continuationRequests: {
         offer: (request) =>
@@ -267,6 +272,12 @@ const makeWakeHarnessWithOptions = (options?: {
                   offeredMessages.push(message);
                 }),
               setModel: () => Effect.void,
+              setPermissionMode: (mode) =>
+                Effect.sync(() => {
+                  permissionModeChanges.push(mode);
+                  if (mode !== input.options.permissionMode)
+                    throw new Error("Wake fixture may only restore its captured permission mode.");
+                }),
               interrupt: options?.interrupt ?? Effect.void,
               close: options?.close?.(sdkMessages) ?? Effect.void,
             };
@@ -319,6 +330,13 @@ const makeWakeHarnessWithOptions = (options?: {
       sdkMessages,
       offerAndWait,
       offeredMessages,
+      promptUuid: (index: number) => {
+        const uuid = offeredMessages[index]?.uuid;
+        if (uuid === undefined || !ClaudeAdapterV2.isClaudePromptUuid(uuid))
+          throw new Error(`No valid prompt offered at index ${index}.`);
+        return uuid;
+      },
+      permissionModeChanges,
       continuationRequests,
       events,
       terminalReceipts,

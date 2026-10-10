@@ -29,55 +29,58 @@ const encodeReply = Schema.encodeSync(
   ),
 );
 
-for (const outcome of ["eof", "failure"] as const) {
-  it.effect(`forwards actual classified ${outcome} once after failing pending requests`, () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { stdio, input, output } = yield* makeInMemoryStdio();
-        const ended = yield* Deferred.make<Errors.CodexAppServerError>();
-        const calls = yield* Ref.make(0);
-        const inputFailure = PlatformError.systemError({
-          _tag: "Unknown",
-          module: "Stdio",
-          method: "stdin",
-          cause: "controlled synthetic stdin failure",
-        });
-        const ownedStdio = Stdio.make({
-          ...stdio,
-          stdin:
-            outcome === "failure"
-              ? Stream.concat(stdio.stdin, Stream.fail(inputFailure))
-              : stdio.stdin,
-        });
-        const client = yield* Client.make(ownedStdio, {
-          onTermination: (error) =>
-            Ref.update(calls, (n) => n + 1).pipe(
-              Effect.andThen(Deferred.succeed(ended, error)),
-              Effect.asVoid,
-            ),
-        });
-        const pending = yield* client.raw.request("controlled/pending", {}).pipe(Effect.forkScoped);
-        assert.equal(decodeRequest(yield* Queue.take(output)).method, "controlled/pending");
-        yield* Queue.end(input);
-        const error = yield* Deferred.await(ended);
-        if (outcome === "eof") assert.instanceOf(error, Errors.CodexAppServerInputStreamEndedError);
-        else {
-          assert.ok(error._tag === "CodexAppServerTransportError");
-          assert.equal(error.operation, "read-input-stream");
-          assert.strictEqual(error.cause, inputFailure);
-        }
-        const failed = yield* Fiber.join(pending).pipe(Effect.exit);
-        assert.equal(failed._tag, "Failure");
-        if (failed._tag === "Failure") assert.strictEqual(Cause.squash(failed.cause), error);
-        const refused = yield* client.raw.notify("controlled/after-exit", {}).pipe(Effect.exit);
-        assert.equal(refused._tag, "Failure");
-        if (refused._tag === "Failure") assert.strictEqual(Cause.squash(refused.cause), error);
-        yield* Queue.end(input);
-        assert.equal(yield* Ref.get(calls), 1);
-      }),
-    ),
-  );
-}
+it.effect.each(
+  (["eof", "failure"] as const).map((outcome) => ({
+    caseTitle: `forwards actual classified ${outcome} once after failing pending requests`,
+    outcome,
+  })),
+)("$caseTitle", ({ outcome }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const ended = yield* Deferred.make<Errors.CodexAppServerError>();
+      const calls = yield* Ref.make(0);
+      const inputFailure = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "Stdio",
+        method: "stdin",
+        cause: "controlled synthetic stdin failure",
+      });
+      const ownedStdio = Stdio.make({
+        ...stdio,
+        stdin:
+          outcome === "failure"
+            ? Stream.concat(stdio.stdin, Stream.fail(inputFailure))
+            : stdio.stdin,
+      });
+      const client = yield* Client.make(ownedStdio, {
+        onTermination: (error) =>
+          Ref.update(calls, (n) => n + 1).pipe(
+            Effect.andThen(Deferred.succeed(ended, error)),
+            Effect.asVoid,
+          ),
+      });
+      const pending = yield* client.raw.request("controlled/pending", {}).pipe(Effect.forkScoped);
+      assert.equal(decodeRequest(yield* Queue.take(output)).method, "controlled/pending");
+      yield* Queue.end(input);
+      const error = yield* Deferred.await(ended);
+      if (outcome === "eof") assert.instanceOf(error, Errors.CodexAppServerInputStreamEndedError);
+      else {
+        assert.ok(error._tag === "CodexAppServerTransportError");
+        assert.equal(error.operation, "read-input-stream");
+        assert.strictEqual(error.cause, inputFailure);
+      }
+      const failed = yield* Fiber.join(pending).pipe(Effect.exit);
+      assert.equal(failed._tag, "Failure");
+      if (failed._tag === "Failure") assert.strictEqual(Cause.squash(failed.cause), error);
+      const refused = yield* client.raw.notify("controlled/after-exit", {}).pipe(Effect.exit);
+      assert.equal(refused._tag, "Failure");
+      if (refused._tag === "Failure") assert.strictEqual(Cause.squash(refused.cause), error);
+      yield* Queue.end(input);
+      assert.equal(yield* Ref.get(calls), 1);
+    }),
+  ),
+);
 
 it.effect("preserves default typed request and EOF behavior without a termination callback", () =>
   Effect.scoped(

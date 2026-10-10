@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -25,7 +26,7 @@ import * as IdAllocator from "../IdAllocator.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import { CLAUDE_MODEL_SELECTION } from "./fixtures/shared.ts";
 
@@ -44,6 +45,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
       const messages = yield* Queue.unbounded<SDKMessage>();
       const offered = yield* Deferred.make<void>();
       const adapter = Claude.makeClaudeAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId: Claude.CLAUDE_DEFAULT_INSTANCE_ID,
         settings,
         environment: {},
@@ -55,6 +57,8 @@ it.live("ingests coordinator-owned workflow members after successful root settle
           allocateSessionId: Effect.succeed(nativeSession),
           open: () =>
             Effect.succeed({
+              setPermissionMode: () =>
+                Effect.die("Permission-mode mutation is outside this fixture."),
               messages: Stream.fromQueue(messages),
               offer: (message) =>
                 Queue.offer(
@@ -291,7 +295,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
         Effect.provide(
           makeOrchestratorV2ReplayLayerWithRegistry(
             { name: "claude-workflow-runtime" },
-            Registry.makeSingleLayer(adapter),
+            Registry.layerSingle(adapter),
             { configureMcp: false },
           ),
         ),

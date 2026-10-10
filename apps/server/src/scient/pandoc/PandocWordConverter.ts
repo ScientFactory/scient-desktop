@@ -37,7 +37,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { decodePandocDocument, toPandocDocument } from "./pandocAst.ts";
 import { applyCitations, bibliographyFromCitations } from "./pandocCitations.ts";
@@ -513,18 +513,19 @@ const make = Effect.gen(function* () {
         duration: input.limits?.totalMs ?? SCIENT_WORD_CONVERSION_TIMEOUT_MS,
         orElse: () => Effect.fail(conversionTimeout(kind)),
       }),
-      Effect.catchTag("PlatformError", (cause) =>
-        Effect.logWarning("scient pandoc word conversion file error", { cause }).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new WordConversionError({
-                reason: "failed",
-                message: "Scient could not prepare the files for the Word conversion.",
-              }),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          Effect.logWarning("scient pandoc word conversion file error", { cause }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new WordConversionError({
+                  reason: "failed",
+                  message: "Scient could not prepare the files for the Word conversion.",
+                }),
+              ),
             ),
           ),
-        ),
-      ),
+      }),
       // A failed or interrupted conversion leaves no partial Word file.
       Effect.ensuring(fileSystem.remove(partialPath, { force: true }).pipe(Effect.ignoreCause())),
       Effect.provideContext(context),

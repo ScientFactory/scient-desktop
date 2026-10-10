@@ -85,6 +85,13 @@ Keep Scient open while the server restarts. The update is complete only when
 the replacement server reports ready, not merely when the initial update
 request is accepted. A failure remains visible for review and retry.
 
+| Action                     | What to do                                                                                                                                                                                      |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
+| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
+| **Copy update command**    | Run the command on the named host to update the detected global npm install, then restart the server with your usual options.                                                                   |
+| **Copy relaunch command**  | Stop the command-line server on its host and relaunch with the copied command, keeping your usual subcommand and options. This does not update an installed `t3` command.                       |
+
 An older service installation may require one local repair or update first.
 Use the exact command supplied by Scient or the procedure
 in [Run Scient in the background](./background-service.md).

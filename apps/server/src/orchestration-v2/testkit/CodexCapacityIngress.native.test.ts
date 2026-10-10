@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -38,9 +39,9 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { makeCodexAdapterV2 } from "../Adapters/CodexAdapterV2.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
@@ -50,9 +51,9 @@ import { ProviderAdapterEventStreamError } from "../ProviderAdapter.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { nativeModelWindowKey } from "../scient-fork/NativeModelContextWindow.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 // SCIENT-FORK:START — failure-only evidence before the synthetic server unwinds.
 import { ScientCapacityFailureObservation } from "./ScientCapacityFailureObservation.test-support.ts";
@@ -584,9 +585,11 @@ it.live(
           Effect.gen(function* () {
             const peer = yield* makePeer(autoComplete, startup);
             const allocator = yield* IdAllocatorV2;
+            const crypto = yield* Crypto.Crypto;
             const registry = makeLayer(
               [instanceId, ProviderInstanceId.make("other-codex")].map((id) =>
                 makeCodexAdapterV2({
+                  crypto,
                   instanceId: id,
                   settings,
                   environment: {},
@@ -642,7 +645,7 @@ it.live(
               { name: "first-codex-capacity", runtimePolicyOverride: { cwd } },
               registry,
               {
-                databaseLayer: database,
+                layerDatabase: database,
                 ...(idleTimeoutMs === undefined
                   ? {}
                   : { providerSessionIdleTimeoutMs: idleTimeoutMs }),
@@ -683,8 +686,8 @@ it.live(
                     );
                   },
                 }),
-                serverConfigLayer: configLayer,
-                serverSettingsLayer: ServerSettings.layerTest({
+                layerServerConfig: configLayer,
+                layerServerSettings: ServerSettings.layerTest({
                   scientFork: { contextHandoffSize: "maximum" },
                 }).pipe(Layer.orDie),
               },

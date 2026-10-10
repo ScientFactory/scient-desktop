@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The pure native-context evidence fingerprint retains its persisted identity.
 /** Destination capacity, scoped to the selected provider instance and model. */
 import {
   ModelSelection,
@@ -15,7 +16,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 import { customModelProviderId } from "../../customModels.ts";
 import { droidCustomModelId } from "../../provider/droid/DroidCustomModels.ts";
 import type {

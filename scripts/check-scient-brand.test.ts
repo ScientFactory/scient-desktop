@@ -136,3 +136,29 @@ describe("Scient brand guard", () => {
     ).toHaveLength(1);
   });
 });
+
+describe("non-public compatibility boundaries", () => {
+  it("excludes the captured mock agent while checking production provider output", () => {
+    const contents = 'const captured = "T3 Code page";';
+    expect(
+      findPublicBrandViolations([{ path: "apps/server/scripts/acp-mock-agent.ts", contents }]),
+    ).toEqual([]);
+    expect(
+      findPublicBrandViolations([{ path: "apps/server/src/provider/CodexProvider.ts", contents }]),
+    ).toHaveLength(1);
+  });
+
+  it("permits only the exact legacy error recognizer and keeps adjacent public copy covered", () => {
+    const path = "apps/web/src/components/chat/MessagesTimeline.logic.ts";
+    const compatibility =
+      'const THREAD_READ_OBJECTS = [" a Scient thread", " a T3 thread"] as const;';
+    const publicCopy = 'const label = "Reading a T3 thread";';
+    expect(findPublicBrandViolations([{ path, contents: compatibility }])).toEqual([]);
+    expect(
+      findPublicBrandViolations([{ path, contents: compatibility + "\n" + publicCopy }]),
+    ).toEqual([{ path, line: 2, text: publicCopy }]);
+    expect(
+      findPublicBrandViolations([{ path: "apps/web/src/other.ts", contents: compatibility }]),
+    ).toHaveLength(1);
+  });
+});

@@ -11,7 +11,7 @@ import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeAgySession } from "../../provider/antigravity/AgySession.ts";
 import type { ServerConfig } from "../../config.ts";
@@ -39,7 +39,7 @@ export interface LegacyAntigravityAdapterV2Options extends Pick<
 }
 
 export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapterV2Options) {
-  const scopes = new Set<Scope.Scope>();
+  const scopes = new Set<Scope.Closeable>();
   const adapter = makeNativeSessionAdapterV2({
     ...options,
     // Legacy agy has no host MCP transport; modern Antigravity uses the ACP bridge.
@@ -70,17 +70,21 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
     },
     open: (input, onUpdate) =>
       Effect.gen(function* () {
-        const scope = yield* Effect.scope;
+        const scope = yield* Scope.fork(yield* Scope.Scope);
         scopes.add(scope);
-        yield* Effect.addFinalizer(() =>
+        yield* Scope.addFinalizer(
+          scope,
           Effect.sync(() => {
             scopes.delete(scope);
           }),
         );
         const cwd = input.runtimePolicy.cwd ?? options.serverConfig.cwd;
-        const attachmentStagingDir = yield* options.fileSystem.makeTempDirectoryScoped({
-          prefix: "scient-antigravity-attachments-",
-        });
+        // The native scope releases its process before deleting these reader-owned copies.
+        const attachmentStagingDir = yield* options.fileSystem
+          .makeTempDirectoryScoped({
+            prefix: "scient-antigravity-attachments-",
+          })
+          .pipe(Effect.provideService(Scope.Scope, scope));
         yield* options.fileSystem.chmod(attachmentStagingDir, 0o700);
         let conversationId = input.initialNativeThreadId;
         const effort = getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort");
@@ -103,7 +107,10 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
             Effect.provideService(Scope.Scope, scope),
           );
         let session = yield* launch(conversationId);
-        yield* Effect.addFinalizer(() => session.close);
+        yield* Scope.addFinalizer(
+          scope,
+          Effect.suspend(() => session.close),
+        );
         const native: NativeSession = {
           nativeId: conversationId ?? `${input.threadId}:agy:${input.providerSessionId}`,
           nativeThreadKnown: conversationId !== undefined,

@@ -779,7 +779,7 @@ export function ScientSourcesPanel(props: {
           }
           onBack={sources.closeZoteroStatus}
         />
-        <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-6 pt-[clamp(2rem,7vh,4.5rem)] pb-6">
+        <div className="scrollbar-gutter-both flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-6 pt-[clamp(2rem,7vh,4.5rem)] pb-6">
           <div className="w-full max-w-md">
             <p className="text-base leading-relaxed text-foreground">{connectionMessage}</p>
             <div className="mt-6 flex w-44 flex-col items-stretch gap-1">

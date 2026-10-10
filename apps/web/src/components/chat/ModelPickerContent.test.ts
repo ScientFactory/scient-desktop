@@ -257,6 +257,26 @@ describe("adjacentModelPickerProvider", () => {
     ).toBe("favorites");
   });
 
+  it("includes setup providers in the same navigation order as the rail", () => {
+    expect(
+      adjacentModelPickerProvider({
+        ...input,
+        setupAvailableInstanceIds: new Set([unavailable.instanceId]),
+        selectedInstanceId: codex.instanceId,
+        direction: 1,
+      }),
+    ).toBe(unavailable.instanceId);
+    expect(
+      adjacentModelPickerProvider({
+        ...input,
+        setupAvailableInstanceIds: new Set([unavailable.instanceId]),
+        disabledInstanceIds: new Set([unavailable.instanceId]),
+        selectedInstanceId: codex.instanceId,
+        direction: 1,
+      }),
+    ).toBe(claude.instanceId);
+  });
+
   it("keeps thread locks and the selected unavailable catalog", () => {
     expect(
       adjacentModelPickerProvider({

@@ -39,10 +39,10 @@ import * as Semaphore from "effect/Semaphore";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
-import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import { layer as OrchestrationCommandReceiptRepositoryLive } from "../../persistence/OrchestrationCommandReceipts.ts";
+import { OrchestrationCommandReceiptRepository } from "../../persistence/OrchestrationCommandReceipts.ts";
 import { ProjectCloneTracker } from "../../project/ProjectCloneTracker.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import {
   ConversationImporter,
   ConversationImporterError,

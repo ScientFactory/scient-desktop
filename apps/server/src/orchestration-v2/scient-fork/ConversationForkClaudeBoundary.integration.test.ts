@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -23,7 +24,7 @@ import * as IdAllocator from "../IdAllocator.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import * as Registry from "../ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import { CLAUDE_MODEL_SELECTION } from "../testkit/fixtures/shared.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
@@ -74,6 +75,7 @@ it.live(
         const forks: Claude.ClaudeAgentSdkSessionForkInput[] = [];
         const offers: SDKUserMessage[] = [];
         const adapter = Claude.makeClaudeAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId: Claude.CLAUDE_DEFAULT_INSTANCE_ID,
           settings,
           environment: {},
@@ -96,6 +98,8 @@ it.live(
                     ? "Root answer at the exact native boundary"
                     : "Native destination answer";
                 return {
+                  setPermissionMode: () =>
+                    Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(messages),
                   offer: (message: SDKUserMessage) =>
                     Effect.gen(function* () {
@@ -288,7 +292,7 @@ it.live(
           Effect.provide(
             makeOrchestratorV2ReplayLayerWithRegistry(
               { name: "claude-root-boundary", runtimePolicyOverride: { cwd } },
-              Registry.makeSingleLayer(adapter),
+              Registry.layerSingle(adapter),
               { configureMcp: false },
             ),
           ),

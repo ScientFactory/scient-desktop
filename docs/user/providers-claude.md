@@ -121,6 +121,14 @@ In Settings, open your Claude provider and set **Auto-compact after** to a token
 reaches about 300,000 tokens, without changing the model's context window. Leave the field
 empty to keep Claude Code's default behavior.
 
+You can also send `/compact` in an existing conversation. Web and desktop offer
+**Compact context** from the context meter. When you return to a large thread
+after more than an hour, a **Compact** chip with the thread's token count shows
+next to the send button. While it is on, Enter summarizes the history first, then
+sends your message. Click the chip to switch it to **Full** and keep the full
+history for that message. See [commands and skills](./composer.md#commands-and-skills) for using
+composer commands.
+
 On web and desktop, when you return to an older Claude thread with a large context, Scient
 offers to compact the conversation before you continue. You can also select **Compact context**
 from the context meter. On every client, you can enter `/compact` in the message composer, and

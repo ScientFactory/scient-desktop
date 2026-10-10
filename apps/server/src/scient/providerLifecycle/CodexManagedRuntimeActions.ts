@@ -24,10 +24,10 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { resolveCodexLaunchArgs } from "../../provider/Layers/codexLaunchArgs.ts";
-import { openCodexAppServerConnection } from "../../provider/Layers/CodexProvider.ts";
+import { resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
+import { openCodexAppServerConnection } from "../../provider/CodexProvider.ts";
 import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,

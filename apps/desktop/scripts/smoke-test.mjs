@@ -20,7 +20,10 @@ export function runDesktopSmoke({
   env = process.env,
   cwd,
   survivalMs = 8_000,
-  shutdownGraceMs = 2_000,
+  // SCIENT-FORK:START — observe the existing native shutdown policy, not just its first grace period.
+  // Pool stop permits 5s; allow 3s more for native process exit and finalizer drainage.
+  shutdownGraceMs = 8_000,
+  // SCIENT-FORK:END
 }) {
   if (![survivalMs, shutdownGraceMs].every((value) => Number.isFinite(value) && value > 0)) {
     throw new RangeError("Smoke deadlines must be finite and positive.");

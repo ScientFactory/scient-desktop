@@ -50,6 +50,30 @@ function startProbe(signal?: AbortSignal) {
 }
 
 describe("managed runtime smoke process lifetime", () => {
+  it.each(["2026.10.01-e373342", "2026.10.01-14929f9", ""])(
+    "checks exact reported identity %j before accepting a successful exit",
+    async (reported) => {
+      const expectedVersion = "2026.10.01-e373342";
+      const result = smokeManagedRuntimeExecutable(
+        "cursor",
+        ["--version"],
+        "Cursor",
+        {},
+        { expectedVersion },
+      );
+      const checked =
+        reported === expectedVersion
+          ? expect(result).resolves.toBeUndefined()
+          : expect(result).rejects.toThrow("expected release version");
+      // Exercise a version split across chunks, not just a buffered stdout fixture.
+      child.stdout.emit("data", Buffer.from(reported.slice(0, 12)));
+      child.stdout.emit("data", Buffer.from(reported.slice(12)));
+      child.emit("close", 0, null);
+      await checked;
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
   it("does not release the payload on exit before the process streams close", async () => {
     const { result, settled } = startProbe();
     child.emit("exit", 0, null);
@@ -163,6 +187,7 @@ describe("managed runtime smoke process lifetime", () => {
       expect(stages).not.toContain("activating");
       expect(await runtime.readState()).toBeUndefined();
 
+      child.stdout.emit("data", Buffer.from(`${artifact.version}\n`));
       child.emit("close", 0, null);
       await expect(installing).resolves.toMatchObject({
         installed: true,

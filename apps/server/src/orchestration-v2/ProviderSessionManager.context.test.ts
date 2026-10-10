@@ -371,7 +371,9 @@ it.effect(
           threadId: secondThreadId,
           providerSessionId,
           now,
+          nativeThreadId: "native-thread-b",
         });
+        assert.notEqual(firstProviderThread.id, secondProviderThread.id);
         const firstRunId = idAllocator.derive.run({ threadId: firstThreadId, ordinal: 1 });
         const secondRunId = idAllocator.derive.run({ threadId: secondThreadId, ordinal: 1 });
         const firstProviderTurnId = idAllocator.derive.providerTurn({
@@ -798,99 +800,100 @@ it.effect(
     }),
 );
 
-for (const workspaceCapability of [true, false, undefined] as const) {
-  it.effect(
-    `ProviderSessionManagerV2 shares different project workspaces only with explicit per-thread authority (${workspaceCapability})`,
-    () =>
-      Effect.gen(function* () {
-        const state = yield* Ref.make(emptyState);
-        const fs = yield* FileSystem.FileSystem;
-        const firstCwd = yield* fs.makeTempDirectoryScoped();
-        const secondCwd = yield* fs.makeTempDirectoryScoped();
-        const capabilities = {
-          ...CodexCapabilities,
-          sessions: {
-            ...CodexCapabilities.sessions,
-            supportsPerThreadWorkspace: workspaceCapability,
-          },
-        };
-        yield* Effect.gen(function* () {
-          const sink = yield* EventSink.EventSinkV2;
-          const allocator = yield* IdAllocator.IdAllocatorV2;
-          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-          const now = yield* DateTime.now;
-          const firstThread = ThreadId.make("pooled-workspace-first");
-          const secondThread = ThreadId.make("pooled-workspace-second");
-          const providerSessionId = yield* allocator.allocate.providerSession({
-            providerInstanceId: modelSelection.instanceId,
-            threadId: firstThread,
-          });
-          yield* sink.write({
-            events: [
-              yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId: firstThread, now }),
-              yield* makeThreadCreatedEvent({
-                idAllocator: allocator,
-                threadId: secondThread,
-                now,
-              }),
-            ],
-          });
-          const firstRuntime = yield* manager.open({
-            threadId: firstThread,
-            providerSessionId,
-            modelSelection,
-            runtimePolicy: { ...runtimePolicy, cwd: firstCwd },
-          });
-          const result = yield* Effect.result(
-            manager.open({
-              threadId: secondThread,
-              providerSessionId,
-              modelSelection,
-              runtimePolicy: { ...runtimePolicy, cwd: secondCwd },
+it.effect.each(
+  ([true, false, undefined] as const).map((workspaceCapability) => ({
+    caseTitle: `ProviderSessionManagerV2 shares different project workspaces only with explicit per-thread authority (${workspaceCapability})`,
+    workspaceCapability,
+  })),
+)("$caseTitle", ({ workspaceCapability }) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const fs = yield* FileSystem.FileSystem;
+    const firstCwd = yield* fs.makeTempDirectoryScoped();
+    const secondCwd = yield* fs.makeTempDirectoryScoped();
+    const capabilities = {
+      ...CodexCapabilities,
+      sessions: {
+        ...CodexCapabilities.sessions,
+        supportsPerThreadWorkspace: workspaceCapability,
+      },
+    };
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const firstThread = ThreadId.make("pooled-workspace-first");
+      const secondThread = ThreadId.make("pooled-workspace-second");
+      const providerSessionId = yield* allocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: firstThread,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId: firstThread, now }),
+          yield* makeThreadCreatedEvent({
+            idAllocator: allocator,
+            threadId: secondThread,
+            now,
+          }),
+        ],
+      });
+      const firstRuntime = yield* manager.open({
+        threadId: firstThread,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy: { ...runtimePolicy, cwd: firstCwd },
+      });
+      const result = yield* Effect.result(
+        manager.open({
+          threadId: secondThread,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: secondCwd },
+        }),
+      );
+      if (workspaceCapability === true) {
+        assert.equal(result._tag, "Success");
+        if (result._tag === "Success") assert.equal(result.success, firstRuntime);
+        for (const threadId of [firstThread, secondThread]) {
+          const native = {
+            ...makeProviderThread({ threadId, providerSessionId, now, idAllocator: allocator }),
+            id: allocator.derive.providerThread({
+              driver: CODEX_DRIVER,
+              nativeThreadId: threadId,
             }),
-          );
-          if (workspaceCapability === true) {
-            assert.equal(result._tag, "Success");
-            if (result._tag === "Success") assert.equal(result.success, firstRuntime);
-            for (const threadId of [firstThread, secondThread]) {
-              const native = {
-                ...makeProviderThread({ threadId, providerSessionId, now, idAllocator: allocator }),
-                id: allocator.derive.providerThread({
-                  driver: CODEX_DRIVER,
-                  nativeThreadId: threadId,
-                }),
-                nativeThreadRef: {
-                  driver: CODEX_DRIVER,
-                  nativeId: String(threadId),
-                  strength: "strong" as const,
-                },
-              };
-              yield* firstRuntime.resumeThread({
-                providerThread: native,
-                threadId,
-                modelSelection,
-                runtimePolicy: {
-                  ...runtimePolicy,
-                  cwd: threadId === firstThread ? firstCwd : secondCwd,
-                },
-              });
-            }
-            assert.equal((yield* Ref.get(state)).resumeCount, 2);
-            assert.deepEqual((yield* Ref.get(state)).resumedWorkspaces, [
-              { threadId: firstThread, cwd: firstCwd },
-              { threadId: secondThread, cwd: secondCwd },
-            ]);
-            assert.isDefined(McpProviderSession.readMcpProviderSession(secondThread));
-          } else {
-            assert.equal(result._tag, "Failure");
-            if (result._tag === "Failure")
-              assert.equal(result.failure._tag, "ProviderSessionOpenError");
-            assert.isUndefined(McpProviderSession.readMcpProviderSession(secondThread));
-          }
-          assert.equal(firstRuntime.providerSession.cwd, firstCwd);
-          assert.equal((yield* Ref.get(state)).openCount, 1);
-          assert.equal((yield* Ref.get(state)).closeCount, 0);
-        }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000, capabilities })));
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-}
+            nativeThreadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: String(threadId),
+              strength: "strong" as const,
+            },
+          };
+          yield* firstRuntime.resumeThread({
+            providerThread: native,
+            threadId,
+            modelSelection,
+            runtimePolicy: {
+              ...runtimePolicy,
+              cwd: threadId === firstThread ? firstCwd : secondCwd,
+            },
+          });
+        }
+        assert.equal((yield* Ref.get(state)).resumeCount, 2);
+        assert.deepEqual((yield* Ref.get(state)).resumedWorkspaces, [
+          { threadId: firstThread, cwd: firstCwd },
+          { threadId: secondThread, cwd: secondCwd },
+        ]);
+        assert.isDefined(McpProviderSession.readMcpProviderSession(secondThread));
+      } else {
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure")
+          assert.equal(result.failure._tag, "ProviderSessionOpenError");
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(secondThread));
+      }
+      assert.equal(firstRuntime.providerSession.cwd, firstCwd);
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+    }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000, capabilities })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

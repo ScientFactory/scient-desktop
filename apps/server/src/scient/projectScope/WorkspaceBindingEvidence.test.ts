@@ -41,82 +41,70 @@ const liveLayer = workspaceBindingEvidenceLayer.pipe(
 const testLayer = Layer.merge(liveLayer, NodeServices.layer);
 
 describe("WorkspaceBindingEvidence", () => {
-  for (const failure of [
-    "probe",
-    "remotes",
-    "canonical-path",
-    "truncated",
-    "invalid-utf8",
-  ] as const) {
-    it.effect(
-      `does not publish absent repository evidence after ${failure} failure and recovers uncached`,
-      () =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-evidence-failure-" });
-          yield* git(root, ["init"]);
-          yield* git(root, [
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/ScientFactory/fixture.git",
-          ]);
-          const process = yield* VcsProcess.VcsProcess;
-          let fail = false;
-          const injected = VcsProcess.VcsProcess.of({
-            run: (input) =>
-              Effect.gen(function* () {
-                if (
-                  fail &&
-                  ((failure === "probe" &&
-                    input.operation === "ScientWorkspace.inspectRepository") ||
-                    (failure === "remotes" && input.operation === "ScientWorkspace.inspectRemotes"))
-                )
-                  return yield* new VcsProcessTimeoutError({
-                    operation: input.operation,
-                    cwd: input.cwd,
-                    command: input.command,
-                    timeoutMs: 5_000,
-                  });
-                const result = yield* process.run(input);
-                if (!fail) return result;
-                if (
-                  failure === "canonical-path" &&
-                  input.operation === "ScientWorkspace.inspectRepository"
-                )
-                  return { ...result, stdout: `${root}\n${root}/missing-metadata\n` };
-                if (failure === "truncated" && input.operation === "ScientWorkspace.inspectRemotes")
-                  return { ...result, stdoutTruncated: true };
-                if (
-                  failure === "invalid-utf8" &&
-                  input.operation === "ScientWorkspace.inspectRemotes"
-                )
-                  return { ...result, stdoutInvalidUtf8: true };
-                return result;
-              }),
-          });
-          const fixture = workspaceBindingEvidenceLayer.pipe(
-            Layer.provide(
-              VcsDriverRegistry.layer.pipe(
-                Layer.provide(Layer.succeed(VcsProcess.VcsProcess, injected)),
-              ),
-            ),
-          );
-          yield* Effect.gen(function* () {
-            const service = yield* WorkspaceBindingEvidence;
-            const before = yield* service.inspect(root);
-            fail = true;
-            const error = yield* service.inspect(root).pipe(Effect.flip);
-            expect(error.kind).toBe("repository-inspection-failed");
-            fail = false;
-            const after = yield* service.inspect(root);
-            expect(after.repositoryIdentity).toEqual(before.repositoryIdentity);
-            expect(after.worktreeIdentity).toEqual(before.worktreeIdentity);
-            expect(after.rootFileSystemIdentity).toEqual(before.rootFileSystemIdentity);
-          }).pipe(Effect.provide(fixture));
-        }).pipe(Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
-    );
-  }
+  it.effect.each(
+    (["probe", "remotes", "canonical-path", "truncated", "invalid-utf8"] as const).map(
+      (failure) => ({
+        caseTitle: `does not publish absent repository evidence after ${failure} failure and recovers uncached`,
+        failure,
+      }),
+    ),
+  )("$caseTitle", ({ failure }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-evidence-failure-" });
+      yield* git(root, ["init"]);
+      yield* git(root, ["remote", "add", "origin", "https://github.com/ScientFactory/fixture.git"]);
+      const process = yield* VcsProcess.VcsProcess;
+      let fail = false;
+      const injected = VcsProcess.VcsProcess.of({
+        run: (input) =>
+          Effect.gen(function* () {
+            if (
+              fail &&
+              ((failure === "probe" && input.operation === "ScientWorkspace.inspectRepository") ||
+                (failure === "remotes" && input.operation === "ScientWorkspace.inspectRemotes"))
+            )
+              return yield* new VcsProcessTimeoutError({
+                operation: input.operation,
+                cwd: input.cwd,
+                command: input.command,
+                timeoutMs: 5_000,
+              });
+            const result = yield* process.run(input);
+            if (!fail) return result;
+            if (
+              failure === "canonical-path" &&
+              input.operation === "ScientWorkspace.inspectRepository"
+            )
+              return { ...result, stdout: `${root}\n${root}/missing-metadata\n` };
+            if (failure === "truncated" && input.operation === "ScientWorkspace.inspectRemotes")
+              return { ...result, stdoutTruncated: true };
+            if (failure === "invalid-utf8" && input.operation === "ScientWorkspace.inspectRemotes")
+              return { ...result, stdoutInvalidUtf8: true };
+            return result;
+          }),
+      });
+      const fixture = workspaceBindingEvidenceLayer.pipe(
+        Layer.provide(
+          VcsDriverRegistry.layer.pipe(
+            Layer.provide(Layer.succeed(VcsProcess.VcsProcess, injected)),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* WorkspaceBindingEvidence;
+        const before = yield* service.inspect(root);
+        fail = true;
+        const error = yield* service.inspect(root).pipe(Effect.flip);
+        expect(error.kind).toBe("repository-inspection-failed");
+        fail = false;
+        const after = yield* service.inspect(root);
+        expect(after.repositoryIdentity).toEqual(before.repositoryIdentity);
+        expect(after.worktreeIdentity).toEqual(before.worktreeIdentity);
+        expect(after.rootFileSystemIdentity).toEqual(before.rootFileSystemIdentity);
+      }).pipe(Effect.provide(fixture));
+    }).pipe(Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
   it.effect("canonicalizes an ordinary folder without writing project metadata", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

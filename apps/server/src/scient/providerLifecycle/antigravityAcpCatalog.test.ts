@@ -26,13 +26,15 @@ it("hydrates only the five app-owned ACP targets and preserves the bundled relea
     );
     const bundled = bundledAntigravityAcpAsset(platform, arch);
     expect(bundled?.registryVersion).toBe(ANTIGRAVITY_ACP_REGISTRY_VERSION);
-    expect(bundled?.version).toBe("agy_acp_server_1.1.1");
+    expect(bundled?.version).toBe("1.3.0");
     expect(bundled?.sha256).toBe(asset?.sha256);
+    expect(bundled).toEqual(asset);
   }
   expect(resolveAntigravityAcpCatalogAsset(catalog, "darwin", "x64")).toBeUndefined();
+  expect(bundledAntigravityAcpAsset("darwin", "x64")).toBeNull();
 });
 
-it.each(["1.0.0", "1.1.0"])(
+it.each(["1.0.0", "1.1.0", "1.1.1", "1.2.0"])(
   "does not let an older %s catalog override the bundled ACP release",
   (version) => {
     const staleCatalog = {
@@ -44,10 +46,46 @@ it.each(["1.0.0", "1.1.0"])(
     };
     for (const [platform, arch] of targets) {
       expect(resolveAntigravityAcpCatalogAsset(staleCatalog, platform, arch)).toBeUndefined();
-      expect(bundledAntigravityAcpAsset(platform, arch)?.registryVersion).toBe("1.1.1");
+      expect(bundledAntigravityAcpAsset(platform, arch)?.registryVersion).toBe("1.3.0");
     }
   },
 );
+
+it.each([
+  "latest",
+  "1.3",
+  "1.3.0/other",
+  "../1.3.0",
+  "agy_acp_server_",
+  `agy_acp_server_${"a".repeat(97)}`,
+])("rejects malformed native release identity %s", (version) => {
+  const release = catalog.providers.antigravityAcp;
+  const artifact = release.artifacts["linux-x64"];
+  expect(
+    resolveAntigravityAcpCatalogAsset(
+      {
+        ...catalog,
+        providers: {
+          ...catalog.providers,
+          antigravityAcp: {
+            ...release,
+            artifacts: {
+              ...release.artifacts,
+              "linux-x64": {
+                ...artifact,
+                artifactName: `agy-acp-server-${version}-linux-x86_64.zip`,
+                url: `https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-${version}-linux-x86_64.zip`,
+                antigravityAcp: { ...artifact.antigravityAcp, version },
+              },
+            },
+          },
+        },
+      },
+      "linux",
+      "x64",
+    ),
+  ).toBeUndefined();
+});
 
 it("rejects feed attempts to change the approved ACP host, member facts, or release order", () => {
   const release = catalog.providers.antigravityAcp;

@@ -55,14 +55,9 @@ export interface TurnFold {
   readonly label: string;
 }
 
-/**
- * Chat's per-message line-break decision for assistant text: single line
- * breaks render as breaks (`remark-breaks`) only in "★ Insight" blocks. User
- * messages and reasoning always keep their line breaks.
- */
-export function shouldPreserveAssistantLineBreaks(text: string): boolean {
-  return /^★ Insight(?:\s|─)/mu.test(text);
-}
+// SCIENT-FORK:START — conversation documents share chat's line-break policy.
+export { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+// SCIENT-FORK:END
 
 export function computeElapsedMs(startIso: string, endIso: string): number | null {
   const start = Date.parse(startIso);

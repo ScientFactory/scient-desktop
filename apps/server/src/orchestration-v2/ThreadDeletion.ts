@@ -21,7 +21,6 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     OrchestrationV2ThreadProjection,
     "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
   >;
-  readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocatorV2["Service"];
 }): Effect.fn.Return<ThreadDeletionPlan, IdAllocatorV2Error> {
@@ -215,14 +214,15 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     threadId: command.threadId,
     request: { type: "terminal.cleanup" },
   });
-  const attachmentIds = Array.from(new Set(input.attachmentIds));
-  if (attachmentIds.length > 0) {
-    effects.push({
-      id: `effect:${command.commandId}:attachment.cleanup`,
-      commandId: command.commandId,
-      threadId: command.threadId,
-      request: { type: "attachment.cleanup", attachmentIds },
-    });
-  }
+  // SCIENT-FORK:START — files can be shown by other conversations (forks share
+  // them, messages can reuse them): release them after the deletion commits,
+  // keeping any a live conversation still names.
+  effects.push({
+    id: `effect:${command.commandId}:scient.release-thread-files`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "scient.release-thread-files" },
+  });
+  // SCIENT-FORK:END
   return { events, effects };
 });

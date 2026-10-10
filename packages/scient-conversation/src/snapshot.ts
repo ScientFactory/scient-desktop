@@ -18,6 +18,7 @@ import {
   type OrchestrationThreadActivity,
   type TurnId,
 } from "@t3tools/contracts";
+import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Data from "effect/Data";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
@@ -266,6 +267,17 @@ export function buildConversationSnapshot(input: {
   if (running !== null) warnings.push({ _tag: "running-turn-omitted", turnId: running });
   const transcript = content.messages;
   const activities = content.activities;
+  const omittedRenders = activities.filter((activity) => {
+    if (activity.kind !== "tool.completed" || !Predicate.isObject(activity.payload)) return false;
+    const payload = activity.payload;
+    if (payload.status !== "completed" || !Predicate.isObject(payload.data)) return false;
+    const data = payload.data;
+    if (typeof data.toolName !== "string" || !Predicate.isObject(data.item)) return false;
+    const item = { toolName: data.toolName, output: data.item.aggregatedOutput };
+    return htmlRenderFromToolItem(item) !== undefined || mcpAppFromToolItem(item) !== undefined;
+  }).length;
+  if (omittedRenders > 0)
+    warnings.push({ _tag: "records-skipped", kind: "rendered-output", count: omittedRenders });
   let skippedContext = 0;
   const foldedIds = foldedAnswerMessageIds(activities);
   const messages: ConversationMessage[] = [];

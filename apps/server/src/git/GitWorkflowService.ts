@@ -220,11 +220,12 @@ export const make = Effect.gen(function* () {
   const detectGitRepositoryForStatus = Effect.fn("GitWorkflowService.detectGitRepositoryForStatus")(
     function* (operation: string, cwd: string) {
       const handle = yield* registry.detect({ cwd }).pipe(
-        Effect.catchTag("VcsExecutableUnavailableError", (cause) =>
-          cause.kind === "git" && cause.command === "git"
-            ? Effect.succeed("git-missing" as const)
-            : Effect.fail(cause),
-        ),
+        Effect.catchTags({
+          VcsExecutableUnavailableError: (cause) =>
+            cause.kind === "git" && cause.command === "git"
+              ? Effect.succeed("git-missing" as const)
+              : Effect.fail(cause),
+        }),
         Effect.mapError(
           (cause) =>
             new GitManagerError({
@@ -376,7 +377,7 @@ export const make = Effect.gen(function* () {
       ),
     createWorktree: (input, options) =>
       ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
-        Effect.andThen(git.createWorktree(input, options)),
+        Effect.andThen(gitManager.createWorktree(input, options)),
       ),
     listLocalBranchNames: (cwd) =>
       ensureGitCommand("GitWorkflowService.listLocalBranchNames", cwd).pipe(

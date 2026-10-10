@@ -1,8 +1,11 @@
-import type { ScopedProjectRef } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  sessionGrantsScope,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import { ArrowRightIcon } from "lucide-react";
 import { lazy, Suspense, useCallback, useState } from "react";
 
-import { resolvePrimaryOperateAccess } from "../../providerOperateAccess";
 import { usePrimarySessionState } from "../../environments/primary";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
@@ -23,14 +26,11 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
   const openNewThread = useNewThreadHandler();
   const [open, setOpen] = useState(false);
   const [importing, setImporting] = useState(false);
-  const access = resolvePrimaryOperateAccess({
-    isPrimary: true,
-    hasDesktopBridge: typeof window !== "undefined" && Boolean(window.desktopBridge),
-    session: session.data,
-    isPending: session.isPending,
-    hasError: session.error !== null,
-  });
-  const canImport = environment !== null && access === "granted";
+  const canImport =
+    environment !== null &&
+    session.data !== null &&
+    session.error === null &&
+    sessionGrantsScope(session.data, AuthOrchestrationOperateScope);
 
   const busy = canImport && importing;
 

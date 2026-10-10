@@ -15,6 +15,9 @@ authorization URL and opens it once. **Reopen Cursor sign-in** opens that same p
 operation is active. The provider becomes ready after its account and model checks succeed.
 There is no pasted-code step.
 
+Cancelling sign-in stops that SDK login attempt. Closing the details card keeps the attempt
+running; reopen it through the provider's progress or Manage control.
+
 A configured `CURSOR_API_KEY` owns SDK authentication instead of the browser flow. Sign-out stops
 that instance's running sessions and forgets its saved browser credential while preserving
 conversation history. To revoke the generated key before expiry, remove it in Cursor's API-key

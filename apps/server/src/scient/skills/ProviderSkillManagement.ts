@@ -6,7 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
-import type { ProviderRegistryShape } from "../../provider/Services/ProviderRegistry.ts";
+import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 
 export interface ProviderSkillManagementShape {
   readonly setEnabled: (

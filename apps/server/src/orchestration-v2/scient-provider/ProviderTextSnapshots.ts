@@ -192,6 +192,12 @@ export const makeProviderTextSnapshots = <Entry extends SnapshotSessionEntry>(in
             entry.runtime.textSnapshots!.ended,
           );
         }).pipe(
+          // Bound only pre-admission capture. Retiring this waiter releases its
+          // token, never the source run or an already accepted fork's setup.
+          Effect.timeoutOrElse({
+            duration: "90 seconds",
+            orElse: () => new ProviderTextSnapshotError({ reason: "timed-out" }),
+          }),
           Effect.onExit((exit) =>
             Exit.isFailure(exit) ? releaseTextSnapshot(token) : Effect.void,
           ),

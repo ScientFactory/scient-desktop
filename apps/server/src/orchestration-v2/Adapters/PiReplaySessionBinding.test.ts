@@ -385,305 +385,310 @@ const originalSchedulePins = {
 } as const;
 
 describe("Pi pinned native read schedules", () => {
-  for (const [scenario, digest] of Object.entries(originalSchedulePins)) {
-    const bytes = () =>
-      NodeFS.readFileSync(
-        new URL(`../testkit/fixtures/${scenario}/pi_transcript.ndjson`, import.meta.url),
-        "utf8",
-      );
-    it.effect(
-      `preserves ${scenario} recording, native activity and session selection with explicit read-only observations`,
-      () =>
-        Effect.gen(function* () {
-          const raw = bytes();
-          assert.equal(NodeCrypto.createHash("sha256").update(raw).digest("hex"), digest);
-          const recorded = yield* decodeProviderReplayNdjson(raw);
-          const before = structuredClone(recorded);
-          const prepared = reconcilePiRecordedSchedules(recorded);
-          const real = prepared.filter(
-            (entry) => entry.type === "runtime_exit" || !entry.label?.startsWith("synthetic:"),
-          );
-          assert.equal(real.length, recorded.entries.length);
-          for (const entry of recorded.entries)
-            assert.equal(real.filter((candidate) => candidate === entry).length, 1);
-          const activity = (entries: ReadonlyArray<ProviderReplayEntry>) =>
-            entries.filter(
-              (entry) =>
-                entry.type !== "runtime_exit" &&
-                Predicate.isObject(entry.frame) &&
-                entry.frame.type !== "get_state" &&
-                entry.frame.type !== "get_entries" &&
-                entry.frame.type !== "get_session_stats" &&
-                !(
-                  entry.frame.type === "response" &&
-                  ["get_state", "get_entries", "get_session_stats"].includes(
-                    String(entry.frame.command),
-                  )
-                ),
-            );
-          assert.deepEqual(activity(prepared), activity(recorded.entries));
-          const confirmations = prepared.filter(
-            (entry) =>
-              entry.type === "emit_inbound" &&
-              entry.label?.startsWith("synthetic:settle-confirmation:"),
-          );
-          assert.equal(
-            confirmations.length,
-            new Map(
-              Object.entries({
-                multi_turn: 2,
-                pi_compaction: 8,
-                provider_thread_resume: 2,
-                message_steering: 1,
-                thread_rollback: 3,
-                thread_rollback_after_stop: 3,
-              }),
-            ).get(scenario),
-          );
-          for (const entry of confirmations) {
-            if (
-              entry.type !== "emit_inbound" ||
-              !Predicate.isObject(entry.frame) ||
-              !Predicate.isObject(entry.frame.data)
-            )
-              throw new Error("Missing confirming state");
-            const frame = entry.frame;
-            const data = entry.frame.data;
-            assert.equal(data.isStreaming, false);
-            assert.equal(data.isCompacting, false);
-            assert.equal(data.pendingMessageCount, 0);
-            assert.isTrue(
-              recorded.entries.some(
-                (original) =>
-                  original.type === "emit_inbound" &&
-                  Predicate.isObject(original.frame) &&
-                  original.frame.command === "get_state" &&
-                  JSON.stringify(original.frame.data) === JSON.stringify(data) &&
-                  original.label?.endsWith("@p2") === entry.label?.endsWith("@p2"),
-              ),
-            );
-            const position = prepared.indexOf(entry);
-            const request = prepared[position - 1]!;
-            assert.deepEqual(request.type === "expect_outbound" ? request.frame : null, {
-              type: "get_state",
-              id: frame.id,
-            });
-            const dualProbe =
-              scenario === "pi_compaction" &&
-              ["t3-910001", "t3-930005", "t3-910004", "t3-930014"].includes(String(frame.id));
-            if (dualProbe) {
-              const reads = prepared
-                .slice(0, position)
-                .filter(
-                  (candidate) =>
-                    candidate.type === "emit_inbound" &&
-                    candidate.label?.startsWith("synthetic:concurrent-compaction-probe:"),
+  it.effect.each(
+    Object.entries(originalSchedulePins).flatMap(([scenario, digest]) => {
+      const bytes = () =>
+        NodeFS.readFileSync(
+          new URL(`../testkit/fixtures/${scenario}/pi_transcript.ndjson`, import.meta.url),
+          "utf8",
+        );
+      return [
+        {
+          caseTitle: `preserves ${scenario} recording, native activity and session selection with explicit read-only observations`,
+          run: () =>
+            Effect.gen(function* () {
+              const raw = bytes();
+              assert.equal(NodeCrypto.createHash("sha256").update(raw).digest("hex"), digest);
+              const recorded = yield* decodeProviderReplayNdjson(raw);
+              const before = structuredClone(recorded);
+              const prepared = reconcilePiRecordedSchedules(recorded);
+              const real = prepared.filter(
+                (entry) => entry.type === "runtime_exit" || !entry.label?.startsWith("synthetic:"),
+              );
+              assert.equal(real.length, recorded.entries.length);
+              for (const entry of recorded.entries)
+                assert.equal(real.filter((candidate) => candidate === entry).length, 1);
+              const activity = (entries: ReadonlyArray<ProviderReplayEntry>) =>
+                entries.filter(
+                  (entry) =>
+                    entry.type !== "runtime_exit" &&
+                    Predicate.isObject(entry.frame) &&
+                    entry.frame.type !== "get_state" &&
+                    entry.frame.type !== "get_entries" &&
+                    entry.frame.type !== "get_session_stats" &&
+                    !(
+                      entry.frame.type === "response" &&
+                      ["get_state", "get_entries", "get_session_stats"].includes(
+                        String(entry.frame.command),
+                      )
+                    ),
                 );
-              const statistics = reads.findLast(
-                (candidate) =>
-                  candidate.type === "emit_inbound" &&
-                  Predicate.isObject(candidate.frame) &&
-                  candidate.frame.command === "get_session_stats",
+              assert.deepEqual(activity(prepared), activity(recorded.entries));
+              const confirmations = prepared.filter(
+                (entry) =>
+                  entry.type === "emit_inbound" &&
+                  entry.label?.startsWith("synthetic:settle-confirmation:"),
               );
-              const tree = reads.findLast(
-                (candidate) =>
-                  candidate.type === "emit_inbound" &&
-                  Predicate.isObject(candidate.frame) &&
-                  candidate.frame.command === "get_entries",
+              assert.equal(
+                confirmations.length,
+                new Map(
+                  Object.entries({
+                    multi_turn: 2,
+                    pi_compaction: 8,
+                    provider_thread_resume: 2,
+                    message_steering: 1,
+                    thread_rollback: 3,
+                    thread_rollback_after_stop: 3,
+                  }),
+                ).get(scenario),
               );
-              assert.isDefined(statistics);
-              assert.isDefined(tree);
-              assert.isBelow(prepared.indexOf(statistics), prepared.indexOf(tree));
-              for (const copied of [statistics, tree]) {
-                if (copied.type !== "emit_inbound" || !Predicate.isObject(copied.frame))
-                  throw new Error("Missing copied read");
-                const copiedFrame = copied.frame;
+              for (const entry of confirmations) {
+                if (
+                  entry.type !== "emit_inbound" ||
+                  !Predicate.isObject(entry.frame) ||
+                  !Predicate.isObject(entry.frame.data)
+                )
+                  throw new Error("Missing confirming state");
+                const frame = entry.frame;
+                const data = entry.frame.data;
+                assert.equal(data.isStreaming, false);
+                assert.equal(data.isCompacting, false);
+                assert.equal(data.pendingMessageCount, 0);
                 assert.isTrue(
                   recorded.entries.some(
                     (original) =>
                       original.type === "emit_inbound" &&
                       Predicate.isObject(original.frame) &&
-                      original.frame.command === copiedFrame.command &&
-                      JSON.stringify(original.frame.data) === JSON.stringify(copiedFrame.data),
+                      original.frame.command === "get_state" &&
+                      JSON.stringify(original.frame.data) === JSON.stringify(data) &&
+                      original.label?.endsWith("@p2") === entry.label?.endsWith("@p2"),
                   ),
                 );
-                const correlated = prepared.find(
-                  (candidate) =>
-                    candidate.type === "expect_outbound" &&
-                    Predicate.isObject(candidate.frame) &&
-                    candidate.frame.id === copiedFrame.id,
-                );
-                assert.isDefined(correlated);
-                assert.isBelow(prepared.indexOf(correlated), prepared.indexOf(copied));
+                const position = prepared.indexOf(entry);
+                const request = prepared[position - 1]!;
+                assert.deepEqual(request.type === "expect_outbound" ? request.frame : null, {
+                  type: "get_state",
+                  id: frame.id,
+                });
+                const dualProbe =
+                  scenario === "pi_compaction" &&
+                  ["t3-910001", "t3-930005", "t3-910004", "t3-930014"].includes(String(frame.id));
+                if (dualProbe) {
+                  const reads = prepared
+                    .slice(0, position)
+                    .filter(
+                      (candidate) =>
+                        candidate.type === "emit_inbound" &&
+                        candidate.label?.startsWith("synthetic:concurrent-compaction-probe:"),
+                    );
+                  const statistics = reads.findLast(
+                    (candidate) =>
+                      candidate.type === "emit_inbound" &&
+                      Predicate.isObject(candidate.frame) &&
+                      candidate.frame.command === "get_session_stats",
+                  );
+                  const tree = reads.findLast(
+                    (candidate) =>
+                      candidate.type === "emit_inbound" &&
+                      Predicate.isObject(candidate.frame) &&
+                      candidate.frame.command === "get_entries",
+                  );
+                  assert.isDefined(statistics);
+                  assert.isDefined(tree);
+                  assert.isBelow(prepared.indexOf(statistics), prepared.indexOf(tree));
+                  for (const copied of [statistics, tree]) {
+                    if (copied.type !== "emit_inbound" || !Predicate.isObject(copied.frame))
+                      throw new Error("Missing copied read");
+                    const copiedFrame = copied.frame;
+                    assert.isTrue(
+                      recorded.entries.some(
+                        (original) =>
+                          original.type === "emit_inbound" &&
+                          Predicate.isObject(original.frame) &&
+                          original.frame.command === copiedFrame.command &&
+                          JSON.stringify(original.frame.data) === JSON.stringify(copiedFrame.data),
+                      ),
+                    );
+                    const correlated = prepared.find(
+                      (candidate) =>
+                        candidate.type === "expect_outbound" &&
+                        Predicate.isObject(candidate.frame) &&
+                        candidate.frame.id === copiedFrame.id,
+                    );
+                    assert.isDefined(correlated);
+                    assert.isBelow(prepared.indexOf(correlated), prepared.indexOf(copied));
+                  }
+                } else {
+                  const tree = prepared[position - 2]!;
+                  const statistics = prepared[position - 4]!;
+                  assert.isTrue(
+                    tree.type === "emit_inbound" &&
+                      Predicate.isObject(tree.frame) &&
+                      tree.frame.command === "get_entries",
+                  );
+                  assert.isTrue(
+                    statistics.type === "emit_inbound" &&
+                      Predicate.isObject(statistics.frame) &&
+                      statistics.frame.command === "get_session_stats",
+                  );
+                }
               }
-            } else {
-              const tree = prepared[position - 2]!;
-              const statistics = prepared[position - 4]!;
-              assert.isTrue(
-                tree.type === "emit_inbound" &&
-                  Predicate.isObject(tree.frame) &&
-                  tree.frame.command === "get_entries",
+              const streaming = prepared.filter(
+                (entry) =>
+                  entry.type === "emit_inbound" &&
+                  entry.label === "synthetic:streaming-identity-preflight:response:get_state",
               );
-              assert.isTrue(
-                statistics.type === "emit_inbound" &&
-                  Predicate.isObject(statistics.frame) &&
-                  statistics.frame.command === "get_session_stats",
+              assert.equal(streaming.length, scenario === "message_steering" ? 1 : 0);
+              if (scenario === "message_steering") {
+                const entry = streaming[0]!;
+                const selected = recorded.entries[15]!;
+                if (
+                  entry.type !== "emit_inbound" ||
+                  !Predicate.isObject(entry.frame) ||
+                  !Predicate.isObject(entry.frame.data) ||
+                  selected.type !== "emit_inbound" ||
+                  !Predicate.isObject(selected.frame) ||
+                  !Predicate.isObject(selected.frame.data)
+                )
+                  throw new Error("Missing steering identity");
+                const data = entry.frame.data;
+                assert.equal(data.isStreaming, true);
+                assert.equal(data.sessionFile, selected.frame.data.sessionFile);
+                assert.equal(data.sessionId, selected.frame.data.sessionId);
+                assert.deepEqual(data.model, selected.frame.data.model);
+                assert.equal(data.thinkingLevel, selected.frame.data.thinkingLevel);
+                assert.strictEqual(prepared[prepared.indexOf(entry) + 1], recorded.entries[27]);
+              }
+              assert.deepEqual(recorded, before);
+              assert.equal(bytes(), raw);
+            }),
+        },
+        {
+          caseTitle: `refuses unpinned ${scenario} state, activity, order, truncation and reapplication`,
+          run: () =>
+            Effect.gen(function* () {
+              const recorded = yield* decodeProviderReplayNdjson(bytes());
+              const changedIdentity = structuredClone(recorded.entries);
+              const state = changedIdentity.find(
+                (entry) =>
+                  entry.type === "emit_inbound" &&
+                  Predicate.isObject(entry.frame) &&
+                  entry.frame.command === "get_state",
               );
-            }
-          }
-          const streaming = prepared.filter(
-            (entry) =>
-              entry.type === "emit_inbound" &&
-              entry.label === "synthetic:streaming-identity-preflight:response:get_state",
-          );
-          assert.equal(streaming.length, scenario === "message_steering" ? 1 : 0);
-          if (scenario === "message_steering") {
-            const entry = streaming[0]!;
-            const selected = recorded.entries[15]!;
-            if (
-              entry.type !== "emit_inbound" ||
-              !Predicate.isObject(entry.frame) ||
-              !Predicate.isObject(entry.frame.data) ||
-              selected.type !== "emit_inbound" ||
-              !Predicate.isObject(selected.frame) ||
-              !Predicate.isObject(selected.frame.data)
-            )
-              throw new Error("Missing steering identity");
-            const data = entry.frame.data;
-            assert.equal(data.isStreaming, true);
-            assert.equal(data.sessionFile, selected.frame.data.sessionFile);
-            assert.equal(data.sessionId, selected.frame.data.sessionId);
-            assert.deepEqual(data.model, selected.frame.data.model);
-            assert.equal(data.thinkingLevel, selected.frame.data.thinkingLevel);
-            assert.strictEqual(prepared[prepared.indexOf(entry) + 1], recorded.entries[27]);
-          }
-          assert.deepEqual(recorded, before);
-          assert.equal(bytes(), raw);
-        }),
-    );
-    it.effect(
-      `refuses unpinned ${scenario} state, activity, order, truncation and reapplication`,
-      () =>
-        Effect.gen(function* () {
-          const recorded = yield* decodeProviderReplayNdjson(bytes());
-          const changedIdentity = structuredClone(recorded.entries);
-          const state = changedIdentity.find(
-            (entry) =>
-              entry.type === "emit_inbound" &&
-              Predicate.isObject(entry.frame) &&
-              entry.frame.command === "get_state",
-          );
-          if (
-            state?.type !== "emit_inbound" ||
-            !Predicate.isObject(state.frame) ||
-            !Predicate.isObject(state.frame.data)
-          )
-            throw new Error("Missing state");
-          state.frame.data.sessionId = "foreign";
-          const reordered = [...recorded.entries];
-          [reordered[1], reordered[2]] = [reordered[2]!, reordered[1]!];
-          for (const entries of [
-            changedIdentity,
-            reordered,
-            recorded.entries.slice(0, -1),
-            [
-              ...recorded.entries,
-              {
-                type: "emit_inbound",
-                label: "agent_start",
-                frame: { type: "agent_start" },
-              } satisfies ProviderReplayEntry,
-            ],
-            reconcilePiRecordedSchedules(recorded),
-          ])
-            assert.throws(
-              () => reconcilePiRecordedSchedules({ ...recorded, entries }),
-              /pinned recording/,
-            );
-        }),
-    );
-  }
+              if (
+                state?.type !== "emit_inbound" ||
+                !Predicate.isObject(state.frame) ||
+                !Predicate.isObject(state.frame.data)
+              )
+                throw new Error("Missing state");
+              state.frame.data.sessionId = "foreign";
+              const reordered = [...recorded.entries];
+              [reordered[1], reordered[2]] = [reordered[2]!, reordered[1]!];
+              for (const entries of [
+                changedIdentity,
+                reordered,
+                recorded.entries.slice(0, -1),
+                [
+                  ...recorded.entries,
+                  {
+                    type: "emit_inbound",
+                    label: "agent_start",
+                    frame: { type: "agent_start" },
+                  } satisfies ProviderReplayEntry,
+                ],
+                reconcilePiRecordedSchedules(recorded),
+              ])
+                assert.throws(
+                  () => reconcilePiRecordedSchedules({ ...recorded, entries }),
+                  /pinned recording/,
+                );
+            }),
+        },
+      ];
+    }),
+  )("$caseTitle", ({ run }) => run());
 });
 
 describe("Pi current bound-launch fixture proof", () => {
-  for (const scenario of ["provider_thread_resume", "thread_rollback_after_stop"]) {
-    it.effect(
-      `retains ${scenario} historical RPC bytes while requiring current same-session confirmation`,
-      () =>
-        Effect.gen(function* () {
-          const raw = NodeFS.readFileSync(
-            new URL(`../testkit/fixtures/${scenario}/pi_transcript.ndjson`, import.meta.url),
-            "utf8",
-          );
-          const original = yield* decodeProviderReplayNdjson(raw);
-          const before = structuredClone(original);
-          const adapted = reconcilePiBoundLaunchProtocol(original);
-          assert.lengthOf(adapted.historicalRPCFrames, 2);
-          const scheduled = reconcilePiRecordedSchedules(original);
-          for (const entry of original.entries)
-            assert.equal(
-              [...adapted.entries, ...adapted.historicalRPCFrames].filter(
-                (candidate) => candidate === entry,
-              ).length,
-              1,
-            );
-          assert.deepEqual(
-            adapted.entries,
-            scheduled.filter((entry) => !adapted.historicalRPCFrames.includes(entry)),
-          );
-          assert.deepEqual(
-            adapted.historicalRPCFrames.map((entry) =>
-              entry.type === "runtime_exit" ? null : entry.label,
-            ),
-            ["switch_session@p2", "response:switch_session@p2"],
-          );
-          const declared = declarePiReplaySessionFiles(adapted.entries, root);
-          const first = declared.expectedFile(recordedFile);
-          const binding = new PiReplaySessionBinding(declared.entries, root);
-          const starts = declared.entries.filter(
-            (entry) =>
-              entry.type === "expect_outbound" &&
-              Predicate.isObject(entry.frame) &&
-              entry.frame.type === "process_start",
-          );
-          assert.lengthOf(starts, 2);
-          for (const [index, start] of starts.entries()) {
-            if (
-              start.type !== "expect_outbound" ||
-              !Predicate.isObject(start.frame) ||
-              !Array.isArray(start.frame.args) ||
-              !start.frame.args.every((arg) => typeof arg === "string")
-            )
-              throw new Error("Missing declared launch");
-            const launchArgs = start.frame.args.map((arg) =>
-              arg === "<any>" ? "/actual-extension" : arg,
-            );
-            assert.equal(launchArgs.at(-1), first);
-            binding.bind({ ordinal: index + 1, cwd: "/workspace", args: launchArgs });
-          }
-          const wrong = structuredClone(original.entries);
-          const confirmation = wrong.find(
-            (entry) => entry.type === "emit_inbound" && entry.label === "response:get_state@p2",
-          );
-          if (
-            confirmation?.type !== "emit_inbound" ||
-            !Predicate.isObject(confirmation.frame) ||
-            !Predicate.isObject(confirmation.frame.data)
-          )
-            throw new Error("Missing recorded confirmation");
-          confirmation.frame.data.sessionId = "foreign";
-          assert.throws(
-            () => reconcilePiBoundLaunchProtocol({ ...original, entries: wrong }),
-            /pinned recording/,
-          );
-          assert.throws(
-            () => reconcilePiBoundLaunchProtocol({ ...original, entries: adapted.entries }),
-            /pinned recording/,
-          );
-          assert.deepEqual(original, before);
-        }),
-    );
-  }
+  it.effect.each(
+    ["provider_thread_resume", "thread_rollback_after_stop"].map((scenario) => ({
+      caseTitle: `retains ${scenario} historical RPC bytes while requiring current same-session confirmation`,
+      scenario,
+    })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.gen(function* () {
+      const raw = NodeFS.readFileSync(
+        new URL(`../testkit/fixtures/${scenario}/pi_transcript.ndjson`, import.meta.url),
+        "utf8",
+      );
+      const original = yield* decodeProviderReplayNdjson(raw);
+      const before = structuredClone(original);
+      const adapted = reconcilePiBoundLaunchProtocol(original);
+      assert.lengthOf(adapted.historicalRPCFrames, 2);
+      const scheduled = reconcilePiRecordedSchedules(original);
+      for (const entry of original.entries)
+        assert.equal(
+          [...adapted.entries, ...adapted.historicalRPCFrames].filter(
+            (candidate) => candidate === entry,
+          ).length,
+          1,
+        );
+      assert.deepEqual(
+        adapted.entries,
+        scheduled.filter((entry) => !adapted.historicalRPCFrames.includes(entry)),
+      );
+      assert.deepEqual(
+        adapted.historicalRPCFrames.map((entry) =>
+          entry.type === "runtime_exit" ? null : entry.label,
+        ),
+        ["switch_session@p2", "response:switch_session@p2"],
+      );
+      const declared = declarePiReplaySessionFiles(adapted.entries, root);
+      const first = declared.expectedFile(recordedFile);
+      const binding = new PiReplaySessionBinding(declared.entries, root);
+      const starts = declared.entries.filter(
+        (entry) =>
+          entry.type === "expect_outbound" &&
+          Predicate.isObject(entry.frame) &&
+          entry.frame.type === "process_start",
+      );
+      assert.lengthOf(starts, 2);
+      for (const [index, start] of starts.entries()) {
+        if (
+          start.type !== "expect_outbound" ||
+          !Predicate.isObject(start.frame) ||
+          !Array.isArray(start.frame.args) ||
+          !start.frame.args.every((arg) => typeof arg === "string")
+        )
+          throw new Error("Missing declared launch");
+        const launchArgs = start.frame.args.map((arg) =>
+          arg === "<any>" ? "/actual-extension" : arg,
+        );
+        assert.equal(launchArgs.at(-1), first);
+        binding.bind({ ordinal: index + 1, cwd: "/workspace", args: launchArgs });
+      }
+      const wrong = structuredClone(original.entries);
+      const confirmation = wrong.find(
+        (entry) => entry.type === "emit_inbound" && entry.label === "response:get_state@p2",
+      );
+      if (
+        confirmation?.type !== "emit_inbound" ||
+        !Predicate.isObject(confirmation.frame) ||
+        !Predicate.isObject(confirmation.frame.data)
+      )
+        throw new Error("Missing recorded confirmation");
+      confirmation.frame.data.sessionId = "foreign";
+      assert.throws(
+        () => reconcilePiBoundLaunchProtocol({ ...original, entries: wrong }),
+        /pinned recording/,
+      );
+      assert.throws(
+        () => reconcilePiBoundLaunchProtocol({ ...original, entries: adapted.entries }),
+        /pinned recording/,
+      );
+      assert.deepEqual(original, before);
+    }),
+  );
   it.each([
     "valid",
     "wrong-file",

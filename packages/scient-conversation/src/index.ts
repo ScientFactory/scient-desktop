@@ -6,6 +6,7 @@ export * from "./markdownExport.ts";
 export { bodyIsContained, readMessageBody, writeMessageBody } from "./messageBody.ts";
 export type { BodyWriteOptions, RawHtmlMode, WrittenBody } from "./messageBody.ts";
 export * from "./snapshot.ts";
+export * from "./toolLifecycle.ts";
 export * from "./workLogGrouping.ts";
 export * from "./workLogProjection.ts";
 export * from "./storagePaths.ts";

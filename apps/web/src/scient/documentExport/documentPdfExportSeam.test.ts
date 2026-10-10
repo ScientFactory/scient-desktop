@@ -8,12 +8,10 @@ const read = (relativePath: string) =>
 
 describe("document PDF export seams", () => {
   it("keeps the desktop host mount narrow and ahead of browser session work", () => {
-    const host = read("../../components/preview/PreviewAutomationHosts.tsx");
-    expect(host).toContain('request.operation === "documentPagePdfRender"');
+    const host = read("./documentHost.tsx");
+    expect(host).toContain('case "documentPagePdfRender"');
     expect(host).toContain("renderDocumentPagePdfForHost(httpBaseUrl, request.input)");
-    expect(host.indexOf('request.operation === "documentPagePdfRender"')).toBeLessThan(
-      host.indexOf("const needsSessionSync = needsPreviewAutomationSessionSync"),
-    );
+    expect(host).not.toContain("needsPreviewAutomationSessionSync");
     expect(host).not.toContain("renderDocumentPagePdf!(");
   });
 

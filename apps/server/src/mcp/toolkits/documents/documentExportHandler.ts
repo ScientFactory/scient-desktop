@@ -25,7 +25,7 @@ import {
 import { boundWarnings } from "../../../scient/documentExport/documentPageInput.ts";
 import { isMarkdownDocumentPath } from "../../../scient/documentExport/MarkdownFileBundle.ts";
 import { captureProjectMarkdownFile } from "../../../scient/documentExport/MarkdownPdfPreparation.ts";
-import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import {
   assertCurrentDocumentBuildProject,
   commitStagedProjectPdfOutput,
@@ -78,13 +78,11 @@ const abandonQuietly = (
 ) => store.abandonProduction({ ...handle, reason }).pipe(Effect.ignore);
 
 const renderCapture = Effect.fn("ScientDocumentExport.render")(function* (
-  scope: Parameters<
-    PreviewAutomationBroker.PreviewAutomationBroker["Service"]["invoke"]
-  >[0]["scope"],
+  scope: Parameters<DocumentHostBroker.DocumentHostBroker["Service"]["invoke"]>[0]["scope"],
   record: DocumentCaptureRecord,
   inputRelativeUrl: string,
 ) {
-  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const broker = yield* DocumentHostBroker.DocumentHostBroker;
   const raw = yield* broker
     .invoke({
       scope,
@@ -240,7 +238,7 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
         );
       }
 
-      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const broker = yield* DocumentHostBroker.DocumentHostBroker;
       const presented = yield* broker
         .invoke({
           scope: invocation,

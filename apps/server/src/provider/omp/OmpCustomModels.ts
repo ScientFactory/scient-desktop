@@ -19,7 +19,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
 
 import { customModelProviderId, type ResolvedModelConnection } from "../../customModels.ts";

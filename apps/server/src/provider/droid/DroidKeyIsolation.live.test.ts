@@ -9,12 +9,12 @@ import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Redacted, Schema, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { beforeAll } from "vite-plus/test";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
-import { qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
+import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;
 beforeAll(() => qualifyDroidTestBinary(binary), 10_000);
@@ -87,7 +87,7 @@ it.effect.skipIf(!binary)(
           NodeHttp.createServer(async (request, response) => {
             if (!request.url?.endsWith("/chat/completions")) {
               response.writeHead(200, { "content-type": "application/json" });
-              response.end("{}");
+              response.end(factoryFixtureBody(request.url));
               return;
             }
             let body = "";
@@ -293,7 +293,7 @@ for (const protocol of Object.keys(MODEL_PATHS) as Array<keyof typeof MODEL_PATH
               for await (const _part of request);
               if (!request.url?.endsWith(MODEL_PATHS[protocol])) {
                 response.writeHead(200, { "content-type": "application/json" });
-                response.end("{}");
+                response.end(factoryFixtureBody(request.url));
                 return;
               }
               modelRequests++;

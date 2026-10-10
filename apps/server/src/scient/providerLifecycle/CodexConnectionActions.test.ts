@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
-import type { CodexAppServerConnection } from "../../provider/Layers/CodexProvider.ts";
+import type { CodexAppServerConnection } from "../../provider/CodexProvider.ts";
 import { makeCodexConnectionActionsFromOpen } from "./CodexConnectionActions.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 

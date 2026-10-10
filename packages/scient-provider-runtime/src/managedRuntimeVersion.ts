@@ -4,6 +4,14 @@ import type { ManagedRuntimeCatalogProvider } from "./managedRuntimeArtifact.ts"
 
 export type ManagedRuntimeVersionComparison = "older" | "equal" | "newer" | "unknown";
 
+export interface ManagedRuntimeRelease {
+  readonly version: string;
+  /** Qualified Cursor replacements on the same calendar date. */
+  readonly supersedes?: ReadonlyArray<string> | undefined;
+}
+
+export const MAX_CURSOR_SUPERSEDES = 64;
+
 const CURSOR_VERSION = /^(\d{4})\.(\d{2})\.(\d{2})-([0-9a-f]{7,40})$/u;
 
 function cursorDateKey(match: RegExpExecArray): string | undefined {
@@ -35,6 +43,73 @@ function cursorDateKey(match: RegExpExecArray): string | undefined {
 
 function comparisonFromNumber(comparison: number): ManagedRuntimeVersionComparison {
   return comparison < 0 ? "older" : comparison > 0 ? "newer" : "equal";
+}
+
+function cursorReleaseDate(version: string): string | undefined {
+  const match = CURSOR_VERSION.exec(version);
+  return match ? cursorDateKey(match) : undefined;
+}
+
+export function parseManagedCursorVersion(output: string): string | undefined {
+  const version = /\b\d{4}\.\d{2}\.\d{2}-[0-9a-f]{7,40}\b/u.exec(output)?.[0];
+  return version && cursorReleaseDate(version) ? version : undefined;
+}
+
+export function isSameCursorReleaseDate(current: string, candidate: string): boolean {
+  const date = cursorReleaseDate(current);
+  return date !== undefined && date === cursorReleaseDate(candidate);
+}
+
+/** Ordering metadata never authorizes a new date, malformed identity or another provider. */
+export function isValidManagedRuntimeSupersedes(
+  provider: ManagedRuntimeCatalogProvider,
+  version: string,
+  supersedes: unknown,
+): supersedes is ReadonlyArray<string> | undefined {
+  if (supersedes === undefined) return true;
+  return (
+    provider === "cursor" &&
+    Array.isArray(supersedes) &&
+    supersedes.length <= MAX_CURSOR_SUPERSEDES &&
+    new Set(supersedes).size === supersedes.length &&
+    supersedes.every(
+      (previous: unknown) =>
+        typeof previous === "string" &&
+        previous !== version &&
+        isSameCursorReleaseDate(previous, version),
+    )
+  );
+}
+
+/** Raw versions keep their vendor semantics; only qualified lineage orders same-day Cursor builds. */
+export function compareManagedRuntimeReleases(input: {
+  readonly provider: ManagedRuntimeCatalogProvider;
+  readonly current: ManagedRuntimeRelease;
+  readonly candidate: ManagedRuntimeRelease;
+}): ManagedRuntimeVersionComparison {
+  const raw = compareManagedRuntimeVersions({
+    provider: input.provider,
+    current: input.current.version,
+    candidate: input.candidate.version,
+  });
+  if (raw !== "unknown" || input.provider !== "cursor") return raw;
+  if (
+    !isSameCursorReleaseDate(input.current.version, input.candidate.version) ||
+    !isValidManagedRuntimeSupersedes(
+      input.provider,
+      input.current.version,
+      input.current.supersedes,
+    ) ||
+    !isValidManagedRuntimeSupersedes(
+      input.provider,
+      input.candidate.version,
+      input.candidate.supersedes,
+    )
+  )
+    return "unknown";
+  const forward = input.candidate.supersedes?.includes(input.current.version) ?? false;
+  const backward = input.current.supersedes?.includes(input.candidate.version) ?? false;
+  return forward === backward ? "unknown" : forward ? "newer" : "older";
 }
 
 function compareCursorVersions(

@@ -5,7 +5,7 @@ import {
 } from "@scientfactory/provider-runtime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import {
   createProviderVersionAdvisory,
   ProviderVersionCache,

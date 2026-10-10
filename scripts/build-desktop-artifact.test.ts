@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   BundleNotSelfContainedError,
@@ -105,6 +105,11 @@ import {
   WSL_RUNTIME_EXTRA_RESOURCES,
   wslRuntimeArchiveTarTarget,
 } from "./build-desktop-artifact.ts";
+import {
+  WINDOWS_VOICE_FILES,
+  windowsCursorFiles,
+  windowsNativeIgnoreGlobs,
+} from "./lib/windows-payload.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -173,6 +178,8 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   readonly copyUnpackedNatives: boolean;
   readonly serverEntrySource?: string;
   readonly wslRuntime?: "valid" | "forbidden" | "bad-digest";
+  readonly targetArch?: "x64" | "arm64";
+  readonly ptyPrebuildArch?: "x64" | "arm64";
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -213,13 +220,24 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   for (const file of ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"]) {
     yield* fs.writeFileString(path.join(resourcesDir, "synctex-runtime", file), file);
   }
+  for (const file of [
+    ...WINDOWS_VOICE_FILES.map((name) => `whisper-runtime/${name}`),
+    ...windowsCursorFiles(input.targetArch ?? "x64").map((name) => `node_modules/@cursor/${name}`),
+  ]) {
+    const target = path.join(resourcesDir, file);
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+    yield* fs.writeFileString(target, "component fixture");
+  }
   const appExecutableName = "t3code.exe";
   yield* fs.writeFileString(path.join(packagedAppDir, appExecutableName), "electron");
   yield* fs.writeFileString(path.join(packagedAppDir, "chrome_crashpad_handler.exe"), "crashpad");
 
   if (input.wslRuntime !== undefined) {
     const wslSourceDir = path.join(tempDir, "wsl-source");
-    const linuxPrebuildDir = path.join(wslSourceDir, "node_modules/node-pty/prebuilds/linux-x64");
+    const linuxPrebuildDir = path.join(
+      wslSourceDir,
+      `node_modules/node-pty/prebuilds/linux-${input.ptyPrebuildArch ?? "x64"}`,
+    );
     yield* fs.makeDirectory(path.join(wslSourceDir, "apps/server/dist"), { recursive: true });
     yield* fs.makeDirectory(linuxPrebuildDir, { recursive: true });
     yield* fs.writeFileString(
@@ -233,7 +251,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
     yield* fs.writeFileString(path.join(linuxPrebuildDir, "pty.node"), "linux-pty");
     yield* fs.writeFileString(
       path.join(linuxPrebuildDir, "t3code-wsl-node-pty.json"),
-      '{"arch":"x64"}',
+      JSON.stringify({ arch: input.ptyPrebuildArch ?? "x64" }),
     );
     if (input.wslRuntime === "forbidden") {
       const windowsPrebuildDir = path.join(
@@ -810,11 +828,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(mac.fileAssociations, []);
       // Windows uses a custom OpenWith ProgID to preserve the user's default.
       assert.deepStrictEqual(win.fileAssociations, []);
+
+      assert.deepStrictEqual(linux.toolsets, { appimage: "1.0.3" });
+      assert.notProperty(mac, "toolsets");
+      assert.notProperty(win, "toolsets");
       assert.deepStrictEqual(mac.files, [...DESKTOP_FILE_EXCLUSIONS, ...MAC_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(linux.files, [...DESKTOP_FILE_EXCLUSIONS, ...LINUX_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(win.files, [
         ...DESKTOP_FILE_EXCLUSIONS,
         ...WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS,
+        ...windowsNativeIgnoreGlobs("x64", false).map((glob) => `!${glob}`),
       ]);
       assert.deepStrictEqual(winWithoutWslPrebuild.files, win.files);
       assert.notProperty(mac.mac as Record<string, unknown>, "sign");
@@ -1217,54 +1240,57 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  for (const scenario of [
-    {
-      name: "foreign-only",
-      platform: "mac" as const,
-      arch: "arm64" as const,
-      installed: ["sdk-win32-x64"],
-      missing: ["sdk-darwin-arm64"],
-    },
-    {
-      name: "universal missing x64",
-      platform: "mac" as const,
-      arch: "universal" as const,
-      installed: ["sdk-darwin-arm64"],
-      missing: ["sdk-darwin-x64"],
-    },
-    {
-      name: "Windows missing WSL helpers",
-      platform: "win" as const,
-      arch: "x64" as const,
-      installed: ["sdk-win32-x64"],
-      missing: ["sdk-linux-x64"],
-    },
-  ]) {
-    it.effect(`rejects Cursor ${scenario.name} packages before staging a partial target`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-cursor-target-" });
-          const nodeModules = path.join(root, "node_modules");
-          yield* fs.makeDirectory(path.join(nodeModules, "@cursor/sdk"), { recursive: true });
-          for (const name of scenario.installed)
-            yield* fs.makeDirectory(path.join(nodeModules, "@cursor", name), { recursive: true });
-          const destination = path.join(root, "resources");
-          const error = yield* stageCursorSdkPlatformPackages(nodeModules, destination, {
-            platform: scenario.platform,
-            arch: scenario.arch,
-            linuxServerBackend: scenario.platform === "win",
-          }).pipe(Effect.flip);
-          if (!isCursorSdkPlatformPackagesMissingError(error)) {
-            return yield* Effect.die("Expected a missing Cursor target package error.");
-          }
-          assert.deepEqual(error.missingPackages, scenario.missing);
-          assert.isFalse(yield* fs.exists(destination));
-        }),
-      ),
-    );
-  }
+  it.effect.each(
+    [
+      {
+        name: "foreign-only",
+        platform: "mac" as const,
+        arch: "arm64" as const,
+        installed: ["sdk-win32-x64"],
+        missing: ["sdk-darwin-arm64"],
+      },
+      {
+        name: "universal missing x64",
+        platform: "mac" as const,
+        arch: "universal" as const,
+        installed: ["sdk-darwin-arm64"],
+        missing: ["sdk-darwin-x64"],
+      },
+      {
+        name: "Windows missing WSL helpers",
+        platform: "win" as const,
+        arch: "x64" as const,
+        installed: ["sdk-win32-x64"],
+        missing: ["sdk-linux-x64"],
+      },
+    ].map((scenario) => ({
+      caseTitle: `rejects Cursor ${scenario.name} packages before staging a partial target`,
+      scenario,
+    })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-cursor-target-" });
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(path.join(nodeModules, "@cursor/sdk"), { recursive: true });
+        for (const name of scenario.installed)
+          yield* fs.makeDirectory(path.join(nodeModules, "@cursor", name), { recursive: true });
+        const destination = path.join(root, "resources");
+        const error = yield* stageCursorSdkPlatformPackages(nodeModules, destination, {
+          platform: scenario.platform,
+          arch: scenario.arch,
+          linuxServerBackend: scenario.platform === "win",
+        }).pipe(Effect.flip);
+        if (!isCursorSdkPlatformPackagesMissingError(error)) {
+          return yield* Effect.die("Expected a missing Cursor target package error.");
+        }
+        assert.deepEqual(error.missingPackages, scenario.missing);
+        assert.isFalse(yield* fs.exists(destination));
+      }),
+    ),
+  );
 
   it.effect("rejects a staged server missing Cursor platform optional dependencies", () =>
     Effect.scoped(
@@ -1285,21 +1311,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it("excludes node-pty binaries for the other Windows architecture", () => {
-    assert.deepStrictEqual(resolveWindowsServerAsarIgnoreGlobs("x64"), [
-      ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
-      "**/node_modules/node-pty/prebuilds/win32-arm64",
-      "**/node_modules/node-pty/prebuilds/win32-arm64/**",
-      "**/node_modules/node-pty/third_party/conpty/*/win10-arm64",
-      "**/node_modules/node-pty/third_party/conpty/*/win10-arm64/**",
-    ]);
-    assert.deepStrictEqual(resolveWindowsServerAsarIgnoreGlobs("arm64"), [
-      ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
-      "**/node_modules/node-pty/prebuilds/win32-x64",
-      "**/node_modules/node-pty/prebuilds/win32-x64/**",
-      "**/node_modules/node-pty/third_party/conpty/*/win10-x64",
-      "**/node_modules/node-pty/third_party/conpty/*/win10-x64/**",
-    ]);
+  it("shares the Windows and WSL native selection policy with the sidecar packer", () => {
+    for (const arch of ["x64", "arm64"] as const) {
+      assert.deepStrictEqual(resolveWindowsServerAsarIgnoreGlobs(arch), [
+        ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
+        ...windowsNativeIgnoreGlobs(arch, true),
+      ]);
+    }
   });
 
   it.effect(
@@ -1317,6 +1335,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             "node_modules/node-pty/prebuilds/win32-x64/conpty/OpenConsole.exe",
             "node_modules/node-pty/prebuilds/win32-arm64/conpty/OpenConsole.exe",
             "node_modules/node-pty/prebuilds/linux-x64/pty.node",
+            "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
+            "node_modules/node-pty/prebuilds/darwin-arm64/pty.node",
+            "node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
+            "node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi-rs.win32-x64-msvc.node",
             "node_modules/node-pty/third_party/conpty/1.0.0/win10-x64/OpenConsole.exe",
             "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64/OpenConsole.exe",
           ];
@@ -1330,6 +1352,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           const asarPath = path.join(tempDir, "server.asar");
           yield* packWindowsServerAsar({ sourceDir, asarPath, arch: "x64" });
           const unpackedRoot = `${asarPath}.unpacked`;
+          const emittedFiles = listPackage(asarPath, { isPack: false });
+          assert.isFalse(
+            emittedFiles.some((file) => file.includes("darwin-") || file.includes("win32-ia32")),
+          );
+          assert.isTrue(emittedFiles.some((file) => file.includes("ffi-rs-win32-x64")));
 
           assert.isTrue(
             yield* fs.exists(
@@ -1728,6 +1755,59 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
+  it.effect.each(["x64", "arm64"] as const)(
+    "accepts an embedded archive with the Linux %s node-pty prebuild",
+    (targetArch) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeWindowsPayloadFixture({
+            copyUnpackedNatives: true,
+            wslRuntime: "valid",
+            targetArch,
+            ptyPrebuildArch: targetArch,
+          });
+          const result = yield* validateWindowsPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            appExecutableName: fixture.appExecutableName,
+            targetArch,
+            expectWslRuntime: true,
+          });
+
+          assert.equal(result.packagedAppDir, fixture.packagedAppDir);
+        }),
+      ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect.each(["x64", "arm64"] as const)(
+    "rejects a node-pty prebuild for the wrong architecture in a Linux %s archive",
+    (targetArch) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeWindowsPayloadFixture({
+            copyUnpackedNatives: true,
+            wslRuntime: "valid",
+            targetArch,
+            ptyPrebuildArch: targetArch === "x64" ? "arm64" : "x64",
+          });
+          const error = yield* validateWindowsPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            appExecutableName: fixture.appExecutableName,
+            targetArch,
+            expectWslRuntime: true,
+          }).pipe(Effect.flip);
+
+          assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+          assert.equal(error.reason, "wsl-runtime-invalid");
+        }),
+      ),
+  );
+
+  // SCIENT-FORK: Scient bundles one fixed-name, digest-verified WSL resource;
+  // upstream's version-named archive lookup is not the shipped artifact owner.
+  // Architecture rejection above and checksum/missing-resource tests below
+  // exercise the retained validator without introducing a second archive format.
+  // SCIENT-FORK-END
+
   it.effect("rejects a Windows package missing its expected WSL runtime", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1944,7 +2024,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
     return Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          targetArch: "arm64",
+        });
         yield* validateWindowsPackagedPayload({
           stageDistDir: fixture.stageDistDir,
           appExecutableName: fixture.appExecutableName,
@@ -1980,7 +2063,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          targetArch: "arm64",
+        });
         const executablePath = path.join(fixture.packagedAppDir, fixture.appExecutableName);
         yield* fs.remove(executablePath);
 
@@ -2101,6 +2187,68 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, WindowsPackagedPayloadValidationError);
         assert.equal(error.reason, "file-limit-exceeded");
         assert.isAbove(error.fileCount ?? 0, 2);
+      }),
+    ),
+  );
+
+  it.effect("enforces the original core budget after validating component inventories", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        // Fixture has nine core files, plus the 39 approved component files.
+        for (let index = 0; index < 71; index += 1) {
+          yield* fs.writeFileString(
+            path.join(fixture.packagedAppDir, `padding-${index}.txt`),
+            "core",
+          );
+        }
+        const options = {
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64" as const,
+        };
+        const valid = yield* validateWindowsPackagedPayload(options);
+        assert.equal(valid.fileCount, 119);
+        yield* fs.writeFileString(path.join(fixture.packagedAppDir, "spill.txt"), "core");
+        const error = yield* validateWindowsPackagedPayload(options).pipe(Effect.flip);
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "file-limit-exceeded");
+        assert.equal(error.fileCount, 120);
+        assert.equal(error.fileLimit, 119);
+        assert.include(error.message, "core=81");
+      }),
+    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect.each([
+    { file: "resources/whisper-runtime/whisper-server.exe", remove: true },
+    { file: "resources/node_modules/@cursor/sdk-win32-x64/extra.dll", remove: false },
+    {
+      file: "resources/app.asar.unpacked/node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
+      remove: false,
+    },
+  ])("rejects an invalid final package component: $file", ({ file, remove }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        const target = path.join(fixture.packagedAppDir, file);
+        if (remove) yield* fs.remove(target);
+        else {
+          yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+          yield* fs.writeFileString(target, "unexpected");
+        }
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+        }).pipe(Effect.flip);
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "component-inventory-invalid");
+        assert.include(error.message, file);
       }),
     ),
   );

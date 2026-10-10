@@ -21,7 +21,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { CheckpointStore } from "../../checkpointing/CheckpointStore.ts";
 import * as McpRegistry from "../../mcp/McpSessionRegistry.ts";
@@ -30,10 +30,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
-import * as ProviderInstances from "../../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstances from "../../provider/ProviderInstanceRegistry.ts";
 import { OrchestratorProviderWorkDeferredError, OrchestratorV2 } from "../Orchestrator.ts";
 import type {
   ProviderAdapterV2Event,
@@ -43,12 +43,12 @@ import type {
 import { EventSinkV2 } from "../EventSink.ts";
 import { checkpointRefForScopeOrdinal } from "../CheckpointService.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
-import { makeLayerEffect } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdaptersEffect as makeLayerEffect } from "../ProviderAdapterRegistry.ts";
 import {
   ProviderContinuationRequests,
   type ProviderContinuationRequest,
 } from "../ProviderContinuationRequests.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import { makePiAdapterV2 } from "./PiAdapterV2.ts";
 import { makePiRpcConnection, type PiRpcRecord, type PiRpcConnection } from "./PiRpc.ts";
@@ -361,7 +361,7 @@ export default function(pi) {
         { name: "pi-real-initiated" },
         registry,
         {
-          databaseLayer: database,
+          layerDatabase: database,
           runtimePolicyLayer: policyLayer,
           configureMcp: restricted,
           mcpSessionRegistryLayer: Layer.succeed(
@@ -649,7 +649,7 @@ export default function(pi) {
           assert.isFalse(
             yield* checkpointStore.hasCheckpointRef({
               cwd,
-              checkpointRef: checkpointRefForScopeOrdinal({
+              checkpointRef: yield* checkpointRefForScopeOrdinal({
                 scopeId: parentScopeId,
                 ordinalWithinScope: 1,
               }),

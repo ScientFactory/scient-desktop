@@ -17,10 +17,10 @@ the workflow still reports whitespace and checker-test results without inventing
 work. The full product suite also runs for documentation-only changes so every protected context
 is present and the repository cannot merge around its own branch policy.
 
-For every change, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs these quality
-gates on pull requests and pushes to `main`:
+For every pull request, merge-queue candidate (`merge_group`), and push to `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs these quality
+gates:
 
-- **Check**: `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
+- **Check**: `knip:check` rejects unused files/dependencies repository-wide and unused exports in the enabled application/runtime workspaces. `brand:check` verifies Scient product identity. `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
   builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists,
   imports only modules that Electron's sandbox can load, and still exports callable expected APIs.
@@ -32,10 +32,11 @@ gates on pull requests and pushes to `main`:
   roughly three times larger on a runner with half the vCPUs.
 - **Test Web**: three shards of `vp run --filter @t3tools/web test --shard N/3`, each on its own
   runner. This keeps the large web suite from competing with other workspace packages.
+- **Test Web Layout**: the dedicated browser/layout suite checks rendering and interaction geometry separately from the unit shards.
 - **Test Server**: three shards of `vp run --filter t3 test --shard N/3`. The server sets
   `fileParallelism: false`, so its test files run strictly serially and sharding spreads them over
-  separate runners instead of workers: no two server test files ever share a machine, and no
-  Electron download is spent on these shards. Exactly one shard writes the thread transfer budget
+  separate runners instead of workers: files within a shard execute serially, and no
+  Electron download is spent on these shards. Chromium is installed explicitly for the server browser integration tests. Exactly one shard writes the thread transfer budget
   report; a presence-gated upload keeps a single `thread-transfer-results` artifact, the exact name
   [`thread-transfer-report.yml`](../../.github/workflows/thread-transfer-report.yml) resolves when
   it posts the PR comment. Web and server shards also preserve their normal human-readable output
@@ -84,3 +85,5 @@ large registry metadata cache. pnpm checks the current lockfile and policy befor
 If the artifact is unavailable, installation runs the checks again.
 
 See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.
+
+The separate [Scient upstream provenance workflow](../../.github/workflows/scient-upstream-provenance.yml) runs on pull requests, merge-queue candidates and pushes to `main`. It checks recorded literal upstream ancestry and runs the Scient seam check across all manifests. Event-specific base/head references and queue-merge allowances stay in that workflow. The advisory divergence inventory cannot replace those checks or live behavior tests.

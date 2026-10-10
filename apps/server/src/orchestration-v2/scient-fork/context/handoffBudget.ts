@@ -29,15 +29,12 @@ import * as NodeBuffer from "node:buffer";
 export const DEFAULT_MODEL_CONTEXT_WINDOW = 128_000;
 /** V2: the reserve for tools, instructions and subsequent work. */
 const MIN_HANDOFF_RESERVE = 16_000;
-/** Below this, a handoff carries only its coverage header. */
-export const MIN_USEFUL_HANDOFF_TOKENS = 512;
-
 export function estimateTokens(text: string): number {
   return Math.ceil(NodeBuffer.Buffer.byteLength(text, "utf8") / 3);
 }
 
 // Verbatim from V2 (see header).
-export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachment>): number {
+function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachment>): number {
   // Encoded image bytes are not model tokens. Without dimensions/detail metadata,
   // reserve 8k tokens per image, above typical resized Codex/Claude image costs.
   // This is a fallback estimate, not a bound for original-resolution/custom models.

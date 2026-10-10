@@ -15,7 +15,7 @@ const runtimeB = { label: "B" } as unknown as ProviderAdapterV2SessionRuntime;
 type Entry = {
   readonly runtime: ProviderAdapterV2SessionRuntime;
   readonly idleGeneration: number;
-  readonly busyCount: number;
+  readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly lastActivityAtMs: number;
 };
@@ -23,7 +23,13 @@ type Entry = {
 const entry = (
   runtime: ProviderAdapterV2SessionRuntime,
   idleFiber: Fiber.Fiber<void, never> | null,
-): Entry => ({ runtime, idleGeneration: 1, busyCount: 0, idleFiber, lastActivityAtMs: 0 });
+): Entry => ({
+  runtime,
+  idleGeneration: 1,
+  busyTurns: new Set<string>(),
+  idleFiber,
+  lastActivityAtMs: 0,
+});
 
 /** A runtime A whose idle retirement was declined while one start held its reservation. */
 const makeScenario = (

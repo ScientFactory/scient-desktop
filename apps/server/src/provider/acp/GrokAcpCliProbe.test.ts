@@ -20,10 +20,10 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vite-plus/test";
 
-import { checkGrokProviderStatus } from "../Layers/GrokProvider.ts";
+import { checkGrokProviderStatus } from "../GrokProvider.ts";
 import { makeGrokConnectionActions } from "../../scient/providerLifecycle/GrokConnectionActions.ts";
 import { GROK_AUTH_EXTENSION_METHOD, makeGrokAcpRuntime } from "./GrokAcpSupport.ts";
 

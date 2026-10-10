@@ -149,129 +149,131 @@ it("preserves a newer hydrated same-intent draft when the asynchronous journal l
   ).toBe(hydrated.prompt);
 });
 
-for (const scenario of [
-  "retained",
-  "removed",
-  "legacy",
-  "malformed",
-  "mismatched",
-  "added",
-] as const) {
-  const removed = scenario === "removed";
-  it(`recovers only selected image bytes after reload before encoding (${scenario})`, async () => {
-    vi.resetModules();
-    const drafts = await import("../../composerDraftStore");
-    const journal = await import("./editJournal");
-    const recovery = await import("./editSession");
-    const target = {
-      environmentId: EnvironmentId.make("image-reload-environment"),
-      threadId: ThreadId.make(`image-reload-${scenario}`),
-    };
-    const intentId = `d2d7a045-82b7-4916-9c20-f39695fbf4d${["retained", "removed", "legacy", "malformed", "mismatched", "added"].indexOf(scenario)}`;
-    const journalKey = `image-reload-${scenario}`;
-    const bytes = new File(["durable image bytes"], "evidence.png", { type: "image/png" });
-    const image = {
-      type: "image" as const,
-      id: "image-before-encoding",
-      name: bytes.name,
-      mimeType: bytes.type,
-      sizeBytes: bytes.size,
-      file: bytes,
-      previewUrl: URL.createObjectURL(bytes),
-    };
-    const edited = {
-      ...drafts.createEmptyThreadDraft(),
-      extractedIntent: { intentId, journalKey },
-      prompt: "original extracted prompt",
-      images: [image],
-    };
-    await journal.initializeExtractedIntent(intentId);
-    await journal.writeQueueEditJournal({
-      key: drafts.composerTargetKey(target),
-      journalKey,
-      originalTarget: target,
-      editTarget: target,
-      queueItemId: `image-run-${scenario}`,
-      editToken: intentId,
-      intentId,
-      transferred: true,
-      ordinary: drafts.createEmptyThreadDraft(),
-      edited,
-    });
-    drafts.useComposerDraftStore.setState({
-      draftsByThreadKey: {
-        [drafts.composerTargetKey(target)]: { ...edited, prompt: "newer user prompt" },
-      },
-    });
-    if (removed) drafts.useComposerDraftStore.getState().removeImage(target, image.id);
-    drafts.flushComposerDraftPersistence();
-    if (scenario === "legacy" || scenario === "malformed" || scenario === "mismatched") {
-      const stored = JSON.parse(localStorage.getItem(drafts.COMPOSER_DRAFT_STORAGE_KEY)!);
-      const persisted = stored.state.draftsByThreadKey[drafts.composerTargetKey(target)];
-      if (scenario === "legacy") delete persisted.imageSelection;
-      else if (scenario === "malformed") persisted.imageSelection = [{}];
-      else persisted.imageSelection[0].sizeBytes += 1;
-      localStorage.setItem(drafts.COMPOSER_DRAFT_STORAGE_KEY, JSON.stringify(stored));
-    }
-    await drafts.useComposerDraftStore.persist.rehydrate();
-    expect(drafts.useComposerDraftStore.getState().getComposerDraft(target)?.images).toEqual([]);
-    if (scenario === "added") {
-      const added = new File(["new image bytes"], "new.png", { type: "image/png" });
-      drafts.useComposerDraftStore.getState().addImages(target, [
-        {
-          ...image,
-          id: "added-after-reload",
-          name: added.name,
-          sizeBytes: added.size,
-          file: added,
-          previewUrl: URL.createObjectURL(added),
-        },
-      ]);
-    }
-    await recovery.loadQueueEdits();
-    const recovered = drafts.useComposerDraftStore.getState().getComposerDraft(target)!;
-    expect(recovered.prompt).toBe("newer user prompt");
-    if (scenario === "legacy" || scenario === "malformed" || scenario === "mismatched") {
-      expect(recovery.useQueueEditSessions.getState().error?.message).toMatch(
-        /ambiguous|could not be recovered/,
-      );
-      expect(
-        recovery.useQueueEditSessions.getState().sessions[drafts.composerTargetKey(target)],
-      ).toBeUndefined();
-      await expect(recovery.resolveExtractedDraftIntent(recovered)).rejects.toThrow(
-        "not been recovered",
-      );
-      drafts.useComposerDraftStore.getState().setPrompt(target, "typing after failed recovery");
-      expect(
-        await (await journal.readQueueEditJournal(journalKey))?.edited.images[0]?.file.text(),
-      ).toBe("durable image bytes");
-      expect(() =>
-        drafts.useComposerDraftStore.getState().moveComposerPromptAndImages(target, {
-          ...target,
-          threadId: ThreadId.make("unsafe-image-destination"),
-        }),
-      ).toThrow("Recover the extracted images");
-      const stash = await import("../../promptStashStore");
-      const entry = stash.usePromptStashStore
-        .getState()
-        .entries.find(
-          (entry) => entry.queueEditKey === journalKey && entry.queueEditSide === "edited",
-        );
-      expect(entry).toBeDefined();
-      await recovery.restoreQueueEditStash(entry!, target, target.environmentId);
-      const restored = drafts.useComposerDraftStore.getState().getComposerDraft(target)!;
-      expect(restored.prompt).toContain("typing after failed recovery");
-      expect(await restored.images[0]?.file.text()).toBe("durable image bytes");
-      expect((await recovery.resolveExtractedDraftIntent(restored))?.intentId).toBe(intentId);
-      return;
-    }
-    expect(recovered.images.map((image) => image.id)).toEqual(
-      removed ? [] : scenario === "added" ? [image.id, "added-after-reload"] : [image.id],
-    );
-    if (!removed) expect(await recovered.images[0]?.file.text()).toBe("durable image bytes");
-    expect(recovery.useQueueEditSessions.getState().error).toBeNull();
+it.each(
+  (["retained", "removed", "legacy", "malformed", "mismatched", "added"] as const).map(
+    (scenario) => {
+      const removed = scenario === "removed";
+
+      return {
+        caseTitle: `recovers only selected image bytes after reload before encoding (${scenario})`,
+        scenario,
+        removed,
+      };
+    },
+  ),
+)("$caseTitle", async ({ scenario, removed }) => {
+  vi.resetModules();
+  const drafts = await import("../../composerDraftStore");
+  const journal = await import("./editJournal");
+  const recovery = await import("./editSession");
+  const target = {
+    environmentId: EnvironmentId.make("image-reload-environment"),
+    threadId: ThreadId.make(`image-reload-${scenario}`),
+  };
+  const intentId = `d2d7a045-82b7-4916-9c20-f39695fbf4d${["retained", "removed", "legacy", "malformed", "mismatched", "added"].indexOf(scenario)}`;
+  const journalKey = `image-reload-${scenario}`;
+  const bytes = new File(["durable image bytes"], "evidence.png", { type: "image/png" });
+  const image = {
+    type: "image" as const,
+    id: "image-before-encoding",
+    name: bytes.name,
+    mimeType: bytes.type,
+    sizeBytes: bytes.size,
+    file: bytes,
+    previewUrl: URL.createObjectURL(bytes),
+  };
+  const edited = {
+    ...drafts.createEmptyThreadDraft(),
+    extractedIntent: { intentId, journalKey },
+    prompt: "original extracted prompt",
+    images: [image],
+  };
+  await journal.initializeExtractedIntent(intentId);
+  await journal.writeQueueEditJournal({
+    key: drafts.composerTargetKey(target),
+    journalKey,
+    originalTarget: target,
+    editTarget: target,
+    queueItemId: `image-run-${scenario}`,
+    editToken: intentId,
+    intentId,
+    transferred: true,
+    ordinary: drafts.createEmptyThreadDraft(),
+    edited,
   });
-}
+  drafts.useComposerDraftStore.setState({
+    draftsByThreadKey: {
+      [drafts.composerTargetKey(target)]: { ...edited, prompt: "newer user prompt" },
+    },
+  });
+  if (removed) drafts.useComposerDraftStore.getState().removeImage(target, image.id);
+  drafts.flushComposerDraftPersistence();
+  if (scenario === "legacy" || scenario === "malformed" || scenario === "mismatched") {
+    const stored = JSON.parse(localStorage.getItem(drafts.COMPOSER_DRAFT_STORAGE_KEY)!);
+    const persisted = stored.state.draftsByThreadKey[drafts.composerTargetKey(target)];
+    if (scenario === "legacy") delete persisted.imageSelection;
+    else if (scenario === "malformed") persisted.imageSelection = [{}];
+    else persisted.imageSelection[0].sizeBytes += 1;
+    localStorage.setItem(drafts.COMPOSER_DRAFT_STORAGE_KEY, JSON.stringify(stored));
+  }
+  await drafts.useComposerDraftStore.persist.rehydrate();
+  expect(drafts.useComposerDraftStore.getState().getComposerDraft(target)?.images).toEqual([]);
+  if (scenario === "added") {
+    const added = new File(["new image bytes"], "new.png", { type: "image/png" });
+    drafts.useComposerDraftStore.getState().addImages(target, [
+      {
+        ...image,
+        id: "added-after-reload",
+        name: added.name,
+        sizeBytes: added.size,
+        file: added,
+        previewUrl: URL.createObjectURL(added),
+      },
+    ]);
+  }
+  await recovery.loadQueueEdits();
+  const recovered = drafts.useComposerDraftStore.getState().getComposerDraft(target)!;
+  expect(recovered.prompt).toBe("newer user prompt");
+  if (scenario === "legacy" || scenario === "malformed" || scenario === "mismatched") {
+    expect(recovery.useQueueEditSessions.getState().error?.message).toMatch(
+      /ambiguous|could not be recovered/,
+    );
+    expect(
+      recovery.useQueueEditSessions.getState().sessions[drafts.composerTargetKey(target)],
+    ).toBeUndefined();
+    await expect(recovery.resolveExtractedDraftIntent(recovered)).rejects.toThrow(
+      "not been recovered",
+    );
+    drafts.useComposerDraftStore.getState().setPrompt(target, "typing after failed recovery");
+    expect(
+      await (await journal.readQueueEditJournal(journalKey))?.edited.images[0]?.file.text(),
+    ).toBe("durable image bytes");
+    expect(() =>
+      drafts.useComposerDraftStore.getState().moveComposerPromptAndImages(target, {
+        ...target,
+        threadId: ThreadId.make("unsafe-image-destination"),
+      }),
+    ).toThrow("Recover the extracted images");
+    const stash = await import("../../promptStashStore");
+    const entry = stash.usePromptStashStore
+      .getState()
+      .entries.find(
+        (entry) => entry.queueEditKey === journalKey && entry.queueEditSide === "edited",
+      );
+    expect(entry).toBeDefined();
+    await recovery.restoreQueueEditStash(entry!, target, target.environmentId);
+    const restored = drafts.useComposerDraftStore.getState().getComposerDraft(target)!;
+    expect(restored.prompt).toContain("typing after failed recovery");
+    expect(await restored.images[0]?.file.text()).toBe("durable image bytes");
+    expect((await recovery.resolveExtractedDraftIntent(restored))?.intentId).toBe(intentId);
+    return;
+  }
+  expect(recovered.images.map((image) => image.id)).toEqual(
+    removed ? [] : scenario === "added" ? [image.id, "added-after-reload"] : [image.id],
+  );
+  if (!removed) expect(await recovered.images[0]?.file.text()).toBe("durable image bytes");
+  expect(recovery.useQueueEditSessions.getState().error).toBeNull();
+});
 
 it("reports consumed image intent before unresolved-image recovery and takes no new lease", async () => {
   vi.resetModules();

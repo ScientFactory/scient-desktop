@@ -217,27 +217,35 @@ it.effect(
         rollbackThread: () => Effect.die("unused rollbackThread"),
         forkThread: () => Effect.die("unused forkThread"),
       };
-      const projectionLayer = Layer.succeed(
+      const layerProjection = Layer.succeed(
         ProjectionStore.ProjectionStoreV2,
         ProjectionStore.ProjectionStoreV2.of({
           apply: () => Effect.void,
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
+          readShellSnapshot: () => Effect.die("unused readShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
           getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
           getThreadProjection: () => Effect.die("control effects must not load transcript"),
           getTurnStartContext: () => Effect.die("unused"),
+          getForkHistoryItems: () => Effect.succeed([]),
+          getProjectThreadTitles: () => Effect.succeed([]),
+          getReleasableFiles: () => Effect.succeed([]),
           getTurnStartHistory: () => Effect.die("unused"),
           getRuntimeRecoveryProjection: () => Effect.die("unused getRuntimeRecoveryProjection"),
           getPlan: () => Effect.die("unused"),
           hasUnpairedRunInterruptRequest: () => Effect.die("unused interrupt read"),
           getRollbackAttachmentOwners: () => Effect.die("unused prune query"),
           getThreadAttachmentIds: () => Effect.die("Unused attachment lookup"),
+          searchThread: () => Effect.die("unused"),
+          searchThreadStream: () => Stream.empty,
+          getThreadHistoryPage: () => Effect.die("unused"),
           getTimelinePage: () => Effect.die("Unused timeline read"),
           getMessageCount: () => Effect.die("unused message count"),
           getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
+          getTurnItem: () => Effect.die("unused turn item read"),
           getThreadRecords: () => Effect.die("unused record read"),
           getRuntimeRequest: () => Effect.die("unused getRuntimeRequest"),
           getRunningTurnContext: () => Effect.die("unused getRunningTurnContext"),
@@ -268,7 +276,7 @@ it.effect(
           getThreadSnapshotWindow: () => Effect.die("unused getThreadSnapshotWindow"),
         }),
       );
-      const sessionManagerLayer = Layer.succeed(
+      const layerSessionManager = Layer.succeed(
         ProviderSessionManager.ProviderSessionManagerV2,
         ProviderSessionManager.ProviderSessionManagerV2.of({
           withProviderWorkAdmission: () => Effect.die("Unused native generation admission"),
@@ -289,8 +297,8 @@ it.effect(
       const controlLayer = ProviderTurnControlService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            projectionLayer,
-            sessionManagerLayer,
+            layerProjection,
+            layerSessionManager,
             ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
               Layer.provide(NodeServices.layer),
             ),

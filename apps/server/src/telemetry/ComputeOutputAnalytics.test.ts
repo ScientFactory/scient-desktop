@@ -27,49 +27,51 @@ const fixture = () => {
 };
 
 describe("interactive output analytics", () => {
-  for (const scenario of [
-    { retained: [], expected: "skipped" },
-    { retained: [true], expected: "completed" },
-    { retained: [true, false, true], expected: "failed" },
-    { retained: [false], expected: "failed" },
-    { retained: [false, true], expected: "failed" },
-  ] as const) {
-    it.effect(
-      `summarizes ${scenario.retained.join(",") || "no outputs"} as ${scenario.expected}`,
-      () => {
-        const f = fixture();
-        return Effect.gen(function* () {
-          const observe = yield* makeComputeOutputAnalytics;
-          yield* observe({ key: "private-id", phase: "started", startedAt: 100 });
-          yield* observe({ key: "private-id", phase: "started", startedAt: 200 });
-          for (const retained of scenario.retained)
-            yield* observe({ key: "private-id", phase: "output", retained });
-          yield* observe({
-            key: "private-id",
-            phase: "finished",
-            finishedAt: 400,
-          });
-          yield* observe({ key: "private-id", phase: "output", retained: false });
-          yield* observe({ key: "private-id", phase: "finished" });
-          expect(f.events).toEqual([
-            {
-              name: "scient.operation.started",
-              properties: { operationKind: "compute-artifact", trigger: "other" },
-            },
-            {
-              name: `scient.operation.${scenario.expected}`,
-              properties: {
-                operationKind: "compute-artifact",
-                trigger: "other",
-                durationMs: 300,
-                failureClass: "unknown",
-              },
-            },
-          ]);
-        }).pipe(Effect.provideService(AnalyticsService, f.service));
-      },
-    );
-  }
+  it.effect.each(
+    (
+      [
+        { retained: [], expected: "skipped" },
+        { retained: [true], expected: "completed" },
+        { retained: [true, false, true], expected: "failed" },
+        { retained: [false], expected: "failed" },
+        { retained: [false, true], expected: "failed" },
+      ] as const
+    ).map((scenario) => ({
+      caseTitle: `summarizes ${scenario.retained.join(",") || "no outputs"} as ${scenario.expected}`,
+      scenario,
+    })),
+  )("$caseTitle", ({ scenario }) => {
+    const f = fixture();
+    return Effect.gen(function* () {
+      const observe = yield* makeComputeOutputAnalytics;
+      yield* observe({ key: "private-id", phase: "started", startedAt: 100 });
+      yield* observe({ key: "private-id", phase: "started", startedAt: 200 });
+      for (const retained of scenario.retained)
+        yield* observe({ key: "private-id", phase: "output", retained });
+      yield* observe({
+        key: "private-id",
+        phase: "finished",
+        finishedAt: 400,
+      });
+      yield* observe({ key: "private-id", phase: "output", retained: false });
+      yield* observe({ key: "private-id", phase: "finished" });
+      expect(f.events).toEqual([
+        {
+          name: "scient.operation.started",
+          properties: { operationKind: "compute-artifact", trigger: "other" },
+        },
+        {
+          name: `scient.operation.${scenario.expected}`,
+          properties: {
+            operationKind: "compute-artifact",
+            trigger: "other",
+            durationMs: 300,
+            failureClass: "unknown",
+          },
+        },
+      ]);
+    }).pipe(Effect.provideService(AnalyticsService, f.service));
+  });
 
   it.effect("does not replay pre-consent work, history, or a reset epoch", () => {
     const f = fixture();

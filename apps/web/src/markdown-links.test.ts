@@ -1,16 +1,18 @@
-import { describe, expect, it } from "vite-plus/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
-
 import {
   extractMarkdownLinkHrefs,
+  isWindowsDrivePathHref,
+  resolveMarkdownFileLinkTarget,
+} from "@t3tools/shared/markdownLinks";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
   markdownFileLinkRelativeCopyPath,
   markdownLinkLookupKey,
-  isWindowsDrivePathHref,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
-  resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
@@ -43,6 +45,19 @@ function renderMarkdownLinkHref(markdown: string): string | undefined {
   );
   return renderedHref;
 }
+
+describe("relative file destinations with punctuation and Unicode", () => {
+  it.each([
+    "LTC - Cystic Fibrosis - new (readable).md",
+    "סיכום.md",
+    "Résumé & results.md",
+    "Folder (draft)/Study [final].md",
+  ])("resolves the rendered href for %s in its workspace", (path) => {
+    const href = renderMarkdownLinkHref(`[Open file](<${path}>)`);
+    expect(href).toBeDefined();
+    expect(resolveMarkdownFileLinkTarget(href!, "/work")).toBe(`/work/${path}`);
+  });
+});
 
 describe("extractMarkdownLinkHrefs", () => {
   it("extracts ordinary and angle-bracketed destinations containing spaces", () => {

@@ -13,8 +13,7 @@ import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as NodeCrypto from "node:crypto";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as CodexInstallation from "./CodexInstallation.ts";
 
 const archive = Buffer.from(
@@ -25,7 +24,7 @@ const asset = {
   version: "0.156.1",
   target: "aarch64-apple-darwin",
   url: "https://github.com/openai/codex/releases/download/test/package.tar.gz",
-  sha256: NodeCrypto.createHash("sha256").update(archive).digest("hex"),
+  sha256: "19efdda051ce625430e82101e24bc2ada750dee379116f18bdf6ca41c9ce3bf3",
   archiveBytes: archive.length,
 };
 const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
@@ -105,63 +104,67 @@ it.effect("keeps the dormant Scient installer passive at startup", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-for (const version of ["0.156.0", "0.156.1", "0.156.2", "0.157.0"]) {
-  it.effect(`reuses installed Codex ${version} without downloading or taking ownership of it`, () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ local: { version } });
-      expect(yield* h.installation.start).toMatchObject({
-        source: "local",
-        phase: "succeeded",
-        installedVersion: version,
-        executablePath: h.localBinaryPath,
-        canRemove: false,
-      });
-      expect(yield* h.installation.resolve()).toMatchObject({
-        source: "local",
-        executablePath: h.localBinaryPath,
-        managedVersionDirectory: null,
-        version,
-      });
-      yield* h.installation.acquire().pipe(Effect.scoped);
-      expect(h.downloads()).toBe(0);
-      expect(yield* h.fs.exists(h.installation.managedDirectory)).toBe(false);
-      expect((yield* h.fs.readFileString(h.probeLog)).trim().split("\n")).toEqual([
-        "--version",
-        "app-server --help",
-      ]);
-      yield* h.installation.remove();
-      expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
-      expect((yield* h.installation.state).source).toBe("local");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-}
-for (const local of [
-  { version: "0.128.9" },
-  { version: "0.145.0" },
-  { version: "0.155.1" },
-  { version: "0.155.9" },
-  { version: "0.156.1-alpha.1" },
-  { version: "unknown" },
-  { version: "0.156.1", appServerFails: true },
-  { version: "0.156.1", versionFails: true },
-]) {
-  it.effect(
-    `downloads the pinned release when the local CLI is unsupported or broken: ${JSON.stringify(local)}`,
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness({ local });
-        expect((yield* h.installation.state).installedVersion).toBeNull();
-        yield* h.installation.start;
-        const installed = yield* terminalState(h.installation);
-        expect(installed.phase).toBe("succeeded");
-        const executable = yield* h.installation.resolve();
-        expect(executable.source).toBe("managed");
-        expect(installed.executablePath).toBe(executable.executablePath);
-        expect(h.downloads()).toBe(1);
-        expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-}
+it.effect.each(
+  ["0.156.0", "0.156.1", "0.156.2", "0.157.0"].map((version) => ({
+    caseTitle: `reuses installed Codex ${version} without downloading or taking ownership of it`,
+    version,
+  })),
+)("$caseTitle", ({ version }) =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ local: { version } });
+    expect(yield* h.installation.start).toMatchObject({
+      source: "local",
+      phase: "succeeded",
+      installedVersion: version,
+      executablePath: h.localBinaryPath,
+      canRemove: false,
+    });
+    expect(yield* h.installation.resolve()).toMatchObject({
+      source: "local",
+      executablePath: h.localBinaryPath,
+      managedVersionDirectory: null,
+      version,
+    });
+    yield* h.installation.acquire().pipe(Effect.scoped);
+    expect(h.downloads()).toBe(0);
+    expect(yield* h.fs.exists(h.installation.managedDirectory)).toBe(false);
+    expect((yield* h.fs.readFileString(h.probeLog)).trim().split("\n")).toEqual([
+      "--version",
+      "app-server --help",
+    ]);
+    yield* h.installation.remove();
+    expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
+    expect((yield* h.installation.state).source).toBe("local");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+it.effect.each(
+  [
+    { version: "0.128.9" },
+    { version: "0.145.0" },
+    { version: "0.155.1" },
+    { version: "0.155.9" },
+    { version: "0.156.1-alpha.1" },
+    { version: "unknown" },
+    { version: "0.156.1", appServerFails: true },
+    { version: "0.156.1", versionFails: true },
+  ].map((local) => ({
+    caseTitle: `downloads the pinned release when the local CLI is unsupported or broken: ${JSON.stringify(local)}`,
+    local,
+  })),
+)("$caseTitle", ({ local }) =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ local });
+    expect((yield* h.installation.state).installedVersion).toBeNull();
+    yield* h.installation.start;
+    const installed = yield* terminalState(h.installation);
+    expect(installed.phase).toBe("succeeded");
+    const executable = yield* h.installation.resolve();
+    expect(executable.source).toBe("managed");
+    expect(installed.executablePath).toBe(executable.executablePath);
+    expect(h.downloads()).toBe(1);
+    expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 it.effect("falls back to a managed download when the reused local executable disappears", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness({ local: { version: "0.156.1" } });

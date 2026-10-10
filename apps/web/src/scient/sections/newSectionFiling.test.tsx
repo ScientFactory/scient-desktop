@@ -1,6 +1,6 @@
 import { EnvironmentId, ThreadId, type ThreadSection } from "@t3tools/contracts";
 import { threadSectionCatalogsEqual } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";

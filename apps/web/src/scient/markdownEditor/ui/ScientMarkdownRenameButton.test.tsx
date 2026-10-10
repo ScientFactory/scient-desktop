@@ -3,7 +3,7 @@ import { act, type ReactElement, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({ rename: vi.fn() }));

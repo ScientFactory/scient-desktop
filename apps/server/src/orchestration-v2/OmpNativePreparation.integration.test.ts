@@ -19,11 +19,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ChildProcessSpawner } from "effect/process";
+import * as SqlClient from "effect/sql/SqlClient";
 import { persistChatAttachments } from "../AttachmentPersistence.ts";
 import * as ServerConfig from "../config.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import { ompTarget } from "../provider/omp/OmpTarget.ts";
 import { scriptedOmpRpc } from "../provider/testUtils/scriptedOmpRpc.ts";
 import { makeOmpAdapterV2 } from "./Adapters/OmpAdapterV2.ts";
@@ -32,9 +32,9 @@ import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import {
   encodeJson,
@@ -44,240 +44,243 @@ import {
   nativeSettlementTrace,
 } from "./testkit/OmpNativeConjunctions.ts";
 
-for (const superseded of [false, true]) {
-  it.live(
-    superseded
+it.live.each(
+  [false, true].map((superseded) => ({
+    caseTitle: superseded
       ? "rejects the captured OMP owner after preparation when a newer public turn owns the session"
       : "preserves public healthy OMP steering after held payload preparation",
-    () =>
-      withNative(`omp-preparation-${superseded ? "superseded" : "healthy"}`, {}, (f) =>
-        Effect.gen(function* () {
-          const orchestrator = yield* OrchestratorV2;
-          const worker = yield* OrchestrationEffectWorkerV2;
-          const sessions = yield* ProviderSessionManagerV2;
-          const receipts = yield* CommandReceiptStoreV2;
-          const outbox = yield* EffectOutboxV2;
-          const trace = nativeSettlementTrace(f.threadId, { orchestrator, outbox, receipts });
-          trace.admissionCommands.push(
-            CommandId.make(`omp-preparation-${superseded ? "superseded" : "healthy"}-start`),
+    superseded,
+  })),
+)(
+  "$caseTitle",
+  ({ superseded }) =>
+    withNative(`omp-preparation-${superseded ? "superseded" : "healthy"}`, {}, (f) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* OrchestratorV2;
+        const worker = yield* OrchestrationEffectWorkerV2;
+        const sessions = yield* ProviderSessionManagerV2;
+        const receipts = yield* CommandReceiptStoreV2;
+        const outbox = yield* EffectOutboxV2;
+        const trace = nativeSettlementTrace(f.threadId, { orchestrator, outbox, receipts });
+        trace.admissionCommands.push(
+          CommandId.make(`omp-preparation-${superseded ? "superseded" : "healthy"}-start`),
+        );
+        return yield* Effect.gen(function* () {
+          const original = yield* trace.at("original-admission", f.seed);
+          yield* trace.drain("original-start-drain", 8, worker.drain(8));
+          const peer = f.peers[0]!;
+          yield* trace.at(
+            "initial-native-prompt-delivered",
+            peer.promptDelivered().pipe(Effect.timeout("10 seconds")),
           );
-          return yield* Effect.gen(function* () {
-            const original = yield* trace.at("original-admission", f.seed);
-            yield* trace.drain("original-start-drain", 8, worker.drain(8));
-            const peer = f.peers[0]!;
-            yield* trace.at(
-              "initial-native-prompt-delivered",
-              peer.promptDelivered().pipe(Effect.timeout("10 seconds")),
-            );
-            const active = yield* trace.at(
-              "initial-native-acceptance",
-              waitForThread(f.threadId, (p) =>
-                p.providerTurns.some(
-                  (t) => t.runAttemptId === original.activeAttemptId && t.acceptedAt !== undefined,
-                ),
+          const active = yield* trace.at(
+            "initial-native-acceptance",
+            waitForThread(f.threadId, (p) =>
+              p.providerTurns.some(
+                (t) => t.runAttemptId === original.activeAttemptId && t.acceptedAt !== undefined,
               ),
-            );
-            const turn = active.providerTurns[0]!;
-            const thread = active.providerThreads.find((t) => t.id === turn.providerThreadId)!;
-            const owner = Option.getOrNull(yield* sessions.get(thread.providerSessionId!));
-            assert.ok(owner);
-            const token = yield* f.fs.readFileString(f.lock());
-            yield* trace.drain("original-settlement-drain", 8, worker.drain(8));
-            f.holdPreparation();
-            const followupId = MessageId.make(`${f.threadId}-followup`);
-            const commandId = CommandId.make(`${f.threadId}-steer`);
-            // Public effects serialize lifecycle work. Only this superseded-owner
-            // negative calls the published native API directly while the worker
-            // starts a genuine replacement; it makes no public Steer admission claim.
-            const delivery = yield* Effect.gen(function* () {
-              if (superseded) {
-                yield* owner.steerTurn({
-                  threadId: f.threadId,
-                  runId: original.id,
-                  providerThread: thread,
-                  providerTurnId: turn.id,
-                  message: {
-                    messageId: followupId,
-                    text: "Old captured owner",
-                    attachments: [],
-                    createdBy: "user",
-                    creationSource: "web",
-                  },
-                });
-              } else {
-                yield* orchestrator.dispatch({
-                  type: "message.dispatch",
-                  commandId,
-                  threadId: f.threadId,
-                  messageId: followupId,
-                  text: "Healthy current owner",
-                  attachments: [],
-                  selectedScientSkillNames: [],
-                  dispatchMode: { type: "steer_active", targetRunId: original.id },
-                  createdBy: "user",
-                  creationSource: "web",
-                });
-                assert.equal(
-                  Option.getOrNull(yield* receipts.getByCommandId(commandId))?.status,
-                  "accepted",
-                );
-                yield* worker.runOnce;
-              }
-            }).pipe(Effect.exit, Effect.forkScoped);
-            yield* trace.at(
-              "preparation-entered",
-              Deferred.await(f.prepEntered).pipe(Effect.timeout("10 seconds")),
-            );
-            yield* f.snapshot("preparation-held");
+            ),
+          );
+          const turn = active.providerTurns[0]!;
+          const thread = active.providerThreads.find((t) => t.id === turn.providerThreadId)!;
+          const owner = Option.getOrNull(yield* sessions.get(thread.providerSessionId!));
+          assert.ok(owner);
+          const token = yield* f.fs.readFileString(f.lock());
+          yield* trace.drain("original-settlement-drain", 8, worker.drain(8));
+          f.holdPreparation();
+          const followupId = MessageId.make(`${f.threadId}-followup`);
+          const commandId = CommandId.make(`${f.threadId}-steer`);
+          // Public effects serialize lifecycle work. Only this superseded-owner
+          // negative calls the published native API directly while the worker
+          // starts a genuine replacement; it makes no public Steer admission claim.
+          const delivery = yield* Effect.gen(function* () {
             if (superseded) {
-              yield* peer.finish();
-              yield* trace.at(
-                "old-attempt-completed",
-                waitForThread(f.threadId, (p) =>
-                  p.attempts.some(
-                    (a) => a.id === original.activeAttemptId && a.status === "completed",
-                  ),
-                ),
-              );
-              const replacementCommand = CommandId.make(`${f.threadId}-replacement`);
-              trace.admissionCommands.push(replacementCommand);
-              yield* trace.at(
-                "replacement-admission",
-                orchestrator.dispatch({
-                  type: "message.dispatch",
-                  commandId: replacementCommand,
-                  threadId: f.threadId,
-                  messageId: MessageId.make(`${f.threadId}-replacement`),
-                  text: "New public owner",
-                  attachments: [],
-                  selectedScientSkillNames: [],
-                  dispatchMode: { type: "start_immediately" },
-                  createdBy: "user",
-                  creationSource: "web",
-                }),
-              );
-              yield* trace.capture("replacement-before-drain", {
-                peers: f.peers.map((p) => p.state),
-              });
-              yield* trace.drain("replacement-start-drain", 8, worker.drain(8));
-              yield* trace.capture("replacement-after-drain", {
-                peers: f.peers.map((p) => p.state),
-              });
-              yield* trace.at(
-                "replacement-start-committed",
-                waitForThread(f.threadId, (p) =>
-                  p.runs.some(
-                    (run) =>
-                      run.userMessageId === `${f.threadId}-replacement` &&
-                      (run.status === "starting" || run.status === "running"),
-                  ),
-                ),
-              );
-              yield* trace.drain("replacement-admitted-drain", 8, worker.drain(8));
-              const newer = yield* trace.at(
-                "replacement-native-acceptance",
-                waitForThread(
-                  f.threadId,
-                  (p) =>
-                    p.providerTurns.length === 2 &&
-                    p.providerTurns.every((t) => t.acceptedAt !== undefined),
-                ),
-              );
-              assert.notEqual(newer.runs[1]!.activeAttemptId, original.activeAttemptId);
-              assert.notEqual(newer.providerTurns[1]!.id, turn.id);
-              assert.notEqual(
-                newer.providerTurns[1]!.nativeTurnRef?.nativeId,
-                turn.nativeTurnRef?.nativeId,
-              );
-              yield* peer.emit([{ type: "agent_start" }]);
-              yield* trace.at(
-                "replacement-session-running",
-                waitForThread(f.threadId, (p) =>
-                  p.providerSessions.some(
-                    (s) => s.id === thread.providerSessionId && s.status === "running",
-                  ),
-                ),
-              );
-              yield* f.snapshot("newer-owner-before-release");
-            }
-            yield* Deferred.succeed(f.prepRelease, undefined);
-            const exit = yield* trace.at(
-              "captured-owner-delivery-join",
-              Fiber.join(delivery).pipe(Effect.timeout("10 seconds")),
-            );
-            if (superseded) {
-              assert.isTrue(Exit.isFailure(exit));
-              assert.include(encodeJson(exit), "no longer owns this active turn");
-              assert.include(encodeJson(exit), '"breaksSession":false');
-              assert.deepEqual(
-                peer.state.prompts.map((p) => p.frame.type),
-                ["prompt", "prompt"],
-              );
-              assert.equal(peer.state.frames.filter((p) => p.type === "steer").length, 0);
-              const current = Option.getOrNull(yield* sessions.get(thread.providerSessionId!));
-              assert.strictEqual(current, owner);
-              const retained = yield* f.snapshot("superseded-refused");
-              assert.equal(
-                retained.providerSessions.find((s) => s.id === thread.providerSessionId)?.status,
-                "running",
-              );
-              const newerTurn = retained.providerTurns[1]!;
-              const newerRun = retained.runs.find(
-                (r) => r.activeAttemptId === newerTurn.runAttemptId,
-              )!;
-              // Manager publication is a runtime handle, not a mutable status
-              // projection. Prove the retained newer generation can still steer.
-              yield* current!.steerTurn({
+              yield* owner.steerTurn({
                 threadId: f.threadId,
-                runId: newerRun.id,
-                providerThread: retained.providerThreads.find(
-                  (t) => t.id === newerTurn.providerThreadId,
-                )!,
-                providerTurnId: newerTurn.id,
+                runId: original.id,
+                providerThread: thread,
+                providerTurnId: turn.id,
                 message: {
-                  messageId: MessageId.make(`${f.threadId}-newer-steer`),
-                  text: "Healthy newer captured owner",
+                  messageId: followupId,
+                  text: "Old captured owner",
                   attachments: [],
                   createdBy: "user",
                   creationSource: "web",
                 },
               });
-              assert.deepEqual(
-                peer.state.prompts.map((p) => p.frame.type),
-                ["prompt", "prompt", "steer"],
-              );
             } else {
-              assert.isTrue(Exit.isSuccess(exit));
-              yield* trace.drain("healthy-steer-drain", 8, worker.drain(8));
-              assert.deepEqual(
-                peer.state.prompts.map((p) => p.frame.type),
-                ["prompt", "steer"],
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId,
+                threadId: f.threadId,
+                messageId: followupId,
+                text: "Healthy current owner",
+                attachments: [],
+                selectedScientSkillNames: [],
+                dispatchMode: { type: "steer_active", targetRunId: original.id },
+                createdBy: "user",
+                creationSource: "web",
+              });
+              assert.equal(
+                Option.getOrNull(yield* receipts.getByCommandId(commandId))?.status,
+                "accepted",
               );
-              assert.include(peer.state.prompts[1]!.frame.message ?? "", "Healthy current owner");
-              const projection = yield* f.snapshot("healthy-steer-delivered");
-              assert.equal(projection.runs.length, 1);
-              assert.equal(projection.providerTurns.length, 1);
-              assert.equal(projection.messages.filter((m) => m.id === followupId).length, 1);
+              yield* worker.runOnce;
             }
-            assert.equal(yield* f.fs.readFileString(f.lock()), token);
-            assert.equal(f.peers.length, 1);
-            assert.equal(peer.state.shutdowns, 0);
+          }).pipe(Effect.exit, Effect.forkScoped);
+          yield* trace.at(
+            "preparation-entered",
+            Deferred.await(f.prepEntered).pipe(Effect.timeout("10 seconds")),
+          );
+          yield* f.snapshot("preparation-held");
+          if (superseded) {
             yield* peer.finish();
             yield* trace.at(
-              "final-attempts-completed",
-              waitForThread(f.threadId, (p) => p.attempts.every((a) => a.status === "completed")),
+              "old-attempt-completed",
+              waitForThread(f.threadId, (p) =>
+                p.attempts.some(
+                  (a) => a.id === original.activeAttemptId && a.status === "completed",
+                ),
+              ),
             );
-            const final = yield* f.snapshot("terminal-after-release");
-            assert.equal(final.providerTurns.length, superseded ? 2 : 1);
-            assert.isTrue(final.providerTurns.every((t) => t.status === "completed"));
-          }).pipe(
-            Effect.onError((cause) => trace.failure(cause, { peers: f.peers.map((p) => p.state) })),
+            const replacementCommand = CommandId.make(`${f.threadId}-replacement`);
+            trace.admissionCommands.push(replacementCommand);
+            yield* trace.at(
+              "replacement-admission",
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: replacementCommand,
+                threadId: f.threadId,
+                messageId: MessageId.make(`${f.threadId}-replacement`),
+                text: "New public owner",
+                attachments: [],
+                selectedScientSkillNames: [],
+                dispatchMode: { type: "start_immediately" },
+                createdBy: "user",
+                creationSource: "web",
+              }),
+            );
+            yield* trace.capture("replacement-before-drain", {
+              peers: f.peers.map((p) => p.state),
+            });
+            yield* trace.drain("replacement-start-drain", 8, worker.drain(8));
+            yield* trace.capture("replacement-after-drain", {
+              peers: f.peers.map((p) => p.state),
+            });
+            yield* trace.at(
+              "replacement-start-committed",
+              waitForThread(f.threadId, (p) =>
+                p.runs.some(
+                  (run) =>
+                    run.userMessageId === `${f.threadId}-replacement` &&
+                    (run.status === "starting" || run.status === "running"),
+                ),
+              ),
+            );
+            yield* trace.drain("replacement-admitted-drain", 8, worker.drain(8));
+            const newer = yield* trace.at(
+              "replacement-native-acceptance",
+              waitForThread(
+                f.threadId,
+                (p) =>
+                  p.providerTurns.length === 2 &&
+                  p.providerTurns.every((t) => t.acceptedAt !== undefined),
+              ),
+            );
+            assert.notEqual(newer.runs[1]!.activeAttemptId, original.activeAttemptId);
+            assert.notEqual(newer.providerTurns[1]!.id, turn.id);
+            assert.notEqual(
+              newer.providerTurns[1]!.nativeTurnRef?.nativeId,
+              turn.nativeTurnRef?.nativeId,
+            );
+            yield* peer.emit([{ type: "agent_start" }]);
+            yield* trace.at(
+              "replacement-session-running",
+              waitForThread(f.threadId, (p) =>
+                p.providerSessions.some(
+                  (s) => s.id === thread.providerSessionId && s.status === "running",
+                ),
+              ),
+            );
+            yield* f.snapshot("newer-owner-before-release");
+          }
+          yield* Deferred.succeed(f.prepRelease, undefined);
+          const exit = yield* trace.at(
+            "captured-owner-delivery-join",
+            Fiber.join(delivery).pipe(Effect.timeout("10 seconds")),
           );
-        }),
-      ),
-    { timeout: 60_000 },
-  );
-}
+          if (superseded) {
+            assert.isTrue(Exit.isFailure(exit));
+            assert.include(encodeJson(exit), "no longer owns this active turn");
+            assert.include(encodeJson(exit), '"breaksSession":false');
+            assert.deepEqual(
+              peer.state.prompts.map((p) => p.frame.type),
+              ["prompt", "prompt"],
+            );
+            assert.equal(peer.state.frames.filter((p) => p.type === "steer").length, 0);
+            const current = Option.getOrNull(yield* sessions.get(thread.providerSessionId!));
+            assert.strictEqual(current, owner);
+            const retained = yield* f.snapshot("superseded-refused");
+            assert.equal(
+              retained.providerSessions.find((s) => s.id === thread.providerSessionId)?.status,
+              "running",
+            );
+            const newerTurn = retained.providerTurns[1]!;
+            const newerRun = retained.runs.find(
+              (r) => r.activeAttemptId === newerTurn.runAttemptId,
+            )!;
+            // Manager publication is a runtime handle, not a mutable status
+            // projection. Prove the retained newer generation can still steer.
+            yield* current!.steerTurn({
+              threadId: f.threadId,
+              runId: newerRun.id,
+              providerThread: retained.providerThreads.find(
+                (t) => t.id === newerTurn.providerThreadId,
+              )!,
+              providerTurnId: newerTurn.id,
+              message: {
+                messageId: MessageId.make(`${f.threadId}-newer-steer`),
+                text: "Healthy newer captured owner",
+                attachments: [],
+                createdBy: "user",
+                creationSource: "web",
+              },
+            });
+            assert.deepEqual(
+              peer.state.prompts.map((p) => p.frame.type),
+              ["prompt", "prompt", "steer"],
+            );
+          } else {
+            assert.isTrue(Exit.isSuccess(exit));
+            yield* trace.drain("healthy-steer-drain", 8, worker.drain(8));
+            assert.deepEqual(
+              peer.state.prompts.map((p) => p.frame.type),
+              ["prompt", "steer"],
+            );
+            assert.include(peer.state.prompts[1]!.frame.message ?? "", "Healthy current owner");
+            const projection = yield* f.snapshot("healthy-steer-delivered");
+            assert.equal(projection.runs.length, 1);
+            assert.equal(projection.providerTurns.length, 1);
+            assert.equal(projection.messages.filter((m) => m.id === followupId).length, 1);
+          }
+          assert.equal(yield* f.fs.readFileString(f.lock()), token);
+          assert.equal(f.peers.length, 1);
+          assert.equal(peer.state.shutdowns, 0);
+          yield* peer.finish();
+          yield* trace.at(
+            "final-attempts-completed",
+            waitForThread(f.threadId, (p) => p.attempts.every((a) => a.status === "completed")),
+          );
+          const final = yield* f.snapshot("terminal-after-release");
+          assert.equal(final.providerTurns.length, superseded ? 2 : 1);
+          assert.isTrue(final.providerTurns.every((t) => t.status === "completed"));
+        }).pipe(
+          Effect.onError((cause) => trace.failure(cause, { peers: f.peers.map((p) => p.state) })),
+        );
+      }),
+    ),
+  { timeout: 60_000 },
+);
 
 it.live(
   "C398 redispatches one exact follow-up prompt when the predecessor completes during actual OMP payload preparation",
@@ -370,8 +373,8 @@ it.live(
           { name: "omp-native-conjunction", runtimePolicyOverride: { cwd } },
           makeLayer([adapter]),
           {
-            databaseLayer: database,
-            serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),
+            layerDatabase: database,
+            layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
             configureMcp: false,
             runEffectWorker: false,
           },

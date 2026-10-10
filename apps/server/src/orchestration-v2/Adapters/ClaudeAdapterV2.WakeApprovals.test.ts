@@ -43,10 +43,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const continuationAttempt = RunAttemptId.make("attempt-claude-wake-callback-3");
           const planToolUseId = "toolu_01WakePlanExitPlanMode";
           const planMarkdown = "# Wake plan\n\n1. Report the background result.";
-          const stamp = (frame: SDKMessage, attemptId: RunAttemptId) =>
+          const stamp = (frame: SDKMessage, promptIndex: number) =>
             claudeSdkFrame({
               ...frame,
-              user_message_uuid: ClaudeAdapterV2.claudePromptUuid(attemptId),
+              user_message_uuid: harness.promptUuid(promptIndex),
             });
           const runOf = (attemptId: RunAttemptId) => RunId.make(`run-${attemptId}`);
           const planToolUse = claudeSdkFrame({
@@ -100,12 +100,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               runtimePolicy,
             }),
           );
-          yield* Queue.offer(harness.sdkMessages, stamp(wakeTaskStarted, firstAttempt));
+          yield* Queue.offer(harness.sdkMessages, stamp(wakeTaskStarted, 0));
           yield* Queue.offer(
             harness.sdkMessages,
             stamp(
               makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000740", result: "STARTED" }),
-              firstAttempt,
+              0,
             ),
           );
           yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
@@ -167,7 +167,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 uuid: "00000000-0000-4000-8000-000000000743",
                 text: "USER_REPLY",
               }),
-              userAttempt,
+              1,
             ),
           );
           yield* Queue.offer(
@@ -177,7 +177,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 uuid: "00000000-0000-4000-8000-000000000744",
                 result: "USER_REPLY",
               }),
-              userAttempt,
+              1,
             ),
           );
           yield* awaitUntil(() => harness.terminalEvents().length === 2, "user turn terminal");
@@ -259,10 +259,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const firstAttempt = RunAttemptId.make("attempt-claude-wake-approval-1");
         const userAttempt = RunAttemptId.make("attempt-claude-wake-approval-2");
         const bashToolUseId = "toolu_01WakeApprovalBash";
-        const stamp = (frame: SDKMessage, attemptId: RunAttemptId) =>
+        const stamp = (frame: SDKMessage, promptIndex: number) =>
           claudeSdkFrame({
             ...frame,
-            user_message_uuid: ClaudeAdapterV2.claudePromptUuid(attemptId),
+            user_message_uuid: harness.promptUuid(promptIndex),
           });
 
         yield* harness.runtime.startTurn(
@@ -280,14 +280,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.sdkMessages,
           stamp(
             makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000780", text: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* Queue.offer(
           harness.sdkMessages,
           stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000781", result: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
@@ -382,10 +382,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const now = yield* DateTime.now;
         const firstAttempt = RunAttemptId.make("attempt-claude-echo-debris-1");
         const secondAttempt = RunAttemptId.make("attempt-claude-echo-debris-2");
-        const stamp = (frame: SDKMessage, attemptId: RunAttemptId) =>
+        const stamp = (frame: SDKMessage, promptIndex: number) =>
           claudeSdkFrame({
             ...frame,
-            user_message_uuid: ClaudeAdapterV2.claudePromptUuid(attemptId),
+            user_message_uuid: harness.promptUuid(promptIndex),
           });
 
         yield* harness.runtime.startTurn(
@@ -403,14 +403,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.sdkMessages,
           stamp(
             makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000760", text: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* Queue.offer(
           harness.sdkMessages,
           stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000761", result: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
@@ -437,14 +437,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.sdkMessages,
           stamp(
             makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000762", text: "Two." }),
-            secondAttempt,
+            1,
           ),
         );
         yield* Queue.offer(
           harness.sdkMessages,
           stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000763", result: "Two." }),
-            secondAttempt,
+            1,
           ),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
@@ -480,10 +480,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const now = yield* DateTime.now;
         const firstAttempt = RunAttemptId.make("attempt-claude-echo-1");
         const secondAttempt = RunAttemptId.make("attempt-claude-echo-2");
-        const stamp = (frame: SDKMessage, attemptId: RunAttemptId) =>
+        const stamp = (frame: SDKMessage, promptIndex: number) =>
           claudeSdkFrame({
             ...frame,
-            user_message_uuid: ClaudeAdapterV2.claudePromptUuid(attemptId),
+            user_message_uuid: harness.promptUuid(promptIndex),
           });
         const assistantTexts = () =>
           harness.events.flatMap((event) =>
@@ -504,22 +504,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        assert.equal(
-          harness.offeredMessages[0]?.uuid,
-          ClaudeAdapterV2.claudePromptUuid(firstAttempt),
-        );
+        assert.isTrue(ClaudeAdapterV2.isClaudePromptUuid(harness.offeredMessages[0]?.uuid ?? ""));
         yield* Queue.offer(
           harness.sdkMessages,
           stamp(
             makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000701", text: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* Queue.offer(
           harness.sdkMessages,
           stamp(
             makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000702", result: "One." }),
-            firstAttempt,
+            0,
           ),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");

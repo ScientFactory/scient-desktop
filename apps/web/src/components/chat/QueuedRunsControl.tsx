@@ -4,11 +4,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
+import { canSendQueuedRun, isQueueUsageLimitProven } from "@t3tools/shared/scientQueuedRunSend";
 import type { ChatAttachment, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
-import { useThreadProjection } from "../../state/entities";
+import { useThreadProjection, useThreadShell } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatMessage } from "../../types";
 import { ThreadQueueStrip } from "../../scient/threadQueue/ThreadQueueStrip";
@@ -44,9 +45,11 @@ export function QueuedRunsControl({
   readonly onCancelEdit: () => void;
   readonly error?: string | null;
 }) {
-  const projection = useThreadProjection(
-    scopeThreadRef(props.environmentId, props.threadId),
-  )?.projection;
+  const threadRef = scopeThreadRef(props.environmentId, props.threadId);
+  const projection = useThreadProjection(threadRef)?.projection;
+  // SCIENT-FORK:START queue-head-send-rule
+  const shell = useThreadShell(threadRef);
+  // SCIENT-FORK:END queue-head-send-rule
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
@@ -68,6 +71,17 @@ export function QueuedRunsControl({
         item.runId === queued[0]?.run.id &&
         item.failure.code === "queued_start_failed",
     ) === true;
+  // SCIENT-FORK:START queue-head-send-rule — a held queue offers Send on every message
+  // the server accepts; Send starts that message and resumes the rest after it.
+  // A windowed snapshot can miss the session that lifts a usage limit, so the
+  // limit hides Send only when the server-computed shell confirms it.
+  const heldProjection = workflow?.isHeld === true && projection != null ? projection : null;
+  const usageLimited =
+    heldProjection !== null &&
+    isQueueUsageLimitProven(heldProjection, shell?.runtime?.lastErrorClass);
+  const canSendRun = (runId: RunId) =>
+    heldProjection !== null && canSendQueuedRun(heldProjection, runId, { usageLimited });
+  // SCIENT-FORK:END queue-head-send-rule
   const items = queued.map(({ run, text, attachments }) => ({
     queueItemId: run.id,
     runId: run.id,
@@ -101,6 +115,7 @@ export function QueuedRunsControl({
       id: message.id,
       text: message.text,
       attachmentCount: message.attachments?.length ?? 0,
+      imageCount: message.attachments?.filter((item) => item.type === "image").length ?? 0,
       accepted: message.queueAdmission?.accepted === true,
     }));
   const perform = async (
@@ -168,9 +183,11 @@ export function QueuedRunsControl({
       threadBusy={workflow?.activeRun != null}
       supportsExplicitSend={workflow?.isHeld === true}
       awaitingCompletion={workflow?.isHeld === true}
+      canSendItem={(item) => canSendRun(item.runId)}
       paused={false}
-      held={workflow?.isHeld === true}
-      canReorder={workflow?.canReorder === true && busyId === null}
+      // The strip enables dragging only with two queued rows, and reserves the
+      // grip while a pending follow-up is about to become the second row.
+      canReorder={busyId === null}
       canSteer={workflow?.canPromoteToSteer === true}
       dispatchingItemId={busyId}
       editingItemId={props.editingRunId}
@@ -196,7 +213,7 @@ export function QueuedRunsControl({
         );
       }}
       onSteer={(item) => steer(item.runId)}
-      retryable={failedHead}
+      retryable={failedHead && queued[0] !== undefined && canSendRun(queued[0].run.id)}
       onRetry={() => {
         const head = queued[0];
         if (head)
@@ -206,11 +223,6 @@ export function QueuedRunsControl({
               input: { threadId: props.threadId, runId: head.run.id },
             }),
           );
-      }}
-      onResume={() => {
-        void perform("resume", () =>
-          resume({ environmentId: props.environmentId, input: { threadId: props.threadId } }),
-        );
       }}
       onReorder={(ids) => {
         if (!workflow?.canReorder || busyRef.current) return;

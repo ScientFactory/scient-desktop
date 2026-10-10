@@ -18,10 +18,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { ServerConfig } from "../config.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import * as Checkpoints from "../orchestration-v2/CheckpointService.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
@@ -118,7 +118,7 @@ it.live.each(["historical", "workspace-bound"] as const)(
               laterKind === "workspace-bound"
                 ? modernScope
                 : { ...modernScope, id: CheckpointScopeId.make(`scope:${name}:legacy-later`) };
-            const legacyRef = Checkpoints.checkpointRefForScopeOrdinal({
+            const legacyRef = yield* Checkpoints.checkpointRefForScopeOrdinal({
               scopeId: legacyScope.id,
               ordinalWithinScope: 0,
             });

@@ -75,6 +75,7 @@ function Fixture({ initial = "My question. " }: { initial?: string }) {
               value: next,
               citationStart: previous.length,
               sourceAnchor: anchor,
+              insertedSpaces: { before: false, after: false },
             });
             draftRef.current = next;
             setDraft(next);

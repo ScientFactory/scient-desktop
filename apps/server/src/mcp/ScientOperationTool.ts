@@ -1,6 +1,6 @@
 import type { OperationDefinition } from "@scientfactory/operations";
 import * as Context from "effect/Context";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 export type OperationMetadata = Pick<
   OperationDefinition,

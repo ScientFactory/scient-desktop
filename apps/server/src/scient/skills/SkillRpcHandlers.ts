@@ -17,7 +17,7 @@ import * as Option from "effect/Option";
 
 import type * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import type * as ProjectService from "../../project/ProjectService.ts";
-import type { ProviderRegistryShape } from "../../provider/Services/ProviderRegistry.ts";
+import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
 import * as ProviderSkillManagement from "./ProviderSkillManagement.ts";
 import type { ScientSkillManagementShape } from "./ScientSkillManagement.ts";

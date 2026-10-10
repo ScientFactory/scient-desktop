@@ -29,6 +29,12 @@ import {
   restoreForkPdfContinuity,
   subscribeForkPdfContinuity,
 } from "~/components/scient-fork/forkViewContinuity";
+import {
+  isForkLandingPending,
+  isForkLandingReady,
+  settleForkLanding,
+  subscribeForkLanding,
+} from "~/components/scient-fork/forkLanding";
 import { useScientThreadFork, type ForkSource } from "~/components/scient-fork/useScientThreadFork";
 import type { TimelineLatestRun } from "~/components/chat/MessagesTimeline.logic";
 import type { TimelineEntry } from "~/session-logic";
@@ -456,4 +462,69 @@ export function useForkPdfContinuityPending(
     });
   }, [activeThreadRef, activeWorkspaceRoot, forkPdfContinuityPending]);
   return forkPdfContinuityPending;
+}
+
+/** Another thread's held rows: never shown under a landing fork. */
+const NO_HELD_TIMELINE = { threadKey: null, entries: [] as never[] };
+
+/**
+ * A fork opened from the fork dialog lands hidden (forkLanding.ts). While it
+ * stays the open thread, another thread's held timeline never stands in for
+ * its own, even once the landing has timed out. Other threads are untouched.
+ */
+export function useForkLanding(routeThreadKey: string) {
+  const pending = useSyncExternalStore(
+    subscribeForkLanding,
+    () => isForkLandingPending(routeThreadKey),
+    () => false,
+  );
+  const [landedThreadKey, setLandedThreadKey] = useState<string | null>(null);
+  if (pending && landedThreadKey !== routeThreadKey) {
+    setLandedThreadKey(routeThreadKey);
+  } else if (!pending && landedThreadKey !== null && landedThreadKey !== routeThreadKey) {
+    setLandedThreadKey(null);
+  }
+  const landed = pending || landedThreadKey === routeThreadKey;
+  return {
+    pending,
+    landed,
+    /** Passed as the switch timeline's `lastReady` so nothing is held. */
+    heldTimeline: landed ? NO_HELD_TIMELINE : undefined,
+  };
+}
+
+export type ForkLanding = ReturnType<typeof useForkLanding>;
+
+/**
+ * Keeps a landing fork's messages invisible, still laid out so the list can
+ * measure and position them, and shows them once with a short fade when the
+ * fork is ready. Its composer's load status stays out of view meanwhile, so
+ * the status row cannot appear and then leave after the messages show.
+ */
+export function useForkLandingReveal(input: {
+  readonly landing: ForkLanding;
+  readonly threadKey: string;
+  readonly threadExists: boolean;
+  readonly threadDeleted: boolean;
+  readonly detailLoaded: boolean;
+  readonly displayedThreadKey: string | null;
+  readonly timelineEmpty: boolean;
+}) {
+  const { landing, ...readiness } = input;
+  // Which thread the timeline has finished positioning, reported only while landing.
+  const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(null);
+  const ready = landing.pending && isForkLandingReady({ ...readiness, positionedThreadKey });
+  const { threadKey } = input;
+  useLayoutEffect(() => {
+    if (ready) settleForkLanding(threadKey);
+  }, [ready, threadKey]);
+  return {
+    messagesClassName: landing.pending
+      ? "opacity-0"
+      : landing.landed
+        ? "transition-opacity duration-150 ease-out motion-reduce:transition-none"
+        : undefined,
+    onPositionedThreadKeyChange: landing.pending ? setPositionedThreadKey : undefined,
+    syncStatusHidden: landing.pending,
+  };
 }

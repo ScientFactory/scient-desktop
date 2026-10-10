@@ -76,8 +76,8 @@ Scient supports both app-managed and existing installations:
   legacy transport. They are not reinterpreted as ACP sessions.
 
 Managed ACP downloads are available on Apple Silicon macOS, x64 and ARM64
-Linux, and x64 and ARM64 Windows. Google does not publish the ACP runtime for
-Intel macOS; existing legacy `agy` installations remain usable there, or the
+Linux, and x64 and ARM64 Windows. Intel macOS is not yet an approved target for
+Scient-managed ACP installation; existing legacy `agy` installations remain usable there, or the
 Mac can connect to a supported remote environment.
 
 Scient's update catalog treats official ACP and legacy `agy` as separate

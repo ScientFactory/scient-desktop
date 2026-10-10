@@ -13,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { VcsProcess } from "../../vcs/VcsProcess.ts";
+import { CheckpointPublicationWitness } from "../../vcs/ScientCheckpointCapture.ts";
 
 export interface ScientForkCheckpointBaselineShape {
   readonly workspaceExists: (cwd: string) => Effect.Effect<boolean>;
@@ -35,7 +36,7 @@ export interface ScientForkCheckpointBaselineShape {
   readonly capture: (input: {
     readonly cwd: string;
     readonly toCheckpointRef: CheckpointRef;
-  }) => Effect.Effect<boolean>;
+  }) => Effect.Effect<void, VcsError>;
   /**
    * Whether a fork worktree is this repository's checkout of the fork branch at
    * the frozen checkpoint, with no checkout still in progress. A reused
@@ -125,6 +126,11 @@ const make = Effect.gen(function* () {
     const commitOid = resolved.stdout.trim();
     if (!/^[0-9a-f]{40,64}$/i.test(commitOid)) return false;
 
+    yield* (yield* CheckpointPublicationWitness)({
+      cwd: input.cwd,
+      checkpointRef: input.toCheckpointRef,
+      commitOid,
+    });
     yield* process.run({
       operation: "ScientForkCheckpointBaseline.copy",
       command: "git",
@@ -146,17 +152,7 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map((result) => result.exitCode === 0));
 
   const capture: ScientForkCheckpointBaselineShape["capture"] = (input) =>
-    checkpointStore
-      .captureCheckpoint({ cwd: input.cwd, checkpointRef: input.toCheckpointRef })
-      .pipe(
-        Effect.as(true),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("scient fork could not snapshot the running workspace", {
-            cwd: input.cwd,
-            cause,
-          }).pipe(Effect.as(false)),
-        ),
-      );
+    checkpointStore.captureCheckpoint({ cwd: input.cwd, checkpointRef: input.toCheckpointRef });
 
   const verifyWorktree: ScientForkCheckpointBaselineShape["verifyWorktree"] = Effect.fn(
     "verifyScientForkWorktree",

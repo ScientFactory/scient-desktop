@@ -1,3 +1,4 @@
+import { useSettingsIntentPreload } from "./useSettingsIntentPreload";
 import {
   lazy,
   Suspense,
@@ -131,6 +132,7 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
+  const preloadSettings = useSettingsIntentPreload();
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
@@ -154,10 +156,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   useEffect(() => {
     const result = results[activeResultIndex];
     if (!result) return;
+    if (isSearching && document.activeElement === searchInputRef.current) {
+      preloadSettings(result.to, result.targetId ?? result.id);
+    }
     document
       .getElementById(`settings-search-result-${result.id}`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [activeResultIndex, results]);
+  }, [activeResultIndex, isSearching, preloadSettings, results]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -330,6 +335,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       isActive={index === activeResultIndex}
                       className="h-auto min-h-10 items-start"
                       onMouseMove={() => setActiveResultIndex(index)}
+                      onMouseEnter={() => preloadSettings(item.to, item.targetId ?? item.id)}
+                      onFocus={() => preloadSettings(item.to, item.targetId ?? item.id)}
                       onClick={() => handleSearchResultClick(item)}
                     >
                       <SettingsSectionIcon to={item.to} />
@@ -365,6 +372,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                             isActive={isActive}
                             aria-label={item.label}
                             tooltip={item.label}
+                            onMouseEnter={() => preloadSettings(item.to)}
+                            onFocus={() => preloadSettings(item.to)}
                             onClick={() => handleSectionClick(item.to)}
                           >
                             <Icon />

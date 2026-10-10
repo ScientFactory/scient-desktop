@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderManagedRuntimeAction,
+  type ProviderRuntimePlan,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -561,7 +562,7 @@ describe("ProviderRuntimeSection", () => {
     },
   );
 
-  it("presents a qualified system-to-managed action as a compact secondary choice", () => {
+  it("presents a qualified system-to-managed action as a blue primary choice", () => {
     hooks.beginRender();
     const markup = renderToStaticMarkup(
       ProviderRuntimeSection({
@@ -598,348 +599,148 @@ describe("ProviderRuntimeSection", () => {
     const actionIndex = markup.indexOf(">Use Scient-managed</button>");
     const actionStart = markup.lastIndexOf("<button", actionIndex);
     const actionMarkup = markup.slice(actionStart, actionIndex);
-    expect(actionMarkup).toContain("text-muted-foreground");
-    expect(actionMarkup).not.toContain("bg-primary");
+    expect(actionMarkup).toContain("text-primary");
   });
 
-  it.each(["Back", "Use Scient-managed"])(
-    "names both versions before a system-to-managed switch and honors %s",
-    async (choice) => {
-      const systemProvider: ServerProvider = {
-        ...provider,
-        installed: true,
-        version: "1.0.9",
-        connection: {
-          ...provider.connection!,
-          runtime: {
-            ...provider.connection!.runtime!,
-            source: "system",
-            actions: ["install"],
-            message: "Using a compatible system Antigravity runtime.",
-          },
-        },
-      };
-      const switchMessage =
-        "Scient will install private Antigravity 1.1.27 and use it instead of the system installation (1.0.9), which stays untouched.";
-      commands.plan.mockResolvedValue({
-        _tag: "Success",
-        value: {
-          instanceId,
-          action: "install",
-          target: "darwin-arm64",
-          version: "1.1.27",
-          downloadBytes: 1024,
-          sourceLabel: "Official Google Antigravity CLI release",
-          catalogRevision: "reviewed:1",
-          message: switchMessage,
-        },
-      });
-      const onPlanOpenChange = vi.fn();
-      const props = {
-        compact: true,
-        environmentId,
-        provider: systemProvider,
-        displayName: "Antigravity",
-        onPlanOpenChange,
-      };
-
-      hooks.beginRender();
-      const section = ProviderRuntimeSection(props);
-      expect(commands.plan).not.toHaveBeenCalled();
-      const button = findActionButton(section, "Use Scient-managed");
-      expect(button).toBeDefined();
-      (button!.props.onClick as () => void)();
-      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
-
-      // The switch waits for a decision made with both versions in view.
-      hooks.beginRender();
-      const review = renderToStaticMarkup(ProviderRuntimeSection(props));
-      expect(review).toContain("Use Scient-managed Antigravity 1.1.27?");
-      expect(review).toContain(switchMessage);
-      expect(review).toContain(">Back</button>");
-      expect(commands.start).not.toHaveBeenCalled();
-      expect(onPlanOpenChange).toHaveBeenLastCalledWith(true);
-
-      hooks.beginRender();
-      const decision = findActionButton(ProviderRuntimeSection(props), choice);
-      expect(decision).toBeDefined();
-      (decision!.props.onClick as () => void)();
-      if (choice === "Back") {
-        hooks.beginRender();
-        const markup = renderToStaticMarkup(ProviderRuntimeSection(props));
-        expect(markup).not.toContain("Use Scient-managed Antigravity 1.1.27?");
-        expect(markup).toContain("System installation");
-        expect(commands.start).not.toHaveBeenCalled();
-        expect(onPlanOpenChange).toHaveBeenLastCalledWith(false);
-        return;
-      }
-      await vi.waitFor(() =>
-        expect(commands.start).toHaveBeenCalledWith({
-          environmentId,
-          input: { instanceId, action: "install", catalogRevision: "reviewed:1" },
-        }),
-      );
-      hooks.beginRender();
-      expect(renderToStaticMarkup(ProviderRuntimeSection(props))).toContain(
-        "Preparing the provider runtime operation.",
-      );
-    },
-  );
-
   describe.each([
-    { driver: "droid", name: "Droid", runtimeName: "Droid" },
-    { driver: "cursor", name: "Cursor", runtimeName: "Cursor CLI" },
-  ] as const)("$runtimeName switch to a managed release older than the system runtime", (entry) => {
-    const systemProvider: ServerProvider = {
+    { driver: "codex", name: "Codex" },
+    { driver: "claudeAgent", name: "Claude" },
+    { driver: "antigravity", name: "Antigravity" },
+    { driver: "droid", name: "Droid" },
+    { driver: "grok", name: "Grok" },
+    { driver: "opencode", name: "OpenCode" },
+    { driver: "pi", name: "Pi" },
+    { driver: "cursor", name: "Cursor" },
+  ] as const)("$name one-click managed selection", ({ driver, name }) => {
+    const id = ProviderInstanceId.make(driver);
+    const systemProvider = {
       ...provider,
-      instanceId: ProviderInstanceId.make(entry.driver),
-      driver: ProviderDriverKind.make(entry.driver),
+      instanceId: id,
+      driver: ProviderDriverKind.make(driver),
       installed: true,
-      version: "0.231.0",
-      status: "ready",
       connection: {
         ...provider.connection!,
         runtime: {
           ...provider.connection!.runtime!,
-          source: "system",
-          actions: ["install"],
-          message: `Scient is using the healthy ${entry.runtimeName} runtime already installed on this computer.`,
+          source: "system" as const,
+          actions: ["install" as const],
         },
       },
     };
-    const runtimeInstanceId = systemProvider.instanceId;
-    const olderMessage = `Scient-managed ${entry.runtimeName} 0.230.0 is older than your installed ${entry.runtimeName} 0.231.0. Scient will use its own verified copy; your installation stays as it is.`;
-    const olderPlan = {
-      instanceId: runtimeInstanceId,
-      action: "install" as const,
-      target: "darwin-arm64",
-      version: "0.230.0",
-      downloadBytes: 1024,
-      sourceLabel: `Official Factory ${entry.runtimeName} release`,
-      catalogRevision: "reviewed:1:older-than-system",
-      message: olderMessage,
-      systemVersion: "0.231.0",
-      olderThanSystem: true,
-    };
-    const stale = () => ({
-      _tag: "Failure" as const,
-      cause: Cause.fail(
-        new ProviderConnectionError({
-          provider: systemProvider.driver,
-          instanceId: runtimeInstanceId,
-          reason: "runtime_plan_stale",
-          message: "The provider setup plan changed. Review it again before continuing.",
-        }),
-      ),
-    });
-    const props = {
-      compact: true,
-      environmentId,
-      provider: systemProvider,
-      displayName: entry.name,
-    };
+    const props = { compact: true, environmentId, provider: systemProvider, displayName: name };
     const render = () => {
       hooks.beginRender();
       return ProviderRuntimeSection(props);
     };
-    const click = (label: string) => {
-      const button = findActionButton(render(), label);
-      expect(button).toBeDefined();
-      (button!.props.onClick as () => void)();
-    };
-
-    it("is offered, and starts only once both versions were shown and accepted", async () => {
-      commands.plan.mockResolvedValue({ _tag: "Success", value: olderPlan });
-
-      expect(renderToStaticMarkup(render())).toContain(
-        `aria-label="Use Scient-managed ${entry.runtimeName}"`,
-      );
-      click("Use Scient-managed");
-      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
-
-      const review = renderToStaticMarkup(render());
-      expect(review).toContain(`Use Scient-managed ${entry.runtimeName} 0.230.0?`);
-      expect(review).toContain(olderMessage);
-      expect(review).toContain("lucide-triangle-alert");
-      expect(review).toContain(">Back</button>");
-      expect(commands.start).not.toHaveBeenCalled();
-
-      click("Use Scient-managed");
-      await vi.waitFor(() =>
-        expect(commands.start).toHaveBeenCalledWith({
-          environmentId,
-          input: {
-            instanceId: runtimeInstanceId,
-            action: "install",
-            catalogRevision: olderPlan.catalogRevision,
-            acceptOlderThanSystem: true,
-          },
-        }),
-      );
+    const click = () =>
+      (findActionButton(render(), "Use Scient-managed")!.props.onClick as () => void)();
+    const plan = (systemVersion: string | null, olderThanSystem: boolean) => ({
+      instanceId: id,
+      action: "install" as const,
+      target: "darwin-arm64",
+      version: "1.2.0",
+      downloadBytes: null,
+      sourceLabel: "Official release",
+      catalogRevision: "reviewed:1",
+      message: "Private copy installation.",
+      systemVersion,
+      olderThanSystem,
     });
-
-    it("returns to runtime controls on Back without starting", async () => {
-      commands.plan.mockResolvedValue({ _tag: "Success", value: olderPlan });
-      click("Use Scient-managed");
-      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
-      expect(renderToStaticMarkup(render())).toContain(olderMessage);
-
-      click("Back");
-
-      const markup = renderToStaticMarkup(render());
-      expect(markup).not.toContain(olderMessage);
-      expect(markup).toContain(`aria-label="Use Scient-managed ${entry.runtimeName}"`);
-      expect(commands.start).not.toHaveBeenCalled();
-    });
-
-    it("accepts a switch from a system runtime of unknown version from its decision", async () => {
-      const unknownPlan = {
-        ...olderPlan,
-        catalogRevision: "reviewed:1:system-version-unknown",
-        message: `Scient does not know which ${entry.runtimeName} version, if any, is installed on this computer (system version unknown), so Scient-managed ${entry.runtimeName} 0.230.0 may be older than it.`,
-        systemVersion: null,
-        olderThanSystem: false,
-      };
-      commands.plan.mockResolvedValue({ _tag: "Success", value: unknownPlan });
-      click("Use Scient-managed");
-      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
-
-      const review = renderToStaticMarkup(render());
-      expect(review).toContain("system version unknown");
-      expect(review).toContain("lucide-triangle-alert");
-      expect(commands.start).not.toHaveBeenCalled();
-
-      click("Use Scient-managed");
-      await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(1));
-      expect(commands.start.mock.calls[0]![0].input).toMatchObject({
-        catalogRevision: unknownPlan.catalogRevision,
-        acceptOlderThanSystem: true,
-      });
-    });
-
     it.each([
-      ["a system runtime that is not newer", "0.229.0", false, false],
-      ["a newer system runtime", "0.231.0", true, true],
-      ["a system runtime of unknown version", null, false, true],
+      ["older", "1.3.0", true],
+      ["equal", "1.2.0", false],
+      ["newer", "1.1.0", false],
+      ["unknown", null, false],
     ] as const)(
-      "asks before a Repair that puts a never-selected copy in use beside %s",
-      async (_label, systemVersion, olderThanSystem, accepts) => {
-        // The copy looked like the runtime in use; the plan found the system one.
-        const legacy = {
-          ...props,
-          provider: {
-            ...systemProvider,
-            connection: {
-              ...systemProvider.connection!,
-              runtime: {
-                ...systemProvider.connection!.runtime!,
-                source: "scient_managed" as const,
-                actions: ["repair" as const, "remove" as const],
-                managedVersion: "0.230.0",
-              },
-            },
-          },
-        };
-        const repairPlan = {
-          ...olderPlan,
-          action: "repair" as const,
-          catalogRevision: "reviewed:1:repair",
-          message: `Repair plan beside ${systemVersion ?? "an unknown version"}.`,
-          systemVersion,
-          olderThanSystem,
-        };
-        commands.plan.mockResolvedValue({ _tag: "Success", value: repairPlan });
-        const renderLegacy = () => {
-          hooks.beginRender();
-          return ProviderRuntimeSection(legacy);
-        };
-        const button = findActionButton(renderLegacy(), "Repair");
-        (button!.props.onClick as () => void)();
-        await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
-
-        // The same decision as "Use Scient-managed": nothing starts from the click.
-        const review = renderToStaticMarkup(renderLegacy());
-        expect(review).toContain(`Use Scient-managed ${entry.runtimeName} 0.230.0?`);
-        expect(review).toContain(repairPlan.message);
-        expect(commands.start).not.toHaveBeenCalled();
-
-        const confirm = findActionButton(renderLegacy(), "Use Scient-managed");
-        (confirm!.props.onClick as () => void)();
-        await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(1));
-        expect(commands.start.mock.calls[0]![0].input).toEqual({
-          instanceId: runtimeInstanceId,
-          action: "repair",
-          catalogRevision: repairPlan.catalogRevision,
-          ...(accepts ? { acceptOlderThanSystem: true } : {}),
-        });
+      "starts when the managed version is %s without another decision",
+      async (_case, version, older) => {
+        const reviewed = plan(version, older);
+        commands.plan.mockResolvedValue({ _tag: "Success", value: reviewed });
+        expect(commands.plan).not.toHaveBeenCalled();
+        click();
+        await vi.waitFor(() =>
+          expect(commands.start).toHaveBeenCalledExactlyOnceWith({
+            environmentId,
+            input: { instanceId: id, action: "install", catalogRevision: reviewed.catalogRevision },
+          }),
+        );
+        const markup = renderToStaticMarkup(render());
+        expect(markup).not.toContain(">Back</button>");
+        expect(markup).not.toContain("Private copy installation.");
+        expect(markup).toContain("text-primary");
       },
     );
-
-    it("asks before an install that turns out to replace a newer system runtime", async () => {
-      // Offered as a first installation; the plan found a system runtime installed since.
-      const missing = {
-        ...props,
-        provider: {
-          ...systemProvider,
-          connection: {
-            ...systemProvider.connection!,
-            runtime: {
-              ...systemProvider.connection!.runtime!,
-              source: "missing" as const,
-            },
-          },
-        },
-      };
-      commands.plan.mockResolvedValue({ _tag: "Success", value: olderPlan });
-      const onPlanOpenChange = vi.fn();
-      hooks.beginRender();
-      const button = findActionButton(
-        ProviderRuntimeSection({ ...missing, onPlanOpenChange }),
-        "Install",
-      );
-      (button!.props.onClick as () => void)();
-      await vi.waitFor(() => expect(onPlanOpenChange).toHaveBeenLastCalledWith(true));
-
-      hooks.beginRender();
-      expect(
-        renderToStaticMarkup(ProviderRuntimeSection({ ...missing, onPlanOpenChange })),
-      ).toContain(olderMessage);
-      expect(commands.start).not.toHaveBeenCalled();
+    it("refreshes a stale plan once and starts the current managed release", async () => {
+      commands.plan
+        .mockResolvedValueOnce({ _tag: "Success", value: plan("1.1.0", false) })
+        .mockResolvedValueOnce({
+          _tag: "Success",
+          value: { ...plan("1.3.0", true), catalogRevision: "reviewed:2" },
+        });
+      commands.start.mockResolvedValueOnce({
+        _tag: "Failure",
+        cause: Cause.fail(
+          new ProviderConnectionError({
+            provider: systemProvider.driver,
+            instanceId: id,
+            reason: "runtime_plan_stale",
+            message: "Plan changed.",
+          }),
+        ),
+      });
+      click();
+      await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(2));
+      expect(commands.plan).toHaveBeenCalledTimes(2);
+      expect(commands.start.mock.calls[1]![0].input.catalogRevision).toBe("reviewed:2");
+      expect(renderToStaticMarkup(render())).not.toContain(">Back</button>");
     });
-
-    it("shows the switch again when the system runtime was upgraded after the plan", async () => {
-      const reviewed = {
-        ...olderPlan,
-        catalogRevision: "reviewed:1",
-        message: `Scient will install private ${entry.runtimeName} 0.230.0 and use it instead of the system installation (0.229.0), which stays untouched.`,
-        systemVersion: "0.229.0",
-        olderThanSystem: false,
-      };
-      commands.plan.mockResolvedValueOnce({ _tag: "Success", value: reviewed });
-      click("Use Scient-managed");
-      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
-      expect(renderToStaticMarkup(render())).toContain("system installation (0.229.0)");
-
-      // Droid updated itself meanwhile: the server does not carry out the plan as it was.
-      commands.start.mockResolvedValueOnce(stale());
-      commands.plan.mockResolvedValueOnce({ _tag: "Success", value: olderPlan });
-      click("Use Scient-managed");
+    const staleResult = () => ({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new ProviderConnectionError({
+          provider: systemProvider.driver,
+          instanceId: id,
+          reason: "runtime_plan_stale",
+          message: "Plan changed.",
+        }),
+      ),
+    });
+    it("stops after a second stale plan instead of reopening confirmation", async () => {
+      commands.plan.mockResolvedValue({ _tag: "Success", value: plan(null, false) });
+      commands.start.mockResolvedValue(staleResult());
+      click();
+      await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(2));
+      expect(commands.plan).toHaveBeenCalledTimes(2);
+      const markup = renderToStaticMarkup(render());
+      expect(markup).toContain("Plan changed.");
+      expect(markup).not.toContain(">Back</button>");
+    });
+    it("reports a failed refresh without dispatching another start", async () => {
+      commands.plan
+        .mockResolvedValueOnce({ _tag: "Success", value: plan(null, false) })
+        .mockResolvedValueOnce({
+          _tag: "Failure",
+          cause: Cause.fail(new Error("Catalog unavailable.")),
+        });
+      commands.start.mockResolvedValueOnce(staleResult());
+      click();
       await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(2));
       expect(commands.start).toHaveBeenCalledTimes(1);
-      expect(commands.start.mock.calls[0]![0].input).not.toHaveProperty("acceptOlderThanSystem");
-
-      // Not an error and not a silent start: the current decision.
-      const updated = renderToStaticMarkup(render());
-      expect(updated).toContain(olderMessage);
-      expect(updated).not.toContain('role="alert"');
-      expect(updated).toContain(">Back</button>");
-
-      click("Use Scient-managed");
-      await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(2));
-      expect(commands.start.mock.calls[1]![0].input).toMatchObject({
-        catalogRevision: olderPlan.catalogRevision,
-        acceptOlderThanSystem: true,
-      });
+      expect(renderToStaticMarkup(render())).toContain("Catalog unavailable.");
+    });
+    it("ignores another click while the preflight is pending", async () => {
+      let finish!: (value: { _tag: "Success"; value: ProviderRuntimePlan }) => void;
+      commands.plan.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      click();
+      click();
+      expect(commands.plan).toHaveBeenCalledTimes(1);
+      finish({ _tag: "Success", value: plan("1.3.0", true) });
+      await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(1));
     });
   });
 

@@ -184,11 +184,18 @@ Markdown, document and file-opening suites pass on the composed candidate.
 Hosted runs after that catch-up exposed intermittent required-check failures with
 unchanged code, each traced and fixed at its cause rather than retried:
 
-- **Remote runtime install lock** (`packages/ssh/src/tunnel.ts`, inherited from
-  upstream): a waiter reclaiming a dead owner's lock could delete a fresh lock
-  another launch had just created, so two installs ran at once. Reclaim now
-  renames the lock away and checks the pid of the lock it actually took. The
-  race test failed 2/24 concurrent runs before and 0/72 after.
+- **Remote runtime install lock** (`packages/ssh/src/tunnel.ts`): string
+  placeholder replacement changed the shell PID `$$` to a literal `$`. Waiters
+  therefore treated a live installer as dead and could replace its runtime
+  before execution. The shared helper now inserts values literally, including
+  when launch and pairing scripts embed the runner. The rename-only workaround
+  is removed. Regression coverage preserves the generated runner and executes
+  concurrent installs while verifying a live numeric lock owner. The same
+  literal-substitution defect is tracked in upstream issue
+  [#15696](https://github.com/pingdotgg/t3code/issues/15696) and fix PR
+  [#14598](https://github.com/pingdotgg/t3code/pull/14598); reconcile the marked
+  helper with that fix when it lands. Separate stale-lock identity hazards are
+  outside this bounded repair.
 - **Pi observed-effort fixture:** runs fell back to `process.cwd()` and
   checkpointed the host repository (about 5 s each), and the controlled peer
   could read a half-written control file. Runs now bind to their fixture

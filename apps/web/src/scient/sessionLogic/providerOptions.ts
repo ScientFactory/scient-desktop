@@ -54,6 +54,12 @@ const PROVIDER_OPTIONS_UNORDERED: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  {
+    value: ProviderDriverKind.make("muse"),
+    label: "Muse Code",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
 ];
 
 export const PROVIDER_OPTIONS = PROVIDER_OPTIONS_UNORDERED.toSorted((left, right) =>

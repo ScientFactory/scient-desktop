@@ -1,3 +1,4 @@
+import type { File as FileInstance, PostRenderPhase } from "@pierre/diffs";
 import { File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { FILE_LINK_REVEAL_UNSAFE_CSS } from "~/components/files/fileSurfaceChrome";
@@ -24,7 +25,11 @@ export const SCIENT_FILE_UNSAFE_CSS = `
     color: var(--diffs-fg-number) !important;
   }
 `;
-export type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
+export type FilePostRender = <Annotation>(
+  container: HTMLElement,
+  instance: FileInstance<Annotation, undefined>,
+  phase: PostRenderPhase,
+) => void;
 
 export function StaticTextFileSurface(props: {
   readonly contents: string;

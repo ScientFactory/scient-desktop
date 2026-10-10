@@ -1,5 +1,5 @@
-import type { Editor } from "@pierre/diffs/editor";
-import type { Position } from "@pierre/diffs";
+import type { Editor } from "@pierre/diffs/edit";
+import type { Position } from "@pierre/diffs/edit";
 import { MathInputController } from "./controller";
 import type { MathInputFormat } from "./context";
 
@@ -39,13 +39,13 @@ export function sourcePosition(source: string, offset: number): Position {
 }
 
 export function sourceMathController<Annotation>(
-  editor: Editor<Annotation>,
+  editor: Editor<"file", Annotation, undefined>,
   format: MathInputFormat,
   editable: () => boolean,
 ): MathInputController {
   return new MathInputController({
     read() {
-      const selections = editor.getState().selections;
+      const selections = editor.getViewState().selections;
       if (!editor.getFile() || editor.isComposing || !selections || selections.length !== 1)
         return null;
       const source = editor.getText();

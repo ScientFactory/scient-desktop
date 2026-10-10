@@ -19,7 +19,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import type { DroidAcpRuntimeInput } from "../acp/DroidAcpSupport.ts";

@@ -17,6 +17,21 @@ describe("resolveMarkdownLinkIcon", () => {
 });
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it.each([
+    "t3-thread://v1/thread-1",
+    "t3-thread://v1/local/thread-1",
+    "t3-thread://v1/remote/thread%252F1",
+  ])("preserves valid current and saved thread link %s for native dispatch", (href) => {
+    expect(resolveMarkdownLinkPresentation(href)).toEqual({ kind: "link", href });
+  });
+
+  it("does not expose malformed thread links as native press targets", () => {
+    expect(resolveMarkdownLinkPresentation("t3-thread://v1/remote/thread-1/extra")).toEqual({
+      kind: "link",
+      href: null,
+    });
+  });
+
   it("treats protocol-relative media as an external URL, not a filesystem path", () => {
     expect(resolveMarkdownLinkPresentation("//cdn.example.com/clip.mp4?sig=a%2fb#t=2")).toEqual({
       kind: "external",

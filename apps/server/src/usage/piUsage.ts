@@ -4,8 +4,18 @@ import * as NodeReadline from "node:readline";
 
 import type { PiUsageRow, UsageDay, UsageTokenTotals } from "@t3tools/contracts";
 
-import { addTotals, EMPTY_TOTALS } from "./usageTranscripts.ts";
+import { EMPTY_TOTALS } from "./usageTranscripts.ts";
 import { listTranscriptFiles } from "./usageTranscriptReader.ts";
+
+function addTotals(a: UsageTokenTotals, b: UsageTokenTotals): UsageTokenTotals {
+  return {
+    uncachedInputTokens: a.uncachedInputTokens + b.uncachedInputTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    reasoningTokens: a.reasoningTokens + b.reasoningTokens,
+  };
+}
 
 interface Context {
   readonly connectionId: string;

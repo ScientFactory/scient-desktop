@@ -143,3 +143,22 @@ export function formatContextWindowCost(cost: {
   const fractionDigits = Math.abs(cost.amount) > 0 && Math.abs(cost.amount) < 0.01 ? 4 : 2;
   return `${cost.currency} ${cost.amount.toFixed(fractionDigits)}`;
 }
+
+/** Compact only ordinary server sends; queue edits/retries keep their captured payload. */
+export function shouldCompactBeforeSend(input: {
+  readonly ordinaryServerSend: boolean;
+  readonly hasCapturedQueueSubmission: boolean;
+  readonly multipleModels: boolean;
+  readonly resumeCompactionTokens: number | null;
+  readonly keepFullHistory: boolean;
+  readonly messageText: string;
+}): boolean {
+  return (
+    input.ordinaryServerSend &&
+    !input.hasCapturedQueueSubmission &&
+    !input.multipleModels &&
+    input.resumeCompactionTokens !== null &&
+    !input.keepFullHistory &&
+    input.messageText.trim().toLowerCase() !== "/compact"
+  );
+}

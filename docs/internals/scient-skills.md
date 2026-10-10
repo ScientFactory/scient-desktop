@@ -109,6 +109,12 @@ For supported adapters the existing authenticated Scient MCP session receives:
 - `scient_skills_list`, `scient_skill_load`, and
   `scient_skill_read_resource`.
 
+Muse uses its native session-MCP configuration for this scoped delivery, with a
+host-issued bearer and an explicit native grant. Disabling MCP or lacking that
+grant withholds the skill channel. Its SDK has no private system/developer
+instruction seam, so Scient core awareness remains explicitly unsupported;
+ordinary turn input is not treated as private policy injection.
+
 Supported providers keep the authenticated skill transport available with an
 empty initial scope marked `pending`. Immediately before a turn, the server
 atomically replaces that scope with active automatic skills plus active explicit

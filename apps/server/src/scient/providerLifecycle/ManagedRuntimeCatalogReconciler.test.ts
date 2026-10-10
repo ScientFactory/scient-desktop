@@ -21,7 +21,7 @@ import { PiDriver } from "../../provider/Drivers/PiDriver.ts";
 import { ScientAgentDriver } from "../../provider/Drivers/ScientAgentDriver.ts";
 
 import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import {
   catalogProviderForDriver,
@@ -134,51 +134,52 @@ describe("ManagedRuntimeCatalogReconciler", () => {
       }),
   );
 
-  for (const driver of MANAGED_RUNTIME_CATALOG_PROVIDERS.filter(
-    (provider) => provider !== "antigravityAcp",
-  )) {
-    it.effect(
-      `publishes a newly available ${driver} managed update without reloading the provider`,
-      () =>
-        Effect.gen(function* () {
-          const publications = yield* Ref.make<
-            ReadonlyArray<{
-              readonly runtime: ProviderRuntimeSummary | null;
-              readonly preserveOperation?: boolean;
-            }>
-          >([]);
-          const actions: ProviderManagedRuntimeActions = {
-            getSummary: Effect.succeed(updateRuntime),
-            plan: () => Effect.die("plan must not run during catalog reconciliation"),
-            run: () => Effect.die("runtime mutation must not run during catalog reconciliation"),
-          };
-          const selectedProvider = { ...provider, driver: ProviderDriverKind.make(driver) };
-          const base = makeProviderRegistryMock([selectedProvider]);
-          const registry = ProviderRegistry.of({
-            ...base,
-            getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(actions),
-            setProviderManagedRuntimeSummary: (input) =>
-              Ref.update(publications, (current) => [
-                ...current,
-                {
-                  runtime: input.runtime,
-                  ...(input.preserveOperation === undefined
-                    ? {}
-                    : { preserveOperation: input.preserveOperation }),
-                },
-              ]).pipe(Effect.as([provider])),
-          });
+  it.effect.each(
+    MANAGED_RUNTIME_CATALOG_PROVIDERS.filter((provider) => provider !== "antigravityAcp").map(
+      (driver) => ({
+        caseTitle: `publishes a newly available ${driver} managed update without reloading the provider`,
+        driver,
+      }),
+    ),
+  )("$caseTitle", ({ driver }) =>
+    Effect.gen(function* () {
+      const publications = yield* Ref.make<
+        ReadonlyArray<{
+          readonly runtime: ProviderRuntimeSummary | null;
+          readonly preserveOperation?: boolean;
+        }>
+      >([]);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(updateRuntime),
+        plan: () => Effect.die("plan must not run during catalog reconciliation"),
+        run: () => Effect.die("runtime mutation must not run during catalog reconciliation"),
+      };
+      const selectedProvider = { ...provider, driver: ProviderDriverKind.make(driver) };
+      const base = makeProviderRegistryMock([selectedProvider]);
+      const registry = ProviderRegistry.of({
+        ...base,
+        getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(actions),
+        setProviderManagedRuntimeSummary: (input) =>
+          Ref.update(publications, (current) => [
+            ...current,
+            {
+              runtime: input.runtime,
+              ...(input.preserveOperation === undefined
+                ? {}
+                : { preserveOperation: input.preserveOperation }),
+            },
+          ]).pipe(Effect.as([provider])),
+      });
 
-          yield* reconcileManagedRuntimeProviders([driver]).pipe(
-            Effect.provideService(ProviderRegistry, registry),
-          );
+      yield* reconcileManagedRuntimeProviders([driver]).pipe(
+        Effect.provideService(ProviderRegistry, registry),
+      );
 
-          assert.deepStrictEqual(yield* Ref.get(publications), [
-            { runtime: updateRuntime, preserveOperation: true },
-          ]);
-        }),
-    );
-  }
+      assert.deepStrictEqual(yield* Ref.get(publications), [
+        { runtime: updateRuntime, preserveOperation: true },
+      ]);
+    }),
+  );
 
   it.effect("does not probe providers whose catalog entry did not change", () =>
     Effect.gen(function* () {

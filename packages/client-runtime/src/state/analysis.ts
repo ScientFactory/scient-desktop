@@ -1,7 +1,7 @@
 import { WS_METHODS } from "@t3tools/contracts";
 import type { AnalysisRunSnapshot, AnalysisRunStreamEvent } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -127,7 +127,7 @@ export function createAnalysisEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
       transform: (stream) =>
         stream.pipe(
-          Stream.scan(new Map<string, AnalysisRunSnapshot>(), applyAnalysisRunStreamEvent),
+          Stream.scan(() => new Map<string, AnalysisRunSnapshot>(), applyAnalysisRunStreamEvent),
           Stream.map((runs) =>
             [...runs.values()].sort((left, right) =>
               right.receipt.startedAt.localeCompare(left.receipt.startedAt),

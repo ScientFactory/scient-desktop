@@ -297,9 +297,10 @@ const make = Effect.gen(function* () {
           files: { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },
         })
         .pipe(
-          Effect.catchTag("WordConversionError", (error) =>
-            reject(WORD_FAILURE_REASON[error.reason], error.message),
-          ),
+          Effect.catchTags({
+            WordConversionError: (error) =>
+              reject(WORD_FAILURE_REASON[error.reason], error.message),
+          }),
         );
       return {
         path: reserved.path,
@@ -438,9 +439,9 @@ const make = Effect.gen(function* () {
         files: { baseDirectory: prepared.baseDirectory, allowRoots: [root] },
       })
       .pipe(
-        Effect.catchTag("WordConversionError", (error) =>
-          reject(WORD_FAILURE_REASON[error.reason], error.message),
-        ),
+        Effect.catchTags({
+          WordConversionError: (error) => reject(WORD_FAILURE_REASON[error.reason], error.message),
+        }),
       );
     return {
       path: reserved.path,

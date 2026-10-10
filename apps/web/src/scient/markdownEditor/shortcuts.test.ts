@@ -106,7 +106,7 @@ describe("Scient Markdown shortcut catalog", () => {
   });
 
   it.each(["MacIntel", "Win32"])(
-    "keeps default app collisions limited to the three explicitly scoped commands on %s",
+    "keeps default app collisions limited to the four explicitly scoped commands on %s",
     (platform) => {
       const mac = platform === "MacIntel";
       const collisions: string[] = [];
@@ -134,6 +134,7 @@ describe("Scient Markdown shortcut catalog", () => {
       expect(collisions).toEqual([
         "sidebar.toggle:bold",
         "commandPalette.toggle:link",
+        "chat.find:find",
         "composer.workspace:strike",
       ]);
     },

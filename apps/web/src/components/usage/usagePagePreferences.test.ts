@@ -43,6 +43,14 @@ describe("Usage page preferences", () => {
     expect(readUsagePagePreferences()).toEqual({ metric: "spend", windowDays: 30 });
   });
 
+  it("round-trips hidden providers and reads older saves without them", () => {
+    saveUsagePagePreferences({ metric: "cost", windowDays: 7, hiddenProviders: ["codex"] });
+    expect(readUsagePagePreferences().hiddenProviders).toEqual(["codex"]);
+
+    values.set(key, '{"metric":"tokens","windowDays":30}');
+    expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 30 });
+  });
+
   it.each([
     "not-json",
     '{"metric":"unknown","windowDays":7}',

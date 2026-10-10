@@ -1,6 +1,6 @@
 import { EnvironmentFilePath, type ThreadId } from "@t3tools/contracts";
 
-import { isAbsolutePath } from "~/terminal-links";
+import { isAbsolutePath } from "@t3tools/shared/path";
 
 /**
  * The asset a file surface's media or document viewer loads. A workspace file

@@ -27,7 +27,7 @@ import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
 import { ProviderAdapterOpenSessionError } from "./ProviderAdapter.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -60,7 +60,7 @@ const withQueuedRun = <A, E, R>(
                 interactionMode: thread.interactionMode,
               }),
       });
-      const registry = ProviderAdapters.makeLayer([
+      const registry = ProviderAdapters.layerFromAdapters([
         {
           instanceId,
           driver,

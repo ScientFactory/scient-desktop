@@ -24,7 +24,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import type {
@@ -32,7 +32,7 @@ import type {
   ProviderAdapterV2TurnInput,
 } from "../../orchestration-v2/ProviderAdapter.ts";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
-import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "../EventNdjsonLogger.ts";
 import type { OmpTarget } from "../omp/OmpTarget.ts";
 
 const decodeSettings = Schema.decodeEffect(OmpSettings);

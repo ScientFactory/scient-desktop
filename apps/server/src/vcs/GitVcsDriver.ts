@@ -1,14 +1,14 @@
-import * as NodeCrypto from "node:crypto";
 import * as NodeBuffer from "node:buffer";
 
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
@@ -85,6 +85,7 @@ export interface GitStatusDetails {
   upstreamRef: string | null;
   hasWorkingTreeChanges: boolean;
   workingTree: VcsStatusResult["workingTree"];
+  branchChanges?: VcsStatusResult["branchChanges"];
   hasUpstream: boolean;
   aheadCount: number;
   behindCount: number;
@@ -94,6 +95,8 @@ export interface GitStatusDetails {
 export interface GitLocalStatusOptions {
   /** Skip revision walks and return zero divergence counts for local-only consumers. */
   readonly includeDivergence?: boolean;
+  /** Also read the diff panel's Changes totals. Failures leave them out. */
+  readonly includeBranchChanges?: boolean;
 }
 
 export interface GitRemoteStatusDetails {
@@ -162,6 +165,8 @@ export interface CreateWorktreeOptions {
    * own t3.json.
    */
   readonly submodules?: WorktreeSubmodules | null;
+  /** The `worktreesDirectory` setting, used when the input has no explicit path. */
+  readonly worktreesDirectory?: string;
 }
 
 export interface GitCommitProgress {
@@ -180,6 +185,8 @@ export interface GitCommitProgress {
 export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
+  /** Stage the current working tree immediately before committing. */
+  readonly stage?: { readonly filePaths?: readonly string[] };
 }
 
 export interface GitDeleteLocalBranchInput {
@@ -400,6 +407,11 @@ export class GitVcsDriver extends Context.Service<
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
     }) => Effect.Effect<void, GitCommandError>;
+    /**
+     * Absolute paths of every live worktree of the repository at `cwd`, the
+     * main checkout included. Worktrees whose directory is gone are left out.
+     */
+    readonly listWorktreePaths: (cwd: string) => Effect.Effect<string[], GitCommandError>;
     readonly deleteLocalBranch: (
       input: GitDeleteLocalBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
@@ -507,6 +519,11 @@ const gitCommand = (
   args: ReadonlyArray<string>,
   options?: {
     readonly stdin?: string;
+    // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
+    readonly stdinBytes?: Uint8Array;
+    readonly onStdoutChunk?: VcsProcess.VcsProcessInput["onStdoutChunk"];
+    readonly onStdoutChunkEffect?: VcsProcess.VcsProcessInput["onStdoutChunkEffect"];
+    // SCIENT-FORK:END
     readonly env?: NodeJS.ProcessEnv;
     readonly allowNonZeroExit?: boolean;
     readonly timeoutMs?: number;
@@ -522,6 +539,13 @@ const gitCommand = (
     cwd,
     spawnCwd: globalThis.process.cwd(),
     ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
+    // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
+    ...(options?.stdinBytes !== undefined ? { stdinBytes: options.stdinBytes } : {}),
+    ...(options?.onStdoutChunk !== undefined ? { onStdoutChunk: options.onStdoutChunk } : {}),
+    ...(options?.onStdoutChunkEffect !== undefined
+      ? { onStdoutChunkEffect: options.onStdoutChunkEffect }
+      : {}),
+    // SCIENT-FORK:END
     ...(options?.env !== undefined ? { env: options.env } : {}),
     ...(options?.allowNonZeroExit !== undefined
       ? { allowNonZeroExit: options.allowNonZeroExit }
@@ -539,6 +563,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const commandAvailable = yield* CommandAvailability;
+  const crypto = yield* Crypto.Crypto;
   const capabilities = {
     kind: "git" as const,
     supportsWorktrees: true,
@@ -564,6 +589,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+      // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
+      ...(input.stdinBytes !== undefined ? { stdinBytes: input.stdinBytes } : {}),
+      ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
+      ...(input.onStdoutChunkEffect !== undefined
+        ? { onStdoutChunkEffect: input.onStdoutChunkEffect }
+        : {}),
+      // SCIENT-FORK:END
       ...(input.env !== undefined ? { env: input.env } : {}),
       ...(input.allowNonZeroExit !== undefined ? { allowNonZeroExit: input.allowNonZeroExit } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
@@ -807,7 +839,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     });
 
   // SCIENT-FORK:START — checkpoint size limits live in ScientCheckpointCapture.
-  const checkCheckpointSize = makeCheckpointSizeCheck({ execute, path });
+  const checkCheckpointSize = makeCheckpointSizeCheck({ execute });
   // SCIENT-FORK:END
 
   // Git renames loose objects and refs into place without fsync by default, so
@@ -831,10 +863,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "sparse.expectFilesOutsideOfPatterns=false",
       ];
       const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
-      const tempIndexPath = path.join(
-        gitCommonDir,
-        `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
-      );
+      const indexId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+      const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const commitEnv: NodeJS.ProcessEnv = {
         ...process.env,
         GIT_INDEX_FILE: tempIndexPath,
@@ -857,7 +887,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
       yield* Effect.gen(function* () {
         // SCIENT-FORK:START — stage objects in a scoped bare repository.
-        const { stagingRepo, stagedEnv } = yield* prepareCheckpointStagingRepo({
+        const { stagingRepo, stagedEnv, objectFormat } = yield* prepareCheckpointStagingRepo({
           execute,
           fileSystem,
           path,
@@ -1103,6 +1133,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         // SCIENT-FORK:START — publish the staged commit into the user's repository.
         yield* publishStagedCheckpoint({
           execute,
+          fileSystem,
+          path,
+          gitCommonDir,
+          objectFormat,
           operation,
           cwd: input.cwd,
           stagingRepo,
@@ -1308,5 +1342,5 @@ export const make = Effect.gen(function* () {
   return GitVcsDriver.of(git);
 });
 
-export const vcsLayer = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
+export const layerVcs = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
 export const layer = Layer.effect(GitVcsDriver, make);

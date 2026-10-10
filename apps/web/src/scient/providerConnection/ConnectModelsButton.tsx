@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { PlugIcon } from "lucide-react";
 import { Button } from "../../components/ui/button";
@@ -21,6 +21,7 @@ export function ConnectModelsButton({
   appearance = "outline",
   environmentId,
   instanceId,
+  accountContent,
 }: {
   /**
    * `setup-action` is an assisted setup frame's one primary action;
@@ -29,6 +30,8 @@ export function ConnectModelsButton({
   appearance?: "outline" | "setup-action" | "setup-secondary";
   environmentId: EnvironmentId;
   instanceId: ProviderInstanceId;
+  /** Provider-owned sign-in flow; absent for agents without account capabilities. */
+  accountContent?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -51,11 +54,12 @@ export function ConnectModelsButton({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogPopup className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Custom models</DialogTitle>
+            <DialogTitle>{accountContent ? "Connect models" : "Custom models"}</DialogTitle>
             <DialogDescription className="sr-only">Connect models to this agent.</DialogDescription>
           </DialogHeader>
           {open ? (
             <DialogPanel>
+              {accountContent ? <div className="mb-6">{accountContent}</div> : null}
               <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
                 <CustomModelsContent environmentId={environmentId} instanceId={instanceId} />
               </Suspense>

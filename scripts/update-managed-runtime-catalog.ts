@@ -8,7 +8,7 @@ import {
   isManagedRuntimeProvider,
   refreshManagedRuntimeCatalog,
   refreshManagedRuntimeProvider,
-  validateManagedRuntimeCatalog,
+  readManagedRuntimeCatalog,
 } from "./lib/managed-runtime-catalog.ts";
 
 function argument(name: string): string | undefined {
@@ -25,8 +25,10 @@ const requestedProvider = argument("--provider");
 if (requestedProvider !== undefined && !isManagedRuntimeProvider(requestedProvider)) {
   throw new Error(`Unsupported managed runtime provider '${requestedProvider}'.`);
 }
-const current = validateManagedRuntimeCatalog(
+const current = readManagedRuntimeCatalog(
   JSON.parse(await NodeFSP.readFile(inputPath, "utf8")),
+  requestedProvider,
+  (message) => process.stderr.write(`${message}\n`),
 );
 const report = (message: string) => {
   process.stderr.write(`${message}\n`);
@@ -55,3 +57,5 @@ process.stdout.write(
     ? `Candidate metadata discovered for: ${result.changedProviders.join(", ")}\n`
     : "Managed provider catalog is already current.\n",
 );
+
+if (result.failedProviders?.length) process.exitCode = 1;

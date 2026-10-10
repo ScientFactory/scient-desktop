@@ -25,7 +25,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import type * as ProviderAdapter from "../ProviderAdapter.ts";
@@ -475,7 +475,11 @@ it.layer(TestLayer, { excludeTestServices: true })("LegacyAntigravityAdapterV2",
         assert.notEqual(staged, source);
         assert.equal(yield* h.fs.readFileString(staged), "image-bytes");
         assert.equal((yield* h.fs.stat(staged)).mode & 0o777, 0o600);
+        const pids = (yield* h.fs.readFileString(h.pidPath)).trim().split("\n").map(Number);
+        assert.lengthOf(pids, 1);
+        assert.doesNotThrow(() => process.kill(pids[0]!, 0));
         yield* h.adapter.stopAll();
+        assert.throws(() => process.kill(pids[0]!, 0));
         assert.isFalse(yield* h.fs.exists(staged));
         assert.equal(yield* h.fs.readFileString(source), "image-bytes");
       }),

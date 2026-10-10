@@ -43,6 +43,7 @@ import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
+import { analyzeWindowsPayloadInventory, windowsNativeIgnoreGlobs } from "./lib/windows-payload.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import {
   buildConversationPreview,
@@ -70,8 +71,8 @@ import type { PlatformError } from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = SCIENT_DESKTOP_IDENTITY.appId;
@@ -780,6 +781,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "wsl-runtime-missing",
   "wsl-runtime-invalid",
   "file-limit-exceeded",
+  "component-inventory-invalid",
 ]);
 
 export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<WindowsPackagedPayloadValidationError>()(
@@ -788,6 +790,8 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
     reason: WindowsPackagedPayloadValidationReason,
     packagedAppDir: Schema.String,
     missingFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+    unexpectedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+    breakdown: Schema.optionalKey(Schema.String),
     fileCount: Schema.optionalKey(Schema.Int),
     fileLimit: Schema.optionalKey(Schema.Int),
     cause: Schema.optionalKey(Schema.Defect()),
@@ -795,7 +799,10 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
 ) {
   override get message(): string {
     if (this.reason === "file-limit-exceeded") {
-      return `Windows packaged payload contains ${String(this.fileCount)} files; expected at most ${String(this.fileLimit)}.`;
+      return `Windows packaged payload contains ${String(this.fileCount)} files; expected at most ${String(this.fileLimit)} (${this.breakdown ?? "no inventory breakdown"}).`;
+    }
+    if (this.reason === "component-inventory-invalid") {
+      return `Windows payload inventory is invalid (${this.breakdown ?? ""}); missing: ${(this.missingFiles ?? []).join(", ")}; unexpected: ${(this.unexpectedFiles ?? []).join(", ")}.`;
     }
     if (this.reason === "unpacked-native-missing") {
       return `Windows server sidecar is missing ${String(this.missingFiles?.length ?? 0)} unpacked native files.`;
@@ -1002,6 +1009,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
+  readonly license: string;
   readonly homepage: string;
   readonly author: string;
   readonly main: string;
@@ -1128,29 +1136,13 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
 ] as const;
 
 export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type) {
-  const unusedArch = arch === "arm64" ? "x64" : "arm64";
-  const unusedPrebuild = `**/node_modules/node-pty/prebuilds/win32-${unusedArch}`;
-  const unusedConpty = `**/node_modules/node-pty/third_party/conpty/*/win10-${unusedArch}`;
-
   return [
     ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
-    unusedPrebuild,
-    `${unusedPrebuild}/**`,
-    unusedConpty,
-    `${unusedConpty}/**`,
+    ...windowsNativeIgnoreGlobs(arch === "universal" ? "x64" : arch, true),
   ];
 }
 
 export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 80;
-/**
- * Loose files the Scient voice runtime adds to the Windows payload on top of
- * the inherited T3 inventory the limit above was sized for: whisper-server.exe,
- * 14 DLLs (11 ggml variants, whisper, parakeet, SDL2), LICENSE.whisper.cpp,
- * and provenance.json. Counted from the staged v1.9.1 win/x64 runtime; a
- * whisper release that ships a different inventory should trip the payload
- * validation and get this number re-counted, not estimated.
- */
-export const SCIENT_VOICE_RUNTIME_PAYLOAD_FILES = 17;
 export const WINDOWS_SERVER_RESOURCE_SOURCE_DIR = "apps/desktop/prod-resources/windows-server";
 export const WINDOWS_SERVER_EXTRA_RESOURCES = [
   {
@@ -2919,7 +2911,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         : platform === "linux"
           ? LINUX_FILE_EXCLUSIONS
           : []),
-      ...(platform === "win" ? WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS : []),
+      ...(platform === "win"
+        ? [
+            ...WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS,
+            ...windowsNativeIgnoreGlobs(arch === "arm64" ? "arm64" : "x64", false).map(
+              (glob) => `!${glob}`,
+            ),
+          ]
+        : []),
     ],
     directories: {
       buildResources: "apps/desktop/resources",
@@ -3015,6 +3014,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    // electron-builder 26 defaults to its legacy AppImage runtime, which
+    // dynamically loads the system libfuse2 library. Pin the static runtime so
+    // the AppImage also launches on distributions that only provide FUSE 3.
+    buildConfig.toolsets = { appimage: "1.0.3" };
+    const path = yield* Path.Path;
+    const repoRoot = yield* RepoRoot;
     buildConfig.linux = {
       // Scient publishes an AppImage for Linux and holds the `.deb` channel. The
       // target is deliberately not enabled: electron-builder lists every built
@@ -3039,6 +3044,29 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           StartupWMClass: SCIENT_DESKTOP_IDENTITY.linuxWmClass,
         },
       },
+    };
+    buildConfig.deb = {
+      // FPM runs outside the staged app directory, so source paths must be absolute.
+      // AppStream consumers associate this metadata with our scient.desktop entry.
+      fpm: [
+        `${path.join(repoRoot, "apps/desktop/resources/linux/scient.metainfo.xml")}=/usr/share/metainfo/scient.metainfo.xml`,
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/scient/copyright`,
+      ],
+      // Electron's runtime libraries. Debian 13 and Ubuntu 24.04 renamed some
+      // for 64-bit time; the old name is the fallback for older releases.
+      depends: [
+        "libasound2t64 | libasound2",
+        "libatspi2.0-0t64 | libatspi2.0-0",
+        "libgbm1",
+        "libgtk-3-0t64 | libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libsecret-1-0",
+        "libuuid1",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+      ],
     };
   }
 
@@ -3360,11 +3388,11 @@ function collectUnpackedAsarFiles(
   return output;
 }
 
-const countPayloadFiles = Effect.fn("desktopArtifact.countPayloadFiles")(function* (root: string) {
+const listPayloadFiles = Effect.fn("desktopArtifact.listPayloadFiles")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const pendingDirectories = [root];
-  let count = 0;
+  const files: string[] = [];
 
   while (pendingDirectories.length > 0) {
     const directory = pendingDirectories.pop();
@@ -3376,12 +3404,12 @@ const countPayloadFiles = Effect.fn("desktopArtifact.countPayloadFiles")(functio
       if (stat.type === "Directory") {
         pendingDirectories.push(entryPath);
       } else if (stat.type === "File") {
-        count += 1;
+        files.push(path.relative(root, entryPath).replaceAll("\\", "/"));
       }
     }
   }
 
-  return count;
+  return files.sort();
 });
 
 export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
@@ -3476,11 +3504,12 @@ export const validateWindowsPackagedPayload = Effect.fn(
   readonly targetArch: typeof BuildArch.Type;
   readonly expectWslRuntime?: boolean;
   readonly fileLimit?: number;
+  readonly previewFiles?: readonly string[];
   readonly verbose?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const fileLimit = input.fileLimit ?? WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT;
+  const coreFileLimit = input.fileLimit ?? WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT;
   const isFile = (filePath: string) =>
     fs.stat(filePath).pipe(
       Effect.map((stat) => stat.type === "File"),
@@ -3693,13 +3722,31 @@ export const validateWindowsPackagedPayload = Effect.fn(
     }
   }
 
-  const fileCount = yield* countPayloadFiles(packagedAppDir);
+  const payloadFiles = yield* listPayloadFiles(packagedAppDir);
+  const inventory = analyzeWindowsPayloadInventory({
+    files: payloadFiles,
+    arch: input.targetArch === "universal" ? "x64" : input.targetArch,
+    ...(input.previewFiles ? { previewFiles: input.previewFiles } : {}),
+  });
+  yield* Effect.log(`[desktop-artifact] Windows payload inventory: ${inventory.breakdown}.`);
+  if (inventory.missingFiles.length > 0 || inventory.unexpectedFiles.length > 0) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "component-inventory-invalid",
+      packagedAppDir,
+      missingFiles: inventory.missingFiles,
+      unexpectedFiles: inventory.unexpectedFiles,
+      breakdown: inventory.breakdown,
+    });
+  }
+  const fileCount = payloadFiles.length;
+  const fileLimit = coreFileLimit + inventory.allowance;
   if (fileCount > fileLimit) {
     return yield* new WindowsPackagedPayloadValidationError({
       reason: "file-limit-exceeded",
       packagedAppDir,
       fileCount,
       fileLimit,
+      breakdown: inventory.breakdown,
     });
   }
 
@@ -3717,7 +3764,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
   });
 
   yield* Effect.log(
-    `[desktop-artifact] Validated Windows payload (${String(fileCount)} files, ${String(unpackedFiles.length)} sidecar natives).`,
+    `[desktop-artifact] Validated Windows payload (${String(fileCount)} files, ${inventory.breakdown}, ${String(unpackedFiles.length)} sidecar natives).`,
   );
   return { packagedAppDir, fileCount, unpackedFiles } as const;
 });
@@ -4154,6 +4201,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     author: "ScientFactory",
     // boot.cjs enables the compile cache before loading the main bundle, so
     // the cache covers main.cjs too.
+    license: "MIT",
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
       options.platform,
@@ -4370,25 +4418,21 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // Windows validates and executes the separately packed server
   // sidecar after electron-builder copies it into the final payload.
   if (options.platform === "win") {
-    // Native static dependencies ship their license notices beside the DLL.
-    // Account for the exact staged inventory rather than weakening the general cap.
-    const nativePreviewPayloadFiles = nativePreviewPath
-      ? 1 + (yield* fs.readDirectory(`${nativePreviewPath}.licenses`)).length
-      : 0;
+    // Preview licenses are verified by the native preview staging authority.
+    // Admit only those staged names; an extra emitted file still fails.
+    const previewFiles = nativePreviewPath
+      ? [
+          WINDOWS_PREVIEW_DLL,
+          ...(yield* fs.readDirectory(`${nativePreviewPath}.licenses`)).map(
+            (name) => `licenses/${name}`,
+          ),
+        ]
+      : [];
     const validatedPayload = yield* validateWindowsPackagedPayload({
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
-      // The upstream limit is sized for T3's own payload. Scient additionally
-      // stages the pinned whisper.cpp voice runtime — 17 loose files on
-      // win/x64 (whisper-server.exe, 14 DLLs, LICENSE.whisper.cpp,
-      // provenance.json) — which the cap must admit without loosening the
-      // guard for anything else. A whisper release that changes its file
-      // inventory should fail here and get this allowance re-counted.
-      fileLimit:
-        WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT +
-        SCIENT_VOICE_RUNTIME_PAYLOAD_FILES +
-        nativePreviewPayloadFiles,
+      previewFiles,
       expectWslRuntime: bundlesWslRuntime({
         arch: options.arch,
         prebuildPath: options.wslPrebuild,

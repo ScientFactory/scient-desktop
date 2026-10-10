@@ -11,6 +11,14 @@ explicit editor and Browser actions. The separate Scient right-panel file
 surface still exists for tabs saved before host files moved into the Files
 panel; nothing new opens in it.
 
+Explicit relative Markdown file destinations support Unicode and punctuation
+in names, including `Report (readable).md` and `סיכום.md`, without requiring a
+`./` prefix. They resolve against the current workspace (or the containing
+document's directory in a file preview). URL schemes and app routes retain
+their existing handling, and inline-code auto-linking retains its stricter
+path evidence. Failed file opens use the existing Files panel error state;
+recognizing these destinations does not add chat errors or notifications.
+
 The result is universal routing, not a claim that every binary format already
 has a bespoke renderer. Every valid regular file has a useful in-app outcome:
 a rich adapter when one exists and a minimalist metadata/fallback surface when

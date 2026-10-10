@@ -3,15 +3,12 @@ import {
   EnvironmentFilePath,
   type EnvironmentFileLinkResolution,
 } from "@t3tools/contracts";
-import {
-  collapseAbsoluteFilePath,
-  workspaceRelativeFilePath,
-} from "@t3tools/client-runtime/markdown-links";
+import { collapseAbsoluteFilePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { workspaceFileHostPath } from "~/components/files/filePath";
-import { resolvePathLinkTarget } from "~/terminal-links";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 
 const decodeResolveInput = Schema.decodeUnknownOption(EnvironmentFileLinkResolveInput);
 const isEnvironmentFilePath = Schema.is(EnvironmentFilePath);

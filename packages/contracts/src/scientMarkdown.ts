@@ -1,8 +1,8 @@
 import * as Schema from "effect/Schema";
-import * as Multipart from "effect/unstable/http/Multipart";
-import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import * as Multipart from "effect/http/Multipart";
+import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 

@@ -132,6 +132,27 @@ describe("work-log export projection", () => {
     expect(serialized).not.toContain("native-session-1");
   });
 
+  it("starts a new entry when a finished call's id is reused", () => {
+    const call = (id: string, kind: string, status: string) =>
+      activity({
+        id,
+        kind,
+        turnId: "t1",
+        payload: { itemType: "command_execution", toolCallId: "call-1", status },
+      });
+    const { entries } = projectWorkLog([
+      call("first", "tool.completed", "completed"),
+      call("again", "tool.updated", "inProgress"),
+      call("again-done", "tool.completed", "failed"),
+    ]);
+    expect(entries.map((entry) => (entry._tag === "tool" ? [entry.id, entry.status] : []))).toEqual(
+      [
+        ["first", "completed"],
+        ["again", "failed"],
+      ],
+    );
+  });
+
   it("exports native tool inputs from raw history without depending on client projection", () => {
     const { entries } = projectWorkLog([
       activity({

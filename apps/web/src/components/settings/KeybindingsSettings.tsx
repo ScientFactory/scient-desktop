@@ -1,3 +1,5 @@
+import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
 import {
   ChevronDownIcon,
   CircleXIcon,
@@ -27,6 +29,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import {
+  AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
   type KeybindingCommand,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
@@ -48,7 +52,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
-import { Kbd, KbdGroup } from "../ui/kbd";
+
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -64,6 +68,7 @@ import {
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
+  groupKeybindingRows,
   type KeybindingCommandOption,
   type KeybindingRow,
   type WhenVariableOption,
@@ -77,6 +82,7 @@ import {
   SettingsSearchTarget,
   SettingsSection,
 } from "./settingsLayout";
+
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -98,65 +104,33 @@ import {
 
 type KeybindingSection = "general" | KeyboardScope;
 
-function ExpandableHeaderSearch({
+/** Filter box in the page toolbar; Mod+F focuses it from anywhere on the page. */
+function KeybindingsSearchInput({
   query,
   onChange,
-  isOpen,
-  onOpenChange,
   inputRef,
-  collapsedAccessory,
 }: {
   query: string;
   onChange: (next: string) => void;
-  isOpen: boolean;
-  onOpenChange: (next: boolean) => void;
-  inputRef?: RefObject<HTMLInputElement | null>;
-  collapsedAccessory?: ReactNode;
+  inputRef: RefObject<HTMLInputElement | null>;
 }) {
-  if (!isOpen) {
-    return (
-      <>
-        {collapsedAccessory}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost-muted"
-                onClick={() => onOpenChange(true)}
-                aria-label="Search shortcuts"
-              >
-                <SearchIcon />
-              </Button>
-            }
-          />
-          <TooltipPopup side="top">Search shortcuts</TooltipPopup>
-        </Tooltip>
-      </>
-    );
-  }
-
   return (
-    <InputGroup className="w-44">
+    <InputGroup className="min-w-0 basis-full **:[input]:h-9 sm:basis-0 sm:flex-1 sm:**:[input]:h-8">
       <InputGroupAddon>
-        <SearchIcon aria-hidden className="size-3" />
+        <SearchIcon aria-hidden className="size-3.5" />
       </InputGroupAddon>
       <InputGroupInput
         ref={inputRef}
-        autoFocus
         type="search"
         value={query}
         onChange={(event) => onChange(event.currentTarget.value)}
-        onBlur={() => {
-          if (query.length === 0) onOpenChange(false);
-        }}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onChange("");
-            onOpenChange(false);
-          }
+          // The settings route treats an unhandled Escape as "go back";
+          // inside the search box it clears, then leaves the field.
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          if (query.length > 0) onChange("");
+          else event.currentTarget.blur();
         }}
         placeholder="Search shortcuts"
         aria-label="Search shortcuts"
@@ -1284,14 +1258,18 @@ function KeybindingsList(props: KeybindingsListProps) {
   return (
     <div>
       {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
-      {rows.map((row) => (
-        <KeybindingSettingsRow
-          key={row.id}
-          row={row}
-          anchorId={anchorIds.get(row.id)}
-          isSaving={savingCommand === row.command}
-          {...rowActions}
-        />
+      {groupKeybindingRows(rows).map((group) => (
+        <SettingsSection key={group.id} id={`keybindings-${group.id}`} title={group.title}>
+          {group.rows.map((row) => (
+            <KeybindingSettingsRow
+              key={row.id}
+              row={row}
+              anchorId={anchorIds.get(row.id)}
+              isSaving={savingCommand === row.command}
+              {...rowActions}
+            />
+          ))}
+        </SettingsSection>
       ))}
       {rows.length === 0 && !isAddingBinding ? (
         <div className="px-4 py-12 text-center text-sm text-muted-foreground">
@@ -1304,14 +1282,23 @@ function KeybindingsList(props: KeybindingsListProps) {
 
 /** Browser reservations are additional to OS and native-menu reservations. */
 function BrowserKeybindingNotice() {
+  // The label carries the whole sentence so assistive tech reads it without
+  // opening the tooltip.
+  const message = "The browser may claim some shortcuts first. The desktop app receives them all.";
   return (
-    <div className="flex items-center gap-2 px-3 py-2.5 text-xs leading-compact text-muted-foreground sm:px-4">
-      <TriangleAlertIcon className="size-3.5 shrink-0 text-warning" aria-hidden />
-      <span>
-        Some shortcuts may be claimed by the browser before Scient sees them. Use the desktop app
-        for better keybinding support.
-      </span>
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        delay={200}
+        render={
+          <Button size="icon-micro" variant="ghost-muted" aria-label={message}>
+            <TriangleAlertIcon className="size-3.5 text-warning" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-72">
+        {message}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -1320,6 +1307,14 @@ export function KeybindingsSettingsPanel() {
   // fan out to every connected environment in the selection, so one
   // shortcut change reaches each machine the user runs T3 Code on.
   const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
+  const canOpenKeybindingsFile = useEnvironmentScope(
+    primaryEnvironment?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
+  const writableIds = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
+  const canWriteSettings =
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every((target) => writableIds.has(target.environmentId));
   const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
   const keybindings = useMemo(
     () => mergeWithDefaultKeybindings(serverKeybindings ?? []),
@@ -1338,7 +1333,6 @@ export function KeybindingsSettingsPanel() {
     availableEditors,
   );
   const [query, setQuery] = useState("");
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   // The search-target context is provided by this panel's own page container,
   // so the jump target is read from the route hash here.
   const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
@@ -1381,18 +1375,20 @@ export function KeybindingsSettingsPanel() {
       }
 
       event.preventDefault();
-      setIsSearchOpen(true);
-      requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   const openKeybindingsFile = useCallback(() => {
-    if (!keybindingsConfigPath) return;
+    if (
+      !keybindingsConfigPath ||
+      !primaryEnvironment ||
+      !readEnvironmentScope(primaryEnvironment.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
     void (async () => {
       const result = await openInPreferredEditor(keybindingsConfigPath);
       if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
@@ -1406,11 +1402,17 @@ export function KeybindingsSettingsPanel() {
         type: "error",
       });
     })();
-  }, [keybindingsConfigPath, openInPreferredEditor]);
+  }, [keybindingsConfigPath, openInPreferredEditor, primaryEnvironment]);
 
   const saveKeybinding = useCallback(
     (input: ServerUpsertKeybindingInput) => {
-      if (!primaryEnvironment) return;
+      if (
+        !primaryEnvironment ||
+        !connectedEnvironments.every((target) =>
+          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
+        )
+      )
+        return;
       setSavingCommand(input.command);
       const payload: ServerUpsertKeybindingInput = {
         command: input.command,
@@ -1445,7 +1447,13 @@ export function KeybindingsSettingsPanel() {
 
   const removeKeybinding = useCallback(
     (row: KeybindingRow) => {
-      if (!primaryEnvironment) return;
+      if (
+        !primaryEnvironment ||
+        !connectedEnvironments.every((target) =>
+          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
+        )
+      )
+        return;
       setSavingCommand(row.command);
       void (async () => {
         const results = await Promise.all(
@@ -1531,27 +1539,15 @@ export function KeybindingsSettingsPanel() {
         ).length;
   const visibleCount =
     selectedSection === "general" ? rows.length + (isAddingBinding ? 1 : 0) : visibleAuthoringCount;
-  const bindingsCount = (
-    <span className="text-2xs text-muted-foreground">
-      {visibleCount}{" "}
-      {selectedSection === "general"
-        ? visibleCount === 1
-          ? "binding"
-          : "bindings"
-        : visibleCount === 1
-          ? "command"
-          : "commands"}
-    </span>
-  );
 
   const listProps: KeybindingsListProps = {
     rows,
     allRows,
     commandOptions,
-    variables: whenVariables,
     savingCommand,
     isAddingBinding,
     onCancelAdd: cancelAdd,
+    variables: whenVariables,
     onSave: saveKeybinding,
     onReset: resetKeybinding,
     onRemove: removeKeybinding,
@@ -1564,14 +1560,7 @@ export function KeybindingsSettingsPanel() {
         variant="plain"
         headerAction={
           <div className="flex items-center gap-1.5">
-            <ExpandableHeaderSearch
-              query={query}
-              onChange={setQuery}
-              isOpen={isSearchOpen}
-              onOpenChange={setIsSearchOpen}
-              inputRef={searchInputRef}
-              collapsedAccessory={bindingsCount}
-            />
+            <KeybindingsSearchInput query={query} onChange={setQuery} inputRef={searchInputRef} />
             {selectedSection === "general" ? (
               <>
                 <Tooltip>
@@ -1581,6 +1570,7 @@ export function KeybindingsSettingsPanel() {
                         type="button"
                         size="icon-xs"
                         variant="ghost-muted"
+                        disabled={!canWriteSettings}
                         onClick={() => setIsAddingBinding(true)}
                         aria-label="Add keybinding"
                       >
@@ -1597,7 +1587,7 @@ export function KeybindingsSettingsPanel() {
                         type="button"
                         size="icon-xs"
                         variant="ghost-muted"
-                        disabled={!keybindingsConfigPath}
+                        disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
                         onClick={openKeybindingsFile}
                         aria-label="Open keybindings.json"
                       >
@@ -1671,7 +1661,9 @@ export function KeybindingsSettingsPanel() {
               {selectedSection === "general" ? (
                 <>
                   {!isElectron ? <BrowserKeybindingNotice /> : null}
-                  <KeybindingsList {...listProps} />
+                  <div inert={!canWriteSettings}>
+                    <KeybindingsList {...listProps} />
+                  </div>
                 </>
               ) : (
                 <AuthoringKeybindingsSettings
@@ -1685,6 +1677,12 @@ export function KeybindingsSettingsPanel() {
           </SettingsSourceGroup>
         </SettingsSearchTarget>
       </SettingsSection>
+
+      {!canWriteSettings ? (
+        <p className="text-xs text-muted-foreground">
+          This connection can view keybindings but cannot change them.
+        </p>
+      ) : null}
     </SettingsPageContainer>
   );
 }

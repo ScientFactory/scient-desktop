@@ -40,7 +40,7 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import * as Effect from "effect/Effect";
 
 import {
-  validateManagedRuntimeCatalog,
+  readManagedRuntimeCatalog,
   validateManagedRuntimeCandidate,
 } from "./lib/managed-runtime-catalog.ts";
 
@@ -375,8 +375,9 @@ const factory = providerFactories[provider];
 const policy = factory.policy(target);
 if (!policy) throw new Error(`${provider} does not support native CI target ${targetKey}.`);
 
-const catalog = validateManagedRuntimeCatalog(
+const catalog = readManagedRuntimeCatalog(
   JSON.parse(await NodeFSP.readFile(catalogPath, "utf8")),
+  provider,
 );
 const release = validateManagedRuntimeCandidate(catalog, provider);
 const artifactData = release.artifacts[targetKey];
@@ -386,6 +387,7 @@ if (!artifactData) {
 const artifact = hydrateManagedRuntimeArtifact(policy, {
   provider,
   version: release.version,
+  ...(release.supersedes ? { supersedes: release.supersedes } : {}),
   target,
   ...artifactData,
   catalogRevision: [

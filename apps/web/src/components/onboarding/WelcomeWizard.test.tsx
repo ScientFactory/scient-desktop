@@ -12,6 +12,12 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   projects: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
 }));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScope: () => true,
+  useEnvironmentsWithScope: (environments: Array<{ environmentId: string }>) =>
+    new Set(environments.map((entry) => entry.environmentId)),
+  readEnvironmentScope: () => true,
+}));
 vi.mock("../../state/agentSessions", () => ({ agentSessionImport: "import" }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { create: "create" } }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -32,6 +38,7 @@ vi.mock("../../state/environments", () => {
     environmentId: "test-env",
     label: "Computer",
     connection: { phase: "connected" },
+    entry: { enabled: true },
   };
   return {
     useEnvironments: () => ({ environments: [environment] }),
@@ -129,6 +136,24 @@ async function click(label: string) {
   expect(button, `button ${label}`).toBeDefined();
   await act(async () => button!.click());
 }
+
+it("withholds the privacy link and disclosure while continuing to agent setup", async () => {
+  const onDone = vi.fn();
+  await act(async () => root.render(<WelcomeWizard localAvailable onDone={onDone} />));
+  expect(document.querySelector("h1")?.textContent?.trim()).toBe("Connect your computers");
+  expect(document.querySelectorAll("a")).toHaveLength(0);
+  expect(document.body.textContent).not.toMatch(/privacy policy|data collection|opt[ -]in/i);
+  const continueButton = [...document.querySelectorAll("button")].find(
+    (element) => element.textContent?.trim() === "Continue",
+  );
+  expect(continueButton).toBeDefined();
+  expect(continueButton!.parentElement!.children).toHaveLength(1);
+  expect(continueButton!.parentElement!.classList.contains("justify-end")).toBe(true);
+
+  await click("Continue");
+  expect(document.querySelector("h1")?.textContent?.trim()).toBe("Connect your agents");
+  expect(onDone).not.toHaveBeenCalled();
+});
 
 it("enters the workspace after a partial import and warns after navigation finishes", async () => {
   let finishNavigation = () => {};

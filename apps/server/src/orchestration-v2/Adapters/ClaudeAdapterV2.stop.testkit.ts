@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
   type ModelSelection,
@@ -62,6 +63,7 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
       });
     let allocated = 0;
     const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+      crypto: yield* Crypto.Crypto,
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CLAUDE_SETTINGS,
       environment: {},
@@ -130,6 +132,8 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
                   );
                 }),
               setModel: () => Effect.die("No SDK model mutation in captured Stop race"),
+              setPermissionMode: () =>
+                Effect.die("No SDK permission mutation in captured Stop race"),
               interrupt: Effect.gen(function* () {
                 query.interrupts++;
                 wire.push({

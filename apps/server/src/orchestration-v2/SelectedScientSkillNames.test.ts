@@ -12,7 +12,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as Layer from "effect/Layer";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
@@ -21,7 +21,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 /**
  * `selectedScientSkillNames` is the only authority for an explicit Scient skill
@@ -47,8 +47,8 @@ const testLayer = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provide(database)),
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "selected-scient-skill-names" },
-    ProviderAdapterRegistry.makeLayer([adapter]),
-    { databaseLayer: database, runEffectWorker: false },
+    ProviderAdapterRegistry.layerFromAdapters([adapter]),
+    { layerDatabase: database, runEffectWorker: false },
   ),
 );
 

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Idempotent Scient source operation IDs use the existing synchronous content fingerprint.
 import * as NodeCrypto from "node:crypto";
 
 import {

@@ -123,6 +123,7 @@ export function resolveReviewedCursorArtifact(
       ? { smokeWorkingDirectory: artifact.smokeWorkingDirectory }
       : {}),
     smokeArgs: artifact.smokeArgs,
+    smokeVersionFormat: "cursor",
     catalogRevision: `cursor-agent:${VERSION}:${key}:${artifact.sha256}`,
     supportTier: "fully_assisted",
     supportMessage:

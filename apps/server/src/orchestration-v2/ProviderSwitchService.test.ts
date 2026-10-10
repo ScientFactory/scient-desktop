@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -9,7 +10,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
@@ -66,10 +69,11 @@ function deadSessionRecord(
   };
 }
 
-function testLayer(
+function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
   planSelectionTransition: ProviderAdapterV2Shape["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
+  realPath?: FileSystem.FileSystem["realPath"],
 ) {
   const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape => ({
     instanceId,
@@ -78,7 +82,7 @@ function testLayer(
     planSelectionTransition,
     openSession: () => Effect.die("ProviderSwitchService tests do not open sessions."),
   });
-  const registry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+  const layerRegistry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
     get: (instanceId) =>
       metadata[instanceId] === undefined
         ? Effect.fail(
@@ -100,7 +104,15 @@ function testLayer(
           });
     },
   });
-  return ProviderSwitch.layer.pipe(Layer.provide(Layer.mergeAll(registry, RuntimePolicy.layer)));
+  return ProviderSwitch.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerRegistry,
+        RuntimePolicy.layer,
+        realPath === undefined ? NodeServices.layer : FileSystem.layerNoop({ realPath }),
+      ),
+    ),
+  );
 }
 
 it.effect(
@@ -116,37 +128,35 @@ it.effect(
       assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
     }).pipe(
       Effect.provide(
-        testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
       ),
     ),
 );
 
-for (const deadStatus of ["stopped", "error"] as const) {
-  it.effect(
-    `restarts and releases the live session when a newer ${deadStatus} session exists`,
-    () =>
-      Effect.gen(function* () {
-        const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
-        const thread = projection();
-        const result = yield* service.plan({
-          projection: {
-            ...thread,
-            providerSessions: [
-              ...thread.providerSessions,
-              deadSessionRecord("dead_session", deadStatus),
-            ],
-          },
-          targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
-        });
-        assert.equal(result.transition.type, "restart_and_resume");
-        assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
-      }).pipe(
-        Effect.provide(
-          testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
-        ),
+it.effect.each(["stopped", "error"] as const)(
+  "restarts and releases the live session when a newer %s session exists",
+  (deadStatus) =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const thread = projection();
+      const result = yield* service.plan({
+        projection: {
+          ...thread,
+          providerSessions: [
+            ...thread.providerSessions,
+            deadSessionRecord("dead_session", deadStatus),
+          ],
+        },
+        targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+      });
+      assert.equal(result.transition.type, "restart_and_resume");
+      assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
+    }).pipe(
+      Effect.provide(
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
       ),
-  );
-}
+    ),
+);
 
 it.effect("releases the newest live session, not the newest record overall", () =>
   Effect.gen(function* () {
@@ -172,7 +182,7 @@ it.effect("releases the newest live session, not the newest record overall", () 
     assert.deepEqual(result.releaseProviderSessionIds, [newerLiveSessionId]);
   }).pipe(
     Effect.provide(
-      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
     ),
   ),
 );
@@ -195,7 +205,7 @@ it.effect("creates a fresh session with handoff when every recorded session is d
     assert.deepEqual(result.releaseProviderSessionIds, []);
   }).pipe(
     Effect.provide(
-      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
     ),
   ),
 );
@@ -249,7 +259,7 @@ it.effect("falls back to the native provider thread when every recorded session 
     assert.deepEqual(result.releaseProviderSessionIds, []);
   }).pipe(
     Effect.provide(
-      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
     ),
   ),
 );
@@ -268,7 +278,7 @@ it.effect("hands off from a native provider thread after its session detaches", 
     assert.deepEqual(result.releaseProviderSessionIds, []);
   }).pipe(
     Effect.provide(
-      testLayer({
+      layerTest({
         [currentInstanceId]: { continuationKey: "codex:account:primary" },
         codex_other: { continuationKey: "codex:account:other" },
       }),
@@ -276,32 +286,29 @@ it.effect("hands off from a native provider thread after its session detaches", 
   ),
 );
 
-for (const deadStatus of ["stopped", "error"] as const) {
-  it.effect(
-    `applies a model change on next turn when a ${deadStatus} session negotiated model switching`,
-    () =>
-      Effect.gen(function* () {
-        const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
-        const result = yield* service.plan({
-          projection: deadNativeThreadProjection(deadStatus, CodexProviderCapabilitiesV2),
-          targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
-        });
-        // Static capabilities report no in-session switch, but the dead
-        // record's negotiated capabilities describe the provider: without
-        // them the ACP classification rejects the selection instead of
-        // reopening with the requested model on the next run.
-        assert.equal(result.transition.type, "switch_model_in_session");
-        assert.deepEqual(result.releaseProviderSessionIds, []);
-      }).pipe(
-        Effect.provide(
-          testLayer(
-            { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
-            (input) => Effect.succeed(acpSelectionTransition(input)),
-          ),
+it.effect.each(["stopped", "error"] as const)(
+  "applies a model change on next turn when a %s session negotiated model switching",
+  (deadStatus) =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const result = yield* service.plan({
+        projection: deadNativeThreadProjection(deadStatus, CodexProviderCapabilitiesV2),
+        targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+      });
+      // Static capabilities report no in-session switch, but the dead
+      // record's negotiated capabilities describe the provider: without
+      // them the ACP classification rejects the selection instead of
+      // reopening with the requested model on the next run.
+      assert.equal(result.transition.type, "switch_model_in_session");
+      assert.deepEqual(result.releaseProviderSessionIds, []);
+    }).pipe(
+      Effect.provide(
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
+          Effect.succeed(acpSelectionTransition(input)),
         ),
       ),
-  );
-}
+    ),
+);
 
 it.effect("rejects a model change the dead record never negotiated support for", () =>
   Effect.gen(function* () {
@@ -315,7 +322,7 @@ it.effect("rejects a model change the dead record never negotiated support for",
     assert.instanceOf(result, ProviderSwitch.ProviderSwitchPlanError);
   }).pipe(
     Effect.provide(
-      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
         Effect.succeed(acpSelectionTransition(input)),
       ),
     ),
@@ -339,11 +346,111 @@ it.effect("distinguishes compatible and incompatible instances of the same drive
     assert.equal(incompatible.transition.type, "create_with_handoff");
   }).pipe(
     Effect.provide(
-      testLayer({
+      layerTest({
         [currentInstanceId]: { continuationKey: "codex:account:primary" },
         codex_compatible: { continuationKey: "codex:account:primary" },
         codex_incompatible: { continuationKey: "codex:account:other" },
       }),
     ),
   ),
+);
+
+it.effect("keeps the live native owner when the target is a symlink to the same workspace", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "provider-switch-alias-" });
+    const workspace = `${directory}/workspace`;
+    const alias = `${directory}/workspace-alias`;
+    yield* fs.makeDirectory(workspace);
+    yield* fs.symlink(workspace, alias);
+    const canonical = yield* fs.realPath(workspace);
+    const current = projection();
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: {
+        ...current,
+        thread: { ...current.thread, worktreePath: alias },
+        providerSessions: [{ ...current.providerSessions[0]!, cwd: canonical }],
+      },
+      targetModelSelection: current.thread.modelSelection,
+    });
+    assert.equal(result.transition.type, "reuse");
+    assert.deepEqual(result.releaseProviderSessionIds, []);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect("restarts the live owner for genuinely different canonical workspaces", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "provider-switch-distinct-" });
+    const workspace = `${directory}/current`;
+    const target = `${directory}/target`;
+    yield* fs.makeDirectory(workspace);
+    yield* fs.makeDirectory(target);
+    const current = projection();
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: {
+        ...current,
+        thread: { ...current.thread, worktreePath: target },
+        providerSessions: [{ ...current.providerSessions[0]!, cwd: yield* fs.realPath(workspace) }],
+      },
+      targetModelSelection: current.thread.modelSelection,
+    });
+    assert.equal(result.transition.type, "restart_and_resume");
+    assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect.each(["current", "target"] as const)(
+  "does not grant workspace equivalence when the %s realpath lookup fails",
+  (failedPath) =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const current = projection();
+      const result = yield* service.plan({
+        projection: {
+          ...current,
+          thread: { ...current.thread, worktreePath: "/alias" },
+          providerSessions: [{ ...current.providerSessions[0]!, cwd: "/canonical" }],
+        },
+        targetModelSelection: current.thread.modelSelection,
+      });
+      assert.equal(result.transition.type, "restart_and_resume");
+      assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
+    }).pipe(
+      Effect.provide(
+        layerTest(
+          { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+          undefined,
+          (path) =>
+            path === (failedPath === "current" ? "/canonical" : "/alias")
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "realPath",
+                    pathOrDescriptor: path,
+                  }),
+                )
+              : Effect.succeed("/canonical"),
+        ),
+      ),
+    ),
 );

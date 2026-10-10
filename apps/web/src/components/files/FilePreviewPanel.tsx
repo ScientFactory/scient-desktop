@@ -1,3 +1,4 @@
+import type { EditorSelection } from "@pierre/diffs/edit";
 // SCIENT-FORK:START
 import {
   FILE_ACTIVE_RANGE_ATTRIBUTE,
@@ -31,34 +32,44 @@ import { useScientFileReadRecovery } from "~/scient/fileSurfaces/scientFileReadR
 // SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
-import type {
-  ChatFileAttachment,
-  EditorId,
-  EnvironmentId,
-  ResolvedKeybindingsConfig,
-  ScopedThreadRef,
+import {
+  AuthPreviewOperateScope,
+  type EditorId,
+  type EnvironmentId,
+  type ResolvedKeybindingsConfig,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
-import {
-  VirtualizedFile,
-  type EditorSelection,
-  type GetHoveredLineResult,
-  type SelectedLineRange,
-} from "@pierre/diffs";
+import { AuthFilesystemWriteScope } from "@t3tools/contracts";
+import { VirtualizedFile, type GetHoveredLineResult, type SelectedLineRange } from "@pierre/diffs";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceImagePreviewPath,
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
-import { Editor } from "@pierre/diffs/editor";
-import { EditProvider, File, Virtualizer } from "@pierre/diffs/react";
+import {
+  DEFAULT_TOKENIZE_MAX_LENGTH,
+  getFiletypeFromFileName,
+  type FileContents,
+  type PostRenderPhase,
+} from "@pierre/diffs";
+import {
+  Editor,
+  type EditorChangeEvent,
+  type EditorFactory,
+  type EditorOptions,
+} from "@pierre/diffs/edit";
+import type { WorkerPoolManager } from "@pierre/diffs/worker";
+import { EditProvider, File, Virtualizer, useWorkerPool } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { useFilesystemReadAccess } from "~/state/filesystem";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Code2, Download, Eye, FolderTree, Globe, Table2, WrapTextIcon } from "lucide-react";
+import { Download, FolderTree, Globe, WrapTextIcon } from "lucide-react";
+import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -69,6 +80,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
+import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -77,22 +89,25 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import type {
   HtmlFilePresentationRequest,
   LatexFilePresentationRequest,
   OpenFileOptions,
 } from "~/rightPanelStore";
-import { isAbsolutePath } from "~/terminal-links";
 import { workspaceFileHostPath } from "./filePath";
+import type { ChatFileAttachment } from "~/types";
+import { isAbsolutePath } from "@t3tools/shared/path";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
+import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
+import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import {
@@ -115,7 +130,10 @@ import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence
 import { useMarkdownPersistenceGuards } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
 import { useMarkdownSourcePersistence } from "~/scient/markdownEditor/persistence/useMarkdownSourcePersistence";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
-import { documentSessionIsCurrent } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import {
+  documentIdentity,
+  documentSessionIsCurrent,
+} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -156,7 +174,7 @@ import {
 import SourceFilePreview from "./ReadOnlySourcePreview";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
-import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
+import { projectFileCacheKey } from "./fileContentRevision";
 import { FileBreadcrumbNavigator } from "./FileBreadcrumbNavigator";
 import {
   isLatexPreviewFile,
@@ -166,6 +184,7 @@ import {
   shouldShowFileExplorer,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+import { useInPlaceRename } from "~/scient/fileSurfaces/useInPlaceRename";
 import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
@@ -189,6 +208,8 @@ interface FilePreviewPanelProps {
   latexPresentationRequest: LatexFilePresentationRequest | null;
   latexRootRelativePath: string | null;
   onOpenFile: (relativePath: string) => void;
+  /** The open file was moved in place: its tab follows it, keeping its state. */
+  onFileMoved?: (fromPath: string, toPath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -264,6 +285,7 @@ function WorkspaceImagePreview(props: {
   }
 
   return assetUrl._tag === "Success" && imageUrl !== null ? (
+    // oxlint-disable-next-line t3code/require-centered-scroll-gutter -- The image is capped at max-h-full max-w-full, so this never scrolls.
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
       <MediaActions source={actionsSource}>
         <img
@@ -483,10 +505,20 @@ function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
-): FilePostRender {
+): { readonly onPostRender: FilePostRender; readonly move: (from: string, to: string) => void } {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
-
-  return useCallback<FilePostRender>(
+  // SCIENT-FORK:START — an in-place rename carries a handled reveal along, never replays it
+  const move = useCallback(
+    (from: string, to: string) => {
+      const state = revealStatesByPath.get(from);
+      if (state === undefined) return;
+      revealStatesByPath.delete(from);
+      revealStatesByPath.set(to, state);
+    },
+    [revealStatesByPath],
+  );
+  // SCIENT-FORK:END
+  const onPostRender = useCallback<FilePostRender>(
     (fileContainer, instance, phase) => {
       if (relativePath === null) return;
 
@@ -644,6 +676,69 @@ function useFileLineReveal(
     },
     [revealStatesByPath, relativePath, revealLine, revealRequestId],
   );
+  return { onPostRender, move };
+}
+
+const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
+  editorType,
+  options,
+  editStateKey,
+) => new Editor(editorType, options, editStateKey);
+
+function editableFileContents(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+  contents: string,
+): FileContents {
+  return {
+    name: relativePath,
+    contents,
+    ...scientificSourceLanguageOverride(relativePath),
+    cacheKey: `editor:${environmentId}:${projectFileCacheKey(cwd, relativePath, contents)}`,
+  };
+}
+
+function needsWorkerHighlight(workerPool: WorkerPoolManager | undefined, file: FileContents) {
+  if (workerPool?.isWorkingPool() !== true) return false;
+  if ((file.lang ?? getFiletypeFromFileName(file.name)) === "text") return false;
+  let lines = 1;
+  for (
+    let index = file.contents.indexOf("\n");
+    index !== -1;
+    index = file.contents.indexOf("\n", index + 1)
+  ) {
+    lines += 1;
+  }
+  return lines <= DEFAULT_TOKENIZE_MAX_LENGTH;
+}
+
+/**
+ * Pierre highlights an active edit session on the main thread, so each version
+ * of the file becomes editable only once it has rendered the worker's
+ * highlight. A failed worker highlight falls back to main-thread highlighting.
+ */
+function useEditableAfterHighlight(file: FileContents) {
+  const workerPool = useWorkerPool();
+  const [highlightedFile, setHighlightedFile] = useState<FileContents | null>(null);
+  const needsHighlight = useMemo(() => needsWorkerHighlight(workerPool, file), [file, workerPool]);
+  const ready = !needsHighlight || highlightedFile === file;
+
+  useEffect(() => {
+    if (ready || workerPool === undefined) return;
+    workerPool.primeFileHighlightCache(file).catch(() => setHighlightedFile(file));
+  }, [file, ready, workerPool]);
+
+  const onPostRender = useCallback(
+    (renderedFile: FileContents | undefined, phase: PostRenderPhase) => {
+      if (ready || phase === "unmount" || renderedFile?.cacheKey !== file.cacheKey) return;
+      // The pool caches a result just before the instance renders it, so a
+      // render that sees the cache has painted highlighted rows.
+      if (workerPool?.getFileResultCache(file) !== undefined) setHighlightedFile(file);
+    },
+    [file, ready, workerPool],
+  );
+  return { ready, onPostRender };
 }
 
 interface EditableFileSurfaceProps {
@@ -689,7 +784,11 @@ export function EditableFileSurface(props: EditableFileSurfaceProps) {
     },
     [coordinator, props.environmentId, props.cwd, props.relativePath],
   );
-  return <EditableFileEditor {...props} onContentsChange={onContentsChange} />;
+  return (
+    <DiffWorkerPoolProvider>
+      <EditableFileEditor {...props} onContentsChange={onContentsChange} />
+    </DiffWorkerPoolProvider>
+  );
 }
 
 export function MarkdownSourceSurface({
@@ -699,7 +798,11 @@ export function MarkdownSourceSurface({
   persistence: MarkdownPersistenceLease;
 }) {
   const bindings = useMarkdownSourcePersistence(persistence);
-  return <EditableFileEditor {...props} {...bindings} />;
+  return (
+    <DiffWorkerPoolProvider>
+      <EditableFileEditor {...props} {...bindings} />
+    </DiffWorkerPoolProvider>
+  );
 }
 
 function EditableFileEditor({
@@ -758,57 +861,174 @@ function EditableFileEditor({
   const reportEditorSelectionRef = useRef<() => void>(() => undefined);
   const projectionAppliedRef = useRef(onProjectionApplied);
   projectionAppliedRef.current = onProjectionApplied;
+  // SCIENT-FORK:START — Shared document lease gates retained native source history.
   const applyingExternal = useRef(false);
+  const projectionReady = useRef(false);
+  const [restorationBlocked, setRestorationBlocked] = useState(false);
   const externalBindings = useRef({ externalPersistence, onExternalVersionApplied });
   externalBindings.current = { externalPersistence, onExternalVersionApplied };
-  const editor = useMemo(
-    () =>
-      new Editor<FileCommentAnnotationGroup>({
-        persistState: true,
-        persistStateStorage: "inMemory",
-        onAttach: (attachedEditor) => {
-          const projected = attachedEditor.getFile();
-          if (projected) projectionAppliedRef.current?.(projected.contents);
-          queueMicrotask(() =>
-            externalBindings.current.externalPersistence?.resumeExternalUpdates(),
-          );
-        },
-        onChange: (file, nextLineAnnotations) => {
-          if (!applyingExternal.current) onContentsChange(file.contents);
-          if (nextLineAnnotations) {
-            const remapped = remapFileCommentAnnotations(
-              nextLineAnnotations as FileCommentLineAnnotation[],
+  // SCIENT-FORK:END
+  const [externalFile, setExternalFile] = useState(() =>
+    editableFileContents(environmentId, cwd, relativePath, contents),
+  );
+  // SCIENT-FORK:START — a document session's source undo belongs to the document,
+  // which keeps its id across an in-place rename and across reopening the file.
+  const [fileEditStateKey] = useState(() => `scient-file:${environmentId}:${cwd}:${relativePath}`);
+  const editStateKey = externalPersistence
+    ? `scient-document:${documentIdentity(externalPersistence)}`
+    : fileEditStateKey;
+  // SCIENT-FORK:END
+  const [editedContents, setEditedContents] = useState<string | null>(null);
+  if (contents !== (editedContents ?? externalFile.contents)) {
+    setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
+    setEditedContents(null);
+  }
+  const { ready: editable, onPostRender: onEditablePostRender } =
+    useEditableAfterHighlight(externalFile);
+  const editorRef = useRef<Editor<"file", FileCommentAnnotationGroup, undefined> | null>(null);
+  const [editor, setEditor] = useState<Editor<
+    "file",
+    FileCommentAnnotationGroup,
+    undefined
+  > | null>(null);
+  const editorOptions = useMemo<EditorOptions<"file", FileCommentAnnotationGroup, undefined>>(
+    () => ({
+      ownsVerticalViewport: true,
+      // SCIENT-FORK:START — Rebase or refuse stale source projection without dropping undo.
+      onAttach: (attachedEditor) => {
+        editorRef.current = attachedEditor;
+        setEditor(attachedEditor);
+        const persistence = externalBindings.current.externalPersistence;
+        projectionReady.current = persistence === undefined;
+        const snapshot = persistence?.getSnapshot();
+        const restored = attachedEditor.getFile();
+        // Pierre retains source undo between mounts; the shared document lease
+        // may have advanced in Rich while that source editor was dormant.
+        if (
+          persistence &&
+          restored &&
+          snapshot &&
+          !snapshot.editingBlocked &&
+          persistence.getPendingInput() === null &&
+          restored.contents !== snapshot.draftSource
+        ) {
+          const previous = restored.contents;
+          const current = snapshot.draftSource;
+          const splitsBoundary = (source: string, offset: number) => {
+            if (offset === 0 || offset === source.length) return false;
+            const before = source.charCodeAt(offset - 1);
+            const after = source.charCodeAt(offset);
+            return (
+              (before === 13 && after === 10) ||
+              (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff)
             );
-            setLineAnnotations(remapped);
-            for (const annotation of remapped) {
-              for (const entry of annotation.metadata.entries) {
-                if (entry.kind !== "comment") continue;
-                addReviewComment(
-                  composerDraftTarget,
-                  buildFileReviewComment({
-                    id: entry.id,
-                    filePath: relativePath,
-                    startLine: entry.startLine,
-                    endLine: entry.endLine,
-                    text: entry.text,
-                    contents: file.contents,
-                  }),
-                );
-              }
+          };
+          let start = 0;
+          while (
+            start < previous.length &&
+            start < current.length &&
+            previous[start] === current[start]
+          )
+            start += 1;
+          while (splitsBoundary(previous, start) || splitsBoundary(current, start)) start -= 1;
+          let suffix = 0;
+          while (
+            suffix < previous.length - start &&
+            suffix < current.length - start &&
+            previous[previous.length - suffix - 1] === current[current.length - suffix - 1]
+          )
+            suffix += 1;
+          while (
+            splitsBoundary(previous, previous.length - suffix) ||
+            splitsBoundary(current, current.length - suffix)
+          )
+            suffix -= 1;
+          const end = previous.length - suffix;
+          const text = current.slice(start, current.length - suffix);
+          const prepared = attachedEditor.prepareExternalEdits(previous, [{ start, end, text }]);
+          const latest = persistence.getSnapshot();
+          if (
+            prepared &&
+            externalBindings.current.externalPersistence === persistence &&
+            editorRef.current === attachedEditor &&
+            latest.editVersion === snapshot.editVersion &&
+            latest.draftSource === current &&
+            !latest.editingBlocked &&
+            persistence.getPendingInput() === null &&
+            previous.slice(0, start) + text + previous.slice(end) === current
+          ) {
+            applyingExternal.current = true;
+            try {
+              prepared();
+            } finally {
+              applyingExternal.current = false;
             }
           }
-          queueMicrotask(() => reportEditorSelectionRef.current());
-        },
-        onFocus: () => queueMicrotask(() => reportEditorSelectionRef.current()),
-      }),
+        }
+        const projected = attachedEditor.getFile();
+        if (persistence) {
+          const current = persistence.getSnapshot();
+          projectionReady.current =
+            externalBindings.current.externalPersistence === persistence &&
+            editorRef.current === attachedEditor &&
+            projected?.contents === current.draftSource;
+          setRestorationBlocked(!projectionReady.current);
+        }
+        if (projected) projectionAppliedRef.current?.(projected.contents);
+        queueMicrotask(() => externalBindings.current.externalPersistence?.resumeExternalUpdates());
+      },
+      // SCIENT-FORK:END
+      onComplete: () => {
+        editorRef.current = null;
+      },
+      onFocus: () => queueMicrotask(() => reportEditorSelectionRef.current()),
+    }),
+    [],
+  );
+  const handleEditChange = useCallback(
+    ({
+      file,
+      editor: changedEditor,
+      lineAnnotations: nextLineAnnotations,
+    }: EditorChangeEvent<"file", FileCommentAnnotationGroup, undefined>) => {
+      // SCIENT-FORK:START — Only the current, acknowledged projection may publish source edits.
+      if (
+        externalBindings.current.externalPersistence &&
+        !applyingExternal.current &&
+        (!projectionReady.current || changedEditor !== editorRef.current)
+      )
+        return;
+      // SCIENT-FORK:END
+      setEditedContents(file.contents);
+      if (!applyingExternal.current) onContentsChange(file.contents);
+      if (nextLineAnnotations) {
+        const remapped = remapFileCommentAnnotations(nextLineAnnotations);
+        setLineAnnotations((current) => (current === nextLineAnnotations ? current : remapped));
+        for (const annotation of remapped) {
+          for (const entry of annotation.metadata.entries) {
+            if (entry.kind !== "comment") continue;
+            addReviewComment(
+              composerDraftTarget,
+              buildFileReviewComment({
+                id: entry.id,
+                filePath: relativePath,
+                startLine: entry.startLine,
+                endLine: entry.endLine,
+                text: entry.text,
+                contents: file.contents,
+              }),
+            );
+          }
+        }
+      }
+      queueMicrotask(() => reportEditorSelectionRef.current());
+    },
     [addReviewComment, composerDraftTarget, onContentsChange, relativePath],
   );
-
-  // SCIENT-FORK:START — session edit projection, selection reporting, math input
   const { mathInput, onCompositionEnd, onKeyDownCapture } = useScientFileEditorBindings({
     editor,
     relativePath,
-    editingBlocked,
+    editingBlocked: editingBlocked || restorationBlocked,
     surfaceRef,
     externalPersistence,
     externalBindings,
@@ -818,7 +1038,6 @@ function EditableFileEditor({
     onEditorSelectionChange,
     onRunShortcut,
   });
-  // SCIENT-FORK:END
 
   const removeAnnotationEntry = useCallback(
     (entryId: string) => {
@@ -876,47 +1095,44 @@ function EditableFileEditor({
     ],
   );
 
-  const beginComment = useCallback(
-    (range: SelectedLineRange) => {
-      editor.setSelections([]);
-      editor.blur();
-      const { startLine, endLine } = normalizeFileCommentRange(range);
-      const draftEntry: FileCommentAnnotationEntry = {
-        id: nextFileCommentId(),
-        kind: "draft",
-        startLine,
-        endLine,
-        text: "",
-      };
-      setLineAnnotations((current) => {
-        const withoutDraft = current.flatMap((annotation) => {
-          const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
-          return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
-        });
-        const existingIndex = withoutDraft.findIndex(
-          (annotation) => annotation.lineNumber === endLine,
-        );
-        if (existingIndex < 0) {
-          return [
-            ...withoutDraft,
-            {
-              lineNumber: endLine,
-              metadata: { entries: [draftEntry] },
-            },
-          ];
-        }
-        return withoutDraft.map((annotation, index) =>
-          index === existingIndex
-            ? {
-                ...annotation,
-                metadata: { entries: [...annotation.metadata.entries, draftEntry] },
-              }
-            : annotation,
-        );
+  const beginComment = useCallback((range: SelectedLineRange) => {
+    editorRef.current?.setSelections([]);
+    editorRef.current?.blur();
+    const { startLine, endLine } = normalizeFileCommentRange(range);
+    const draftEntry: FileCommentAnnotationEntry = {
+      id: nextFileCommentId(),
+      kind: "draft",
+      startLine,
+      endLine,
+      text: "",
+    };
+    setLineAnnotations((current) => {
+      const withoutDraft = current.flatMap((annotation) => {
+        const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
+        return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
       });
-    },
-    [editor],
-  );
+      const existingIndex = withoutDraft.findIndex(
+        (annotation) => annotation.lineNumber === endLine,
+      );
+      if (existingIndex < 0) {
+        return [
+          ...withoutDraft,
+          {
+            lineNumber: endLine,
+            metadata: { entries: [draftEntry] },
+          },
+        ];
+      }
+      return withoutDraft.map((annotation, index) =>
+        index === existingIndex
+          ? {
+              ...annotation,
+              metadata: { entries: [...annotation.metadata.entries, draftEntry] },
+            }
+          : annotation,
+      );
+    });
+  }, []);
   const hasOpenCommentForm = lineAnnotations.some((annotation) =>
     annotation.metadata.entries.some((entry) => entry.kind === "draft"),
   );
@@ -925,11 +1141,14 @@ function EditableFileEditor({
     if (!root) return;
     return installFileEditorDismissal({
       root,
-      editor,
+      editor: {
+        getFile: () => editorRef.current?.getFile(),
+        setSelections: (selections) => editorRef.current?.setSelections(selections),
+      },
       isBlocked: () => hasOpenCommentForm,
       onDismiss: () => setSelectedRange(null),
     });
-  }, [editor, hasOpenCommentForm, setSelectedRange]);
+  }, [hasOpenCommentForm, setSelectedRange]);
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null) => {
       setSelectedRange(range);
@@ -950,6 +1169,7 @@ function EditableFileEditor({
   const handlePostRender = useCallback<FilePostRender>(
     (fileContainer, instance, phase) => {
       onPostRender(fileContainer, instance, phase);
+      onEditablePostRender(instance.file, phase);
 
       if (selectionFrameRef.current !== null) {
         cancelAnimationFrame(selectionFrameRef.current);
@@ -973,90 +1193,90 @@ function EditableFileEditor({
         );
       });
     },
-    [activeLineRange, displayedRange, onPostRender, selectedRange],
+    [activeLineRange, displayedRange, onEditablePostRender, onPostRender, selectedRange],
   );
 
   return (
-    <DiffWorkerPoolProvider>
-      <EditProvider editor={editor}>
-        <div
-          ref={surfaceRef}
-          className="relative flex min-h-0 flex-1"
-          onCompositionEnd={onCompositionEnd}
-          onKeyDownCapture={onKeyDownCapture}
+    <EditProvider createEditor={createFileEditor}>
+      <div
+        ref={surfaceRef}
+        className="relative flex min-h-0 flex-1"
+        onCompositionEnd={onCompositionEnd}
+        onKeyDownCapture={onKeyDownCapture}
+      >
+        {/* SCIENT-FORK:START — Explain source refusal without discarding retained edits. */}
+        {restorationBlocked ? (
+          <div role="alert" className="p-2 text-xs text-muted-foreground">
+            Source editing is paused to protect changes made in Rich. Return to Rich to continue.
+          </div>
+        ) : null}
+        {/* SCIENT-FORK:END */}
+        {/* SCIENT-FORK:START — source math input */}
+        <ScientMathSourceToolbar
+          mathInput={mathInput}
+          editingBlocked={editingBlocked || restorationBlocked}
+        />
+        {/* SCIENT-FORK:END */}
+        <Virtualizer
+          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+          config={{
+            overscrollSize: 600,
+            intersectionObserverMargin: 1200,
+          }}
         >
-          {/* SCIENT-FORK:START — source math input */}
-          <ScientMathSourceToolbar mathInput={mathInput} editingBlocked={editingBlocked} />
-          {/* SCIENT-FORK:END */}
-          <Virtualizer
-            className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-            config={{
-              overscrollSize: 600,
-              intersectionObserverMargin: 1200,
+          <File<FileCommentAnnotationGroup>
+            file={externalFile}
+            edit={editable && !editingBlocked && !restorationBlocked}
+            editStateKey={editStateKey}
+            editorOptions={editorOptions}
+            onEditChange={handleEditChange}
+            options={{
+              disableFileHeader: true,
+              enableGutterUtility:
+                renderEditorGutterAction !== undefined ||
+                (enableFileComments && !hasOpenCommentForm),
+              enableLineSelection: !hasOpenCommentForm,
+              ...(renderEditorGutterAction === undefined && enableFileComments
+                ? { onGutterUtilityClick: handleGutterUtilityClick }
+                : {}),
+              onLineSelectionChange: setSelectedRange,
+              onLineSelectionEnd: handleLineSelectionEnd,
+              overflow: wordWrap ? "wrap" : "scroll",
+              theme: resolveDiffThemeName(resolvedTheme),
+              preferredHighlighter: PREFERRED_HIGHLIGHTER,
+              themeType: resolvedTheme,
+              unsafeCSS: scientFileEditorUnsafeCss(gutterUtilityVisibility),
+              onPostRender: handlePostRender,
             }}
-          >
-            <File<FileCommentAnnotationGroup>
-              file={{
-                name: relativePath,
-                contents,
-                ...scientificSourceLanguageOverride(relativePath),
-                cacheKey: projectFileEditorCacheKey(
-                  environmentId,
-                  cwd,
-                  relativePath,
-                  contents,
-                  editor.getFile(),
-                ),
-              }}
-              options={{
-                disableFileHeader: true,
-                enableGutterUtility:
-                  renderEditorGutterAction !== undefined ||
-                  (enableFileComments && !hasOpenCommentForm),
-                enableLineSelection: !hasOpenCommentForm,
-                ...(renderEditorGutterAction === undefined && enableFileComments
-                  ? { onGutterUtilityClick: handleGutterUtilityClick }
-                  : {}),
-                onLineSelectionChange: setSelectedRange,
-                onLineSelectionEnd: handleLineSelectionEnd,
-                overflow: wordWrap ? "wrap" : "scroll",
-                theme: resolveDiffThemeName(resolvedTheme),
-                preferredHighlighter: PREFERRED_HIGHLIGHTER,
-                themeType: resolvedTheme,
-                unsafeCSS: scientFileEditorUnsafeCss(gutterUtilityVisibility),
-                onPostRender: handlePostRender,
-              }}
-              selectedLines={displayedRange}
-              lineAnnotations={enableFileComments ? lineAnnotations : []}
-              renderAnnotation={(annotation) => (
-                <div className="py-1">
-                  {annotation.metadata.entries.map((entry) => (
-                    <DiffCommentAnnotation
-                      key={entry.id}
-                      kind={entry.kind}
-                      rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
-                      text={entry.text}
-                      onCancel={() => removeAnnotationEntry(entry.id)}
-                      onComment={(text) => submitAnnotationEntry(entry.id, text)}
-                      onDelete={() => removeAnnotationEntry(entry.id)}
-                    />
-                  ))}
-                </div>
-              )}
-              // SCIENT-FORK:START — editor action beside Add comment in the gutter
-              {...scientEditorGutterUtility(
-                renderEditorGutterAction,
-                enableFileComments,
-                handleGutterUtilityClick,
-              )}
-              // SCIENT-FORK:END
-              className="min-h-full"
-              contentEditable={!editingBlocked}
-            />
-          </Virtualizer>
-        </div>
-      </EditProvider>
-    </DiffWorkerPoolProvider>
+            selectedLines={displayedRange}
+            lineAnnotations={enableFileComments ? lineAnnotations : []}
+            renderAnnotation={(annotation) => (
+              <div className="py-1">
+                {annotation.metadata.entries.map((entry) => (
+                  <DiffCommentAnnotation
+                    key={entry.id}
+                    kind={entry.kind}
+                    rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
+                    text={entry.text}
+                    onCancel={() => removeAnnotationEntry(entry.id)}
+                    onComment={(text) => submitAnnotationEntry(entry.id, text)}
+                    onDelete={() => removeAnnotationEntry(entry.id)}
+                  />
+                ))}
+              </div>
+            )}
+            // SCIENT-FORK:START — editor action beside Add comment in the gutter
+            {...scientEditorGutterUtility(
+              renderEditorGutterAction,
+              enableFileComments,
+              handleGutterUtilityClick,
+            )}
+            // SCIENT-FORK:END
+            className="min-h-full"
+          />
+        </Virtualizer>
+      </div>
+    </EditProvider>
   );
 }
 
@@ -1165,6 +1385,7 @@ export default function FilePreviewPanel({
   latexPresentationRequest,
   latexRootRelativePath,
   onOpenFile,
+  onFileMoved,
   onOpenFileSource,
   onHtmlPresentationRequestHandled,
   onLatexPresentationRequestHandled,
@@ -1177,9 +1398,11 @@ export default function FilePreviewPanel({
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const updateClientSettings = useUpdateClientSettings();
+  const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const previewAvailable = usePreviewAvailable(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -1197,6 +1420,9 @@ export default function FilePreviewPanel({
   // workspace editor or explorer.
   const isHostFile =
     attachment !== undefined || (relativePath !== null && isAbsolutePath(relativePath));
+  const fileAccess = useFilesystemReadAccess(environmentId);
+  const { canReadFiles } = fileAccess;
+  const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [genericPendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const {
     pendingSurfaceIds: pendingPaths,
@@ -1438,10 +1664,11 @@ export default function FilePreviewPanel({
     ],
   );
   const canOpenInBrowser =
+    canOperatePreview &&
     previewPath !== null &&
     attachment === undefined &&
     !isVideo &&
-    isPreviewSupportedInRuntime() &&
+    previewAvailable &&
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? workspaceFileHostPath(relativePath, cwd) : null;
@@ -1474,7 +1701,40 @@ export default function FilePreviewPanel({
       }),
     [absolutePath, cwd, environmentId, relativePath, threadRef.threadId],
   );
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const { onPostRender: onFilePostRender, move: moveFileLineReveal } = useFileLineReveal(
+    relativePath,
+    revealLine,
+    revealRequestId,
+  );
+  // SCIENT-FORK:START — an open Markdown document renames in place, keeping its editor
+  const { moveInPlace, surfaceGeneration } = useInPlaceRename({
+    threadRef,
+    environmentId,
+    cwd,
+    relativePath,
+    lease: markdownLease,
+    // Markdown only for now; other document kinds keep the ordinary rename.
+    canMove: (from, to) => isScientMarkdownDocumentPath(from) && isScientMarkdownDocumentPath(to),
+    reopen: (from, to, revision) =>
+      applyScientMarkdownRename({
+        environmentId,
+        cwd,
+        relativePath: from,
+        fileData: file.data,
+        destinationRelativePath: to,
+        revision,
+        onOpenFile,
+      }),
+    moveTab: (from, to) => (onFileMoved ? onFileMoved(from, to) : onOpenFile(to)),
+    moveViewState: (from, to) => {
+      setHandledReveal((current) => (current?.path === from ? { ...current, path: to } : current));
+      moveFileLineReveal(from, to);
+    },
+  });
+  const documentSurfaceKey = markdownLease
+    ? `${documentIdentity(markdownLease)}:${surfaceGeneration}`
+    : relativePath;
+  // SCIENT-FORK:END
   const handlePendingChange = useCallback(
     (path: string, pending: boolean) => {
       setPendingPaths((current) => {
@@ -1511,7 +1771,14 @@ export default function FilePreviewPanel({
   };
 
   const handleOpenInBrowser = useCallback(() => {
-    if (!absolutePath || !relativePath || !environmentHttpBaseUrl) return;
+    if (
+      !canReadFiles ||
+      !canOperatePreview ||
+      !absolutePath ||
+      !relativePath ||
+      !environmentHttpBaseUrl
+    )
+      return;
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
@@ -1536,6 +1803,8 @@ export default function FilePreviewPanel({
     })();
   }, [
     absolutePath,
+    canReadFiles,
+    canOperatePreview,
     createAssetUrl,
     cwd,
     environmentHttpBaseUrl,
@@ -1543,6 +1812,22 @@ export default function FilePreviewPanel({
     relativePath,
     threadRef,
   ]);
+
+  if (attachment === undefined && !canReadFiles) {
+    if (fileAccess.isPending) {
+      return (
+        <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Spinner className="size-4" />
+          Checking file access...
+        </div>
+      );
+    }
+    return (
+      <div className="p-4 text-sm text-muted-foreground">
+        {fileAccess.error ?? "This connection cannot read host files."}
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -1581,10 +1866,17 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 onOpenFile={onOpenFile}
                 currentFileControl={
-                  isRichMarkdown && !file.data?.readOnly ? (
+                  isRichMarkdown && !file.data?.readOnly && canWriteFiles ? (
                     <ScientMarkdownRenameButton
                       {...(markdownLease
                         ? { beforeRename: () => markdownLease.holdForRename() }
+                        : {})}
+                      {...(moveInPlace ? { moveInPlace } : {})}
+                      {...(markdownLease
+                        ? {
+                            prepareRename: () =>
+                              markdownLease.settleRecoveryCopy?.() ?? Promise.resolve(true),
+                          }
                         : {})}
                       environmentId={environmentId}
                       cwd={cwd}
@@ -1631,13 +1923,10 @@ export default function FilePreviewPanel({
               pressed={surfaceRendered}
               onPress={() => handleRenderedChange(!surfaceRendered)}
             >
-              {surfaceRendered ? (
-                <Code2 className="size-3.5" />
-              ) : renderedMode === "table" ? (
-                <Table2 className="size-3.5" />
-              ) : (
-                <Eye className="size-3.5" />
-              )}
+              <MorphIcon
+                className="size-3.5"
+                icon={surfaceRendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
+              />
             </FileSurfaceAction>
           ) : null}
           {showsRawText ? (
@@ -1688,7 +1977,7 @@ export default function FilePreviewPanel({
       ) : null}
       {markdownLease ? (
         <ScientMarkdownPersistenceNotice
-          key={relativePath}
+          key={documentSurfaceKey}
           persistence={markdownLease}
           {...(!renderMarkdown ? { onReturnToRich: () => applyMarkdownViewChange(true) } : {})}
           {...(markdownRefreshCopy ? { refreshCopy: markdownRefreshCopy } : {})}
@@ -1715,6 +2004,11 @@ export default function FilePreviewPanel({
           onResolve={resolveReloadNotice}
         />
       )}
+      {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
+        <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
+          Read-only connection. Unsaved edits are kept until write access returns.
+        </div>
+      ) : null}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">
           {readOnlyNotice(file.data.outsideWorkspace === true)}
@@ -1742,6 +2036,7 @@ export default function FilePreviewPanel({
               mimeType={attachment.mimeType}
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
+              htmlRender={attachment.htmlRender === true}
             />
           ) : // SCIENT-FORK:START — the read failure says why nothing can be shown
           relativePath && blockingReadFailure ? (
@@ -1823,7 +2118,7 @@ export default function FilePreviewPanel({
               <Spinner size="lg" />
             </div>
           ) : relativePath && file.data ? (
-            file.data.readOnly && !markdownLease ? (
+            file.data.readOnly || !canWriteFiles ? (
               tableDelimiter && renderTable ? (
                 <DelimitedTablePreview
                   key={relativePath}
@@ -1916,7 +2211,7 @@ export default function FilePreviewPanel({
             ) : usesScientMarkdownEditor && markdownLease ? (
               <ScientSurfaceSuspense>
                 <ScientMarkdownFileSurface
-                  key={relativePath}
+                  key={documentSurfaceKey}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}
@@ -1934,7 +2229,7 @@ export default function FilePreviewPanel({
               </ScientSurfaceSuspense>
             ) : markdownLease ? (
               <MarkdownSourceSurface
-                key={relativePath}
+                key={documentSurfaceKey}
                 persistence={markdownLease}
                 environmentId={environmentId}
                 cwd={cwd}
@@ -1955,7 +2250,7 @@ export default function FilePreviewPanel({
                 contents={file.data.contents}
                 revision={file.data.revision}
                 truncated={file.data.truncated}
-                readOnly={false}
+                readOnly={isHostFile || !canWriteFiles}
                 onPendingChange={handlePendingChange}
                 onSaveFailure={handleSaveFailure}
                 onSaveConfirmed={handleSaveConfirmed}
@@ -1981,7 +2276,7 @@ export default function FilePreviewPanel({
                 onPostRender={onFilePostRender}
               />
             ) : // SCIENT-FORK:END
-            isHostFile ? (
+            isHostFile || !canWriteFiles ? (
               <SourceFilePreview
                 name={relativePath}
                 text={file.data.contents}

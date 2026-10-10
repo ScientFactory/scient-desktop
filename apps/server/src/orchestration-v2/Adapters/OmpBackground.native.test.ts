@@ -4,6 +4,7 @@ import { CommandId, MessageId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import type { ThreadManagementServiceShape } from "../ThreadManagementService.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { applyToProjection, emptyProjection } from "../ProjectionStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -349,68 +350,85 @@ describe("native OMP persisted background work", () => {
       ).pipe(Effect.provide(dependencies)),
   );
 
-  for (const wake of [false, true]) {
-    it.live(
-      `contains native background Stop ${wake ? "after wake" : "between turns"} without another parent outcome`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const f = yield* fixture();
-            yield* f.run(({ orchestrator, waitFor, send, completed }) =>
-              Effect.gen(function* () {
-                yield* send("Keep a child alive");
-                yield* waitFor((p) =>
-                  p.providerTurns.some((t) => t.nativeAcceptance === "accepted"),
-                );
-                yield* f.emit([
-                  { type: "agent_start" },
-                  {
-                    type: "subagent_lifecycle",
-                    payload: {
-                      id: "stop-child",
-                      agent: "task",
-                      detached: true,
-                      status: "started",
-                      description: "Wait for evidence",
-                    },
-                  },
-                ]);
-                yield* waitFor((p) => p.subagents.length === 1);
-                yield* f.finish(false);
-                let latest = yield* waitFor((p) => p.runs.some((r) => r.status === "completed"));
-                const parent = latest.runs[0]!;
-                if (wake) {
-                  yield* f.emit([{ type: "agent_start" }]);
-                  latest = yield* waitFor(
-                    (p) => p.runs.length === 2 && p.runs[1]?.status === "running",
-                  );
-                }
-                yield* orchestrator.dispatch({
-                  type: "run.interrupt",
-                  commandId: CommandId.make("background-stop"),
-                  threadId: f.threadId,
-                  runId: latest.runs.at(-1)!.id,
-                  holdQueue: true,
-                });
-                if (wake) yield* completed(CommandId.make("background-stop"));
-                const stopped = yield* waitFor(
-                  (p) =>
-                    p.providerSessions.some(
-                      (s) => s.status === "stopped" || s.status === "error",
-                    ) && p.providerThreads.every((t) => t.pendingBackgroundTasks?.length === 0),
-                );
-                expect(stopped.runs.find((r) => r.id === parent.id)?.status).toBe("completed");
-                expect(stopped.runs.filter((r) => r.status === "interrupted")).toHaveLength(
-                  wake ? 1 : 0,
-                );
-                expect(stopped.subagents[0]?.status).toBe("interrupted");
-                expect(f.peer.state.shutdowns).toBe(1);
-                expect(f.peer.state.frames.some((frame) => frame.type === "abort")).toBe(false);
-                expect(stopped.runs).toHaveLength(wake ? 2 : 1);
+  it.live.each(
+    [false, true].map((wake) => ({
+      caseTitle: `contains native background Stop ${wake ? "after wake" : "between turns"} without another parent outcome`,
+      wake,
+    })),
+  )("$caseTitle", ({ wake }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegatedStops: Array<
+          Parameters<ThreadManagementServiceShape["stopDelegatedTasks"]>[0]
+        > = [];
+        const f = yield* fixture({
+          threads: {
+            stopDelegatedTasks: (input) =>
+              Effect.sync(() => {
+                delegatedStops.push(input);
               }),
+          },
+        });
+        yield* f.run(({ orchestrator, waitFor, send, completed }) =>
+          Effect.gen(function* () {
+            yield* send("Keep a child alive");
+            yield* waitFor((p) => p.providerTurns.some((t) => t.nativeAcceptance === "accepted"));
+            yield* f.emit([
+              { type: "agent_start" },
+              {
+                type: "subagent_lifecycle",
+                payload: {
+                  id: "stop-child",
+                  agent: "task",
+                  detached: true,
+                  status: "started",
+                  description: "Wait for evidence",
+                },
+              },
+            ]);
+            yield* waitFor((p) => p.subagents.length === 1);
+            yield* f.finish(false);
+            let latest = yield* waitFor((p) => p.runs.some((r) => r.status === "completed"));
+            const parent = latest.runs[0]!;
+            if (wake) {
+              yield* f.emit([{ type: "agent_start" }]);
+              latest = yield* waitFor(
+                (p) => p.runs.length === 2 && p.runs[1]?.status === "running",
+              );
+            }
+            // These are native tasks; ThreadManagement stops only app-owned children.
+            expect(latest.subagents.every((task) => task.origin === "provider_native")).toBe(true);
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make("background-stop"),
+              threadId: f.threadId,
+              runId: latest.runs.at(-1)!.id,
+              holdQueue: true,
+            });
+            yield* completed(CommandId.make("background-stop"));
+            expect(delegatedStops).toEqual([
+              {
+                threadId: f.threadId,
+                commandId: CommandId.make("background-stop"),
+                reason: undefined,
+              },
+            ]);
+            const stopped = yield* waitFor(
+              (p) =>
+                p.providerSessions.some((s) => s.status === "stopped" || s.status === "error") &&
+                p.providerThreads.every((t) => t.pendingBackgroundTasks?.length === 0),
             );
+            expect(stopped.runs.find((r) => r.id === parent.id)?.status).toBe("completed");
+            expect(stopped.runs.filter((r) => r.status === "interrupted")).toHaveLength(
+              wake ? 1 : 0,
+            );
+            expect(stopped.subagents[0]?.status).toBe("interrupted");
+            expect(f.peer.state.shutdowns).toBe(1);
+            expect(f.peer.state.frames.some((frame) => frame.type === "abort")).toBe(false);
+            expect(stopped.runs).toHaveLength(wake ? 2 : 1);
           }),
-        ).pipe(Effect.provide(dependencies)),
-    );
-  }
+        );
+      }),
+    ).pipe(Effect.provide(dependencies)),
+  );
 });

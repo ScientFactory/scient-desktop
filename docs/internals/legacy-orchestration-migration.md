@@ -19,9 +19,33 @@ Transcript import reads user and assistant rows from `projection_thread_messages
 message identifiers, text, supported attachments, timestamps, role, and ordering. A message that was
 still streaming becomes an interrupted turn item.
 
+Attachment entries are validated independently so a malformed entry cannot erase valid siblings.
+The raw legacy attachment JSON remains available. A malformed JSON value or entry leaves the
+thread's import incomplete and prevents continuation with silently missing context; valid entries
+are still visible in its imported messages. Retrying does not duplicate history or overwrite V2
+edits. Persistent malformed source data requires investigation rather than an automatic database
+reset. This does not rewrite imports already acknowledged by an earlier build.
+
+Background restoration reports completion only after the import ledger has no pending threads.
+An incomplete pass or failed completion check produces a persistent restoration notice, including
+the remaining thread count when it can be verified. Failure details are optional on the existing
+lifecycle payload: older clients can still decode it and see restoration as incomplete, while
+updated clients show the error notice. Unaffected threads remain usable. Opening an
+incomplete thread retries its import, and restarting retries the background pass and refreshes the
+overall status. The original V1 database and copied legacy tables are retained for recovery.
+
 Scient's `LegacyScientHistory` also preserves reasoning and system messages, activities and tool
 facts, submitted user-input answers, historical approvals, and proposed plans as inert V2 history.
 `LegacyV1ThreadImporter` hydrates this history, including repair of already-imported threads.
+
+V1 stored one tool call as many work-log rows (started, one per progress report, completed); V2
+keeps one item per call. The import folds a call's rows into one item at the place of its first
+row, without losing content: the last row wins and any field it lacks, at the top level or inside
+`data`, comes from the newest earlier row (`toolLifecycle.ts` in `@scientfactory/conversation`).
+The item shows how the call ended: completed, failed, or interrupted when it never completed.
+Context-meter and "Checkpoint captured" rows are dropped; V2 reads neither. On real conversations
+this imports 18 to 36 times fewer items. A thread an earlier build already imported row by row
+keeps that shape, so a later repair never leaves its items without positions.
 Historical approvals and callbacks do not acquire active requests or execution authority; plans
 remain inspectable historical facts. The importer does not restore live provider session identity,
 native provider runs, or checkpoint/diff execution state.

@@ -18,7 +18,7 @@ import * as Scope from "effect/Scope";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import {
   OMP_KNOWN_EVENT_TYPES,
   OMP_RPC_PROTOCOL_V2,
@@ -43,7 +43,7 @@ import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
 import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
-import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
 import {
   decodeOmpModelSlug,
   encodeOmpModelSlug,
@@ -66,7 +66,7 @@ import {
   makeOmpSessionRuntime,
   type OmpSessionUpdate,
 } from "../../provider/omp/OmpSessionRuntime.ts";
-import type { OmpProcessFactory } from "../../provider/Layers/OmpProvider.ts";
+import type { OmpProcessFactory } from "../../provider/OmpProvider.ts";
 import { formatOmpBytes, planOmpImages } from "../../provider/omp/OmpImagePrompt.ts";
 import {
   browserActionUrl,
@@ -726,7 +726,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
           if (compareSemverVersions(client.runtimeVersion, "18.3.1") >= 0)
             yield* client
               .setEventFilter(OMP_KNOWN_EVENT_TYPES)
-              .pipe(Effect.catchTag("OmpRpcCommandError", () => Effect.void));
+              .pipe(Effect.catchTags({ OmpRpcCommandError: () => Effect.void }));
           const ensureFresh = () =>
             Effect.gen(function* () {
               if (fresh) return;
@@ -1084,13 +1084,14 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                     if (previousSlug !== requestedSlug) {
                       mutated = true;
                       yield* client.setModel(model.provider, model.modelId).pipe(
-                        Effect.catchTag("OmpRpcCommandError", () =>
-                          Effect.gen(function* () {
-                            if (client.refreshModels) yield* client.refreshModels();
-                            yield* refreshCatalog().pipe(Effect.ignore);
-                            yield* client.setModel(model.provider, model.modelId);
-                          }),
-                        ),
+                        Effect.catchTags({
+                          OmpRpcCommandError: () =>
+                            Effect.gen(function* () {
+                              if (client.refreshModels) yield* client.refreshModels();
+                              yield* refreshCatalog().pipe(Effect.ignore);
+                              yield* client.setModel(model.provider, model.modelId);
+                            }),
+                        }),
                       );
                     }
                     const afterModel = yield* client.getState();

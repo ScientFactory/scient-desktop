@@ -1,3 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { fullAccessCapturedPolicyLayer } from "./McpToolAccess.testkit.ts";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -5,9 +8,9 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai";
-import * as Rpc from "effect/unstable/rpc/Rpc";
-import { HttpBody, HttpClient, HttpRouter, HttpServerRequest } from "effect/unstable/http";
+import { McpProtocol, McpServer, Tool, Toolkit } from "effect/ai";
+import * as Rpc from "effect/rpc/Rpc";
+import { HttpBody, HttpClient, HttpRouter, HttpServerRequest } from "effect/http";
 
 import {
   McpInvocationContext,
@@ -19,12 +22,14 @@ import { WorkspaceBindingResolutionError } from "../scient/projectScope/Workspac
 import { workspaceResolverForTest } from "../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import {
   ScientSkillsToolkitRegistrationLive,
-  PreviewToolkitRegistrationLive,
+  layerPreviewToolkit,
+  registerScientToolkit,
+  toolkitRegistration,
 } from "./McpHttpServer.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as ServerConfig from "../config.ts";
 import { ScientMcpProtocol, makeScientToolListLayer } from "./ScientMcpProtocol.ts";
-import { registerScientToolkit } from "./ScientToolkitRegistration.ts";
+import * as McpToolAccess from "./McpToolAccess.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 
 const ScientSourcesListTool = ScientSourcesToolkit.tools.scient_sources_list;
@@ -55,9 +60,13 @@ const deviceTools = Object.values(DeviceToolkit.tools);
 
 const scope = (actor: string): McpInvocationScope => ({
   environmentId: EnvironmentId.make("protocol-test"),
-  threadId: ThreadId.make(actor),
-  providerSessionId: actor,
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: actor,
+  thread: {
+    threadId: ThreadId.make(actor),
+    providerSessionId: actor,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   issuedAt: 1,
   capabilities: new Set<McpCapability>(
     actor === "browser"
@@ -111,30 +120,29 @@ const transport = McpServer.layerHttp({
 );
 const workspaceToolkit = Toolkit.make(ScientSourcesListTool);
 const routes = Layer.mergeAll(
-  Layer.effectDiscard(McpServer.registerToolkit(HostToolkit)).pipe(
-    Layer.provide(
-      HostToolkit.toLayer({
-        host_status: () =>
-          Effect.gen(function* () {
-            const invocation = yield* McpInvocationContext;
-            return invocation.capabilities.has("preview")
-              ? "host-ready"
-              : yield* new HostDenied({ message: "Host policy denied this call." });
-          }),
-      }),
-    ),
+  toolkitRegistration(
+    HostToolkit,
+    McpToolAccess.toLayer(HostToolkit, {
+      host_status: McpToolAccess.reads(() =>
+        Effect.gen(function* () {
+          const invocation = yield* McpInvocationContext;
+          return invocation.capabilities.has("preview")
+            ? "host-ready"
+            : yield* new HostDenied({ message: "Host policy denied this call." });
+        }),
+      ),
+    }),
   ),
-  Layer.effectDiscard(McpServer.registerToolkit(DeviceToolkit)).pipe(
-    Layer.provide(
-      DeviceToolkit.toLayer({
-        device_list: () => Effect.succeed("devices"),
-        device_open: () => Effect.succeed("opened"),
-        device_screenshot: () => Effect.succeed("screenshot"),
-        device_close: () => Effect.succeed("closed"),
-      }),
-    ),
+  toolkitRegistration(
+    DeviceToolkit,
+    McpToolAccess.toLayer(DeviceToolkit, {
+      device_list: McpToolAccess.reads(() => Effect.succeed("devices")),
+      device_open: McpToolAccess.reads(() => Effect.succeed("opened")),
+      device_screenshot: McpToolAccess.reads(() => Effect.succeed("screenshot")),
+      device_close: McpToolAccess.reads(() => Effect.succeed("closed")),
+    }),
   ),
-  PreviewToolkitRegistrationLive,
+  layerPreviewToolkit,
   ScientSkillsToolkitRegistrationLive,
   registerScientToolkit(workspaceToolkit).pipe(
     Layer.provide(
@@ -146,6 +154,9 @@ const routes = Layer.mergeAll(
   ),
 ).pipe(
   Layer.provideMerge(transport),
+  Layer.provide(fullAccessCapturedPolicyLayer),
+  Layer.provide(NodeCrypto.layer),
+  Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
   Layer.provide(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scient-mcp-protocol-" })),
   Layer.provide(

@@ -14,16 +14,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import { ompTarget } from "../omp/OmpTarget.ts";
 import { scriptedOmpRpc } from "./scriptedOmpRpc.ts";
 import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
 import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
-import { makeLayerEffect } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
+import { layerFromAdaptersEffect as makeLayerEffect } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
 
@@ -46,6 +46,9 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
     readonly mcpSessionRegistryLayer?: NonNullable<
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
     >["mcpSessionRegistryLayer"];
+    readonly threads?: NonNullable<
+      Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
+    >["threads"];
     readonly decorateEventSink?: NonNullable<
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
     >["decorateEventSink"];
@@ -99,9 +102,10 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
         ? { mcpSessionRegistryLayer: input.mcpSessionRegistryLayer }
         : {}),
       ...(input.decorateEventSink ? { decorateEventSink: input.decorateEventSink } : {}),
+      ...(input.threads ? { threads: input.threads } : {}),
       runEffectWorker: true,
       runContinuationWorker: true,
-      serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),
+      layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
     },
   );
   const initialize = Effect.gen(function* () {

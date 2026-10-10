@@ -15,6 +15,7 @@ import { useCallback, useMemo } from "react";
 import { ensureLocalApi } from "../../localApi";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { isRuntimePlanStale } from "./isRuntimePlanStale";
 import { isSafeProviderAuthorizationUrl } from "./providerConnectionPresentation";
 
 export interface ProviderLifecycleController {
@@ -30,12 +31,7 @@ export interface ProviderLifecycleController {
   readonly disconnect: () => Promise<ServerProvider>;
   readonly openAuthorizationPage: (url: string) => Promise<void>;
   readonly planRuntime: (action: ProviderManagedRuntimeAction) => Promise<ProviderRuntimePlan>;
-  /**
-   * Starts a planned action. A switch to a release older than the system
-   * runtime, or from one of unknown version, starts only with
-   * `acceptOlderThanSystem`, which a caller passes once the user saw the plan
-   * and chose the managed release.
-   */
+  /** Starts the qualified managed release chosen by the explicit action. */
   readonly startRuntime: (
     plan: ProviderRuntimePlan,
     options?: { readonly acceptOlderThanSystem?: boolean },
@@ -209,19 +205,26 @@ export function useProviderLifecycleController(input: {
 
   const startRuntime = useCallback(
     async (plan: ProviderRuntimePlan, options?: { readonly acceptOlderThanSystem?: boolean }) => {
-      const result = await startProviderRuntime({
-        environmentId: input.environmentId,
-        input: {
-          instanceId,
-          action: plan.action,
-          catalogRevision: plan.catalogRevision,
-          ...(options?.acceptOlderThanSystem === true ? { acceptOlderThanSystem: true } : {}),
-        },
+      const start = async (currentPlan: ProviderRuntimePlan) =>
+        resultValue(
+          await startProviderRuntime({
+            environmentId: input.environmentId,
+            input: {
+              instanceId,
+              action: currentPlan.action,
+              catalogRevision: currentPlan.catalogRevision,
+              ...(options?.acceptOlderThanSystem === true ? { acceptOlderThanSystem: true } : {}),
+            },
+          }),
+          "Scient could not start the provider runtime action.",
+        );
+      const value = await start(plan).catch(async (cause: unknown) => {
+        if (plan.action === "remove" || !isRuntimePlanStale(cause)) throw cause;
+        return start(await planRuntime(plan.action));
       });
-      const value = resultValue(result, "Scient could not start the provider runtime action.");
       return providerFromResult(value.providers, instanceId);
     },
-    [input.environmentId, instanceId, startProviderRuntime],
+    [input.environmentId, instanceId, planRuntime, startProviderRuntime],
   );
 
   const cancelRuntime = useCallback(

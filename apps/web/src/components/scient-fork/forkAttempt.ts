@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadForkCommand, type ForkDisposition } from "@t3tools/contracts";
 import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import * as Schema from "effect/Schema";
-import { RpcClientError } from "effect/unstable/rpc";
+import { RpcClientError } from "effect/rpc";
 
 const Attempt = Schema.Struct({
   environmentId: EnvironmentId,

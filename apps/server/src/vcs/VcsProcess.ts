@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   type VcsError,
@@ -28,6 +28,10 @@ export interface VcsProcessInput {
   readonly spawnCwd?: string;
   readonly stdin?: string;
   readonly onStdoutChunk?: (chunk: Uint8Array) => void;
+  // SCIENT-FORK:START — binary stdin and an awaited stdout consumer for checkpoint capture.
+  readonly stdinBytes?: Uint8Array;
+  readonly onStdoutChunkEffect?: ProcessRunner.ProcessRunInput["onStdoutChunkEffect"];
+  // SCIENT-FORK:END
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
@@ -134,6 +138,12 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
+        // SCIENT-FORK:START — binary stdin and an awaited stdout consumer.
+        ...(input.stdinBytes !== undefined ? { stdinBytes: input.stdinBytes } : {}),
+        ...(input.onStdoutChunkEffect !== undefined
+          ? { onStdoutChunkEffect: input.onStdoutChunkEffect }
+          : {}),
+        // SCIENT-FORK:END
         ...(input.env !== undefined ? { env: input.env } : {}),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
@@ -207,7 +217,10 @@ export const make = Effect.gen(function* () {
     if (
       input.command === "git" &&
       input.operation === CHECKPOINT_CAPTURE_OPERATION &&
-      input.onStdoutChunk === undefined
+      // SCIENT-FORK:START — a consumed stream cannot be replayed into a fresh parser.
+      input.onStdoutChunk === undefined &&
+      input.onStdoutChunkEffect === undefined
+      // SCIENT-FORK:END
     ) {
       // Retry the failed command, retaining the private index/tree and recovery's outer deadline.
       return yield* bounded.pipe(

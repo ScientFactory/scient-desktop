@@ -185,11 +185,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const userAttempt = RunAttemptId.make("attempt-claude-wake-subagent-2");
         const continuationAttempt = RunAttemptId.make("attempt-claude-wake-subagent-3");
         const runOf = (attemptId: RunAttemptId) => RunId.make(`run-${attemptId}`);
-        const stamp = (frame: SDKMessage, attemptId: RunAttemptId) =>
-          claudeSdkFrame({
-            ...frame,
-            user_message_uuid: ClaudeAdapterV2.claudePromptUuid(attemptId),
-          });
+        const promptUuids = new Map<RunAttemptId, string>();
+        const stamp = (frame: SDKMessage, attemptId: RunAttemptId) => {
+          const uuid = promptUuids.get(attemptId);
+          if (!uuid) throw new Error("Missing actually offered Claude prompt UUID");
+          return claudeSdkFrame({ ...frame, user_message_uuid: uuid });
+        };
 
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -201,6 +202,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
+        yield* awaitUntil(() => harness.offeredMessages.length === 1, "first prompt offered");
+        promptUuids.set(firstAttempt, harness.offeredMessages[0]!.uuid!);
         yield* Queue.offer(harness.sdkMessages, stamp(wakeTaskStarted, firstAttempt));
         yield* Queue.offer(
           harness.sdkMessages,
@@ -224,6 +227,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerTurnOrdinal: 2,
           }),
         );
+        yield* awaitUntil(() => harness.offeredMessages.length === 2, "user prompt offered");
+        promptUuids.set(userAttempt, harness.offeredMessages[1]!.uuid!);
         const wakeFrames = [
           wakeNotification,
           claudeSdkFrame({

@@ -25,7 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -272,152 +272,153 @@ const seed = Effect.fnUntraced(function* () {
   return { sink, thread, sourceThread, run, attempt, root, providerThread, plan, now };
 });
 
-for (const proof of ["foreign-id", "foreign-session", "confirmed", "displaced-attempt"] as const) {
-  it.effect(
-    `only an exact OpenCode native prompt acknowledgement consumes a source plan: ${proof}`,
-    () =>
-      Effect.gen(function* () {
-        const { sink, thread, run, attempt, root, providerThread, plan, now } = yield* seed();
-        const projection = yield* ProjectionStore.ProjectionStoreV2;
-        const events = yield* EventStore.EventStoreV2;
-        const offeredId = `msg_t3_turn_${SESSION}:${attempt.id}`;
-        // Deliberately no session.execution.* or assistant/tool events: only the
-        // typed HTTP response can establish acceptance in these scenarios.
-        const runtime = yield* openCode2ReplayRuntime([
-          out("event.subscribe"),
-          out("model.list", "<any>"),
-          reply("model.list", modelCatalog),
-          out("session.get", { sessionID: SESSION }),
-          replyData("session.get", sessionInfo()),
-          out("permission.list", { sessionID: SESSION }),
-          replyData("permission.list", []),
-          out("session.form.list", { sessionID: SESSION }),
-          replyData("session.form.list", []),
-          out("session.instructions.entry.put", {
-            sessionID: SESSION,
-            key: "t3-code",
-            value: "<any>",
-          }),
-          reply("session.instructions.entry.put", null),
-          out("session.prompt", { sessionID: SESSION, id: offeredId, text: "<any>" }),
-          replyData("session.prompt", {
-            id: proof === "foreign-id" ? "msg_foreign_acknowledgement" : offeredId,
-            sessionID: proof === "foreign-session" ? "ses_foreign_acknowledgement" : SESSION,
-            time: { created: 1790656601410 },
-            type: "user",
-            payload: { text: "Implement exact plan" },
-            delivery: "steer",
-          }),
-          out("message.list", { sessionID: SESSION, order: "asc", limit: "100" }),
-          reply("message.list", { data: [], cursor: {} }),
-        ]);
-        const resumed = yield* runtime.resumeThread({ providerThread });
-        assert.ok(run.userMessageId);
-        const input: ProviderAdapterV2TurnInput = {
-          appThread: thread,
-          threadId: thread.id,
-          runId: run.id,
-          runOrdinal: run.ordinal,
-          providerTurnOrdinal: 1,
-          attemptId: attempt.id,
-          rootNodeId: root.id,
-          providerThread: resumed,
-          modelSelection: thread.modelSelection,
-          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: WORK },
-          message: {
-            messageId: run.userMessageId,
-            text: "Implement exact plan",
-            attachments: [],
-            createdBy: "user",
-            creationSource: "web",
-            scheduledTaskId: undefined,
-            senderThreadId: undefined,
+it.effect.each(
+  (["foreign-id", "foreign-session", "confirmed", "displaced-attempt"] as const).map((proof) => ({
+    caseTitle: `only an exact OpenCode native prompt acknowledgement consumes a source plan: ${proof}`,
+    proof,
+  })),
+)("$caseTitle", ({ proof }) =>
+  Effect.gen(function* () {
+    const { sink, thread, run, attempt, root, providerThread, plan, now } = yield* seed();
+    const projection = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventStore.EventStoreV2;
+    const offeredId = `msg_t3_turn_${SESSION}:${attempt.id}`;
+    // Deliberately no session.execution.* or assistant/tool events: only the
+    // typed HTTP response can establish acceptance in these scenarios.
+    const runtime = yield* openCode2ReplayRuntime([
+      out("event.subscribe"),
+      out("model.list", "<any>"),
+      reply("model.list", modelCatalog),
+      out("session.get", { sessionID: SESSION }),
+      replyData("session.get", sessionInfo()),
+      out("permission.list", { sessionID: SESSION }),
+      replyData("permission.list", []),
+      out("session.form.list", { sessionID: SESSION }),
+      replyData("session.form.list", []),
+      out("session.instructions.entry.put", {
+        sessionID: SESSION,
+        key: "t3-code",
+        value: "<any>",
+      }),
+      reply("session.instructions.entry.put", null),
+      out("session.prompt", { sessionID: SESSION, id: offeredId, text: "<any>" }),
+      replyData("session.prompt", {
+        id: proof === "foreign-id" ? "msg_foreign_acknowledgement" : offeredId,
+        sessionID: proof === "foreign-session" ? "ses_foreign_acknowledgement" : SESSION,
+        time: { created: 1790656601410 },
+        type: "user",
+        payload: { text: "Implement exact plan" },
+        delivery: "steer",
+      }),
+      out("message.list", { sessionID: SESSION, order: "asc", limit: "100" }),
+      reply("message.list", { data: [], cursor: {} }),
+    ]);
+    const resumed = yield* runtime.resumeThread({ providerThread });
+    assert.ok(run.userMessageId);
+    const input: ProviderAdapterV2TurnInput = {
+      appThread: thread,
+      threadId: thread.id,
+      runId: run.id,
+      runOrdinal: run.ordinal,
+      providerTurnOrdinal: 1,
+      attemptId: attempt.id,
+      rootNodeId: root.id,
+      providerThread: resumed,
+      modelSelection: thread.modelSelection,
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: WORK },
+      message: {
+        messageId: run.userMessageId,
+        text: "Implement exact plan",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        scheduledTaskId: undefined,
+        senderThreadId: undefined,
+      },
+    };
+    yield* runtime.startTurn(input);
+    const snapshot = yield* runtime.readThreadSnapshot({ providerThread: resumed });
+    const latest = snapshot.providerTurns[0];
+    assert.ok(latest);
+    assert.equal(snapshot.providerTurns.length, 1);
+    if (proof === "displaced-attempt") {
+      const replacementId = RunAttemptId.make(`${attempt.id}:replacement`);
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("replacement:attempt"),
+            type: "run-attempt.created",
+            threadId: thread.id,
+            occurredAt: now,
+            payload: { ...attempt, id: replacementId, attemptOrdinal: 2 },
           },
-        };
-        yield* runtime.startTurn(input);
-        const snapshot = yield* runtime.readThreadSnapshot({ providerThread: resumed });
-        const latest = snapshot.providerTurns[0];
-        assert.ok(latest);
-        assert.equal(snapshot.providerTurns.length, 1);
-        if (proof === "displaced-attempt") {
-          const replacementId = RunAttemptId.make(`${attempt.id}:replacement`);
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("replacement:attempt"),
-                type: "run-attempt.created",
-                threadId: thread.id,
-                occurredAt: now,
-                payload: { ...attempt, id: replacementId, attemptOrdinal: 2 },
-              },
-              {
-                id: EventId.make("replacement:run"),
-                type: "run.updated",
-                threadId: thread.id,
-                occurredAt: now,
-                payload: { ...run, activeAttemptId: replacementId },
-              },
-            ],
-          });
-        }
-        // snapshotOf returns the actual providerTurns map values. Drain through
-        // that exact final emitted object, avoiding sleeps and synthetic receipts.
-        const emitted = yield* runtime.events.pipe(
-          Stream.takeUntil(
-            (event) => event.type === "provider_turn.updated" && event.providerTurn === latest,
-          ),
-          Stream.runCollect,
-          Effect.timeout("5 seconds"),
-        );
-        let receiptOrdinal = 0;
-        for (const event of emitted) {
-          assert.notEqual(event.type, "turn.terminal");
-          if (event.type !== "provider_turn.updated") continue;
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make(`actual-native-receipt:${++receiptOrdinal}`),
-                type: "provider-turn.updated",
-                threadId: thread.id,
-                runId: run.id,
-                nodeId: root.id,
-                providerInstanceId: instanceId,
-                driver,
-                occurredAt: now,
-                payload: event.providerTurn,
-              },
-            ],
-          });
-        }
-        const mismatched = proof === "foreign-id" || proof === "foreign-session";
-        const consumed = yield* projection.getPlan(plan.threadId, plan.id);
-        assert.ok(consumed?.kind === "proposed_plan");
-        assert.equal(consumed.status, proof === "confirmed" ? "completed" : "active");
-        assert.equal(latest.nativeAcceptance, mismatched ? "unknown" : "accepted");
-        assert.equal(latest.nativeTurnRef?.strength, mismatched ? "weak" : "strong");
-        assert.equal(latest.nativeTurnRef?.nativeId, offeredId);
-        assert.equal(latest.runAttemptId, attempt.id);
-        assert.equal(latest.nodeId, run.rootNodeId);
-        assert.equal(latest.providerThreadId, resumed.id);
-        if (proof === "confirmed") {
-          assert.deepEqual(consumed.consumedBy, {
+          {
+            id: EventId.make("replacement:run"),
+            type: "run.updated",
+            threadId: thread.id,
+            occurredAt: now,
+            payload: { ...run, activeAttemptId: replacementId },
+          },
+        ],
+      });
+    }
+    // snapshotOf returns the actual providerTurns map values. Drain through
+    // that exact final emitted object, avoiding sleeps and synthetic receipts.
+    const emitted = yield* runtime.events.pipe(
+      Stream.takeUntil(
+        (event) => event.type === "provider_turn.updated" && event.providerTurn === latest,
+      ),
+      Stream.runCollect,
+      Effect.timeout("5 seconds"),
+    );
+    let receiptOrdinal = 0;
+    for (const event of emitted) {
+      assert.notEqual(event.type, "turn.terminal");
+      if (event.type !== "provider_turn.updated") continue;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`actual-native-receipt:${++receiptOrdinal}`),
+            type: "provider-turn.updated",
             threadId: thread.id,
             runId: run.id,
-            runAttemptId: attempt.id,
-            providerTurnId: latest.id,
-          });
-          assert.ok(latest.acceptedAt);
-        } else {
-          assert.equal(consumed.consumedBy, undefined);
-          if (mismatched) assert.equal(latest.acceptedAt, undefined);
-        }
-        const planEvents = yield* events
-          .read({ threadId: plan.threadId, eventType: "plan.updated" })
-          .pipe(Stream.runCollect);
-        assert.equal(planEvents.length, proof === "confirmed" ? 2 : 1);
-        const persisted = (yield* projection.getThreadProjection(thread.id)).providerTurns;
-        assert.equal(persisted.length, 1);
-        assert.deepEqual(persisted[0], latest);
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
-}
+            nodeId: root.id,
+            providerInstanceId: instanceId,
+            driver,
+            occurredAt: now,
+            payload: event.providerTurn,
+          },
+        ],
+      });
+    }
+    const mismatched = proof === "foreign-id" || proof === "foreign-session";
+    const consumed = yield* projection.getPlan(plan.threadId, plan.id);
+    assert.ok(consumed?.kind === "proposed_plan");
+    assert.equal(consumed.status, proof === "confirmed" ? "completed" : "active");
+    assert.equal(latest.nativeAcceptance, mismatched ? "unknown" : "accepted");
+    assert.equal(latest.nativeTurnRef?.strength, mismatched ? "weak" : "strong");
+    assert.equal(latest.nativeTurnRef?.nativeId, offeredId);
+    assert.equal(latest.runAttemptId, attempt.id);
+    assert.equal(latest.nodeId, run.rootNodeId);
+    assert.equal(latest.providerThreadId, resumed.id);
+    if (proof === "confirmed") {
+      assert.deepEqual(consumed.consumedBy, {
+        threadId: thread.id,
+        runId: run.id,
+        runAttemptId: attempt.id,
+        providerTurnId: latest.id,
+      });
+      assert.ok(latest.acceptedAt);
+    } else {
+      assert.equal(consumed.consumedBy, undefined);
+      if (mismatched) assert.equal(latest.acceptedAt, undefined);
+    }
+    const planEvents = yield* events
+      .read({ threadId: plan.threadId, eventType: "plan.updated" })
+      .pipe(Stream.runCollect);
+    assert.equal(planEvents.length, proof === "confirmed" ? 2 : 1);
+    const persisted = (yield* projection.getThreadProjection(thread.id)).providerTurns;
+    assert.equal(persisted.length, 1);
+    assert.deepEqual(persisted[0], latest);
+  }).pipe(Effect.provide(testLayer), Effect.scoped),
+);

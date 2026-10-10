@@ -6,8 +6,8 @@ import {
   type OrchestrationForkLineage,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import type * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 import { toConversationImportMarker } from "./LegacyConversationOriginReader.ts";
 
 /**

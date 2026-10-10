@@ -1,3 +1,4 @@
+import * as Base64Url from "effect/encoding/Base64Url";
 // @effect-diagnostics nodeBuiltinImport:off -- Filesystem authority and content hashing stay server-owned.
 import {
   ArtifactProducerId,
@@ -13,7 +14,6 @@ import {
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
 import { observeAnalyticsEffect } from "../../../telemetry/OperationAnalytics.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
-import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import { exportScientDocumentForInvocation } from "./documentExportHandler.ts";
 import { buildScientLatexForInvocation } from "./latexHandler.ts";
 import {
@@ -170,7 +170,7 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
     Effect.mapError(boundaryToolError),
   );
   const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
-  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const broker = yield* DocumentHostBroker.DocumentHostBroker;
   const handle = yield* generatedDocuments
     .beginProduction({
       logicalDocumentKey: sourceLogicalDocumentKey(initial.canonicalPath),
@@ -260,7 +260,7 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
   }
 
   const bytes = yield* Effect.try({
-    try: () => Result.getOrThrow(Encoding.decodeBase64Url(rendered.bytesBase64)),
+    try: () => Result.getOrThrow(Base64Url.decode(rendered.bytesBase64)),
     catch: () => toolError("render-failed", "The desktop returned invalid PDF bytes."),
   }).pipe(
     Effect.tapError(() =>

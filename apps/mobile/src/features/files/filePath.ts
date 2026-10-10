@@ -1,4 +1,4 @@
-import { collapseAbsoluteFilePath } from "@t3tools/client-runtime/markdown-links";
+import { collapseAbsoluteFilePath } from "@t3tools/shared/path";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,

@@ -18,7 +18,7 @@ function assertCurrent(isCurrent: () => boolean): void {
 
 /**
  * Regenerates one linked HTML PDF revision. The authorized URL becomes the
- * relation's current page only after the desktop Browser accepts navigation.
+ * relation's current page only after its existing browser owner accepts navigation.
  */
 export async function runHtmlPdfUpdateTransaction(
   transaction: HtmlPdfUpdateTransaction,

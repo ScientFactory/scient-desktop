@@ -16,11 +16,11 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
+import { layer as OrchestrationEventStoreLive } from "../persistence/OrchestrationEventStore.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import { OrchestrationEventStore } from "../persistence/OrchestrationEventStore.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -55,8 +55,9 @@ const controls = [
   },
 ] as const;
 
-for (const { phase, name } of controls) {
-  it.live(name, () =>
+it.live.each(controls.map(({ phase, name }) => ({ caseTitle: name, phase, name })))(
+  "$caseTitle",
+  ({ phase, name }) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const eventStore = yield* EventStore.EventStoreV2;
@@ -269,5 +270,4 @@ for (const { phase, name } of controls) {
         );
       }).pipe(Effect.ensuring(Deferred.succeed(releaseGate, undefined)));
     }).pipe(Effect.scoped, Effect.timeout("10 seconds"), Effect.provide(stores)),
-  );
-}
+);

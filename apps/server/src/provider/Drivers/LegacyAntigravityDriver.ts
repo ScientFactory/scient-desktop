@@ -23,8 +23,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -38,7 +38,7 @@ import {
   buildInitialAntigravityProviderSnapshot,
   checkAntigravityProviderStatus,
   enrichAntigravitySnapshot,
-} from "../Layers/LegacyAntigravityProvider.ts";
+} from "../LegacyAntigravityProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import {

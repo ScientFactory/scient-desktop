@@ -10,7 +10,24 @@ const testState = vi.hoisted(() => ({
   resources: [] as Array<unknown>,
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("~/state/server", async (original) => {
+  const actual = await original<typeof import("~/state/server")>();
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      configValueAtom: () => "render-server-config",
+    },
+  };
+});
+vi.mock("@effect/atom-react", async () => {
+  const { AsyncResult } = await import("effect/reactivity");
+  return {
+    useAtomValue: (atom: unknown) =>
+      atom === "render-server-config" ? null : AsyncResult.initial(),
+    useAtomRefresh: () => vi.fn(),
+  };
+});
 vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlRefresh: () => vi.fn(),
   useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
@@ -25,7 +42,8 @@ vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.f
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/session")>()),
-  usePreparedConnection: () => ({ _tag: "Loading" }),
+  usePreparedConnection: () => ({ _tag: "None" }),
+  useEnvironmentScope: () => false,
 }));
 vi.mock("~/state/entities", () => ({
   readThreadShell: () => null,

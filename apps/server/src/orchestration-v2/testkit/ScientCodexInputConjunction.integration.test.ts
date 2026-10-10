@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import { vi } from "vite-plus/test";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -31,8 +32,8 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 import {
   issueAttachmentUploadUrl,
   validateAttachmentUploadToken,
@@ -73,9 +74,9 @@ import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
@@ -266,6 +267,7 @@ const runConjunction = (refusal = false) =>
         binaryPath: process.execPath,
       });
       const adapter = makeCodexAdapterV2({
+        crypto: yield* Crypto.Crypto,
         instanceId,
         settings,
         environment: {},
@@ -376,7 +378,7 @@ const runConjunction = (refusal = false) =>
             { name, runtimePolicyOverride: { cwd } },
             makeLayer([adapter]),
             {
-              serverConfigLayer: configLayer,
+              layerServerConfig: configLayer,
               configureMcp: true,
               mcpSessionRegistryLayer: Layer.succeed(
                 McpSessionRegistry.McpSessionRegistry,

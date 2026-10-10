@@ -8,9 +8,13 @@ import {
   DROID_LATEST_VERSION_URL,
   parseDroidReleaseVersion,
   antigravityAcpExecutableNames,
+  isAntigravityAcpNativeVersion,
   resolveAntigravityAcpCatalogAsset,
   hydrateManagedRuntimeArtifact,
-  isManagedRuntimeUpdate,
+  compareManagedRuntimeReleases,
+  isSameCursorReleaseDate,
+  isValidManagedRuntimeSupersedes,
+  MAX_CURSOR_SUPERSEDES,
   managedRuntimeTargetKey,
   resolveReviewedAntigravityArtifact,
   resolveReviewedClaudeArtifact,
@@ -59,6 +63,7 @@ export interface ManagedRuntimeCatalogProviderData {
   readonly contractRevision: number;
   readonly channel: "stable";
   readonly version: string;
+  readonly supersedes?: ReadonlyArray<string> | undefined;
   readonly artifacts: Readonly<Record<string, ManagedRuntimeCatalogArtifactData>>;
 }
 
@@ -67,11 +72,14 @@ export interface ManagedRuntimeCatalogData {
   readonly providers: Readonly<
     Partial<Record<ManagedRuntimeCatalogProvider, ManagedRuntimeCatalogProviderData>>
   >;
+  /** Discovery predecessor, retained only in the immutable qualification artifact. */
+  readonly cursorDiscoveryBase?: string | undefined;
 }
 
 export interface ManagedRuntimeCatalogRefreshResult {
   readonly catalog: ManagedRuntimeCatalogData;
   readonly changedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider>;
+  readonly failedProviders?: ReadonlyArray<ManagedRuntimeCatalogProvider>;
 }
 
 type Fetch = (input: URL, init?: RequestInit) => Promise<Response>;
@@ -260,7 +268,11 @@ function candidateProvider(input: {
   readonly provider: ManagedRuntimeCatalogProvider;
   readonly version: string;
   readonly artifacts: Readonly<Record<string, ManagedRuntimeCatalogArtifactData>>;
+  readonly supersedes?: ReadonlyArray<string> | undefined;
 }): ManagedRuntimeCatalogProviderData {
+  if (!isValidManagedRuntimeSupersedes(input.provider, input.version, input.supersedes)) {
+    throw new Error(`${input.provider} has invalid release ordering metadata.`);
+  }
   if (input.provider === "antigravityAcp") {
     const release = {
       contractRevision: MANAGED_RUNTIME_POLICY[input.provider].revision,
@@ -303,18 +315,124 @@ function candidateProvider(input: {
     contractRevision: MANAGED_RUNTIME_POLICY[input.provider].revision,
     channel: "stable",
     version: input.version,
+    ...(input.supersedes ? { supersedes: input.supersedes.toSorted() } : {}),
     artifacts: input.artifacts,
   };
 }
 
-/**
- * Decode a published catalog without upgrading its policy revisions. Current
- * releases are checked against app-owned policy; known historical revisions
- * are retained as data so a policy transition cannot block other providers.
- * Automation reads the generated branch through Git, so it must not trust a
- * TypeScript cast to establish current-policy compatibility. Candidate validation
- * additionally requires the current revision and every approved target.
- */
+/** Read siblings structurally; execution policy is applied only to the selected family. */
+export function readManagedRuntimeCatalog(
+  input: unknown,
+  selected?: ManagedRuntimeCatalogProvider,
+  report: (message: string) => void = () => undefined,
+): ManagedRuntimeCatalogData {
+  const root = record(input, "Managed runtime catalog");
+  if (root.schemaVersion !== 1) throw new Error("Managed runtime catalog schema is unsupported.");
+  const rawProviders = record(root.providers, "Managed runtime catalog providers");
+  const entries = new Map<string, ManagedRuntimeCatalogProviderData>();
+  for (const [provider, value] of Object.entries(rawProviders)) {
+    try {
+      const release = record(value, "Provider release");
+      if (
+        !Number.isSafeInteger(release.contractRevision) ||
+        Number(release.contractRevision) < 1 ||
+        release.channel !== "stable"
+      ) {
+        throw new Error("Invalid provider contract or channel.");
+      }
+      const version = stringField(release, "version", "Provider release");
+      if (version.length > 128) throw new Error("Invalid provider version.");
+      const rawArtifacts = record(release.artifacts, "Provider artifacts");
+      for (const value of Object.values(rawArtifacts)) {
+        const artifact = record(value, "Provider artifact");
+        const checksum = record(artifact.checksum, "Provider checksum");
+        const algorithm = checksum.algorithm;
+        if (algorithm !== "sha256" && algorithm !== "sha512")
+          throw new Error("Invalid checksum algorithm.");
+        strictDigest(
+          stringField(checksum, "digest", "Provider checksum"),
+          algorithm,
+          "Provider checksum",
+        );
+        if (
+          stringField(artifact, "artifactName", "Provider artifact").length > 512 ||
+          stringField(artifact, "url", "Provider artifact").length > 2048 ||
+          typeof artifact.size !== "number"
+        ) {
+          throw new Error("Invalid artifact identity.");
+        }
+        strictSize(artifact.size, "Provider artifact");
+        if (artifact.antigravityAcp !== undefined) {
+          const payload = record(artifact.antigravityAcp, "ACP payload");
+          if (
+            stringField(payload, "version", "ACP payload").length > 128 ||
+            typeof payload.executableBytes !== "number" ||
+            typeof payload.harnessBytes !== "number"
+          ) {
+            throw new Error("Invalid ACP payload identity.");
+          }
+          strictSize(payload.executableBytes, "ACP executable");
+          strictSize(payload.harnessBytes, "ACP harness");
+        }
+      }
+      // Valid siblings are preserved verbatim, including newer contracts and unknown fields.
+      entries.set(provider, value as ManagedRuntimeCatalogProviderData);
+    } catch (cause) {
+      if (provider === selected) throw cause;
+      report(
+        `Quarantined ${isManagedRuntimeProvider(provider) ? provider : "unknown provider"} malformed catalog entry.`,
+      );
+    }
+  }
+  const providers = Object.fromEntries(entries);
+  const catalog: ManagedRuntimeCatalogData = {
+    schemaVersion: 1,
+    providers,
+    ...(typeof root.cursorDiscoveryBase === "string" &&
+    /^[0-9a-f]{64}$/u.test(root.cursorDiscoveryBase)
+      ? { cursorDiscoveryBase: root.cursorDiscoveryBase }
+      : {}),
+  };
+  if (selected && providers[selected]) {
+    const validated = validateManagedRuntimeCatalog({
+      schemaVersion: 1,
+      providers: { [selected]: providers[selected] },
+    });
+    return { ...catalog, providers: { ...providers, [selected]: validated.providers[selected]! } };
+  }
+  return catalog;
+}
+
+/** Binds a Cursor qualification to its predecessor without depending on sibling changes. */
+export function managedRuntimeProviderIdentity(
+  release: ManagedRuntimeCatalogProviderData | undefined,
+): string {
+  const normalized = release
+    ? {
+        contractRevision: release.contractRevision,
+        channel: release.channel,
+        version: release.version,
+        supersedes: release.supersedes?.toSorted() ?? [],
+        artifacts: Object.entries(release.artifacts)
+          .toSorted(([a], [b]) => a.localeCompare(b))
+          .map(([key, artifact]) => [
+            key,
+            {
+              artifactName: artifact.artifactName,
+              url: artifact.url,
+              checksum: {
+                algorithm: artifact.checksum.algorithm,
+                digest: artifact.checksum.digest,
+              },
+              size: artifact.size,
+              antigravityAcp: artifact.antigravityAcp,
+            },
+          ]),
+      }
+    : null;
+  return NodeCrypto.createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+}
+
 export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCatalogData {
   const root = record(input, "Managed runtime catalog");
   if (root.schemaVersion !== 1) {
@@ -354,6 +472,10 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
       stringField(rawRelease, "version", `${provider} catalog release`),
       `${provider} catalog release`,
     );
+    if (!isValidManagedRuntimeSupersedes(provider, version, rawRelease.supersedes)) {
+      throw new Error(`${provider} has invalid release ordering metadata.`);
+    }
+    const supersedes = rawRelease.supersedes;
     const rawArtifacts = record(rawRelease.artifacts, `${provider} catalog artifacts`);
     const historical = contractRevision !== policyContract.revision;
     const entries = historical
@@ -418,7 +540,13 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
       };
     }
     if (historical) {
-      providers[provider] = { contractRevision, channel: "stable", version, artifacts };
+      providers[provider] = {
+        contractRevision,
+        channel: "stable",
+        version,
+        artifacts,
+        ...(supersedes ? { supersedes: supersedes.toSorted() } : {}),
+      };
       continue;
     }
     if (provider === "antigravityAcp") {
@@ -442,6 +570,7 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
       channel: "stable",
       version,
       artifacts,
+      ...(supersedes ? { supersedes: supersedes.toSorted() } : {}),
     };
   }
 
@@ -460,7 +589,14 @@ function releaseChanged(
       approvedTargetKeys(provider).some((key) => current.artifacts[key] === undefined)
     );
   }
-  if (!isManagedRuntimeUpdate({ provider, current: current.version, candidate: version })) {
+  const comparison = compareManagedRuntimeReleases({ provider, current, candidate: { version } });
+  if (
+    comparison === "unknown" &&
+    provider === "cursor" &&
+    isSameCursorReleaseDate(current.version, version)
+  )
+    return true;
+  if (comparison !== "newer") {
     throw new Error(
       `${provider} stable discovery moved backwards from ${current.version} to ${version}.`,
     );
@@ -484,7 +620,12 @@ export function validateManagedRuntimeCandidate(
   if (!hasCompleteApprovedTargetSet(provider, release)) {
     throw new Error(`${provider} candidate does not contain every app-approved target.`);
   }
-  return candidateProvider({ provider, version: release.version, artifacts: release.artifacts });
+  return candidateProvider({
+    provider,
+    version: release.version,
+    artifacts: release.artifacts,
+    supersedes: release.supersedes,
+  });
 }
 
 function preservesPublishedArtifacts(input: {
@@ -774,7 +915,7 @@ async function discoverAntigravityAcp(fetch_: Fetch): Promise<ManagedRuntimeCata
       throw new Error(`Antigravity ACP ${target.registryKey} changed its approved packaging.`);
     }
     const nativeVersion = url.slice(prefix.length, -suffix.length);
-    if (!/^agy_acp_server_[A-Za-z0-9_.-]{1,96}$/u.test(nativeVersion))
+    if (!isAntigravityAcpNativeVersion(nativeVersion))
       throw new Error("Antigravity ACP returned an invalid native release identity.");
     const inspected = await inspectAntigravityAcpArtifact(
       await request({ fetch: fetch_, url, timeoutMs: ARTIFACT_TIMEOUT_MS }),
@@ -997,22 +1138,34 @@ export async function refreshManagedRuntimeCatalog(
     throw new Error("Managed runtime catalog schema is unsupported.");
   let catalog = current;
   const changedProviders: ManagedRuntimeCatalogProvider[] = [];
+  const failedProviders: ManagedRuntimeCatalogProvider[] = [];
   for (const provider of managedRuntimeProviders) {
-    const result = await refreshManagedRuntimeProvider(catalog, provider, fetch_, report);
-    catalog = result.catalog;
-    changedProviders.push(...result.changedProviders);
+    try {
+      const result = await refreshManagedRuntimeProvider(catalog, provider, fetch_, report);
+      catalog = result.catalog;
+      changedProviders.push(...result.changedProviders);
+    } catch (cause) {
+      failedProviders.push(provider);
+      report(
+        `${provider} discovery failed: ${cause instanceof Error ? cause.message : "unknown error"}`,
+      );
+    }
   }
-  return { catalog, changedProviders };
+  return { catalog, changedProviders, failedProviders };
 }
 
 function existingOrBundledRelease(
   catalog: ManagedRuntimeCatalogData,
   provider: ManagedRuntimeCatalogProvider,
 ): ManagedRuntimeCatalogProviderData | undefined {
-  const release =
-    catalog.providers[provider] ??
-    validateManagedRuntimeCatalog(bundledCatalogJson).providers[provider];
-  return release;
+  const bundledProviders: Readonly<Partial<Record<ManagedRuntimeCatalogProvider, unknown>>> =
+    bundledCatalogJson.providers;
+  const raw = catalog.providers[provider] ?? bundledProviders[provider];
+  return raw
+    ? validateManagedRuntimeCatalog({ schemaVersion: 1, providers: { [provider]: raw } }).providers[
+        provider
+      ]
+    : undefined;
 }
 
 /** Discover one provider independently so a broken channel cannot block the other providers. */
@@ -1044,7 +1197,23 @@ export async function refreshManagedRuntimeProvider(
   report(
     `Collecting ${provider} ${latestVersion} release metadata for contract ${MANAGED_RUNTIME_POLICY[provider].revision}.`,
   );
-  const candidate = await discoverers[provider](fetch_);
+  const discovered = await discoverers[provider](fetch_);
+  let candidate =
+    provider === "cursor" && existing?.version === discovered.version && existing.supersedes
+      ? { ...discovered, supersedes: existing.supersedes }
+      : discovered;
+  if (
+    provider === "cursor" &&
+    existing &&
+    existing.version !== discovered.version &&
+    isSameCursorReleaseDate(existing.version, discovered.version)
+  ) {
+    const supersedes = [existing.version, ...(existing.supersedes ?? [])].toSorted();
+    if (supersedes.includes(discovered.version) || supersedes.length > MAX_CURSOR_SUPERSEDES) {
+      throw new Error("Cursor replacement lineage is stale or exceeds its bound.");
+    }
+    candidate = { ...discovered, supersedes };
+  }
   if (candidate.version !== latestVersion) {
     throw new Error(`${provider} stable release changed during discovery.`);
   }
@@ -1053,6 +1222,9 @@ export async function refreshManagedRuntimeProvider(
     catalog: {
       schemaVersion: 1,
       providers: { ...current.providers, [provider]: candidate },
+      ...(provider === "cursor"
+        ? { cursorDiscoveryBase: managedRuntimeProviderIdentity(existing) }
+        : {}),
     },
     changedProviders: [provider],
   };
@@ -1087,8 +1259,12 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
     );
   }
   if (currentRelease.version === candidateRelease.version) {
-    if (JSON.stringify(currentRelease) !== JSON.stringify(candidateRelease)) {
+    if (
+      managedRuntimeProviderIdentity(currentRelease) !==
+      managedRuntimeProviderIdentity(candidateRelease)
+    ) {
       if (
+        JSON.stringify(currentRelease.supersedes) !== JSON.stringify(candidateRelease.supersedes) ||
         !preservesPublishedArtifacts({
           provider: input.provider,
           current: currentRelease,
@@ -1113,11 +1289,26 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
         };
   }
   if (
-    !isManagedRuntimeUpdate({
+    input.provider === "cursor" &&
+    isSameCursorReleaseDate(currentRelease.version, candidateRelease.version)
+  ) {
+    if (
+      input.candidate.cursorDiscoveryBase !== managedRuntimeProviderIdentity(currentRelease) ||
+      JSON.stringify(candidateRelease.supersedes) !==
+        JSON.stringify([currentRelease.version, ...(currentRelease.supersedes ?? [])].toSorted()) ||
+      currentRelease.supersedes?.includes(candidateRelease.version)
+    ) {
+      throw new Error(
+        "Cursor qualification predecessor changed or its replacement lineage is invalid; rediscover Cursor.",
+      );
+    }
+  }
+  if (
+    compareManagedRuntimeReleases({
       provider: input.provider,
-      current: currentRelease.version,
-      candidate: candidateRelease.version,
-    })
+      current: currentRelease,
+      candidate: candidateRelease,
+    }) !== "newer"
   ) {
     throw new Error(
       `${input.provider} candidate ${candidateRelease.version} is not newer than ${currentRelease.version}.`,
@@ -1206,5 +1397,28 @@ async function discoverLatestVersion(
       );
       return supportedOmpVersion(release);
     }
+  }
+}
+
+/** The stable pointer must still name a same-day Cursor candidate at publication. */
+export async function verifyManagedRuntimePromotionPointer(
+  input: {
+    readonly current: ManagedRuntimeCatalogData;
+    readonly candidate: ManagedRuntimeCatalogData;
+    readonly provider: ManagedRuntimeCatalogProvider;
+  },
+  fetch_: Fetch = fetch,
+): Promise<void> {
+  if (input.provider !== "cursor") return;
+  const current = existingOrBundledRelease(input.current, "cursor");
+  const candidate = validateManagedRuntimeCandidate(input.candidate, "cursor");
+  if (
+    !current ||
+    current.version === candidate.version ||
+    !isSameCursorReleaseDate(current.version, candidate.version)
+  )
+    return;
+  if ((await discoverLatestVersion("cursor", fetch_)) !== candidate.version) {
+    throw new Error("Cursor stable pointer changed after qualification; rediscover Cursor.");
   }
 }

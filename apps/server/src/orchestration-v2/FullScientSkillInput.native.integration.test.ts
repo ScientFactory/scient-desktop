@@ -1,4 +1,5 @@
 // Native and issued-token evidence uses digests, never bearer values.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous wire observation records digests without exposing bearer tokens.
 import * as NodeCrypto from "node:crypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -20,6 +21,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -30,8 +32,8 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 import {
   issueAttachmentUploadUrl,
   validateAttachmentUploadToken,
@@ -42,7 +44,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath, parseThreadSegmentFromAttachmentId } from "../attachmentStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
+import { requireThreadScope, type McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { scientInvocationForMcp } from "../mcp/ScientMcpInvocation.ts";
@@ -62,9 +64,9 @@ import { makeCodexAdapterV2 } from "./Adapters/CodexAdapterV2.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectStoreV2 } from "./ProjectStore.ts";
-import { makeLayer } from "./ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import {
-  makeOrchestratorV2ReplayLayerWithRegistry,
+  layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
@@ -274,6 +276,7 @@ const runConjunction = () =>
         path,
         idAllocator: allocator,
         serverConfig: config,
+        crypto: yield* Crypto.Crypto,
         clientFactory: {
           open: () =>
             CodexClient.make(
@@ -377,7 +380,7 @@ const runConjunction = () =>
             { name, runtimePolicyOverride: { cwd } },
             makeLayer([adapter]),
             {
-              serverConfigLayer: configLayer,
+              layerServerConfig: configLayer,
               configureMcp: true,
               mcpSessionRegistryLayer: Layer.succeed(
                 McpSessionRegistry.McpSessionRegistry,
@@ -516,7 +519,9 @@ const runConjunction = () =>
         assert.include(automaticText.text, "Review this workspace automatically.");
         assert.include(automaticText.text, `digest ${automatic.scope.skillScope?.catalog?.digest}`);
         assert.notInclude(automaticText.text, "Scient selected skills");
-        const automaticInvocation = scientInvocationForMcp(automatic.scope);
+        const automaticInvocation = scientInvocationForMcp(
+          yield* requireThreadScope(automatic.scope, "skills.list"),
+        );
         const automaticListing = yield* dispatchScientOperation(
           "skills.list",
           listScientSkillsForInvocation(),
@@ -712,7 +717,9 @@ const runConjunction = () =>
         assert.notInclude(emptyText.text, "Scient selected skills");
         assert.include(emptyText.text, "$unselected is captured data.");
         assert.include(emptyText.text, "$project-method inspect these results.");
-        const emptyInvocation = scientInvocationForMcp(empty.scope);
+        const emptyInvocation = scientInvocationForMcp(
+          yield* requireThreadScope(empty.scope, "skills.list"),
+        );
         const emptyListing = yield* dispatchScientOperation(
           "skills.list",
           listScientSkillsForInvocation(),

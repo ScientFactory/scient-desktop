@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import type { ServerProviderShape } from "../Services/ServerProvider.ts";
+import type { ServerProviderShape } from "../ServerProvider.ts";
 import { makeDroidProviderStatus } from "./DroidProviderStatus.ts";
 
 const snapshot = (overrides: Partial<ServerProvider> = {}): ServerProvider =>

@@ -15,6 +15,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -80,6 +81,7 @@ function buildTurnDiffResult(
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+  const crypto = yield* Crypto.Crypto;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -174,22 +176,22 @@ export const make = Effect.gen(function* () {
       if (input.fromTurnCount === 0) {
         // Historical roots can predate baseline metadata. Their implicit zero
         // still precedes a newer ready boundary in the same workspace.
-        const implicitLegacyBaselines = workspaceRoots.flatMap((scope) =>
-          isWorkspaceBoundRootScopeId(scope.id) ||
-          projection.checkpoints.some(
-            (checkpoint) =>
-              checkpoint.scopeId === scope.id &&
-              checkpoint.runId === null &&
-              checkpoint.appRunOrdinal === null,
-          )
-            ? []
-            : [
-                {
-                  scopeId: scope.id,
-                  ordinalWithinScope: 0,
-                  ref: checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 0 }),
-                },
-              ],
+        const implicitLegacyBaselines = yield* Effect.forEach(
+          workspaceRoots.filter(
+            (scope) =>
+              !isWorkspaceBoundRootScopeId(scope.id) &&
+              !projection.checkpoints.some(
+                (checkpoint) =>
+                  checkpoint.scopeId === scope.id &&
+                  checkpoint.runId === null &&
+                  checkpoint.appRunOrdinal === null,
+              ),
+          ),
+          (scope) =>
+            checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 0 }).pipe(
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.map((ref) => ({ scopeId: scope.id, ordinalWithinScope: 0, ref })),
+            ),
         );
         fromCheckpointRef = [...baselines, ...implicitLegacyBaselines].toSorted(
           (a, b) =>

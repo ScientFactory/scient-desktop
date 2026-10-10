@@ -11,9 +11,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { DroidSettings } from "@t3tools/contracts";
-import { checkDroidProviderStatusWithCapabilities } from "../Layers/DroidProvider.ts";
+import { checkDroidProviderStatusWithCapabilities } from "../DroidProvider.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import type { DroidAcpRuntimeFactory, DroidAcpRuntimeInput } from "../acp/DroidAcpSupport.ts";
 
@@ -886,7 +886,6 @@ describe("Droid custom model settings", () => {
           // The key is in none of the inputs Droid's spawn is built from: its
           // environment, argv inputs or settings.
           expect(capturedInput!.environment).toBeUndefined();
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           expect(JSON.stringify(capturedInput)).not.toContain("scoped-secret");
           const decoded = decodeOverlay(contents).customModels[0]!;
           expect(decoded.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/[a-f0-9]{24}$/);

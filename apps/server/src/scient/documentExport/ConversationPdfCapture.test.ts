@@ -1,3 +1,4 @@
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Tests read the real capture directory.
 import * as NodeFSP from "node:fs/promises";
 
@@ -19,7 +20,12 @@ import {
 } from "./DocumentExportTestUtils.ts";
 import { publishCapturedDocumentPdf } from "./DocumentPdfPublication.ts";
 
-const layer = Layer.orDie(documentExportTestLayer("scient-conversation-pdf-test-"));
+const layer = Layer.merge(
+  Layer.mock(Orchestrator.OrchestratorV2)({
+    dispatch: () => Effect.succeed({ sequence: 1, storedEvents: [] }),
+  }),
+  Layer.orDie(documentExportTestLayer("scient-conversation-pdf-test-")),
+);
 const decodePageInput = Schema.decodeUnknownSync(Schema.fromJsonString(ScientDocumentPageInput));
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9]);
 const digest = sha256Digest(new TextEncoder().encode("conversation snapshot"));

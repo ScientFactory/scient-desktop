@@ -8,6 +8,8 @@ import {
   recordNativeModelContextWindow,
   type NativeModelCapacityOwner,
 } from "./scient-fork/NativeModelContextWindow.ts";
+import { writeForkHistory, type ForkHistoryEntry } from "./scient-fork/ForkHistory.ts";
+import { freezeShownHistory } from "./scient-fork/ForkHistoryFreeze.ts";
 import {
   pendingStartOwnerIsCurrent,
   type PendingStartOwner,
@@ -38,12 +40,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
-import type { UnsequencedProjectEvent } from "../persistence/Services/OrchestrationEventStore.ts";
+import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -147,6 +150,7 @@ export interface EventSinkV2Shape {
     readonly activeAttemptId: RunAttemptId;
     readonly expectedStatus: OrchestrationV2Run["status"];
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<
     {
       readonly committed: boolean;
@@ -186,6 +190,8 @@ export interface EventSinkV2Shape {
     };
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
+    /** SCIENT-FORK: a new fork's inherited history, recorded with its creation. */
+    readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
@@ -251,7 +257,7 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
 /**
  * IMPLEMENTATIONS
  */
-const baseLayer: Layer.Layer<
+const layerBase: Layer.Layer<
   EventSinkV2,
   never,
   | CommandReceiptStore.CommandReceiptStoreV2
@@ -287,6 +293,8 @@ const baseLayer: Layer.Layer<
           );
         }
       });
+    const publishStoredEvents = (events: ReadonlyArray<OrchestrationV2StoredEvent>) =>
+      eventStore.publishCommitted(events).pipe(Effect.andThen(publishLiveEvents(events)));
 
     // A user can answer after terminal normalization reads the pending request.
     // Recheck inside the write transaction so stale cleanup cannot erase answers.
@@ -349,6 +357,8 @@ const baseLayer: Layer.Layer<
       return Effect.gen(function* () {
         const normalized: OrchestrationV2DomainEvent[] = [];
         for (const event of events) {
+          // SCIENT-FORK: forks showing what this event rewrites keep the stored version.
+          yield* freezeShownHistory(sql, event);
           const positioned = yield* event.type === "turn-item.updated"
             ? turnItemPositions
                 .normalize(
@@ -514,6 +524,7 @@ const baseLayer: Layer.Layer<
               yield* effectOutbox.enqueue(input.pendingStartOwner.effects);
             if (capacityOwner !== undefined && capacity !== undefined)
               yield* recordNativeModelContextWindow(sql, capacityOwner, capacity);
+            yield* effectOutbox.enqueue(input.effects ?? []);
             return { committed: true as const, storedEvents };
           }),
           (result) =>
@@ -526,6 +537,8 @@ const baseLayer: Layer.Layer<
                   input.pendingStartOwner.effects.length > 0
                 )
                   yield* effectOutbox.notifyAvailable(input.pendingStartOwner.effects.length);
+                if (input.effects !== undefined && input.effects.length > 0)
+                  yield* effectOutbox.notifyAvailable(input.effects.length);
               }
             }),
         );
@@ -623,7 +636,9 @@ const baseLayer: Layer.Layer<
           const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({ events: normalized });
           yield* applyStoredEvents(storedEvents);
-          const projection = yield* readRunningForkOwner(input.owner);
+          yield* readRunningForkOwner(input.owner);
+          // The fork's one full read of its source, at the captured frame.
+          const projection = yield* projectionStore.getThreadProjection(input.owner.threadId);
           const sourceSequence = yield* eventStore.latestSequence({
             threadId: input.owner.threadId,
           });
@@ -725,6 +740,19 @@ const baseLayer: Layer.Layer<
             );
           }
           yield* applyStoredEvents(storedEvents);
+          // SCIENT-FORK:START
+          if (input.forkHistory !== undefined)
+            yield* writeForkHistory(sql, input.threadId, input.forkHistory).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EventSinkWriteError({
+                    commandId: input.commandId,
+                    eventCount: input.events.length,
+                    cause,
+                  }),
+              ),
+            );
+          // SCIENT-FORK:END
           yield* effectOutbox.enqueue(input.effects);
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
@@ -1058,13 +1086,13 @@ const baseLayer: Layer.Layer<
  * important because enqueue notifications are in-memory wakeups backed by the
  * durable SQL queue.
  */
-export const layerFromStores = baseLayer;
+export const layerFromStores = layerBase;
 
 export const layer: Layer.Layer<
   EventSinkV2,
   never,
   EventStore.EventStoreV2 | ProjectionStore.ProjectionStoreV2 | SqlClient.SqlClient
-> = baseLayer.pipe(
+> = layerBase.pipe(
   Layer.provide(
     Layer.mergeAll(
       CommandReceiptStore.layer,

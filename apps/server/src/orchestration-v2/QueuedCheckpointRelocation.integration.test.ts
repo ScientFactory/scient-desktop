@@ -18,9 +18,9 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
-import * as ProviderInstances from "../provider/Services/ProviderInstanceRegistry.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -28,7 +28,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 // Pause native execution to relocate before delivery; exercise the exact persisted
 // scope through the production Git baseline, capture, diff, and restore services.
@@ -49,7 +49,7 @@ const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
 );
 const testLayer = makeOrchestratorV2ReplayLayerWithRegistry(
   { name: "review-native-queued-checkpoint-relocation" },
-  ProviderAdapters.makeLayer([
+  ProviderAdapters.layerFromAdapters([
     {
       instanceId,
       driver,
@@ -59,7 +59,7 @@ const testLayer = makeOrchestratorV2ReplayLayerWithRegistry(
     },
   ]),
   {
-    databaseLayer: database,
+    layerDatabase: database,
     runEffectWorker: false,
     runtimePolicyLayer: policyLayer.pipe(Layer.orDie),
   },

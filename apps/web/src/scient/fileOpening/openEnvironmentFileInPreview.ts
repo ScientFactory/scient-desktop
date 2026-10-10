@@ -7,7 +7,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
@@ -16,7 +16,7 @@ import {
   openUrlInPreview,
   type OpenPreviewMutation,
 } from "~/browser/openFileInPreview";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { isPreviewAvailableFor } from "~/browser/previewRuntime";
 import { useHtmlPdfSourceStore } from "../documentExport/htmlPdfSourceStore";
 
 export function environmentFileAssetResource(input: {
@@ -45,7 +45,7 @@ export async function openEnvironmentFileInPreview<AssetError, PreviewError>(inp
     AssetError | PreviewError | BrowserPreviewUnavailableError | BrowserSettingsReadError
   >
 > {
-  if (!isPreviewSupportedInRuntime()) {
+  if (!isPreviewAvailableFor(input.threadRef.environmentId)) {
     return AsyncResult.failure(
       Cause.fail(
         new BrowserPreviewUnavailableError({

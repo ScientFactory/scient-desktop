@@ -21,6 +21,7 @@ permissions:
 concurrency:
   group: managed-provider-runtime-update-scan-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   provider:

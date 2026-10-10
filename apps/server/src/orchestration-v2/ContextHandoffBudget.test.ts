@@ -514,83 +514,82 @@ describe("handoff budget", () => {
 });
 
 describe("handoff delivery", () => {
-  for (const native of [true, false]) {
-    it.effect(
-      `carries source omissions through ${native ? "native injection" : "inline fallback"} within the same history budget`,
-      () =>
-        Effect.gen(function* () {
-          let offered = "";
-          const result = yield* deliverContextHandoffs({
-            handoffs: [handoff],
-            providerThread,
-            budget: 8_000,
-            sourceOmissions: [{ _tag: "range-truncated", throughMessageN: 2 }],
-            alreadyDeliveredItemIds: new Set(),
-            inject: (value) =>
-              Effect.sync(() => {
-                offered = value.context;
-                return native;
-              }),
-            persist: () => Effect.void,
-          });
-          const context = native ? offered : result.context;
-          assert.include(context, "Known source omissions (unverified)");
-          assert.include(context, '"range-truncated"');
-          assert.include(context, '"throughMessageN":2');
-          assert.isAtMost(Buffer.byteLength(context), 8_000);
-        }),
-    );
-  }
+  it.effect.each(
+    [true, false].map((native) => ({
+      caseTitle: `carries source omissions through ${native ? "native injection" : "inline fallback"} within the same history budget`,
+      native,
+    })),
+  )("$caseTitle", ({ native }) =>
+    Effect.gen(function* () {
+      let offered = "";
+      const result = yield* deliverContextHandoffs({
+        handoffs: [handoff],
+        providerThread,
+        budget: 8_000,
+        sourceOmissions: [{ _tag: "range-truncated", throughMessageN: 2 }],
+        alreadyDeliveredItemIds: new Set(),
+        inject: (value) =>
+          Effect.sync(() => {
+            offered = value.context;
+            return native;
+          }),
+        persist: () => Effect.void,
+      });
+      const context = native ? offered : result.context;
+      assert.include(context, "Known source omissions (unverified)");
+      assert.include(context, '"range-truncated"');
+      assert.include(context, '"throughMessageN":2');
+      assert.isAtMost(Buffer.byteLength(context), 8_000);
+    }),
+  );
 
-  for (const native of [true, false]) {
-    it.effect(
-      `records omitted recovery coverage separately from ${native ? "injected" : "inline"} text`,
-      () =>
-        Effect.gen(function* () {
-          const omittedBeforeDelivery = TurnItemId.make("item:omitted-during-preparation");
-          const oversized = message("item:oversized", "user", "x".repeat(20_000));
-          let durable: OrchestrationV2ContextHandoff = {
-            ...handoff,
-            history: {
-              ...handoff.history!,
-              messages: [...messages, oversized],
-              omittedItems: 1,
-              omittedItemIds: [omittedBeforeDelivery],
-            },
-          };
-          const result = yield* deliverContextHandoffs({
-            handoffs: [durable],
-            providerThread,
-            budget: 16_000,
-            alreadyDeliveredItemIds: new Set(),
-            inject: (value) => {
-              assert.include(value.context, "omitted 2 items");
-              assert.notInclude(
-                value.messages.map((item) => item.itemId),
-                oversized.itemId,
-              );
-              return Effect.succeed(native);
-            },
-            persist: (value) =>
-              Effect.sync(() => {
-                durable = value;
-              }),
-          });
-          assert.equal(durable.delivery?.status, native ? "injected" : "pending");
-          yield* result.delivered;
-          assert.equal(durable.delivery?.status, native ? "injected" : "inline");
-          assert.deepEqual(
-            durable.delivery?.itemIds,
-            messages.map((item) => item.itemId),
-          );
-          assert.deepEqual(durable.delivery?.omittedItemIds, [
-            omittedBeforeDelivery,
+  it.effect.each(
+    [true, false].map((native) => ({
+      caseTitle: `records omitted recovery coverage separately from ${native ? "injected" : "inline"} text`,
+      native,
+    })),
+  )("$caseTitle", ({ native }) =>
+    Effect.gen(function* () {
+      const omittedBeforeDelivery = TurnItemId.make("item:omitted-during-preparation");
+      const oversized = message("item:oversized", "user", "x".repeat(20_000));
+      let durable: OrchestrationV2ContextHandoff = {
+        ...handoff,
+        history: {
+          ...handoff.history!,
+          messages: [...messages, oversized],
+          omittedItems: 1,
+          omittedItemIds: [omittedBeforeDelivery],
+        },
+      };
+      const result = yield* deliverContextHandoffs({
+        handoffs: [durable],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        inject: (value) => {
+          assert.include(value.context, "omitted 2 items");
+          assert.notInclude(
+            value.messages.map((item) => item.itemId),
             oversized.itemId,
-          ]);
-          assert.deepEqual(decodeHandoff(durable).delivery, durable.delivery);
-        }),
-    );
-  }
+          );
+          return Effect.succeed(native);
+        },
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      assert.equal(durable.delivery?.status, native ? "injected" : "pending");
+      yield* result.delivered;
+      assert.equal(durable.delivery?.status, native ? "injected" : "inline");
+      assert.deepEqual(
+        durable.delivery?.itemIds,
+        messages.map((item) => item.itemId),
+      );
+      assert.deepEqual(durable.delivery?.omittedItemIds, [omittedBeforeDelivery, oversized.itemId]);
+      assert.deepEqual(decodeHandoff(durable).delivery, durable.delivery);
+    }),
+  );
   it.effect("loads the history budget only when a handoff needs delivery", () =>
     Effect.gen(function* () {
       let reads = 0;
@@ -1084,3 +1083,281 @@ it.effect.each(["after-record", "before-agent"] as const)(
         assert.equal(retry.failure._tag, "ContextHandoffDeliveryUncertainError");
     }),
 );
+
+describe("handoff delivery", () => {
+  it.effect.each([
+    { native: true, label: "injected" },
+    { native: false, label: "inline" },
+  ])("records omitted recovery coverage separately from $label text", ({ native }) =>
+    Effect.gen(function* () {
+      const omittedBeforeDelivery = TurnItemId.make("item:omitted-during-preparation");
+      const oversized = message("item:oversized", "user", "x".repeat(20_000));
+      let durable: OrchestrationV2ContextHandoff = {
+        ...handoff,
+        history: {
+          ...handoff.history!,
+          messages: [...messages, oversized],
+          omittedItems: 1,
+          omittedItemIds: [omittedBeforeDelivery],
+        },
+      };
+      const result = yield* deliverContextHandoffs({
+        handoffs: [durable],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        inject: (value) => {
+          assert.include(value.context, "omitted 2 items");
+          assert.notInclude(
+            value.messages.map((item) => item.itemId),
+            oversized.itemId,
+          );
+          return Effect.succeed(native);
+        },
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      assert.equal(durable.delivery?.status, native ? "injected" : "pending");
+      yield* result.delivered;
+      assert.equal(durable.delivery?.status, native ? "injected" : "inline");
+      assert.deepEqual(
+        durable.delivery?.itemIds,
+        messages.map((item) => item.itemId),
+      );
+      assert.deepEqual(durable.delivery?.omittedItemIds, [omittedBeforeDelivery, oversized.itemId]);
+      assert.deepEqual(decodeHandoff(durable).delivery, durable.delivery);
+    }),
+  );
+  it.effect("loads the history budget only when a handoff needs delivery", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const input = {
+        providerThread,
+        budget: Effect.sync(() => {
+          reads++;
+          return 16_000;
+        }),
+        alreadyDeliveredItemIds: new Set<string>(),
+        persist: () => Effect.void,
+      };
+      yield* deliverContextHandoffs({ ...input, handoffs: [] });
+      yield* deliverContextHandoffs({ ...input, handoffs: [handoff], deferInline: true });
+      yield* deliverContextHandoffs({
+        ...input,
+        handoffs: [
+          {
+            ...handoff,
+            delivery: {
+              nativeThreadId: providerThread.nativeThreadRef!.nativeId!,
+              status: "injected",
+              itemIds: [],
+            },
+          },
+        ],
+      });
+      assert.equal(reads, 0);
+      const result = yield* deliverContextHandoffs({ ...input, handoffs: [handoff] });
+      assert.equal(reads, 1);
+      assert.include(result.context, messages[0]!.text);
+    }),
+  );
+
+  it.effect("persists successful injection before turn start and skips it on retry", () =>
+    Effect.gen(function* () {
+      let durable = handoff;
+      const history: unknown[] = [];
+      const statuses: string[] = [];
+      const input = {
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set<string>(),
+        inject: (value: ProviderAdapterV2HistoricalContext) =>
+          Effect.sync(() => {
+            history.push(...historyResponseItems(value.messages, value.context));
+            return true;
+          }),
+        persist: (value: OrchestrationV2ContextHandoff) =>
+          Effect.sync(() => {
+            durable = value;
+            statuses.push(value.delivery!.status);
+          }),
+      };
+      const first = yield* deliverContextHandoffs({ ...input, handoffs: [durable] });
+      assert.equal(first.context, "");
+      assert.deepEqual(statuses, ["pending", "injected"]);
+      assert.lengthOf(history, 3);
+      // No turn has started. Reconstruct from the durable projection as a retry would.
+      const second = yield* deliverContextHandoffs({ ...input, handoffs: [durable] });
+      assert.equal(second.context, "");
+      assert.lengthOf(history, 3);
+    }),
+  );
+
+  it.effect(
+    "uses the same selection on explicit native fallback, marking only accepted input",
+    () =>
+      Effect.gen(function* () {
+        let durable = handoff;
+        const result = yield* deliverContextHandoffs({
+          handoffs: [handoff],
+          providerThread,
+          budget: 16_000,
+          alreadyDeliveredItemIds: new Set(),
+          inject: () => Effect.succeed(false),
+          persist: (value) =>
+            Effect.sync(() => {
+              durable = value;
+            }),
+        });
+        assert.include(result.context, messages[0]!.text);
+        assert.include(result.context, messages[1]!.text);
+        assert.equal(durable.delivery?.status, "pending");
+        yield* result.delivered;
+        assert.equal(durable.delivery?.status, "inline");
+      }),
+  );
+
+  it.effect(
+    "defers unsupported compaction history until a normal turn without marking delivery uncertain",
+    () =>
+      Effect.gen(function* () {
+        let durable = handoff;
+        const persist = (value: OrchestrationV2ContextHandoff) =>
+          Effect.sync(() => {
+            durable = value;
+          });
+        const compact = yield* deliverContextHandoffs({
+          handoffs: [durable],
+          providerThread,
+          budget: 16_000,
+          alreadyDeliveredItemIds: new Set(),
+          deferInline: true,
+          inject: () => Effect.succeed(false),
+          persist,
+        });
+        yield* compact.delivered;
+        assert.equal(compact.context, "");
+        assert.isUndefined((() => durable.delivery)());
+        const next = yield* deliverContextHandoffs({
+          handoffs: [durable],
+          providerThread,
+          budget: 16_000,
+          alreadyDeliveredItemIds: new Set(),
+          inject: () => Effect.succeed(false),
+          persist,
+        });
+        assert.include(next.context, messages[0]!.text);
+        yield* next.delivered;
+        assert.equal(durable.delivery?.status, "inline");
+      }),
+  );
+
+  it.effect("bounds accumulated recovery markers while keeping omitted history discoverable", () =>
+    Effect.gen(function* () {
+      const many = Array.from({ length: 100 }, (_, index) => ({
+        ...handoff,
+        id: ContextHandoffId.make(`handoff:retry:${index}`),
+      }));
+      let captured: ProviderAdapterV2HistoricalContext | undefined;
+      const result = yield* deliverContextHandoffs({
+        handoffs: many,
+        providerThread,
+        budget: 2_500,
+        alreadyDeliveredItemIds: new Set(),
+        inject: (history) =>
+          Effect.sync(() => {
+            captured = history;
+            return true;
+          }),
+        persist: () => Effect.void,
+      });
+      assert.equal(result.context, "");
+      assert.isDefined(captured);
+      assert.include(captured.context, "detailed coverage references omitted");
+      assert.include(captured.context, "scient_thread_read");
+      assert.include(captured.context, threadId);
+      assert.isAtMost(historyCost(captured.messages, captured.context), 2_500);
+      assert.isAbove(captured.messages.length, 0);
+    }),
+  );
+
+  it.effect("does not redeliver after ambiguous injection failure", () =>
+    Effect.gen(function* () {
+      let durable = handoff;
+      let calls = 0;
+      const input = {
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set<string>(),
+        inject: () =>
+          Effect.sync(() => {
+            calls++;
+          }).pipe(Effect.andThen(Effect.fail("connection lost"))),
+        persist: (value: OrchestrationV2ContextHandoff) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      };
+      yield* deliverContextHandoffs({ ...input, handoffs: [durable] }).pipe(Effect.result);
+      assert.equal(durable.delivery?.status, "pending");
+      const retry = yield* deliverContextHandoffs({ ...input, handoffs: [durable] }).pipe(
+        Effect.result,
+      );
+      assert.equal(retry._tag, "Failure");
+      assert.equal(calls, 1);
+    }),
+  );
+
+  it.effect("budgets multiple handoffs together and skips previously delivered items", () =>
+    Effect.gen(function* () {
+      const extra = {
+        ...handoff,
+        id: ContextHandoffId.make("handoff:two"),
+        history: {
+          ...handoff.history!,
+          messages: [...messages, message("item:three", "assistant", "Latest result")],
+        },
+      };
+      let delivered: ReadonlyArray<unknown> = [];
+      yield* deliverContextHandoffs({
+        handoffs: [handoff, extra],
+        providerThread,
+        budget: 2_500,
+        alreadyDeliveredItemIds: new Set(["item:one"]),
+        inject: (value) =>
+          Effect.sync(() => {
+            delivered = historyResponseItems(value.messages, value.context);
+            return true;
+          }),
+        persist: () => Effect.void,
+      });
+      const serialized = yield* encodeJson(delivered);
+      assert.isAtMost(Buffer.byteLength(serialized), 2_500);
+      assert.notInclude(serialized, "Preserve every line");
+      assert.equal(serialized.split("Partial work").length - 1, 1);
+      assert.include(serialized, "Latest result");
+    }),
+  );
+
+  it.effect("fails before delivery when even the coverage marker cannot fit", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const result = yield* deliverContextHandoffs({
+        handoffs: [handoff],
+        providerThread,
+        budget: 0,
+        alreadyDeliveredItemIds: new Set(),
+        inject: () =>
+          Effect.sync(() => {
+            calls++;
+            return true;
+          }),
+        persist: () => Effect.void,
+      }).pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.equal(calls, 0);
+    }),
+  );
+});

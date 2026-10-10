@@ -138,7 +138,7 @@ export function makeCustomModelReasoning(resolver = makeModelReasoningResolver()
     enrich(connection, previous, connection.credentialError !== undefined, refreshModelId).pipe(
       // Bound the whole save, not N sequential per-model deadlines.
       Effect.timeout(Duration.millis(4000)),
-      Effect.catchTag("TimeoutError", () => enrich(connection, previous, true)),
+      Effect.catchTags({ TimeoutError: () => enrich(connection, previous, true) }),
     );
   return { prepare };
 }

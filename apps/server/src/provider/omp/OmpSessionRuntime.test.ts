@@ -869,29 +869,35 @@ describe("Oh My Pi session runtime background work", () => {
 });
 
 describe("Oh My Pi session runtime compaction", () => {
-  for (const [label, frame, expected] of [
-    [
-      "a failed compaction is a warning, not a compaction",
-      { type: "auto_compaction_end", errorMessage: "Summarization failed: 500" },
-      [{ type: "warning", message: "Oh My Pi compaction failed: Summarization failed: 500" }],
-    ],
-    ["a skipped compaction reports nothing", { type: "auto_compaction_end", skipped: true }, []],
-    [
-      "a successful compaction is reported",
-      { type: "auto_compaction_end", result: { summary: "done" } },
-      [{ type: "compacted" }],
-    ],
-  ] as const) {
-    it.effect(label, () =>
-      Effect.gen(function* () {
-        const h = yield* wireHarness();
-        yield* h.wire.send(frame);
-        const produced = yield* h.settleFrames;
-        yield* Scope.close(h.scope, Exit.void);
-        expect(produced).toEqual(expected);
-      }),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        [
+          "a failed compaction is a warning, not a compaction",
+          { type: "auto_compaction_end", errorMessage: "Summarization failed: 500" },
+          [{ type: "warning", message: "Oh My Pi compaction failed: Summarization failed: 500" }],
+        ],
+        [
+          "a skipped compaction reports nothing",
+          { type: "auto_compaction_end", skipped: true },
+          [],
+        ],
+        [
+          "a successful compaction is reported",
+          { type: "auto_compaction_end", result: { summary: "done" } },
+          [{ type: "compacted" }],
+        ],
+      ] as const
+    ).map(([label, frame, expected]) => ({ caseTitle: label, label, frame, expected })),
+  )("$caseTitle", ({ label, frame, expected }) =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.wire.send(frame);
+      const produced = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(produced).toEqual(expected);
+    }),
+  );
 });
 
 describe("Oh My Pi autonomous continuation ownership", () => {
@@ -1236,52 +1242,55 @@ it.effect("a message whose prompt_result never arrives settles as uncertain", ()
   }).pipe(Effect.scoped),
 );
 
-for (const blocking of ["none", "streaming", "compacting", "question"] as const) {
-  it.effect(`bounds an acknowledged prompt without a run, respecting ${blocking}`, () =>
-    Effect.gen(function* () {
-      let blocked = blocking !== "none";
-      const h = yield* failingStateHarness(() =>
-        Effect.succeed({
-          isStreaming: blocked && blocking === "streaming",
-          isCompacting: blocked && blocking === "compacting",
+it.effect.each(
+  (["none", "streaming", "compacting", "question"] as const).map((blocking) => ({
+    caseTitle: `bounds an acknowledged prompt without a run, respecting ${blocking}`,
+    blocking,
+  })),
+)("$caseTitle", ({ blocking }) =>
+  Effect.gen(function* () {
+    let blocked = blocking !== "none";
+    const h = yield* failingStateHarness(() =>
+      Effect.succeed({
+        isStreaming: blocked && blocking === "streaming",
+        isCompacting: blocked && blocking === "compacting",
+      }),
+    );
+    const outcomes: Array<OmpSessionUpdate> = [];
+    yield* Stream.fromQueue(h.updates).pipe(
+      Stream.runForEach((update) =>
+        Effect.sync(() => {
+          if (update.type === "turn-outcome") outcomes.push(update);
         }),
-      );
-      const outcomes: Array<OmpSessionUpdate> = [];
-      yield* Stream.fromQueue(h.updates).pipe(
-        Stream.runForEach((update) =>
-          Effect.sync(() => {
-            if (update.type === "turn-outcome") outcomes.push(update);
-          }),
-        ),
-        Effect.forkScoped,
-      );
-      yield* h.runtime.begin("silent");
-      if (blocking === "question")
-        yield* Queue.offer(h.events, {
-          _tag: "Event",
-          event: {
-            type: "extension_ui_request",
-            id: "question",
-            method: "confirm",
-            title: "Continue?",
-          },
-        });
-      yield* h.runtime.accepted("silent-prompt", true);
-      const advance = Effect.gen(function* () {
-        for (let step = 0; step < 300; step++) {
-          yield* TestClock.adjust("250 millis");
-          for (let hop = 0; hop < 20; hop++) yield* Effect.yieldNow;
-        }
+      ),
+      Effect.forkScoped,
+    );
+    yield* h.runtime.begin("silent");
+    if (blocking === "question")
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: {
+          type: "extension_ui_request",
+          id: "question",
+          method: "confirm",
+          title: "Continue?",
+        },
       });
-      yield* advance;
-      if (blocked) {
-        expect(outcomes).toEqual([]);
-        blocked = false;
-        h.runtime.removeQuestion("question");
-        yield* advance;
+    yield* h.runtime.accepted("silent-prompt", true);
+    const advance = Effect.gen(function* () {
+      for (let step = 0; step < 300; step++) {
+        yield* TestClock.adjust("250 millis");
+        for (let hop = 0; hop < 20; hop++) yield* Effect.yieldNow;
       }
-      expect(outcomes).toEqual([expect.objectContaining({ outcome: "unknown" })]);
-      yield* Scope.close(h.scope, Exit.void);
-    }).pipe(Effect.scoped),
-  );
-}
+    });
+    yield* advance;
+    if (blocked) {
+      expect(outcomes).toEqual([]);
+      blocked = false;
+      h.runtime.removeQuestion("question");
+      yield* advance;
+    }
+    expect(outcomes).toEqual([expect.objectContaining({ outcome: "unknown" })]);
+    yield* Scope.close(h.scope, Exit.void);
+  }).pipe(Effect.scoped),
+);

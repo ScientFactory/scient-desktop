@@ -7,7 +7,12 @@ import {
   OrchestrationV2DispatchCommandError,
   ORCHESTRATION_V2_WS_METHODS,
 } from "./orchestrationV2.ts";
-import { WsRpcGroup, WsSubscribeServerConfigRpc } from "./rpc.ts";
+import {
+  WsConversationRpcGroup,
+  WsDeviceAndTelemetryRpcGroup,
+  WsRpcGroup,
+  WsSubscribeServerConfigRpc,
+} from "./rpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 
 const sharedDispatchRpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
@@ -44,6 +49,19 @@ describe("subscribeServerConfig payload compatibility", () => {
 });
 
 describe("WebSocket RPC contracts", () => {
+  it("owns Thread Find registrations in the conversation group only", () => {
+    for (const method of [
+      ORCHESTRATION_V2_WS_METHODS.searchThread,
+      ORCHESTRATION_V2_WS_METHODS.searchThreadStream,
+    ]) {
+      expect(WsConversationRpcGroup.requests.has(method)).toBe(true);
+      expect(WsDeviceAndTelemetryRpcGroup.requests.has(method)).toBe(false);
+      expect(WsRpcGroup.requests.get(method)?.payloadSchema).toBe(
+        WsConversationRpcGroup.requests.get(method)?.payloadSchema,
+      );
+    }
+  });
+
   it("accepts retained section commands through the shared dispatch registration", () => {
     const command = {
       type: "thread.section.set",

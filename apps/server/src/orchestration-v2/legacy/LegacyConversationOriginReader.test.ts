@@ -3,8 +3,8 @@ import { OrchestrationConversationImport, MessageId, ThreadId } from "@t3tools/c
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import {
   readInheritedTurnIds,
   toConversationImportMarker,

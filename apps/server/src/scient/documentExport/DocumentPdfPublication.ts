@@ -1,3 +1,4 @@
+import * as Base64Url from "effect/encoding/Base64Url";
 // @effect-diagnostics nodeBuiltinImport:off -- Operation identity stays server-owned.
 import { ArtifactProducerId, ProducingOperationId } from "@scientfactory/document-artifacts";
 import {
@@ -14,7 +15,6 @@ import {
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Result from "effect/Result";
 
 import * as GeneratedDocumentStore from "../documentArtifacts/GeneratedDocumentStore.ts";
@@ -121,7 +121,7 @@ export const validateDocumentRender = Effect.fn("DocumentPdfPublication.validate
     });
   }
   const bytes = yield* Effect.try({
-    try: () => Result.getOrThrow(Encoding.decodeBase64Url(render.bytesBase64)),
+    try: () => Result.getOrThrow(Base64Url.decode(render.bytesBase64)),
     catch: () =>
       new ScientDocumentPdfExportError({
         reason: "invalid-pdf",

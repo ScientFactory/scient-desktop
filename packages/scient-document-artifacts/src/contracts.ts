@@ -1,11 +1,14 @@
 import * as Schema from "effect/Schema";
 
-const identifier = <Brand extends string>(brand: Brand, maximumLength = 256) =>
+const identifier = <Brand extends string>(
+  brand: Parameters<typeof Schema.brand<Brand>>[0],
+  maximumLength = 256,
+) =>
   Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(maximumLength),
     Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u),
-  ).pipe(Schema.brand(brand));
+  ).pipe(Schema.brand<Brand>(brand));
 
 export const ArtifactAuthority = identifier("ArtifactAuthority");
 export type ArtifactAuthority = typeof ArtifactAuthority.Type;

@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
+import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 import * as ServerConfig from "../../config.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { McpSessionRegistry } from "../../mcp/McpSessionRegistry.ts";
@@ -72,7 +72,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP MCP authority", () => {
           const registry = yield* McpSessionRegistry;
           let inventoryCalls = 0;
           const routes = McpHttpServer.ScientComputeToolkitRegistrationLive.pipe(
-            Layer.provideMerge(McpHttpServer.McpTransportLive),
+            Layer.provideMerge(McpHttpServer.layerMcpTransport),
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(McpSessionRegistry, registry),

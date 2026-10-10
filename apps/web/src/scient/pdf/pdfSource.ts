@@ -106,7 +106,7 @@ export function workspacePdfSourceForPreview(input: {
   if (
     input.absolutePath === null ||
     input.relativePath === null ||
-    !isWorkspacePdfPreviewPath(input.relativePath)
+    !isWorkspacePdfPreviewPath(input.relativePath.split(/[?#]/u, 1)[0] ?? "")
   ) {
     return null;
   }

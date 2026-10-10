@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
@@ -24,7 +24,7 @@ import * as Receipts from "../../orchestration-v2/CommandReceiptStore.ts";
 import * as Executor from "../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Maintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
 import { planConversationFork } from "../../orchestration-v2/scient-fork/ConversationForkPlan.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { conversationSnapshotProjection } from "../conversationExport/conversationSnapshotProjection.ts";
 import {
   buildConversationImportCommand,
@@ -45,7 +45,7 @@ import { readConversationImportJournal } from "./ConversationImportJournal.ts";
 import * as Snapshot from "../conversationExport/ConversationSnapshotService.ts";
 import * as LegacyImporter from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import { ServerConfig } from "../../config.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { ProjectCloneTracker } from "../../project/ProjectCloneTracker.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
@@ -129,8 +129,11 @@ it.effect(
         targetThreadId: ThreadId.make("import-prefix-fork"),
         source: { kind: "user-message", messageId: secondPrompt.messageId },
       });
-      assert.equal(plan.messages.filter((message) => message.role === "user").length, 1);
-      assert.equal(plan.messages.filter((message) => message.role === "assistant").length, 1);
+      // Settled imported history is shared by reference, not copied.
+      assert.deepEqual(plan.messages, []);
+      assert.equal(plan.retained.filter((item) => item.type === "user_message").length, 1);
+      assert.equal(plan.retained.filter((item) => item.type === "assistant_message").length, 1);
+      assert.lengthOf(plan.history, plan.retained.length);
       yield* commit.dispatch(command);
       assert.deepEqual(yield* projections.getThreadProjection(command.threadId), projection);
       yield* (yield* Maintenance.ProjectionMaintenanceV2).rebuild;

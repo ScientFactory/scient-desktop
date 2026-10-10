@@ -1,5 +1,5 @@
 import { createComputeEnvironmentAtoms } from "@t3tools/client-runtime/state/compute";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { serverEnvironment } from "./server";
 

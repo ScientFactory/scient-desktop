@@ -7,7 +7,7 @@ import { useCallback } from "react";
 
 import { openFileInPreview } from "~/browser/openFileInPreview";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { isPreviewAvailableFor } from "~/browser/previewRuntime";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
@@ -37,7 +37,7 @@ export function useScientFileOpening(input: {
 
       if (
         !shouldOpenInBrowserByDefault(relativePath) ||
-        !isPreviewSupportedInRuntime() ||
+        !isPreviewAvailableFor(threadRef.environmentId) ||
         environmentHttpBaseUrl === null
       ) {
         openSource(relativePath);

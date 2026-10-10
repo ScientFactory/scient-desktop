@@ -28,13 +28,13 @@ import {
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { readQueue, writeQueue } from "./legacy/LegacyQueueLedger.ts";
 import {
   CodexOrchestratorReplayHarness,
-  makeCodexProviderAdapterRegistryReplayLayer,
+  layer as makeCodexProviderAdapterRegistryReplayLayer,
 } from "./Adapters/CodexAdapterV2.testkit.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -44,7 +44,7 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import { cutOverLegacyQueue } from "./legacy/LegacyQueueCutover.ts";
 import { makeLegacyQueueCompatibility } from "./legacy/LegacyQueueCompatibility.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import {
   materializeReplayTranscriptWorkspace,

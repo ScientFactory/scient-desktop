@@ -19,15 +19,19 @@ describe("PDF copy outcomes", () => {
     [{ _tag: "failed", reason: "write-failed" }, "failed"],
     [{ _tag: "download-started" }, null],
   ];
-  for (const [result, outcome] of cases) {
-    it(`preserves ${result._tag} and sends only its bounded outcome`, async () => {
-      const task = vi.fn(async () => result);
-      await expect(observePdfCopy(EnvironmentId.make("environment-1"), task)).resolves.toBe(result);
-      expect(task).toHaveBeenCalledOnce();
-      expect(begin).toHaveBeenCalledExactlyOnceWith("environment-1", "document-export");
-      expect(finish).toHaveBeenCalledExactlyOnceWith(outcome);
-    });
-  }
+  it.each(
+    cases.map(([result, outcome]) => ({
+      caseTitle: `preserves ${result._tag} and sends only its bounded outcome`,
+      result,
+      outcome,
+    })),
+  )("$caseTitle", async ({ result, outcome }) => {
+    const task = vi.fn(async () => result);
+    await expect(observePdfCopy(EnvironmentId.make("environment-1"), task)).resolves.toBe(result);
+    expect(task).toHaveBeenCalledOnce();
+    expect(begin).toHaveBeenCalledExactlyOnceWith("environment-1", "document-export");
+    expect(finish).toHaveBeenCalledExactlyOnceWith(outcome);
+  });
   it("preserves the exact rejected error without passing it into analytics", async () => {
     const error = new Error("private URL and error");
     await expect(

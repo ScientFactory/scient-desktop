@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 
+const voiceLifecycle = vi.hoisted(() => ({ mount: vi.fn(), unmount: vi.fn() }));
 vi.mock("~/scient/voice/ScientVoiceCommentControl", () => ({
   ScientVoiceCommentControl: ({
     onBusyChange,
@@ -11,27 +12,33 @@ vi.mock("~/scient/voice/ScientVoiceCommentControl", () => ({
   }: {
     onBusyChange?: (busy: boolean) => void;
     onTranscript: (text: string) => void;
-  }) => (
-    <>
-      <button
-        type="button"
-        aria-label="Dictate citation comment"
-        onClick={() => onTranscript("Dictated context")}
-      />
-      <button type="button" onClick={() => onBusyChange?.(true)}>
-        Begin voice processing
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          onTranscript("Dictated context");
-          onBusyChange?.(false);
-        }}
-      >
-        Finish voice processing
-      </button>
-    </>
-  ),
+  }) => {
+    useEffect(() => {
+      voiceLifecycle.mount();
+      return () => voiceLifecycle.unmount();
+    }, []);
+    return (
+      <>
+        <button
+          type="button"
+          aria-label="Dictate citation comment"
+          onClick={() => onTranscript("Dictated context")}
+        />
+        <button type="button" onClick={() => onBusyChange?.(true)}>
+          Begin voice processing
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            onTranscript("Dictated context");
+            onBusyChange?.(false);
+          }}
+        >
+          Finish voice processing
+        </button>
+      </>
+    );
+  },
 }));
 
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
@@ -99,6 +106,24 @@ afterEach(async () => {
 });
 
 describe("assistant citation comment actions", () => {
+  it("keeps one voice controller in the right-side footer while idle actions hide and restore", async () => {
+    await render("create");
+    const footer = container.querySelector('[data-citation-comment-footer="true"]');
+    expect(footer?.className).toContain("justify-end");
+    expect(footer?.querySelector('[aria-label="Dictate citation comment"]')).not.toBeNull();
+    const save = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Add to chat",
+    )!;
+    const idleActions = save.parentElement!;
+    await click("Begin voice processing");
+    expect(idleActions.className).toBe("hidden");
+    expect(idleActions.hasAttribute("inert")).toBe(true);
+    await click("Finish voice processing");
+    expect(idleActions.className).not.toContain("hidden");
+    expect(idleActions.hasAttribute("inert")).toBe(false);
+    expect(voiceLifecycle.mount).toHaveBeenCalledOnce();
+    expect(voiceLifecycle.unmount).not.toHaveBeenCalled();
+  });
   it("saves when editing an existing citation comment", async () => {
     await render();
     expect(container.textContent).toContain("Save");

@@ -10,8 +10,8 @@
  * a collapsed details block has no body in the DOM. When the row is mounted,
  * its displayed direction is reused as the message direction.
  */
-import { codexArtifactTemplatePresentationLabel } from "@t3tools/client-runtime/codex-artifact-templates";
-import { artifactTemplateFromHastProperties } from "@t3tools/client-runtime/codex-markdown-directives";
+import { codexArtifactTemplatePresentationLabel } from "@t3tools/shared/codexArtifactTemplates";
+import { artifactTemplateFromHastProperties } from "@t3tools/shared/codexMarkdownDirectives";
 import { Children, createElement, type ComponentProps } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";

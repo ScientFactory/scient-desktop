@@ -7,9 +7,11 @@
 // script-src). Runs in AudioWorkletGlobalScope: no DOM, no imports.
 //
 // The registered name MUST stay in sync with VOICE_WORKLET_PROCESSOR_NAME in
-// voiceWorkletProcessor.ts. CHUNK_SAMPLES ~= 43ms at 48kHz.
+// voiceWorkletProcessor.ts. Emit 20 measurements per second at the actual
+// sample rate, rounding chunks to whole samples. The 112-bar waveform fills
+// in 5.6 seconds, then scrolls at the same cadence.
 
-const CHUNK_SAMPLES = 2048;
+const CHUNK_SAMPLES = Math.round(sampleRate / 20);
 
 class ScientVoiceRecorderProcessor extends AudioWorkletProcessor {
   constructor() {

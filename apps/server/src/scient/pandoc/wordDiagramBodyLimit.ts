@@ -6,7 +6,7 @@ import {
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 /** Effect's default body limit is unlimited. Apply a preparse cap only to the
  * two POSTs that can carry Mermaid PNGs: 12 MiB holds 8 MiB of base64 PNGs. */

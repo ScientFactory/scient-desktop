@@ -1,4 +1,4 @@
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   nativeModelCapacityOwnerFor,
@@ -15,6 +15,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
+  latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -32,6 +33,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 // SCIENT-FORK:START — portable history and the frozen conversation-fork start.
 import {
@@ -42,6 +44,9 @@ import {
 // SCIENT-FORK:START — a pending start keeps its session out of idle release.
 import { reserveSessionForStartup } from "./scient-provider/StartupSessionHold.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START provider-enabled-at-open
+import { isProviderInstanceDisabledOpen } from "./scient-provider/ProviderInstanceEnabled.ts";
+// SCIENT-FORK:END provider-enabled-at-open
 // SCIENT-FORK:START — a Stop before native acceptance declines and captures the start.
 import {
   pendingStartCancellation,
@@ -54,11 +59,9 @@ import { validateProviderCurrentInput } from "./AttachmentPrompt.ts";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
-// SCIENT-FORK:START — explicit Scient skill selection for this turn.
+import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import { prepareScientV2SkillScope } from "../scient/skills/ScientV2SkillTurn.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
-// SCIENT-FORK:END
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -97,6 +100,11 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
 ) {}
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+
+/** Claude refuses to replace a process running background work before it reads the prompt. */
+const refusedBeforePrompt = (error: unknown): boolean =>
+  Predicate.isTagged(error, "ClaudeBackgroundWorkBlocksQueryReplacementError") ||
+  (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
 export interface ProviderTurnStartServiceV2Shape {
   /**
@@ -168,13 +176,14 @@ export const layer: Layer.Layer<
     }) => {
       // Guards and background routing need live execution state, not a fresh
       // allocation of every completed message and tool output in the thread.
+      // `false` means the run moved on or is gone. A failed read is an error,
+      // so the caller fails the start or the run instead of skipping it.
       const isCurrentAttemptInStatus = (expectedStatus: OrchestrationV2Run["status"]) =>
         projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
           Effect.map((current) => {
             const run = current.runs.find((candidate) => candidate.id === input.runId);
             return run?.activeAttemptId === input.attemptId && run.status === expectedStatus;
           }),
-          Effect.catchCause(() => Effect.succeed(false)),
         );
       return {
         isCurrentAttemptInStatus,
@@ -209,7 +218,6 @@ export const layer: Layer.Layer<
                 (run.status === "starting" || run.status === "running")
               );
             }),
-            Effect.catchCause(() => Effect.succeed(false)),
           ),
         hasUnpairedRunInterruptRequest: () =>
           projectionStore
@@ -679,6 +687,9 @@ export const layer: Layer.Layer<
           : providerSessions.open({
               threadId: projection.thread.id,
               providerSessionId,
+              // SCIENT-FORK:START provider-enabled-at-open
+              requireEnabledInstance: true,
+              // SCIENT-FORK:END provider-enabled-at-open
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
               ...(existingSessionProjection === undefined
@@ -704,6 +715,19 @@ export const layer: Layer.Layer<
         settleStartFailure,
       });
       // SCIENT-FORK:END
+      // SCIENT-FORK:START provider-enabled-at-open
+      if (
+        sessionResult._tag === "Failure" &&
+        isProviderInstanceDisabledOpen(sessionResult.failure)
+      ) {
+        yield* settleStartFailure({
+          signal: "provider-instance-disabled",
+          title: "Provider is turned off",
+          error: sessionResult.failure,
+        });
+        return;
+      }
+      // SCIENT-FORK:END provider-enabled-at-open
       if (sessionResult._tag === "Failure") {
         // A disposed buffered generation cannot be recreated by retrying session startup.
         if (
@@ -779,11 +803,11 @@ export const layer: Layer.Layer<
           const sourceAttempt = sourceProjection.attempts.find(
             (candidate) => candidate.id === sourceRun?.activeAttemptId,
           );
-          const sourceProviderTurn = sourceProjection.providerTurns.find(
-            (candidate) =>
-              candidate.id === sourceAttempt?.providerTurnId ||
-              candidate.runAttemptId === sourceAttempt?.id,
-          );
+          const sourceProviderTurn =
+            latestProviderTurnForAttempt(sourceProjection.providerTurns, sourceAttempt?.id) ??
+            sourceProjection.providerTurns.find(
+              (candidate) => candidate.id === sourceAttempt?.providerTurnId,
+            );
           if (sourceRun === undefined || sourceProviderThread === undefined) {
             return yield* new ProviderTurnStartError({
               runId,
@@ -1193,6 +1217,7 @@ export const layer: Layer.Layer<
         run,
         projection.runs,
         projection.providerTurns,
+        projection.attempts,
       );
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
@@ -1207,9 +1232,7 @@ export const layer: Layer.Layer<
             .map((candidate) => candidate.id),
         ),
         run,
-        runAttemptIds: projection.attempts
-          .filter((candidate) => candidate.runId === run.id)
-          .map((candidate) => candidate.id),
+        attempts: projection.attempts,
       });
       const restartNote =
         restartCancelledWork.length === 0
@@ -1342,14 +1365,16 @@ export const layer: Layer.Layer<
           let currentInput = compact
             ? userText
             : yield* validateCurrent(preparedUserText).pipe(
-                Effect.catchTag("ProviderCurrentInputError", (cause) => {
-                  const fallback = preparedSkills.textWithoutCatalogMarker;
-                  if (fallback === undefined) return Effect.fail(cause);
-                  preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
-                  runtimeInstruction = usesRuntimeInstruction
-                    ? preparedSkills.runtimeInstructionWithoutCatalogMarker
-                    : undefined;
-                  return validateCurrent(preparedUserText);
+                Effect.catchTags({
+                  ProviderCurrentInputError: (cause) => {
+                    const fallback = preparedSkills.textWithoutCatalogMarker;
+                    if (fallback === undefined) return Effect.fail(cause);
+                    preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
+                    runtimeInstruction = usesRuntimeInstruction
+                      ? preparedSkills.runtimeInstructionWithoutCatalogMarker
+                      : undefined;
+                    return validateCurrent(preparedUserText);
+                  },
                 }),
               );
           // A failed turn/start can leave the requested turn absent from
@@ -1433,18 +1458,19 @@ export const layer: Layer.Layer<
                 }),
             });
           const delivery = yield* prepareDelivery().pipe(
-            Effect.catchTag("ContextHandoffBudgetError", (cause) =>
-              Effect.gen(function* () {
-                const fallback = preparedSkills.textWithoutCatalogMarker;
-                if (fallback === undefined) return yield* cause;
-                preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
-                runtimeInstruction = usesRuntimeInstruction
-                  ? preparedSkills.runtimeInstructionWithoutCatalogMarker
-                  : undefined;
-                currentInput = compact ? fallback : yield* validateCurrent(preparedUserText);
-                return yield* prepareDelivery();
-              }),
-            ),
+            Effect.catchTags({
+              ContextHandoffBudgetError: (cause) =>
+                Effect.gen(function* () {
+                  const fallback = preparedSkills.textWithoutCatalogMarker;
+                  if (fallback === undefined) return yield* cause;
+                  preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
+                  runtimeInstruction = usesRuntimeInstruction
+                    ? preparedSkills.runtimeInstructionWithoutCatalogMarker
+                    : undefined;
+                  currentInput = compact ? fallback : yield* validateCurrent(preparedUserText);
+                  return yield* prepareDelivery();
+                }),
+            }),
           );
           if (!(yield* shouldStartProviderTurn()))
             return yield* new ProviderAdapterTurnStartError({
@@ -1471,7 +1497,21 @@ export const layer: Layer.Layer<
                   ? preparedUserText
                   : `${context}\n\nUser message:\n${preparedUserText}`,
             },
-          });
+          }).pipe(
+            // A pending marker would make the next turn abandon this native
+            // session, though the refused prompt never reached it.
+            Effect.tapError((error) =>
+              refusedBeforePrompt(error)
+                ? delivery.unsent.pipe(
+                    Effect.catchCause(() =>
+                      Effect.logWarning("Failed to restore unsent context handoffs", {
+                        runId: run.id,
+                      }),
+                    ),
+                  )
+                : Effect.void,
+            ),
+          );
           // The provider already accepted the turn. A stale pending marker
           // can force a fresh thread later, but must not stop live ingestion.
           yield* delivery.delivered.pipe(
@@ -1533,6 +1573,13 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
+        // Legacy accepted attempts have no native id. They count only before
+        // a replacement, while no accepted attempt records a native identity.
+        nativeThreadHasTurns:
+          nativeInputRunIds.size > 0 ||
+          (legacyInputRunIds.size > 0 &&
+            sameNativeThread &&
+            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         cancelBeforeProviderTurn: makePendingStartCancellation({
           threadId: input.threadId,

@@ -3,7 +3,7 @@ import { skillReleaseKey } from "@scientfactory/scient-skills";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { AgentCaller } from "@scientfactory/operations";
 import * as Effect from "effect/Effect";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 
 import { ScientSkillsToolkit } from "../../mcp/toolkits/skills/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "../../mcp/toolkits/skills/handlers.ts";

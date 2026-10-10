@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Sink from "effect/Sink";
-import type { Tool, Toolkit } from "effect/unstable/ai";
+import type { Tool, Toolkit } from "effect/ai";
 
 import { scientOperationCatalog, scientTools } from "../../mcp/ScientOperationCatalog.ts";
 import { AgentInvocationContext, type AgentInvocationScope } from "./AgentInvocationContext.ts";

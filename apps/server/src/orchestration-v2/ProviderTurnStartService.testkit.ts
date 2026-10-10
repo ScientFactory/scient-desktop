@@ -6,7 +6,7 @@ import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 
-export const worktreeRepairDependenciesTestLayer = Layer.mergeAll(
+export const layer = Layer.mergeAll(
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
   Layer.mock(GitWorkflow.GitWorkflowService)({
     pruneWorktrees: () => Effect.void,

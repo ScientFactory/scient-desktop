@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationEntries, runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -13,7 +13,7 @@ layer("059_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 60 }, (_, index) => index + 1).filter((id) => id !== 50),
+        Array.from({ length: 64 }, (_, index) => index + 1).filter((id) => id !== 50),
       );
     }),
   );
@@ -29,6 +29,10 @@ layer("059_OrchestrationV2", (it) => {
         [58, "ProjectionThreadSections"],
         [59, "OrchestrationV2"],
         [60, "RemoveRedundantProjectionIndexes"],
+        [61, "ScheduledTaskWebhooks"],
+        [62, "WebhookRelayDeliveries"],
+        [63, "McpAppModelContext"],
+        [64, "ThreadSnapshotWindowIndexes"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -54,6 +58,10 @@ layer("059_OrchestrationV2", (it) => {
         { migration_id: 58, name: "ProjectionThreadSections" },
         { migration_id: 59, name: "OrchestrationV2" },
         { migration_id: 60, name: "RemoveRedundantProjectionIndexes" },
+        { migration_id: 61, name: "ScheduledTaskWebhooks" },
+        { migration_id: 62, name: "WebhookRelayDeliveries" },
+        { migration_id: 63, name: "McpAppModelContext" },
+        { migration_id: 64, name: "ThreadSnapshotWindowIndexes" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`
@@ -69,13 +77,17 @@ layer("059_OrchestrationV2", (it) => {
             'orchestration_v2_projection_provider_session_bindings',
             'orchestration_v2_thread_launch_workflows',
             'orchestration_v2_legacy_imports',
-            'scheduled_tasks'
+            'scheduled_tasks',
+            'scheduled_task_webhook_deliveries',
+            'scheduled_task_webhook_relay_deliveries',
+            'mcp_app_model_context'
           )
         ORDER BY name
       `;
       assert.deepStrictEqual(
         tables.map(({ name }) => name),
         [
+          "mcp_app_model_context",
           "orchestration_v2_effect_outbox",
           "orchestration_v2_legacy_imports",
           "orchestration_v2_projection_metadata",
@@ -84,6 +96,8 @@ layer("059_OrchestrationV2", (it) => {
           "orchestration_v2_projection_threads",
           "orchestration_v2_thread_launch_workflows",
           "orchestration_v2_turn_item_positions",
+          "scheduled_task_webhook_deliveries",
+          "scheduled_task_webhook_relay_deliveries",
           "scheduled_tasks",
         ],
       );
@@ -128,3 +142,43 @@ layer("059_OrchestrationV2", (it) => {
     }),
   );
 });
+
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
+  "064_ThreadSnapshotWindowIndexes",
+  (it) => {
+    it.effect(
+      "appends snapshot indexes after shipped Scient migration 63 without replaying its ledger",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* runMigrations({ toMigrationInclusive: 63 });
+          const before =
+            yield* sql`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
+          assert.deepStrictEqual(yield* runMigrations(), [[64, "ThreadSnapshotWindowIndexes"]]);
+          assert.deepStrictEqual(
+            yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id <= 63 ORDER BY migration_id`,
+            before,
+          );
+          const indexes = yield* sql<{ readonly name: string; readonly sql: string }>`
+        SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name IN (
+          'orchestration_v2_projection_turn_items_user_message_idx',
+          'orchestration_v2_projection_nodes_live_idx'
+        ) ORDER BY name
+      `;
+          assert.deepStrictEqual(
+            indexes.map(({ name }) => name),
+            [
+              "orchestration_v2_projection_nodes_live_idx",
+              "orchestration_v2_projection_turn_items_user_message_idx",
+            ],
+          );
+          assert.include(
+            indexes[0]!.sql,
+            "WHERE status IN ('pending', 'starting', 'running', 'waiting')",
+          );
+          assert.include(indexes[1]!.sql, "WHERE type = 'user_message'");
+          assert.deepStrictEqual(yield* runMigrations(), []);
+        }),
+    );
+  },
+);

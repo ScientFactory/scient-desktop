@@ -9,6 +9,7 @@ import {
   type AnalysisRunSnapshot,
 } from "@scientfactory/analysis";
 import { ExecutionRunId, executionOutputContentParts } from "@scientfactory/execution";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous receipt fixtures independently calculate the expected content digest.
 import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";

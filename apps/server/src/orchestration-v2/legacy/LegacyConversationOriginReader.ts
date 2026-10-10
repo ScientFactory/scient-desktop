@@ -6,7 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 const decodeImportOriginJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(OrchestrationConversationImport),

@@ -14,7 +14,7 @@ import { Persistence } from "@t3tools/client-runtime/platform";
 import type { RpcSession } from "@t3tools/client-runtime/rpc";
 import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import {
-  boundedThreadSnapshotLoaderLayer,
+  BoundedThreadSnapshotLoader,
   type ThreadSnapshotLoader,
 } from "@t3tools/client-runtime/state/threads";
 import {
@@ -39,9 +39,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AtomRegistry } from "effect/unstable/reactivity";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import { AtomRegistry } from "effect/reactivity";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { RpcClient, RpcSerialization } from "effect/rpc";
 import { act, useId, type PropsWithChildren } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, vi } from "vite-plus/test";
@@ -77,7 +77,7 @@ const controls = vi.hoisted(
 // The route and its real web/shared atoms stay mounted; only the heavy chat
 // presentation and the external connection transport are replaced.
 vi.mock("../connection/runtime", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   const Layer = await import("effect/Layer");
   return {
     connectionAtomRuntime: Atom.runtime(
@@ -301,6 +301,8 @@ function makeTransport(input?: { active?: boolean }) {
         registerPlatform: () => Effect.die("Unexpected registration"),
         reconcilePlatform: () => Effect.die("Unexpected reconciliation"),
         remove: () => Effect.die("Unexpected removal"),
+        removeRoute: () => Effect.die("Unexpected route removal"),
+        reorderRoutes: () => Effect.die("Unexpected route reorder"),
         removeRelayEnvironments: () => Effect.die("Unexpected removal"),
         retryNow: () => Effect.void,
         setEnabled: () => Effect.die("Unexpected toggle"),
@@ -337,7 +339,7 @@ function makeTransport(input?: { active?: boolean }) {
     layer: Layer.mergeAll(
       registryLayer,
       cacheLayer,
-      boundedThreadSnapshotLoaderLayer,
+      BoundedThreadSnapshotLoader.layer,
       ShellSnapshotLoader.layer,
     ).pipe(Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, httpClient))),
     httpStarted,

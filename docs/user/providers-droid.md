@@ -16,9 +16,9 @@ it. Repair and removal appear only when the runtime is Scient-owned. Beside a he
 `droid`, Settings and Droid's **Manage** dialog offer **Use Scient-managed**, which installs
 Scient's private copy and leaves the system installation in place. Droid updates itself often, so
 your own `droid` is usually newer than the release Scient has qualified. The option stays available:
-Scient shows both versions, says that the managed one is older, and switches only when you confirm.
-With several Droid instances that use different `PATH` settings, only the instance you act on is
-checked; see [Providers in Scient](./providers.md#existing-and-scient-managed-installations).
+the first blue action directly installs Scient's qualified release, even when your system version
+is newer or unknown. With several Droid instances, the managed selection applies to every default
+runtime in this environment; see [Providers in Scient](./providers.md#existing-and-scient-managed-installations).
 
 Droid supports two existing-account modes:
 
@@ -53,12 +53,8 @@ Repair downloads and verifies the latest qualified release (or the installed one
 newer) before atomically replacing Scient's managed runtime, so Repair can also bring a newer
 release. A newer qualified stable release is offered as Update as well. Remove deletes only that
 app-private copy. None of these actions changes Factory credentials, custom paths, or system
-installations. Scient asks for a decision first in two cases only: **Remove** and **Use
-Scient-managed**. In Settings and in the **Manage** dialog the switch always shows both releases
-first. Where a failed Droid setup offers **Use Scient-managed Droid** under its runtime diagnostics,
-the install starts right away when Scient's release is the same or newer; when it is older, or when
-your `droid` reports no version Scient can read (the decision then says "system version unknown"),
-Scient shows it there too, with **Back** and **Use Scient-managed**. **Sign out** appears only if
+installations. Only **Remove** asks for confirmation. **Use Scient-managed** starts directly in
+Settings, the **Manage** dialog, and a failed setup's runtime diagnostics. **Sign out** appears only if
 the exact running Droid version advertises ACP logout. When it does not, Scient hides the action
 instead of offering an unreliable terminal-automation fallback.
 

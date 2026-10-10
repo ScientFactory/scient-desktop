@@ -1,3 +1,4 @@
+import * as Base64Url from "effect/encoding/Base64Url";
 import {
   BROWSER_PDF_EXPORT_MAX_BYTES,
   BrowserPdfExportError,
@@ -5,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Result from "effect/Result";
 
 import type { GeneratedDocumentStore } from "./GeneratedDocumentStore.ts";
@@ -15,7 +15,7 @@ export const publishBrowserPdfExport = Effect.fn(
 )(
   function* (generatedDocuments: GeneratedDocumentStore["Service"], input: BrowserPdfExportInput) {
     const bytes = yield* Effect.try({
-      try: () => Result.getOrThrow(Encoding.decodeBase64Url(input.bytesBase64)),
+      try: () => Result.getOrThrow(Base64Url.decode(input.bytesBase64)),
       catch: () =>
         new BrowserPdfExportError({
           reason: "failed",
@@ -43,14 +43,15 @@ export const publishBrowserPdfExport = Effect.fn(
         validationProfile: "browser-export",
       })
       .pipe(
-        Effect.catchTag("GeneratedDocumentStoreError", (cause) =>
-          generatedDocuments
-            .failProduction({
-              ...handle,
-              reason: cause.detail,
-            })
-            .pipe(Effect.ignore, Effect.andThen(Effect.fail(cause))),
-        ),
+        Effect.catchTags({
+          GeneratedDocumentStoreError: (cause) =>
+            generatedDocuments
+              .failProduction({
+                ...handle,
+                reason: cause.detail,
+              })
+              .pipe(Effect.ignore, Effect.andThen(Effect.fail(cause))),
+        }),
       );
 
     return {

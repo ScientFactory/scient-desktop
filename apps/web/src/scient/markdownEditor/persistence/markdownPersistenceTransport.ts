@@ -12,8 +12,8 @@ import {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AsyncResult } from "effect/unstable/reactivity";
-import { RpcClientError } from "effect/unstable/rpc";
+import { AsyncResult } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
 
 import { environmentCatalog } from "~/connection/catalog";
 import {

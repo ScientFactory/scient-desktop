@@ -1,3 +1,4 @@
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 // @vitest-environment happy-dom
 
 import { act, type ComponentProps } from "react";
@@ -38,6 +39,15 @@ it("offers an accessible inactive issue tab without adding routine Markdown indi
   const noop = () => undefined;
   const props: ComponentProps<typeof RightPanelTabs> = {
     mode: "inline",
+    keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+    getShortcutContext: () => ({
+      terminalFocus: false,
+      terminalOpen: false,
+      previewFocus: false,
+      previewOpen: false,
+      isWeb: true,
+      isDesktop: false,
+    }),
     surfaces: [file, { id: "diff", kind: "diff" }],
     environmentId: null,
     activeSurfaceId: "diff",

@@ -295,11 +295,12 @@ export function makeAcpDroidSteerSupervision<Turn extends DroidSteerOwnerTurn>(i
                   Effect.map(
                     () => !droidClosed && consumedDroidLease === turnInput.droidSteerLease,
                   ),
-                  Effect.catchTag("ProviderAdapterInterruptError", (error) =>
-                    error.cause instanceof DroidSteerDeferred
-                      ? Effect.succeed(false)
-                      : Effect.fail(error),
-                  ),
+                  Effect.catchTags({
+                    ProviderAdapterInterruptError: (error) =>
+                      error.cause instanceof DroidSteerDeferred
+                        ? Effect.succeed(false)
+                        : Effect.fail(error),
+                  }),
                 );
               }),
           },

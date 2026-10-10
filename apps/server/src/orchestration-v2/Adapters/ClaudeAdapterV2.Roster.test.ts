@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -118,6 +119,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }> = [];
           const events: Array<ProviderAdapterV2Event> = [];
           const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+            crypto: yield* Crypto.Crypto,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
             environment: {},
@@ -144,6 +146,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const queue = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push({ nativeThreadId, queue });
                   return {
+                    setPermissionMode: () =>
+                      Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(queue),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
@@ -370,6 +374,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const events: Array<ProviderAdapterV2Event> = [];
         const continuationRequests: Array<ProviderContinuationRequest> = [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -390,6 +395,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                 processQueues.push(sdkMessages);
                 return {
+                  setPermissionMode: () =>
+                    Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(sdkMessages),
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
@@ -553,6 +560,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const events: Array<ProviderAdapterV2Event> = [];
           const continuationRequests: Array<ProviderContinuationRequest> = [];
           const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+            crypto: yield* Crypto.Crypto,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
             environment: {},
@@ -582,6 +590,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    setPermissionMode: () =>
+                      Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
@@ -746,6 +756,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         const events: Array<ProviderAdapterV2Event> = [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},

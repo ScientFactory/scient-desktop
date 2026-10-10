@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Logger from "effect/Logger";
 import * as Layer from "effect/Layer";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import { scientTools } from "../../mcp/ScientOperationCatalog.ts";
 import {
@@ -191,10 +191,48 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(31);
+      expect(scientTools).toHaveLength(36);
+      expect(schemas.map((tool) => tool.name).sort()).toEqual([
+        "preview_click",
+        "preview_dialog",
+        "preview_drag",
+        "preview_evaluate",
+        "preview_hover",
+        "preview_navigate",
+        "preview_open",
+        "preview_press",
+        "preview_recording_start",
+        "preview_recording_stop",
+        "preview_resize",
+        "preview_scroll",
+        "preview_select",
+        "preview_set_appearance",
+        "preview_snapshot",
+        "preview_status",
+        "preview_type",
+        "preview_upload",
+        "preview_wait_for",
+        "scient_compute_inventory",
+        "scient_document_export",
+        "scient_latex_build",
+        "scient_pdf_build",
+        "scient_skill_load",
+        "scient_skill_read_resource",
+        "scient_skills_list",
+        "scient_sources_add",
+        "scient_sources_attach_pdf",
+        "scient_sources_detach_pdf",
+        "scient_sources_get",
+        "scient_sources_list",
+        "scient_sources_note_update",
+        "scient_sources_remove",
+        "scient_sources_review",
+        "scient_sources_update",
+        "scient_thread_read",
+      ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",
-        actual31Bytes: Buffer.byteLength(encode(schemas)),
+        actual36Bytes: Buffer.byteLength(encode(schemas)),
         synthetic31Bytes: size(31),
         synthetic100Bytes: size(100),
         synthetic500Bytes: size(500),

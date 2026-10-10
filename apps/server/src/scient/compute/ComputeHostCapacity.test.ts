@@ -10,36 +10,39 @@ import {
 } from "./ComputeHostCapacity.ts";
 
 describe("compute host capacity", () => {
-  for (const limit of [1, 2, 4]) {
-    it.effect(`bounds concurrent admissions to ${limit} and recovers without double release`, () =>
-      Effect.gen(function* () {
-        const capacity = yield* ComputeHostCapacity;
-        const results = yield* Effect.all(
-          Array.from({ length: 40 }, () => capacity.acquire().pipe(Effect.result)),
-          { concurrency: "unbounded" },
-        );
-        const admitted = results.filter((result) => result._tag === "Success");
-        expect(admitted).toHaveLength(limit);
-        for (const result of admitted) {
-          yield* result.success;
-          yield* result.success;
-        }
-        const replacements = yield* Effect.all(
-          Array.from({ length: limit }, () => capacity.acquire()),
-          { concurrency: "unbounded" },
-        );
-        const rejected = yield* capacity.acquire().pipe(Effect.result);
-        expect(rejected._tag).toBe("Failure");
-        if (rejected._tag === "Failure") expect(rejected.failure.reason).toBe("capacity-reached");
-        yield* Effect.all(replacements);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.provideService(HostProcessEnvironment, {
-          SCIENT_COMPUTE_MAX_LIVE_SESSIONS: String(limit),
-        }),
-      ),
-    );
-  }
+  it.effect.each(
+    [1, 2, 4].map((limit) => ({
+      caseTitle: `bounds concurrent admissions to ${limit} and recovers without double release`,
+      limit,
+    })),
+  )("$caseTitle", ({ limit }) =>
+    Effect.gen(function* () {
+      const capacity = yield* ComputeHostCapacity;
+      const results = yield* Effect.all(
+        Array.from({ length: 40 }, () => capacity.acquire().pipe(Effect.result)),
+        { concurrency: "unbounded" },
+      );
+      const admitted = results.filter((result) => result._tag === "Success");
+      expect(admitted).toHaveLength(limit);
+      for (const result of admitted) {
+        yield* result.success;
+        yield* result.success;
+      }
+      const replacements = yield* Effect.all(
+        Array.from({ length: limit }, () => capacity.acquire()),
+        { concurrency: "unbounded" },
+      );
+      const rejected = yield* capacity.acquire().pipe(Effect.result);
+      expect(rejected._tag).toBe("Failure");
+      if (rejected._tag === "Failure") expect(rejected.failure.reason).toBe("capacity-reached");
+      yield* Effect.all(replacements);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcessEnvironment, {
+        SCIENT_COMPUTE_MAX_LIVE_SESSIONS: String(limit),
+      }),
+    ),
+  );
 
   it.effect(
     "shares the configured ceiling across independently composed session and batch services",
@@ -69,28 +72,22 @@ describe("compute host capacity", () => {
     },
   );
 
-  for (const value of [
-    undefined,
-    "",
-    "0",
-    "-1",
-    "1.5",
-    "Infinity",
-    "invalid",
-    "9007199254740992",
-  ]) {
-    it.effect(`uses the default budget for invalid configuration ${String(value)}`, () =>
-      Effect.gen(function* () {
-        const capacity = yield* ComputeHostCapacity;
-        const releases = yield* Effect.all(
-          Array.from({ length: DEFAULT_COMPUTE_HOST_CAPACITY }, () => capacity.acquire()),
-        );
-        expect((yield* capacity.acquire().pipe(Effect.result))._tag).toBe("Failure");
-        yield* Effect.all(releases);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.provideService(HostProcessEnvironment, { SCIENT_COMPUTE_MAX_LIVE_SESSIONS: value }),
-      ),
-    );
-  }
+  it.effect.each(
+    [undefined, "", "0", "-1", "1.5", "Infinity", "invalid", "9007199254740992"].map((value) => ({
+      caseTitle: `uses the default budget for invalid configuration ${String(value)}`,
+      value,
+    })),
+  )("$caseTitle", ({ value }) =>
+    Effect.gen(function* () {
+      const capacity = yield* ComputeHostCapacity;
+      const releases = yield* Effect.all(
+        Array.from({ length: DEFAULT_COMPUTE_HOST_CAPACITY }, () => capacity.acquire()),
+      );
+      expect((yield* capacity.acquire().pipe(Effect.result))._tag).toBe("Failure");
+      yield* Effect.all(releases);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcessEnvironment, { SCIENT_COMPUTE_MAX_LIVE_SESSIONS: value }),
+    ),
+  );
 });

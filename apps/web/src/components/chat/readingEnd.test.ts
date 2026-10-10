@@ -50,6 +50,28 @@ describe("boundedAnswerScrollDelta", () => {
     ).toBe(0);
   });
 
+  it("follows a later prompt's whole response to the end, only until the prompt reaches the top", () => {
+    // No answer yet; the conversation's end (a trace) is 150px below its resting place.
+    expect(
+      boundedAnswerScrollDelta({
+        ...view,
+        promptTextTop: 300,
+        answerTop: null,
+        answerBottom: 340,
+        endBelow: 150,
+      }),
+    ).toBe(150);
+    expect(
+      boundedAnswerScrollDelta({
+        ...view,
+        promptTextTop: 100,
+        answerTop: null,
+        answerBottom: 140,
+        endBelow: 1500,
+      }),
+    ).toBe(100 - CHAT_TIMELINE_ANCHOR_OFFSET);
+  });
+
   it("reveals the prompt itself before any answer exists", () => {
     expect(
       boundedAnswerScrollDelta({ ...view, promptTextTop: 500, answerTop: null, answerBottom: 700 }),
@@ -58,12 +80,12 @@ describe("boundedAnswerScrollDelta", () => {
 });
 
 describe("shouldRevealArrivedPrompt", () => {
-  const previous = { threadKey: "thread", id: "p1" };
+  const previous = { threadKey: "thread", id: "p1", delivered: false };
   const arrived = {
     previous,
     threadKey: "thread",
-    latestPromptId: "queue:item-2",
-    sentHere: false,
+    latestPromptId: "p2",
+    delivered: true,
     readerAtEnd: true,
   };
 
@@ -71,13 +93,25 @@ describe("shouldRevealArrivedPrompt", () => {
     expect(shouldRevealArrivedPrompt(arrived)).toBe(true);
   });
 
-  it("leaves prompts sent here, readers away from the end, and thread changes alone", () => {
-    expect(shouldRevealArrivedPrompt({ ...arrived, sentHere: true })).toBe(false);
+  it("reveals a prompt already listed here once V2 reports it delivered from the queue", () => {
+    // Sent from this window and shown before its receipt said it was queued.
+    expect(shouldRevealArrivedPrompt({ ...arrived, previous: { ...previous, id: "p2" } })).toBe(
+      true,
+    );
+    // Already a delivered prompt: nothing new arrived.
+    expect(
+      shouldRevealArrivedPrompt({
+        ...arrived,
+        previous: { ...previous, id: "p2", delivered: true },
+      }),
+    ).toBe(false);
+  });
+
+  it("leaves direct sends, readers away from the end, and thread changes alone", () => {
+    // A direct send (from this or another window) is not a queued delivery.
+    expect(shouldRevealArrivedPrompt({ ...arrived, delivered: false })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, readerAtEnd: false })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, threadKey: "other" })).toBe(false);
-    expect(shouldRevealArrivedPrompt({ ...arrived, latestPromptId: "p1" })).toBe(false);
-    // A direct send from another window is not a queued delivery.
-    expect(shouldRevealArrivedPrompt({ ...arrived, latestPromptId: "p2" })).toBe(false);
     // Opening a thread, or its first prompt, is not an arrival.
     expect(shouldRevealArrivedPrompt({ ...arrived, previous: null })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, previous: { ...previous, id: null } })).toBe(

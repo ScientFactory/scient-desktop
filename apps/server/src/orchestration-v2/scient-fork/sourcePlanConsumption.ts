@@ -2,7 +2,7 @@
  * consumed, inside the same write transaction. */
 import { EventId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import type * as ProjectionStore from "../ProjectionStore.ts";
 import { sourcePlanFingerprint } from "../SourcePlan.ts";

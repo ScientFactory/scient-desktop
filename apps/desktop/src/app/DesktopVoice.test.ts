@@ -625,15 +625,17 @@ describe("DesktopVoice transcription ownership", () => {
     sampleRateHz: 24000,
     durationMs: 1,
   } as const;
-  it.effect("old, unknown, and legacy cancellation cannot abort a replacement request", () => {
+  it.effect("a competing request waits for the engine instead of aborting the first", () => {
     const harness = makeFakeEngine({ states: { [SMALL_MODEL_ID]: ready(SMALL_MODEL_ID) } });
     const started = [Promise.withResolvers<AbortSignal>(), Promise.withResolvers<AbortSignal>()];
+    const finish: Array<() => void> = [];
     const queuedStarts = [...started];
     harness.transcribe.mockImplementation(
       (...args: Parameters<TranscriptionEngine["transcribe"]>) => {
         const signal = args[2].signal;
         queuedStarts.shift()!.resolve(signal);
-        return new Promise<never>((_resolve, reject) => {
+        return new Promise((resolve, reject) => {
+          finish.push(() => resolve({ text: `run ${finish.length}`, engine: "local" }));
           signal.addEventListener(
             "abort",
             () => reject(new DOMException("Aborted", "AbortError")),
@@ -649,23 +651,56 @@ describe("DesktopVoice transcription ownership", () => {
           Effect.forkChild,
         );
         const firstSignal = yield* Effect.promise(() => started[0]!.promise);
-        yield* voice.cancelTranscription({ requestId: "unknown" });
-        yield* voice.cancelTranscription(undefined);
-        expect(firstSignal.aborted).toBe(false);
         const second = yield* voice.transcribe({ ...clip, requestId: "second" }).pipe(
           Effect.orElseSucceed(() => null),
           Effect.forkChild,
         );
-        const secondSignal = yield* Effect.promise(() => started[1]!.promise);
-        expect(firstSignal.aborted).toBe(true);
-        yield* Fiber.join(first);
-        yield* voice.cancelTranscription({ requestId: "first" });
+        for (let turn = 0; turn < 5; turn += 1) yield* Effect.yieldNow;
+        expect(firstSignal.aborted).toBe(false);
+        expect(harness.transcribe).toHaveBeenCalledOnce();
+        yield* voice.cancelTranscription({ requestId: "unknown" });
         yield* voice.cancelTranscription(undefined);
+        expect(firstSignal.aborted).toBe(false);
+        finish[0]!();
+        expect(yield* Fiber.join(first)).toMatchObject({ text: "run 1" });
+        const secondSignal = yield* Effect.promise(() => started[1]!.promise);
+        yield* voice.cancelTranscription({ requestId: "first" });
         expect(secondSignal.aborted).toBe(false);
         yield* voice.cancelTranscription({ requestId: "second" });
         expect(secondSignal.aborted).toBe(true);
-        yield* Fiber.join(second);
-        yield* voice.cancelTranscription({ requestId: "second" });
+        expect(yield* Fiber.join(second)).toBeNull();
+      }),
+    );
+  });
+
+  it.effect("cancelling a queued request never reaches the engine", () => {
+    const harness = makeFakeEngine({ states: { [SMALL_MODEL_ID]: ready(SMALL_MODEL_ID) } });
+    const started = Promise.withResolvers<void>();
+    let finishFirst!: () => void;
+    harness.transcribe.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = () => resolve({ text: "first", engine: "local" });
+          started.resolve();
+        }),
+    );
+    return withVoice(dependencies(harness), (voice) =>
+      Effect.gen(function* () {
+        const first = yield* voice.transcribe({ ...clip, requestId: "first" }).pipe(
+          Effect.orElseSucceed(() => null),
+          Effect.forkChild,
+        );
+        yield* Effect.promise(() => started.promise);
+        const queued = yield* voice.transcribe({ ...clip, requestId: "queued" }).pipe(
+          Effect.orElseSucceed(() => null),
+          Effect.forkChild,
+        );
+        for (let turn = 0; turn < 5; turn += 1) yield* Effect.yieldNow;
+        yield* voice.cancelTranscription({ requestId: "queued" });
+        finishFirst();
+        expect(yield* Fiber.join(first)).toMatchObject({ text: "first" });
+        expect(yield* Fiber.join(queued)).toBeNull();
+        expect(harness.transcribe).toHaveBeenCalledOnce();
       }),
     );
   });

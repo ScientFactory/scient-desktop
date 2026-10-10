@@ -12,13 +12,14 @@ export interface WorkspaceFileSessionCallbacks<A, E> {
 }
 
 interface WorkspaceFileSessionTransport<A, E> {
+  readonly canPersist?: () => boolean;
   readonly persist: (
     contents: string,
     expectedRevision: string,
   ) => Promise<AtomCommandResult<A, E>>;
   readonly revisionFromResult: (value: A) => string;
   /** Shared cache publication that must run once per successful write. */
-  readonly onPersisted?: (contents: string, value: A) => void;
+  readonly onPersisted?: (contents: string, value: A) => boolean | void;
 }
 
 export interface WorkspaceFileSessionLeaseOptions<A, E> extends WorkspaceFileSessionTransport<
@@ -94,6 +95,7 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
   acquire(options: WorkspaceFileSessionLeaseOptions<A, E>): WorkspaceFileSessionLease {
     let entry = this.entries.get(options.key);
     const transport: WorkspaceFileSessionTransport<A, E> = {
+      ...(options.canPersist === undefined ? {} : { canPersist: options.canPersist }),
       persist: options.persist,
       revisionFromResult: options.revisionFromResult,
       ...(options.onPersisted === undefined ? {} : { onPersisted: options.onPersisted }),
@@ -193,6 +195,7 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
     entry.coordinator = new FileSaveCoordinator({
       debounceMs,
       initialRevision,
+      canPersist: () => activeTransport(entry).canPersist?.() !== false,
       persist: (contents, expectedRevision) => {
         const selected = activeTransport(entry);
         entry.persistTransport = selected;
@@ -219,8 +222,9 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
         const selected = entry.persistTransport ?? activeTransport(entry);
         entry.persistTransport = null;
         entry.lastFailure = null;
-        selected.onPersisted?.(contents, value);
+        const confirmed = selected.onPersisted?.(contents, value) !== false;
         broadcast(entry, (callbacks) => callbacks.onConfirmed?.(contents, value));
+        return confirmed;
       },
       onFailure: (contents, result) => {
         entry.persistTransport = null;

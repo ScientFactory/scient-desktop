@@ -10,8 +10,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 /** Carries no query text: search input is user content. */
 export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
@@ -104,6 +104,39 @@ export const make = Effect.gen(function* () {
           AND messages.streaming = 0
           AND messages.role IN ('user', 'assistant')
           AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
+        -- SCIENT-FORK:START — a fork's history shows other conversations' messages.
+        UNION ALL
+        SELECT
+          threads.thread_id,
+          threads.project_id,
+          json_extract(shown.payload_json, '$.role') AS role,
+          json_extract(shown.payload_json, '$.text') AS match_text,
+          shown.created_at AS message_created_at,
+          shown.message_id,
+          threads.updated_at AS thread_updated_at
+        FROM (
+          SELECT history.thread_id, history.message_id,
+            COALESCE(frozen.message_json, message.payload_json) AS payload_json,
+            COALESCE(json_extract(frozen.message_json, '$.createdAt'), message.created_at)
+              AS created_at
+          FROM scient_fork_history AS history
+          LEFT JOIN scient_fork_frozen_items AS frozen
+            ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+          LEFT JOIN orchestration_v2_projection_messages AS message
+            ON message.message_id = history.message_id
+          WHERE history.item_type IN ('user_message', 'assistant_message')
+            AND history.source_thread_id <> history.thread_id
+        ) AS shown
+        INNER JOIN orchestration_v2_projection_threads AS threads
+          ON threads.thread_id = shown.thread_id
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+          AND projects.deleted_at IS NULL
+          AND json_extract(shown.payload_json, '$.role') IN ('user', 'assistant')
+          AND json_extract(shown.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
+        -- SCIENT-FORK:END
       ),
       ranked AS (
         SELECT

@@ -18,9 +18,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import { CommandReceiptV2 } from "../CommandReceiptStore.ts";
 import { OrchestratorDispatchError } from "../Orchestrator.ts";
 import type {
@@ -296,15 +296,15 @@ void (async () => { while (true) {
             if (scenario === "missing") {
               const failure = yield* Deferred.await(dispatchFailed).pipe(
                 Effect.timeout("10 seconds"),
-                Effect.catchTag("TimeoutError", () =>
-                  Effect.die("Native witness timed out: dispatchFailed"),
-                ),
+                Effect.catchTags({
+                  TimeoutError: () => Effect.die("Native witness timed out: dispatchFailed"),
+                }),
               );
               yield* Deferred.await(cleared).pipe(
                 Effect.timeout("10 seconds"),
-                Effect.catchTag("TimeoutError", () =>
-                  Effect.die("Native witness timed out: cleared"),
-                ),
+                Effect.catchTags({
+                  TimeoutError: () => Effect.die("Native witness timed out: cleared"),
+                }),
               );
               yield* noAcceptedNativeRows(failure.commandId);
               assert.lengthOf(ctx.offers, 1);
@@ -314,9 +314,9 @@ void (async () => { while (true) {
             } else {
               admissionIdentity = yield* Deferred.await(afterLookup).pipe(
                 Effect.timeout("10 seconds"),
-                Effect.catchTag("TimeoutError", () =>
-                  Effect.die("Native witness timed out: afterLookup"),
-                ),
+                Effect.catchTags({
+                  TimeoutError: () => Effect.die("Native witness timed out: afterLookup"),
+                }),
               );
               assert.equal(admissionIdentity.workId, ctx.offers[0]?.initiated?.workId);
               assert.equal(admissionIdentity.runtimePolicy.cwd, ctx.cwd);
@@ -406,9 +406,9 @@ void (async () => { while (true) {
                     .pipe(Effect.timeout("10 seconds"));
                 yield* Deferred.await(invalidated).pipe(
                   Effect.timeout("10 seconds"),
-                  Effect.catchTag("TimeoutError", () =>
-                    Effect.die("Native witness timed out: invalidated"),
-                  ),
+                  Effect.catchTags({
+                    TimeoutError: () => Effect.die("Native witness timed out: invalidated"),
+                  }),
                 );
                 assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
                 if (scenario === "replacement") {
@@ -454,15 +454,15 @@ void (async () => { while (true) {
                 yield* Deferred.succeed(releaseLookup, undefined);
                 const failure = yield* Deferred.await(dispatchFailed).pipe(
                   Effect.timeout("10 seconds"),
-                  Effect.catchTag("TimeoutError", () =>
-                    Effect.die("Native witness timed out: dispatchFailed"),
-                  ),
+                  Effect.catchTags({
+                    TimeoutError: () => Effect.die("Native witness timed out: dispatchFailed"),
+                  }),
                 );
                 yield* Deferred.await(cleared).pipe(
                   Effect.timeout("10 seconds"),
-                  Effect.catchTag("TimeoutError", () =>
-                    Effect.die("Native witness timed out: cleared"),
-                  ),
+                  Effect.catchTags({
+                    TimeoutError: () => Effect.die("Native witness timed out: cleared"),
+                  }),
                 );
                 yield* noAcceptedNativeRows(failure.commandId);
                 assert.isTrue(
@@ -488,9 +488,9 @@ void (async () => { while (true) {
               } else {
                 const committed = yield* Deferred.await(commitEntered).pipe(
                   Effect.timeout("10 seconds"),
-                  Effect.catchTag("TimeoutError", () =>
-                    Effect.die("Native witness timed out: commitEntered"),
-                  ),
+                  Effect.catchTags({
+                    TimeoutError: () => Effect.die("Native witness timed out: commitEntered"),
+                  }),
                 );
                 const closer = yield* (
                   scenario === "scope-commit"
@@ -501,9 +501,9 @@ void (async () => { while (true) {
                   scenario === "scope-commit" ? scopeCloseEntered : invalidationEntered,
                 ).pipe(
                   Effect.timeout("10 seconds"),
-                  Effect.catchTag("TimeoutError", () =>
-                    Effect.die("Native witness timed out: invalidationEntered"),
-                  ),
+                  Effect.catchTags({
+                    TimeoutError: () => Effect.die("Native witness timed out: invalidationEntered"),
+                  }),
                 );
                 if (scenario === "scope-commit") yield* nativeState;
                 assert.isUndefined(closer.pollUnsafe());
@@ -535,9 +535,9 @@ void (async () => { while (true) {
                 if (scenario === "interrupt") {
                   yield* Deferred.await(cleared).pipe(
                     Effect.timeout("10 seconds"),
-                    Effect.catchTag("TimeoutError", () =>
-                      Effect.die("Native witness timed out: cleared"),
-                    ),
+                    Effect.catchTags({
+                      TimeoutError: () => Effect.die("Native witness timed out: cleared"),
+                    }),
                   );
                   yield* noAcceptedNativeRows(committed.commandId);
                 } else {

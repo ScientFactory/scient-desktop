@@ -6,8 +6,6 @@ import {
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   CircleAlertIcon,
   CircleIcon,
   GitBranchIcon,
@@ -16,12 +14,17 @@ import {
   TerminalIcon,
   XIcon,
 } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
+import { MorphIcon } from "~/components/MorphIcon";
 import { Spinner } from "~/components/ui/spinner";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
+// SCIENT-FORK:START — live activity.
+import { observeLiveActivitySweep } from "./liveActivity";
+// SCIENT-FORK:END
 import { cn } from "~/lib/utils";
 import { TRACE_ICON_STROKE } from "~/scient/presentation/traceIcons";
 import { WorkLogRow } from "./WorkLog";
@@ -184,10 +187,16 @@ function StageRow({
   stage,
   nowMs,
   scriptName,
+  // SCIENT-FORK:START — live activity (chat/liveActivity.tsx).
+  sweep,
+  // SCIENT-FORK:END
 }: {
   stage: WorktreeSetupStage;
   nowMs: number;
   scriptName: string | null;
+  // SCIENT-FORK:START — live activity.
+  sweep: boolean;
+  // SCIENT-FORK:END
 }) {
   const elapsed = stageElapsedMs(stage, nowMs);
   const label =
@@ -211,13 +220,15 @@ function StageRow({
         </span>
       }
       label={
+        // SCIENT-FORK:START — a running stage sweeps only as the current activity; its text rests lighter.
         <span
-          ref={running ? observeVisibleAnimation : undefined}
+          ref={running && sweep ? observeLiveActivitySweep : undefined}
           className={cn("relative block truncate", stageRowClassName(stage.status))}
         >
-          {label}
-          {running ? <ShimmerOverlay>{label}</ShimmerOverlay> : null}
+          <span className={running && sweep ? "live-activity-rest" : undefined}>{label}</span>
+          {running && sweep ? <ShimmerOverlay>{label}</ShimmerOverlay> : null}
         </span>
+        // SCIENT-FORK:END
       }
       trailing={
         <>
@@ -352,6 +363,9 @@ export function WorktreeSetupCard({
   onWorkLocally,
   onOpenTerminal,
   embedded = false,
+  // SCIENT-FORK:START — live activity (chat/liveActivity.tsx).
+  sweep = true,
+  // SCIENT-FORK:END
 }: WorktreeSetupCardProps & {
   /**
    * The agent's turn is live and owns the "Working for" header. The stage
@@ -359,8 +373,14 @@ export function WorktreeSetupCard({
    * failed script that outlives the handoff collapses to a single row.
    */
   embedded?: boolean;
+  // SCIENT-FORK:START — whether its running stage sweeps (only as the timeline's current activity).
+  sweep?: boolean;
+  // SCIENT-FORK:END
 }) {
   const running = snapshot.phase === "running";
+  // SCIENT-FORK:START — live activity: an async script can still run beside the agent-start stage.
+  const sweepingStageId = snapshot.stages.findLast((stage) => stage.status === "running")?.id;
+  // SCIENT-FORK:END
   const nowMs = useNowWhile(running);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const totalElapsed = (() => {
@@ -371,17 +391,20 @@ export function WorktreeSetupCard({
   const setupStage = snapshot.stages.find((stage) => stage.id === "setup-script");
   const showTerminal = onOpenTerminal && setupStage && setupStage.status !== "pending";
   const collapsed = embedded && !running;
-  // While running, the timeline's working row above the card carries the
-  // "Setting up worktree…" label (and keeps that slot when the agent takes
-  // over). The card only brings its own header for a settled outcome that
-  // has no working row to sit under.
-  const showHeader = !embedded && !running;
+  // While running, and after a clean finish until the agent's turn is live,
+  // the timeline's working row above the card carries the label (and keeps
+  // that slot when the agent takes over). The card only brings its own
+  // header for a failed or cancelled setup that has no working row above it.
+  const showHeader = !embedded && !running && snapshot.phase !== "done";
   // The tail box is part of the script row's footprint while the script runs
   // (and after it failed, so the last lines explain the failure). It mounts
-  // as soon as the script is running, empty lines and all, so the card takes
-  // its final height once instead of growing with each output line.
+  // with the first output line at its full fixed height, so the card grows
+  // once instead of with each line. A script that ends before printing
+  // anything never flashes an empty box.
   const showTail =
-    setupStage !== undefined && (setupStage.status === "running" || setupStage.status === "failed");
+    setupStage !== undefined &&
+    (setupStage.status === "failed" ||
+      (setupStage.status === "running" && setupStage.tail.length > 0));
 
   return (
     <section aria-label="Worktree setup" data-worktree-setup-phase={snapshot.phase}>
@@ -396,6 +419,9 @@ export function WorktreeSetupCard({
                 stage={stage}
                 nowMs={nowMs}
                 scriptName={snapshot.setupScript?.name ?? null}
+                // SCIENT-FORK:START — live activity: only the latest running stage sweeps.
+                sweep={sweep && stage.id === sweepingStageId}
+                // SCIENT-FORK:END
               />
               {stage.id === "setup-script" && showTail ? (
                 <OutputTail lines={stage.tail} failed={stage.status === "failed"} />
@@ -421,7 +447,7 @@ export function WorktreeSetupCard({
           aria-expanded={detailsOpen}
           onClick={() => setDetailsOpen((open) => !open)}
         >
-          {detailsOpen ? <ChevronDownIcon aria-hidden /> : <ChevronRightIcon aria-hidden />}
+          <MorphIcon aria-hidden icon={detailsOpen ? ChevronDown : ChevronRight} />
           Details
         </Button>
         {showTerminal ? (

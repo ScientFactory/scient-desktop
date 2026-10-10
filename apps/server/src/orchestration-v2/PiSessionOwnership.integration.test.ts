@@ -1,3 +1,4 @@
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 /** Native Pi JSONL and the actual manager; only the peer and publication gate are controlled. */
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -18,11 +19,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as Config from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as McpRegistry from "../mcp/McpSessionRegistry.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../provider/testUtils/providerRegistryMock.ts";
 import { makePiAdapterV2 } from "./Adapters/PiAdapterV2.ts";
 import { makePiRpcConnection } from "./Adapters/PiRpc.ts";
@@ -31,7 +32,7 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Ingestor from "./ProviderEventIngestor.ts";
-import { makeSingleLayer } from "./ProviderAdapterRegistry.ts";
+import { layerSingle as makeSingleLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2, layerWithOptions } from "./ProviderSessionManager.ts";
 
 function processIsLive(pid: number): boolean {
@@ -54,10 +55,10 @@ const stores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
 );
 const sink = EventSink.layer.pipe(Layer.provide(Layer.merge(stores, SqlitePersistenceMemory)));
 const outer = Layer.mergeAll(
-  NodeServices.layer,
+  Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer),
   IdAllocator.layer,
   Config.layerTest(process.cwd(), { prefix: "pi-native-owner-" }).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer)),
   ),
 );
 

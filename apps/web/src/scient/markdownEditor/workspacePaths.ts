@@ -1,12 +1,8 @@
-import {
-  collapseAbsoluteFilePath,
-  isRelativeFilePath,
-  parseMarkdownFileLink,
-} from "@t3tools/client-runtime/markdown-links";
+import { isRelativeFilePath, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { collapseAbsoluteFilePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 
-import { resolvePathLinkTarget } from "~/terminal-links";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
 

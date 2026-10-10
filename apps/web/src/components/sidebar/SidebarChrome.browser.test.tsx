@@ -13,6 +13,7 @@ import { SidebarUtilityMenu } from "./SidebarChrome";
 const fixture = vi.hoisted(() => ({
   updateState: null as DesktopUpdateState | null,
   navigate: vi.fn(),
+  preload: vi.fn(() => Promise.resolve([])),
   importConversation: vi.fn(),
 }));
 vi.mock("../../env", () => ({ isElectron: true }));
@@ -29,6 +30,7 @@ vi.mock("../../state/environments", async (original) => ({
 vi.mock("@tanstack/react-router", async (original) => ({
   ...(await original<typeof import("@tanstack/react-router")>()),
   useNavigate: () => fixture.navigate,
+  useRouter: () => ({ preloadRoute: fixture.preload }),
   useLocation: () => false,
 }));
 vi.mock("../../scient/conversationImport/requests", () => ({

@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 
 import { EnvironmentId, type AssetResource } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const saveAssetCopy = vi.fn();

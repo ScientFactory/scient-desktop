@@ -15,7 +15,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -489,7 +489,9 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.subscribeComputeSessions,
       idleTtlMs: 0,
       transform: (stream) =>
-        stream.pipe(Stream.scan(EMPTY_COMPUTE_SUBSCRIPTION_STATE, applyComputeSessionStreamEvent)),
+        stream.pipe(
+          Stream.scan(() => EMPTY_COMPUTE_SUBSCRIPTION_STATE, applyComputeSessionStreamEvent),
+        ),
     }),
     verifyRuntime: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:verify-runtime",

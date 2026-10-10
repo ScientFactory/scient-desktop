@@ -100,36 +100,39 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  for (const invalidReplacement of ["veto", "same identity"] as const) {
-    it.effect(`rejects a replacement with ${invalidReplacement}`, () =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakePi;
-        const { runtime } = yield* openRuntime(fake);
-        const providerThread = yield* runtime.ensureThread({
+  it.effect.each(
+    (["veto", "same identity"] as const).map((invalidReplacement) => ({
+      caseTitle: `rejects a replacement with ${invalidReplacement}`,
+      invalidReplacement,
+    })),
+  )("$caseTitle", ({ invalidReplacement }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      if (invalidReplacement === "veto") fake.vetoNextNewSession();
+      else fake.queueState({ sessionFile: FAKE_SESSION_FILE });
+      const error = yield* runtime
+        .ensureThread({
           threadId: THREAD_ID,
           modelSelection: modelSelection("default"),
           runtimePolicy,
-        });
-        if (invalidReplacement === "veto") fake.vetoNextNewSession();
-        else fake.queueState({ sessionFile: FAKE_SESSION_FILE });
-        const error = yield* runtime
-          .ensureThread({
-            threadId: THREAD_ID,
-            modelSelection: modelSelection("default"),
-            runtimePolicy,
-            existingProviderThread: { ...providerThread, nativeThreadRef: null },
-          })
-          .pipe(Effect.flip);
-        assert.equal(error._tag, "ProviderAdapterEnsureThreadError");
-        assert.match(
-          String(error.cause),
-          invalidReplacement === "veto" ? /cancelled/ : /distinct session/,
-        );
-        yield* startTurn(runtime, providerThread, "default").pipe(Effect.flip);
-        assert.isFalse(fake.allRequests().some((request) => request.type === "prompt"));
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+          existingProviderThread: { ...providerThread, nativeThreadRef: null },
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterEnsureThreadError");
+      assert.match(
+        String(error.cause),
+        invalidReplacement === "veto" ? /cancelled/ : /distinct session/,
+      );
+      yield* startTurn(runtime, providerThread, "default").pipe(Effect.flip);
+      assert.isFalse(fake.allRequests().some((request) => request.type === "prompt"));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 
   it.effect("retires a timed-out lifecycle process before a late switch can race replacement", () =>
     Effect.gen(function* () {

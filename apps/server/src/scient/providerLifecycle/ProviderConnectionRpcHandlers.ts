@@ -6,7 +6,7 @@
  * @module ProviderConnectionRpcHandlers
  */
 import {
-  AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   type ProviderConnectionOperation,
   type ProviderInstanceId,
   type ServerProvider,
@@ -16,7 +16,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import type * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
-import type * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
+import type * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
 import * as ManagedRuntimeCatalog from "./ManagedRuntimeCatalog.ts";
 import { reconcileManagedRuntimeProviders } from "./ManagedRuntimeCatalogReconciler.ts";
@@ -69,7 +69,7 @@ const redactProviderAuthorizationForReadOnlyClient = (provider: ServerProvider):
 export const providerProjectionForSession = (currentSession: {
   readonly scopes: EnvironmentAuth.AuthenticatedSession["scopes"];
 }) =>
-  currentSession.scopes.includes(AuthOrchestrationOperateScope)
+  currentSession.scopes.includes(AuthProvidersManageScope)
     ? (providers: ReadonlyArray<ServerProvider>) => providers
     : (providers: ReadonlyArray<ServerProvider>) =>
         providers.map(redactProviderAuthorizationForReadOnlyClient);

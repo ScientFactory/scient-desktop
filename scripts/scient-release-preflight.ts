@@ -78,7 +78,10 @@ function assertExactSha(value: string, label: string): void {
 
 export function renderScientReleaseNotesMarkdown(note: ScientReleaseNoteLike): string {
   const highlights = note.highlights
-    .map((highlight) => `- **${highlight.title.trim()}** — ${highlight.description.trim()}`)
+    .map(
+      (highlight) =>
+        `- **${highlight.title.trim()}** — ${highlight.description.trim().replace(/\n/gu, "\n  ")}`,
+    )
     .join("\n");
 
   if (note.format === "paragraphs") {

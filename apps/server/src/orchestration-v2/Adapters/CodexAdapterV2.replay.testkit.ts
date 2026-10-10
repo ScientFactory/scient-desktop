@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import {
   CodexSettings,
   type ModelSelection,
@@ -156,6 +157,9 @@ export function codexReplayPreamble(input: {
           },
           capabilities: {
             experimentalApi: true,
+            extensions: {
+              "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
+            },
             optOutNotificationMethods: ["turn/diff/updated"],
           },
         },
@@ -363,6 +367,7 @@ export const makeCodexReplayHarness = (
       },
     };
     const adapter = CodexAdapterV2.makeCodexAdapterV2({
+      crypto: yield* Crypto.Crypto,
       instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
       settings: settings ?? DEFAULT_CODEX_SETTINGS,
       environment: {},

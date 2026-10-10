@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- This injectable Promise transport owns a synchronous per-process HMAC cache key.
 // @effect-diagnostics globalTimers:off -- This injected Promise/fetch API owns and clears its transport deadline.
 // @effect-diagnostics globalDate:off -- Injectable epoch clock records portable ISO evidence timestamps.
 import * as NodeCrypto from "node:crypto";

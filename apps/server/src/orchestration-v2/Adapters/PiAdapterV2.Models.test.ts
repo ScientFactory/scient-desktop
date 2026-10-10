@@ -10,7 +10,7 @@ import type { ResolvedModelConnection } from "../../customModels.ts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 import * as PubSub from "effect/PubSub";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import {
   testLayer,
   PI_INSTANCE_ID,

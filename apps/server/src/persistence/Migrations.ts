@@ -8,9 +8,9 @@
  * schema is always up to date before the application starts.
  */
 
-import * as Migrator from "effect/unstable/sql/Migrator";
+import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
 // Import all migrations statically
@@ -79,6 +79,12 @@ import Migration0058 from "./Migrations/058_ProjectionThreadSections.ts";
 import Migration0059 from "./Migrations/059_OrchestrationV2.ts";
 // T3's migration 56 follows Scient's immutable migration sequence at the next free ID.
 import Migration0060 from "./Migrations/060_RemoveRedundantProjectionIndexes.ts";
+// Incoming migrations follow Scient's immutable shipped ledger.
+import Migration0061 from "./Migrations/061_ScheduledTaskWebhooks.ts";
+import Migration0062 from "./Migrations/062_WebhookRelayDeliveries.ts";
+import Migration0063 from "./Migrations/063_McpAppModelContext.ts";
+// Incoming migrations follow Scient's immutable shipped ledger.
+import Migration0064 from "./Migrations/064_ThreadSnapshotWindowIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -163,6 +169,10 @@ export const migrationEntries = [
   [59, "OrchestrationV2", Migration0059],
   // T3's migration 56 follows Scient's immutable migration sequence.
   [60, "RemoveRedundantProjectionIndexes", Migration0060],
+  [61, "ScheduledTaskWebhooks", Migration0061],
+  [62, "WebhookRelayDeliveries", Migration0062],
+  [63, "McpAppModelContext", Migration0063],
+  [64, "ThreadSnapshotWindowIndexes", Migration0064],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

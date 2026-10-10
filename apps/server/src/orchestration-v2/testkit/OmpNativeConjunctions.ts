@@ -24,10 +24,10 @@ import * as Path from "effect/Path";
 import { isRecord } from "effect-omp-rpc/schema";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ChildProcessSpawner } from "effect/process";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../../config.ts";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { makeOmpAdapterV2 } from "../Adapters/OmpAdapterV2.ts";
@@ -35,9 +35,9 @@ import { EffectOutboxV2, type OrchestrationEffectV2 } from "../EffectOutbox.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 
 const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -444,8 +444,8 @@ const nativeFixture = Effect.fnUntraced(function* (
     { name, runtimePolicyOverride: { cwd } },
     makeLayer([adapter]),
     {
-      databaseLayer: database,
-      serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),
+      layerDatabase: database,
+      layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
       configureMcp: false,
       runEffectWorker: false,
     },

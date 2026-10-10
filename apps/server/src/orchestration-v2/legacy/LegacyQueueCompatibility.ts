@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
 import { listScientThreadQueue } from "../../scient/threadQueue/Store.ts";
 import { readQueue, writeQueue } from "./LegacyQueueLedger.ts";

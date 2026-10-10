@@ -45,6 +45,7 @@ export const makeTurnItemBaseFields = (
         status: OrchestrationV2TurnItemStatus,
       }),
     ),
+    toolNonExecutionKind: Schema.optional(Schema.String),
     toolSurface: Schema.optional(ToolActivitySurface),
     toolIcon: Schema.optional(ToolActivityIcon),
     toolSource: Schema.optional(ToolActivitySource),
@@ -75,6 +76,7 @@ interface OrchestrationV2TurnItemBaseFields {
       readonly status: typeof TurnItemStatus;
     }>
   >;
+  readonly toolNonExecutionKind: Schema.optional<typeof Schema.String>;
   readonly toolSurface: Schema.optional<typeof ToolActivitySurface>;
   readonly toolIcon: Schema.optional<typeof ToolActivityIcon>;
   readonly toolSource: Schema.optional<typeof ToolActivitySource>;

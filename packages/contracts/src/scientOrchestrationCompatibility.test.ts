@@ -29,7 +29,14 @@ import {
 import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
-import { ProjectCreatePayload, ProjectFaviconPath, ProjectIconOverride } from "./project.ts";
+import {
+  ProjectCreatePayload,
+  ProjectFaviconPath,
+  ProjectIconOverride,
+  ProjectUpdatePayload,
+  ReceivedProjectIcon,
+  StoredProjectIcon,
+} from "./project.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "./providerPolicy.ts";
 import {
@@ -1292,8 +1299,12 @@ it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects 
 
 const decodeProjectIcon = Schema.decodeUnknownEffect(ProjectIconOverride);
 const encodeProjectIcon = Schema.encodeEffect(ProjectIconOverride);
+const decodeStoredProjectIcon = Schema.decodeUnknownEffect(StoredProjectIcon);
+const encodeStoredProjectIcon = Schema.encodeEffect(StoredProjectIcon);
+const decodeReceivedProjectIcon = Schema.decodeUnknownEffect(ReceivedProjectIcon);
+const encodeReceivedProjectIcon = Schema.encodeEffect(ReceivedProjectIcon);
 
-// Pre-monogram clients reject unknown variants; nightly clients additionally validate monogram.
+// Historical pre-monogram validators describe the fallback records being recovered, not current writes.
 const decodeOldIcon = Schema.decodeUnknownEffect(
   Schema.Union([
     Schema.Struct({ kind: Schema.Literal("lucide"), name: Schema.String, color: Schema.String }),
@@ -1313,18 +1324,30 @@ const decodeNightlyIcon = Schema.decodeUnknownEffect(
   ]),
 );
 
-it.effect("sends monograms as fallback icons that old and nightly clients can decode", () =>
+it.effect("writes canonical monograms while recovering legacy icons and project updates", () =>
   Effect.gen(function* () {
     const fallback = { kind: "lucide", name: "folder-code", color: "violet" } as const;
     for (const text of ["T3", "क्ष्म", "e\u0301"]) {
       const monogram = { kind: "monogram", text, color: "violet" } as const;
       const wire = yield* encodeProjectIcon(monogram);
-      assert.deepEqual(wire, { ...fallback, monogramText: text });
-      assert.deepEqual(yield* decodeOldIcon(wire), fallback);
-      assert.deepEqual(yield* decodeNightlyIcon(wire), fallback);
+      assert.deepEqual(wire, monogram);
+      assert.deepEqual(yield* encodeStoredProjectIcon(monogram), monogram);
+      assert.deepEqual(yield* encodeReceivedProjectIcon(monogram), monogram);
+      assert.strictEqual((yield* Effect.exit(decodeOldIcon(wire)))._tag, "Failure");
+      assert.strictEqual((yield* Effect.exit(decodeNightlyIcon(wire)))._tag, "Failure");
+      const legacyWire = { ...fallback, monogramText: text };
+      assert.deepEqual(yield* decodeOldIcon(legacyWire), fallback);
+      assert.deepEqual(yield* decodeNightlyIcon(legacyWire), fallback);
       assert.deepEqual(yield* decodeProjectIcon(wire), monogram);
       assert.deepEqual(yield* decodeProjectIcon(monogram), monogram);
-      assert.deepEqual(yield* decodeProjectIcon({ ...fallback, monogram: text }), monogram);
+      for (const legacy of [legacyWire, { ...fallback, monogram: text }]) {
+        assert.deepEqual(yield* decodeStoredProjectIcon(legacy), monogram);
+        assert.deepEqual(yield* decodeReceivedProjectIcon(legacy), monogram);
+        assert.deepEqual(
+          yield* Schema.decodeUnknownEffect(ProjectUpdatePayload)({ projectIcon: legacy }),
+          { projectIcon: monogram },
+        );
+      }
     }
     for (const icon of [
       { kind: "lucide", name: "alarm-clock", color: "blue" },
@@ -1337,6 +1360,7 @@ it.effect("sends monograms as fallback icons that old and nightly clients can de
 );
 
 const encodeProjectShell = Schema.encodeEffect(OrchestrationProjectShell);
+const decodeProjectShell = Schema.decodeUnknownEffect(OrchestrationProjectShell);
 const decodeLegacyShell = Schema.decodeUnknownEffect(
   Schema.Struct({
     ...OrchestrationProjectShell.fields,
@@ -1352,7 +1376,7 @@ const decodeLegacyShell = Schema.decodeUnknownEffect(
   }),
 );
 
-it.effect("encodes compatible icons inside snapshots", () =>
+it.effect("recovers legacy monograms inside snapshots and writes their canonical shape", () =>
   Effect.gen(function* () {
     const projectIcon = { kind: "monogram", text: "क्ष्म", color: "violet" } as const;
     const shell = yield* encodeProjectShell({
@@ -1366,6 +1390,17 @@ it.effect("encodes compatible icons inside snapshots", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     const fallback = { kind: "lucide", name: "folder-code", color: "violet" } as const;
-    assert.deepEqual((yield* decodeLegacyShell(shell)).projectIcon, fallback);
+    assert.deepEqual(shell.projectIcon, projectIcon);
+    assert.deepEqual((yield* decodeProjectShell(shell)).projectIcon, projectIcon);
+    for (const legacyIcon of [
+      { ...fallback, monogramText: projectIcon.text },
+      { ...fallback, monogram: projectIcon.text },
+    ]) {
+      const legacyShell = { ...shell, projectIcon: legacyIcon };
+      assert.deepEqual((yield* decodeLegacyShell(legacyShell)).projectIcon, fallback);
+      const recovered = yield* decodeProjectShell(legacyShell);
+      assert.deepEqual(recovered.projectIcon, projectIcon);
+      assert.deepEqual(yield* encodeProjectShell(recovered), shell);
+    }
   }),
 );

@@ -3,14 +3,14 @@ import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpClient } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as FileSystem from "effect/FileSystem";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ModelManifest from "../ModelManifest.ts";
-import * as ResetCreditCoordinator from "../Layers/resetCreditCoordinator.ts";
+import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import { CodexAppServerClientFactory } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ClaudeAgentSdkQueryRunner } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
@@ -24,7 +24,7 @@ import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { PiDriver } from "./PiDriver.ts";
 import { OmpDriver } from "./OmpDriver.ts";
@@ -170,34 +170,35 @@ it.layer(testLayer)("Configured native continuation identity", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  for (const factory of factories) {
-    it.effect(
-      `${factory.kind} confines continuation to the configured instance across recreation`,
-      () =>
-        Effect.gen(function* () {
-          const initial = yield* factory.create(1);
-          const peer = yield* factory.create(2);
-          const recreated = yield* factory.create(1);
-          assert.deepEqual(initial.continuationIdentity, {
-            driverKind: initial.driverKind,
-            continuationKey: `${factory.kind}:instance:${initial.instanceId}`,
-          });
-          assert.deepEqual(recreated.continuationIdentity, initial.continuationIdentity);
-          assert.notEqual(
-            peer.continuationIdentity.continuationKey,
-            initial.continuationIdentity.continuationKey,
-          );
-          assert.equal(initial.orchestrationAdapter.instanceId, initial.instanceId);
-          assert.equal(peer.orchestrationAdapter.instanceId, peer.instanceId);
-          assert.equal(
-            (yield* initial.snapshot.getSnapshot).continuation?.groupKey,
-            initial.continuationIdentity.continuationKey,
-          );
-          assert.equal(
-            (yield* peer.snapshot.getSnapshot).continuation?.groupKey,
-            peer.continuationIdentity.continuationKey,
-          );
-        }).pipe(Effect.scoped),
-    );
-  }
+  it.effect.each(
+    factories.map((factory) => ({
+      caseTitle: `${factory.kind} confines continuation to the configured instance across recreation`,
+      factory,
+    })),
+  )("$caseTitle", ({ factory }) =>
+    Effect.gen(function* () {
+      const initial = yield* factory.create(1);
+      const peer = yield* factory.create(2);
+      const recreated = yield* factory.create(1);
+      assert.deepEqual(initial.continuationIdentity, {
+        driverKind: initial.driverKind,
+        continuationKey: `${factory.kind}:instance:${initial.instanceId}`,
+      });
+      assert.deepEqual(recreated.continuationIdentity, initial.continuationIdentity);
+      assert.notEqual(
+        peer.continuationIdentity.continuationKey,
+        initial.continuationIdentity.continuationKey,
+      );
+      assert.equal(initial.orchestrationAdapter.instanceId, initial.instanceId);
+      assert.equal(peer.orchestrationAdapter.instanceId, peer.instanceId);
+      assert.equal(
+        (yield* initial.snapshot.getSnapshot).continuation?.groupKey,
+        initial.continuationIdentity.continuationKey,
+      );
+      assert.equal(
+        (yield* peer.snapshot.getSnapshot).continuation?.groupKey,
+        peer.continuationIdentity.continuationKey,
+      );
+    }).pipe(Effect.scoped),
+  );
 });

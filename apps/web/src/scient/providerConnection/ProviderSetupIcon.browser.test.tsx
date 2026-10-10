@@ -185,7 +185,10 @@ const isVisible = (element: Element | null) =>
   element !== null && element.getBoundingClientRect().width > 0;
 const visibleButton = (label: string) =>
   [...host!.querySelectorAll("button")].find(
-    (button) => isVisible(button) && button.textContent!.trim() === label,
+    (button) =>
+      isVisible(button) &&
+      button.closest("details")?.open !== false &&
+      button.textContent!.trim() === label,
   );
 
 describe("optional provider runtime summaries", () => {
@@ -273,7 +276,7 @@ describe.each(PROVIDERS)("%s setup mark", (driver, name, methods) => {
 });
 
 describe.each(PROVIDERS.filter(([driver, , methods]) => driver !== "cursor" && methods.length > 0))(
-  "%s switch to an older Scient-managed release",
+  "%s single-click Scient-managed installation",
   (driver, name, methods) => {
     const provider = signInFailedOnSystem(driver, name, methods);
     const plan: ProviderRuntimePlan = {
@@ -284,15 +287,16 @@ describe.each(PROVIDERS.filter(([driver, , methods]) => driver !== "cursor" && m
       downloadBytes: null,
       sourceLabel: "Official release",
       catalogRevision: "reviewed:1:older-than-system",
-      message: `Scient-managed ${name} 0.230.0 is older than your installed ${name} 0.231.0. Scient will use its own verified copy; your installation stays as it is. ${name} accounts in this environment that use the default runtime will use that copy; custom paths remain unchanged.`,
+      message: `Scient-managed ${name} 0.230.0 is older than your installed ${name} 0.231.0.`,
       systemVersion: "0.231.0",
       olderThanSystem: true,
     };
 
     it.each([true, false])(
-      "shows the decision in place of the setup and fits its host (model picker: %s)",
+      "starts from its blue action without another frame (model picker: %s)",
       async (picker) => {
         runtime.plan.mockResolvedValue(plan);
+        runtime.start.mockResolvedValue(provider);
         host = document.createElement("div");
         document.body.append(host);
         root = createRoot(host);
@@ -306,46 +310,32 @@ describe.each(PROVIDERS.filter(([driver, , methods]) => driver !== "cursor" && m
             />
           </Container>,
         );
-        await expect.poll(() => host!.textContent).toContain("The sign-in window was closed.");
-        const useManaged = [...host.querySelectorAll("button")].find(
-          (button) => button.textContent!.trim() === `Use Scient-managed ${name}`,
-        )!;
-        useManaged.click();
-
-        await expect.poll(() => visibleButton("Back")).toBeTruthy();
-        expect(runtime.start).not.toHaveBeenCalled();
-        const frames = [...host.querySelectorAll("[data-provider-onboarding-view=assisted]")];
-        const shown = frames.filter(isVisible);
-        // One frame: the decision. The setup it replaced takes no space.
-        expect(shown).toHaveLength(1);
-        expect(frames).toHaveLength(2);
-        expect(shown[0]!.textContent).toContain(`Use Scient-managed ${name} 0.230.0?`);
-        expect(shown[0]!.textContent).toContain(plan.message);
-        expect(shown[0]!.textContent).not.toContain("The sign-in window was closed.");
-
+        await expect.poll(() => host!.querySelector("details")).toBeTruthy();
+        host.querySelector("details")!.open = true;
+        await expect.poll(() => visibleButton(`Use Scient-managed ${name}`)).toBeTruthy();
+        const action = visibleButton(`Use Scient-managed ${name}`)!;
+        expect(action.className).toContain("text-primary");
         const container = host.querySelector("[data-container]")!.getBoundingClientRect();
-        for (const label of ["Back", "Use Scient-managed"]) {
-          const box = visibleButton(label)!.getBoundingClientRect();
-          expect(box.left, label).toBeGreaterThanOrEqual(container.left);
-          expect(box.right, label).toBeLessThanOrEqual(container.right);
-          expect(box.bottom, label).toBeLessThanOrEqual(container.bottom);
-        }
+        const box = action.getBoundingClientRect();
+        expect(box.left).toBeGreaterThanOrEqual(container.left);
+        expect(box.right).toBeLessThanOrEqual(container.right);
+        action.click();
 
-        // Back returns to the setup as it was, with nothing started.
-        visibleButton("Back")!.click();
-        await expect.poll(() => host!.textContent).not.toContain(plan.message);
-        expect(runtime.start).not.toHaveBeenCalled();
-        const after = [...host.querySelectorAll("[data-provider-onboarding-view=assisted]")];
-        expect(after.filter(isVisible)).toHaveLength(1);
-        expect(after[0]!.textContent).toContain("The sign-in window was closed.");
+        await expect.poll(() => runtime.start.mock.calls.length).toBe(1);
+        expect(runtime.start).toHaveBeenCalledExactlyOnceWith(plan);
+        expect(visibleButton("Back")).toBeUndefined();
+        expect(host.textContent).not.toContain(plan.message);
+        const frames = [...host.querySelectorAll("[data-provider-onboarding-view=assisted]")];
+        expect(frames).toHaveLength(1);
+        expect(frames.filter(isVisible)).toHaveLength(1);
       },
     );
   },
 );
 
-// Cursor's SDK account state does not select its optional CLI. Exercise the
-// same version decision through the CLI controls that settings actually owns.
-describe("Cursor CLI switch to an older Scient-managed release", () => {
+// Cursor account sign-in uses its bundled SDK. The optional CLI is managed
+// through the shared runtime section rather than the account setup action.
+describe("Cursor CLI single-click Scient-managed installation", () => {
   const provider = signInFailedOnSystem("cursor", "Cursor CLI", ["cursor_browser"]);
   const plan: ProviderRuntimePlan = {
     instanceId: provider.instanceId,
@@ -355,16 +345,16 @@ describe("Cursor CLI switch to an older Scient-managed release", () => {
     downloadBytes: null,
     sourceLabel: "Official Cursor CLI release",
     catalogRevision: "reviewed:1:older-than-system",
-    message:
-      "Scient-managed Cursor CLI 0.230.0 is older than the system CLI 0.231.0. Your system installation stays unchanged.",
+    message: "Scient-managed Cursor CLI 0.230.0 is older than the system CLI 0.231.0.",
     systemVersion: "0.231.0",
     olderThanSystem: true,
   };
 
   it.each([true, false])(
-    "fits the host and returns on Back without starting (compact: %s)",
+    "starts from its blue action without a version review (compact: %s)",
     async (compact) => {
       runtime.plan.mockResolvedValue(plan);
+      runtime.start.mockResolvedValue({ providers: [provider] });
       host = document.createElement("div");
       document.body.append(host);
       root = createRoot(host);
@@ -379,26 +369,13 @@ describe("Cursor CLI switch to an older Scient-managed release", () => {
         </Container>,
       );
       await expect.poll(() => visibleButton("Use Scient-managed")).toBeTruthy();
+      const action = visibleButton("Use Scient-managed")!;
+      expect(action.className).toContain("text-primary");
       expect(host.textContent).toContain("Conversations use the bundled Cursor SDK.");
-      visibleButton("Use Scient-managed")!.click();
-
-      await expect.poll(() => visibleButton("Back")).toBeTruthy();
-      expect(host.textContent).toContain("Use Scient-managed Cursor CLI 0.230.0?");
-      expect(host.textContent).toContain(plan.message);
-      expect(host.textContent).not.toContain("The sign-in window was closed.");
-      expect(runtime.start).not.toHaveBeenCalled();
-      const container = host.querySelector("[data-container]")!.getBoundingClientRect();
-      for (const label of ["Back", "Use Scient-managed"]) {
-        const box = visibleButton(label)!.getBoundingClientRect();
-        expect(box.left, label).toBeGreaterThanOrEqual(container.left);
-        expect(box.right, label).toBeLessThanOrEqual(container.right);
-        expect(box.bottom, label).toBeLessThanOrEqual(container.bottom);
-      }
-
-      visibleButton("Back")!.click();
-      await expect.poll(() => host!.textContent).not.toContain(plan.message);
-      expect(host.textContent).toContain("System Cursor CLI");
-      expect(runtime.start).not.toHaveBeenCalled();
+      action.click();
+      await expect.poll(() => runtime.start.mock.calls.length).toBe(1);
+      expect(visibleButton("Back")).toBeUndefined();
+      expect(host.textContent).not.toContain(plan.message);
     },
   );
 });

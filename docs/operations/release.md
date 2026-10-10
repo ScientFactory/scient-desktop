@@ -30,6 +30,20 @@ separate states and must be reported separately.
   monitor, omit unused Claude SDK platform executables, and package only the
   target Windows `node-pty` architecture. These optimizations do not relax the
   exact-source CI, signing, assembly, or publication gates.
+- CI calls Windows Packaging for changes affecting packaged code on pull
+  requests, merge groups, and main. Successful qualification is part of the
+  existing required `Test` check; an unresolved diff runs qualification, and
+  a failed detector or an unqualified skip fails the gate. It runs the release
+  payload validator, packaged terminal/Cursor native probes, and an install/upgrade
+  from the checksum-pinned 0.6.21 installer without signing
+  secrets or publication authority. Release Smoke uses synthetic artifacts and
+  remains a separate workflow/manifest check.
+- Windows loose-file validation retains an 80-file core budget. Pinned voice
+  and Windows/WSL Cursor inventories are admitted separately only after their
+  exact file sets pass validation; missing or extra component files fail even
+  below the total cap. Foreign native targets fail independently of the budget.
+  Dependency updates that change these inventories require reviewing the runtime
+  loaders and updating the inventories and regression fixtures together.
 
 Release versions follow the current stable line. A version does not imply
 proximity to `v1.0.0`; semantic versions permit any number of patch and minor
@@ -155,6 +169,19 @@ Scient does not publish T3's npm package. Each release instead contains
 `scient-server-<version>.tgz`. SSH launches and background-service updates use
 that immutable GitHub asset at the exact desktop version. The tarball is built
 from the same source SHA and includes native resource monitors from the matrix.
+Its manifest shares the CLI bundler's runtime-external dependency boundary with
+both desktop backends. Ordinary JavaScript and patched SDKs remain bundled;
+only disk-loaded runtime roots and their npm shrinkwrapped closure are installed
+on the remote host. The Electron-only FFF ASAR loader patch is unnecessary in
+this plain filesystem package.
+
+Required CI qualification builds the real tarball on Linux, installs the same
+bytes outside the workspace on Linux, macOS and Windows, probes native file
+search, canvas, Cursor helpers and concurrent terminals, then verifies HTTP
+startup and POSIX graceful shutdown (Windows process termination) using disposable state. The existing required
+`Test` check fails if applicable remote qualification fails or is skipped.
+Release packaging repeats the Linux tarball check after adding native assets,
+before uploading the candidate.
 
 ## What's New ownership
 

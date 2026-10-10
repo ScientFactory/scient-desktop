@@ -171,6 +171,7 @@ it.each([false, true])(
       completeSetup = resolve;
     });
     const handoff = vi.fn();
+    const forkCompleted = vi.fn();
     let reopen!: () => void;
     function Probe() {
       const [open, setOpen] = useState(true);
@@ -188,6 +189,7 @@ it.each([false, true])(
           onConfirm={async (_, closeBeforeNavigate) => {
             setBusy(true);
             await setup;
+            forkCompleted();
             handoff(await closeBeforeNavigate());
             setBusy(false);
           }}
@@ -195,6 +197,9 @@ it.each([false, true])(
       );
     }
     await act(() => root.render(<Probe />));
+    expect(
+      [...document.querySelectorAll("button")].some((button) => button.textContent === "Cancel"),
+    ).toBe(true);
     await act(() => {
       document
         .querySelector("form")!
@@ -202,6 +207,7 @@ it.each([false, true])(
     });
     const buttons = [...document.querySelectorAll("button")];
     expect(buttons.some((button) => button.textContent === "Forking…")).toBe(true);
+    expect(buttons.some((button) => button.textContent === "Cancel")).toBe(false);
     const close = buttons.find((button) => button.textContent === "Close")!;
     expect(close.disabled).toBe(false);
     await act(() => close.click());
@@ -209,6 +215,9 @@ it.each([false, true])(
       await act(async () => {});
       expect(document.querySelector('[role="dialog"]')).toBeNull();
     });
+    // Dismissal neither completes nor aborts the accepted fork; setup still owns it.
+    expect(forkCompleted).not.toHaveBeenCalled();
+    expect(handoff).not.toHaveBeenCalled();
 
     // Opening the dialog again must not hand the dismissed fork its navigation back.
     if (reopened) await act(() => reopen());
@@ -220,6 +229,7 @@ it.each([false, true])(
       await act(async () => {});
       expect(handoff).toHaveBeenCalledWith(false);
     });
+    expect(forkCompleted).toHaveBeenCalledTimes(1);
     expect(document.querySelector('[role="dialog"]') !== null).toBe(reopened);
   },
 );
@@ -320,6 +330,9 @@ it.each(["continue", "cancel", "unmount"] as const)(
     });
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("missing.png");
     expect(fork).not.toHaveBeenCalled();
+    const buttons = [...document.querySelectorAll("button")];
+    expect(buttons.some((button) => button.textContent === "Cancel")).toBe(true);
+    expect(buttons.some((button) => button.textContent === "Close")).toBe(false);
     if (action === "unmount") await act(() => root.render(null));
     else
       await act(() => {

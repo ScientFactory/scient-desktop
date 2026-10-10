@@ -7,6 +7,8 @@ import type { BrowserPdfExportTarget } from "./useBrowserPdfExport";
 
 const mocks = vi.hoisted(() => ({
   exportPdf: vi.fn(),
+  exportServerPage: vi.fn(),
+  lease: vi.fn(),
   openScient: vi.fn(),
   publish: vi.fn(),
   recordExport: vi.fn(),
@@ -30,9 +32,16 @@ vi.mock("~/rightPanelStore", () => ({
   },
 }));
 vi.mock("~/state/browserPdfExport", () => ({
-  browserPdfExportEnvironment: { publish: "browser-pdf-export-publish" },
+  browserPdfExportEnvironment: {
+    publish: "browser-pdf-export-publish",
+    exportServerPage: "browser-pdf-export-server",
+  },
 }));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => mocks.publish }));
+vi.mock("~/state/use-atom-command", () => ({
+  useAtomCommand: (command: string) =>
+    command === "browser-pdf-export-server" ? mocks.exportServerPage : mocks.publish,
+}));
+vi.mock("./browserPdfExportOwner", () => ({ readBrowserPdfExportLease: mocks.lease }));
 vi.mock("../rightPanel/surfaces", () => ({
   scientGeneratedPdfSurface: (source: unknown) => ({
     id: "scient:generated-pdf:environment-1:artifact-1",
@@ -95,6 +104,11 @@ describe("useBrowserPdfExport", () => {
     exportPdf = null;
     for (const mock of Object.values(mocks)) mock.mockReset();
     mocks.beginAnalytics.mockReturnValue(mocks.finishAnalytics);
+    mocks.lease.mockImplementation(() => ({
+      owner: "desktop",
+      serverEpoch: "epoch-1",
+      pageUrl: target.pageUrl,
+    }));
     mocks.exportPdf.mockResolvedValue({
       data: new Uint8Array([37, 80, 68, 70]),
       sourceUrl: target.pageUrl,
@@ -199,6 +213,65 @@ describe("useBrowserPdfExport", () => {
     mocks.exportPdf.mockRejectedValue(error);
     await expect(exportPdf?.(target)).rejects.toBe(error);
     expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
+    expect(mocks.publish).not.toHaveBeenCalled();
+  });
+  it("prints and publishes a remote server tab through its environment without a local render or upload", async () => {
+    mocks.lease.mockReturnValue({
+      owner: "server",
+      serverEpoch: "remote-epoch",
+      pageUrl: target.pageUrl,
+    });
+    const remoteSource = { ...generatedSource, authority: "remote-environment" };
+    mocks.exportServerPage.mockResolvedValue({
+      _tag: "Success",
+      value: { source: remoteSource, receipt: { warnings: [] } },
+    });
+    await exportPdf?.(target);
+    expect(mocks.exportServerPage).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.threadRef.environmentId,
+      input: {
+        threadId: target.threadRef.threadId,
+        tabId: target.tabId,
+        expectedServerEpoch: "remote-epoch",
+        expectedSourceUrl: target.pageUrl,
+        logicalDocumentKey: expect.stringMatching(/^browser-export:[a-f0-9]{64}$/u),
+        operationId: "browser-export-operation-1",
+        producerId: "browser.export",
+      },
+    });
+    expect(mocks.exportPdf).not.toHaveBeenCalled();
+    expect(mocks.publish).not.toHaveBeenCalled();
+    expect(mocks.updateScientGeneratedPdf).toHaveBeenCalledWith(
+      target.threadRef,
+      expect.objectContaining({ source: remoteSource }),
+    );
+    expect(mocks.recordExport).toHaveBeenCalledWith("relation-1", remoteSource);
+  });
+
+  it("rejects a remote epoch or page lease lost during print without presenting or associating the PDF", async () => {
+    mocks.lease
+      .mockReturnValueOnce({
+        owner: "server",
+        serverEpoch: "remote-epoch",
+        pageUrl: target.pageUrl,
+      })
+      .mockReturnValue(null);
+    mocks.exportServerPage.mockResolvedValue({
+      _tag: "Success",
+      value: { source: generatedSource, receipt: { warnings: [] } },
+    });
+    await expect(exportPdf?.(target)).rejects.toThrow(
+      "HTML source changed while the PDF was being published",
+    );
+    expect(mocks.updateScientGeneratedPdf).not.toHaveBeenCalled();
+    expect(mocks.recordExport).not.toHaveBeenCalled();
+  });
+
+  it("does not route an unavailable or replaced remote tab into the local renderer", async () => {
+    mocks.lease.mockReturnValue(null);
+    await expect(exportPdf?.(target)).rejects.toThrow("PDF renderer is unavailable");
+    expect(mocks.exportPdf).not.toHaveBeenCalled();
+    expect(mocks.exportServerPage).not.toHaveBeenCalled();
     expect(mocks.publish).not.toHaveBeenCalled();
   });
 });

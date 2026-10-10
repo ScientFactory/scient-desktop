@@ -27,8 +27,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -242,41 +242,44 @@ const seed = Effect.fnUntraced(function* () {
   return { sink, thread, sourceThread, run, attempt, root, providerThread, plan, receipt, now };
 });
 
-for (const receiptKind of ["local-pending", "offered-unknown", "old-unknown"] as const) {
-  it.effect(`does not consume a plan from ${receiptKind} running installation`, () =>
-    Effect.gen(function* () {
-      const { sink, plan, receipt } = yield* seed();
-      const projection = yield* ProjectionStore.ProjectionStoreV2;
-      const {
-        acceptedAt: _acceptedAt,
-        nativeAcceptance: _nativeAcceptance,
-        ...installed
-      } = receipt.payload;
-      yield* sink.write({
-        events: [
-          {
-            ...receipt,
-            payload: {
-              ...installed,
-              ...(receiptKind === "local-pending"
-                ? { nativeAcceptance: "pending" as const }
-                : receiptKind === "offered-unknown"
-                  ? { nativeAcceptance: "unknown" as const }
-                  : {}),
-            },
+it.effect.each(
+  (["local-pending", "offered-unknown", "old-unknown"] as const).map((receiptKind) => ({
+    caseTitle: `does not consume a plan from ${receiptKind} running installation`,
+    receiptKind,
+  })),
+)("$caseTitle", ({ receiptKind }) =>
+  Effect.gen(function* () {
+    const { sink, plan, receipt } = yield* seed();
+    const projection = yield* ProjectionStore.ProjectionStoreV2;
+    const {
+      acceptedAt: _acceptedAt,
+      nativeAcceptance: _nativeAcceptance,
+      ...installed
+    } = receipt.payload;
+    yield* sink.write({
+      events: [
+        {
+          ...receipt,
+          payload: {
+            ...installed,
+            ...(receiptKind === "local-pending"
+              ? { nativeAcceptance: "pending" as const }
+              : receiptKind === "offered-unknown"
+                ? { nativeAcceptance: "unknown" as const }
+                : {}),
           },
-        ],
-      });
-      assert.equal((yield* projection.getPlan(plan.threadId, plan.id))?.status, "active");
-      // The later, exact-owner native acknowledgement consumes exactly once.
-      yield* sink.write({ events: [{ ...receipt, id: EventId.make("later-native-acceptance") }] });
-      const consumed = yield* projection.getPlan(plan.threadId, plan.id);
-      assert.ok(consumed?.kind === "proposed_plan");
-      assert.equal(consumed.status, "completed");
-      assert.equal(consumed.consumedBy?.providerTurnId, receipt.payload.id);
-    }).pipe(Effect.provide(testLayer)),
-  );
-}
+        },
+      ],
+    });
+    assert.equal((yield* projection.getPlan(plan.threadId, plan.id))?.status, "active");
+    // The later, exact-owner native acknowledgement consumes exactly once.
+    yield* sink.write({ events: [{ ...receipt, id: EventId.make("later-native-acceptance") }] });
+    const consumed = yield* projection.getPlan(plan.threadId, plan.id);
+    assert.ok(consumed?.kind === "proposed_plan");
+    assert.equal(consumed.status, "completed");
+    assert.equal(consumed.consumedBy?.providerTurnId, receipt.payload.id);
+  }).pipe(Effect.provide(testLayer)),
+);
 
 it.effect(
   "consumes a queued plan with the native receipt atomically and retains exact owner through replay/new attempts",
@@ -383,111 +386,116 @@ it.effect(
     }).pipe(Effect.provide(testLayer)),
 );
 
-for (const mismatch of [
-  "attempt",
-  "root",
-  "provider-thread",
-  "envelope-run",
-  "envelope-node",
-  "envelope-instance",
-  "native-driver",
-  "bound-turn",
-  "source-content",
-  "source-deleted",
-  "source-project",
-  "target-archived",
-  "same-batch-content",
-  "same-batch-plan-owner",
-] as const) {
-  it.effect(`does not consume a plan from a mismatched native receipt: ${mismatch}`, () =>
-    Effect.gen(function* () {
-      const { sink, root, run, sourceThread, thread, plan, receipt, now } = yield* seed();
-      const projection = yield* ProjectionStore.ProjectionStoreV2;
-      const payload = { ...receipt.payload };
-      const event = { ...receipt, payload };
-      const before: OrchestrationV2DomainEvent[] = [];
-      if (mismatch === "attempt") payload.runAttemptId = RunAttemptId.make("foreign-attempt");
-      if (mismatch === "root") payload.nodeId = NodeId.make("foreign-root");
-      if (mismatch === "provider-thread")
-        payload.providerThreadId = ProviderThreadId.make("foreign-native");
-      if (mismatch === "envelope-run") event.runId = RunId.make("foreign-run");
-      if (mismatch === "envelope-node") event.nodeId = NodeId.make("foreign-envelope-node");
-      if (mismatch === "envelope-instance")
-        event.providerInstanceId = ProviderInstanceId.make("foreign-instance");
-      if (mismatch === "native-driver")
-        payload.nativeTurnRef = {
-          driver: ProviderDriverKind.make("codex"),
-          nativeId: "foreign",
-          strength: "strong",
-        };
-      if (mismatch === "bound-turn")
-        before.push({
-          id: EventId.make("changed:root"),
-          type: "node.updated",
-          threadId: run.threadId,
-          occurredAt: now,
-          payload: { ...root, providerTurnId: ProviderTurnId.make("different-bound-turn") },
-        });
-      if (mismatch === "source-content")
-        before.push({
-          id: EventId.make("changed:plan"),
-          type: "plan.updated",
-          threadId: plan.threadId,
-          occurredAt: now,
-          payload: { ...plan, markdown: "# A newer selected plan" },
-        });
-      if (mismatch === "source-deleted" || mismatch === "source-project")
-        before.push({
-          id: EventId.make("changed:source"),
-          type: "thread.metadata-updated",
-          threadId: plan.threadId,
-          occurredAt: now,
-          payload: {
-            ...sourceThread,
-            ...(mismatch === "source-deleted"
-              ? { deletedAt: now }
-              : { projectId: ProjectId.make("foreign-project") }),
-          },
-        });
-      if (mismatch === "target-archived")
-        before.push({
-          id: EventId.make("changed:target"),
-          type: "thread.metadata-updated",
-          threadId: thread.id,
-          occurredAt: now,
-          payload: { ...thread, archivedAt: now },
-        });
-      if (before.length > 0) yield* sink.write({ events: before });
-      const changedPlan: OrchestrationV2DomainEvent = {
-        id: EventId.make("same-batch:changed-plan"),
+it.effect.each(
+  (
+    [
+      "attempt",
+      "root",
+      "provider-thread",
+      "envelope-run",
+      "envelope-node",
+      "envelope-instance",
+      "native-driver",
+      "bound-turn",
+      "source-content",
+      "source-deleted",
+      "source-project",
+      "target-archived",
+      "same-batch-content",
+      "same-batch-plan-owner",
+    ] as const
+  ).map((mismatch) => ({
+    caseTitle: `does not consume a plan from a mismatched native receipt: ${mismatch}`,
+    mismatch,
+  })),
+)("$caseTitle", ({ mismatch }) =>
+  Effect.gen(function* () {
+    const { sink, root, run, sourceThread, thread, plan, receipt, now } = yield* seed();
+    const projection = yield* ProjectionStore.ProjectionStoreV2;
+    const payload = { ...receipt.payload };
+    const event = { ...receipt, payload };
+    const before: OrchestrationV2DomainEvent[] = [];
+    if (mismatch === "attempt") payload.runAttemptId = RunAttemptId.make("foreign-attempt");
+    if (mismatch === "root") payload.nodeId = NodeId.make("foreign-root");
+    if (mismatch === "provider-thread")
+      payload.providerThreadId = ProviderThreadId.make("foreign-native");
+    if (mismatch === "envelope-run") event.runId = RunId.make("foreign-run");
+    if (mismatch === "envelope-node") event.nodeId = NodeId.make("foreign-envelope-node");
+    if (mismatch === "envelope-instance")
+      event.providerInstanceId = ProviderInstanceId.make("foreign-instance");
+    if (mismatch === "native-driver")
+      payload.nativeTurnRef = {
+        driver: ProviderDriverKind.make("codex"),
+        nativeId: "foreign",
+        strength: "strong",
+      };
+    if (mismatch === "bound-turn")
+      before.push({
+        id: EventId.make("changed:root"),
+        type: "node.updated",
+        threadId: run.threadId,
+        occurredAt: now,
+        payload: { ...root, providerTurnId: ProviderTurnId.make("different-bound-turn") },
+      });
+    if (mismatch === "source-content")
+      before.push({
+        id: EventId.make("changed:plan"),
         type: "plan.updated",
         threadId: plan.threadId,
         occurredAt: now,
-        payload: { ...plan, markdown: "# Newer plan in this transaction" },
-      };
-      const wrongOwner: OrchestrationV2DomainEvent = {
-        ...changedPlan,
-        payload: { ...plan, threadId: thread.id },
-      };
-      const written = yield* sink.write({
-        events:
-          mismatch === "same-batch-content"
-            ? [changedPlan, event]
-            : mismatch === "same-batch-plan-owner"
-              ? [wrongOwner, event]
-              : [event],
+        payload: { ...plan, markdown: "# A newer selected plan" },
       });
-      assert.isFalse(
-        written.some(
-          (entry) =>
-            entry.event.type === "plan.updated" && entry.event.payload.status === "completed",
-        ),
-      );
-      const currentPlan = yield* projection.getPlan(
-        mismatch === "same-batch-plan-owner" ? thread.id : plan.threadId,
-        plan.id,
-      );
-      assert.equal(currentPlan?.status, "active");
-    }).pipe(Effect.provide(testLayer)),
-  );
-}
+    if (mismatch === "source-deleted" || mismatch === "source-project")
+      before.push({
+        id: EventId.make("changed:source"),
+        type: "thread.metadata-updated",
+        threadId: plan.threadId,
+        occurredAt: now,
+        payload: {
+          ...sourceThread,
+          ...(mismatch === "source-deleted"
+            ? { deletedAt: now }
+            : { projectId: ProjectId.make("foreign-project") }),
+        },
+      });
+    if (mismatch === "target-archived")
+      before.push({
+        id: EventId.make("changed:target"),
+        type: "thread.metadata-updated",
+        threadId: thread.id,
+        occurredAt: now,
+        payload: { ...thread, archivedAt: now },
+      });
+    if (before.length > 0) yield* sink.write({ events: before });
+    const changedPlan: OrchestrationV2DomainEvent = {
+      id: EventId.make("same-batch:changed-plan"),
+      type: "plan.updated",
+      threadId: plan.threadId,
+      occurredAt: now,
+      payload: { ...plan, markdown: "# Newer plan in this transaction" },
+    };
+    const wrongOwner: OrchestrationV2DomainEvent = {
+      ...changedPlan,
+      payload: { ...plan, threadId: thread.id },
+    };
+    const written = yield* sink.write({
+      events:
+        mismatch === "same-batch-content"
+          ? [changedPlan, event]
+          : mismatch === "same-batch-plan-owner"
+            ? [wrongOwner, event]
+            : [event],
+    });
+    assert.isFalse(
+      written.some(
+        (entry) =>
+          entry.event.type === "plan.updated" && entry.event.payload.status === "completed",
+      ),
+    );
+    const currentPlan = yield* projection.getPlan(
+      mismatch === "same-batch-plan-owner" ? thread.id : plan.threadId,
+      plan.id,
+    );
+    assert.equal(currentPlan?.status, "active");
+  }).pipe(Effect.provide(testLayer)),
+);

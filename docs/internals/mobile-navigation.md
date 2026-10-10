@@ -7,8 +7,9 @@ continuous transition.
 
 ## UIKit constraints
 
-The [react-native-screens patch](../../patches/react-native-screens@4.28.0.patch)
-preserves behavior that is easy to break when changing native headers:
+The v5 stack uses the committed [Screens fork](../operations/mobile-screens-fork.md),
+not the former `react-native-screens@4.28.0` patch. Changes to native headers must
+preserve these constraints:
 
 - The brand belongs in `headerTitle`. On iOS 26.5, UIKit morphs a background-free
   leading toolbar item's rectangle into the next screen's glass back button,
@@ -24,10 +25,10 @@ preserves behavior that is easy to break when changing native headers:
   gesture. Upstream gives every horizontal ScrollView priority, so swiping back
   on a code block or table can only bounce its content.
 
-The patch adds native header props that require code generation and a new binary.
-Patch rebuild guidance lives in the
-[mobile development README](../../apps/mobile/README.md#development).
-The source patch and these constraints do not by themselves establish physical iOS acceptance.
+Native header changes require code generation and a new binary. Dependency rebuild
+guidance lives in the [Screens fork runbook](../operations/mobile-screens-fork.md)
+and [mobile development README](../../apps/mobile/README.md#development).
+Source inspection and these constraints do not establish physical iOS acceptance.
 
 ## Native media presentations
 

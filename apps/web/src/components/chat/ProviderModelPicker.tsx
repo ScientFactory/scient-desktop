@@ -46,6 +46,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   instanceIndicatorBackground?: string;
   size?: ComposerControlSize;
   compact?: boolean;
+  iconOnly?: boolean;
   isComposerOwned?: boolean;
   disabled?: boolean;
   terminalOpen?: boolean;
@@ -226,7 +227,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       <PopoverTrigger
         render={
           <ComposerControl
-            aria-label={props.triggerAriaLabel ?? allModelNames}
+            aria-label={
+              props.triggerAriaLabel ?? allModelNames ?? (props.iconOnly ? triggerLabel : undefined)
+            }
             size={size}
             data-chat-provider-model-picker="true"
             className={cn(
@@ -282,45 +285,51 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               )}
             />
           ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span
-                  className="min-w-0 flex-1 overflow-hidden truncate"
-                  data-chat-provider-model-picker-label="true"
-                />
-              }
-            >
-              {props.triggerLabel ?? multipleLabel ?? triggerTitle}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
-          </Tooltip>
-          {!props.statusLabel && selectedModel?.providerCostLabel ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="shrink-0 text-3xs font-medium leading-none text-muted-foreground/70" />
-                }
-              >
-                {selectedModel.providerCostLabel}
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                Costs {selectedModel.providerCostLabel} of the provider&apos;s base token rate
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {!props.statusLabel &&
-          !selectedEntries &&
-          props.triggerLabel === undefined &&
-          selectedModel?.isUnavailable ? (
-            <Badge variant="outline" size="sm">
-              Unavailable
-            </Badge>
-          ) : null}
+          {props.iconOnly ? null : (
+            <>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="min-w-0 flex-1 overflow-hidden truncate"
+                      data-chat-provider-model-picker-label="true"
+                    />
+                  }
+                >
+                  {props.triggerLabel ?? multipleLabel ?? triggerTitle}
+                </TooltipTrigger>
+                <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
+              </Tooltip>
+              {!props.statusLabel && selectedModel?.providerCostLabel ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="shrink-0 text-3xs font-medium leading-none text-muted-foreground/70" />
+                    }
+                  >
+                    {selectedModel.providerCostLabel}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">
+                    Costs {selectedModel.providerCostLabel} of the provider&apos;s base token rate
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+              {!props.statusLabel &&
+              !selectedEntries &&
+              props.triggerLabel === undefined &&
+              selectedModel?.isUnavailable ? (
+                <Badge variant="outline" size="sm">
+                  Unavailable
+                </Badge>
+              ) : null}
+            </>
+          )}
         </span>
-        <span aria-hidden="true" className="flex items-center">
-          <ComposerControlChevron size={size} />
-        </span>
+        {props.iconOnly ? null : (
+          <span aria-hidden="true" className="flex items-center">
+            <ComposerControlChevron size={size} />
+          </span>
+        )}
       </PopoverTrigger>
       <PopoverPopup
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}

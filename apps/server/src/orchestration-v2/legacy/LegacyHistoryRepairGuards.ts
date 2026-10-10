@@ -1,9 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The transaction preserves historic deterministic repair event IDs.
 /** Legacy V1 history repairs, rechecked inside the native event write transaction. */
 import { EventId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import {
   readLegacyCitationRepairSource,

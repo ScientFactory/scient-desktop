@@ -10,10 +10,12 @@ import * as ThreadUndo from "./threadUndo";
 
 type UndoOptions = {
   // SCIENT-FORK: "Moved" is a thread-section move.
-  action: "Settled" | "Snoozed" | "Unpinned" | "Archived" | "Moved";
+  action: "Settled" | "Snoozed" | "Unpinned" | "Archived" | "Moved" | "Discarded";
   undo: () => Promise<AtomCommandResult<unknown, unknown>>;
   failureTitle: string;
   claim: ReturnType<typeof ThreadUndo.begin>;
+  /** Runs once the action can no longer be undone. */
+  commit?: () => void;
 };
 
 type UndoNotice = {
@@ -30,7 +32,9 @@ let liveUndos: UndoOptions[] = [];
 let expiry: ReturnType<typeof setTimeout> | undefined;
 
 function refreshNotice() {
-  liveUndos = liveUndos.filter(({ claim }) => claim.isCurrent());
+  const stale = liveUndos.filter(({ claim }) => !claim.isCurrent());
+  liveUndos = liveUndos.filter((entry) => !stale.includes(entry));
+  for (const entry of stale) entry.commit?.();
   const latest = liveUndos.at(-1);
   if (!latest) {
     clearTimeout(expiry);
@@ -101,7 +105,10 @@ export function showThreadUndoNotice(options: UndoOptions) {
   expiry = setTimeout(() => {
     const expired = liveUndos;
     liveUndos = [];
-    for (const { claim } of expired) claim.finish();
+    for (const { claim, commit } of expired) {
+      claim.finish();
+      commit?.();
+    }
     refreshNotice();
   }, 5_000);
 }

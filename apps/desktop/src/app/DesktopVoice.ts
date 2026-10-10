@@ -297,9 +297,16 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
     let activeModelMutation: "select" | "remove" | null = null;
     let downloadController: AbortController | null = null;
     let downloadModelId: VoiceModelId | null = null;
-    let activeController: AbortController | null = null;
-    let activeRequestId: string | undefined;
-    let activeTranscription: Promise<unknown> | null = null;
+    // Transcriptions run one at a time, in arrival order. A newer request waits
+    // for the engine; it never aborts work another window or thread started.
+    const transcriptions = new Set<{
+      readonly requestId: string | undefined;
+      readonly controller: AbortController;
+    }>();
+    let transcriptionTail: Promise<void> = Promise.resolve();
+    const abortTranscriptions = () => {
+      for (const transcription of transcriptions) transcription.controller.abort();
+    };
     let selectedModelId = (yield* appSettings.load).voiceSelectedModelId ?? null;
     const persistSelectedModel = (
       modelId: VoiceModelId | null,
@@ -396,7 +403,7 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
     yield* Effect.addFinalizer(() =>
       Effect.promise(async () => {
         downloadController?.abort();
-        activeController?.abort();
+        abortTranscriptions();
         await engine.dispose().catch(() => undefined);
       }),
     );
@@ -554,10 +561,9 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
           }
           activeModelMutation = "remove";
           return yield* Effect.gen(function* () {
-            activeController?.abort();
-            yield* Effect.promise(
-              () => activeTranscription?.catch(() => undefined) ?? Promise.resolve(),
-            );
+            abortTranscriptions();
+            const drained = transcriptionTail;
+            yield* Effect.promise(() => drained);
 
             let replacement = request.replacementModelId ?? null;
             if (replacement === request.modelId) {
@@ -604,7 +610,9 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
 
       cancelTranscription: (request) =>
         Effect.sync(() => {
-          if (activeRequestId === request?.requestId) activeController?.abort();
+          for (const transcription of transcriptions) {
+            if (transcription.requestId === request?.requestId) transcription.controller.abort();
+          }
         }),
 
       transcribe: (request) =>
@@ -620,30 +628,40 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
               safeMessage: "Set up offline voice transcription before using the microphone.",
             });
           }
-          activeController?.abort();
-          const controller = new AbortController();
-          activeController = controller;
-          activeRequestId = request.requestId;
-          const transcription = engine.transcribe(selectedModelId, clip, {
-            signal: controller.signal,
-            ...(request.language !== undefined ? { language: request.language } : {}),
+          const entry = { requestId: request.requestId, controller: new AbortController() };
+          transcriptions.add(entry);
+          const previous = transcriptionTail;
+          let release!: () => void;
+          transcriptionTail = new Promise<void>((resolve) => {
+            release = resolve;
           });
-          activeTranscription = transcription;
-          const modelId = selectedModelId;
+          // The queue slot is released by the engine work itself, not by the
+          // calling fiber, so an interrupted caller cannot start a second run.
+          const run = (async () => {
+            try {
+              await previous;
+              entry.controller.signal.throwIfAborted();
+              const modelId = selectedModelId;
+              if (modelId === null) {
+                throw new VoiceRequestError({
+                  kind: "model-missing",
+                  safeMessage: "Set up offline voice transcription before using the microphone.",
+                });
+              }
+              const transcript = await engine.transcribe(modelId, clip, {
+                signal: entry.controller.signal,
+                ...(request.language !== undefined ? { language: request.language } : {}),
+              });
+              return { ...transcript, modelId };
+            } finally {
+              transcriptions.delete(entry);
+              release();
+            }
+          })();
           return yield* Effect.tryPromise({
-            try: async () => ({ ...(await transcription), modelId }),
+            try: () => run,
             catch: (cause) => toVoiceRequestError(cause),
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (activeController === controller) {
-                  activeController = null;
-                  activeRequestId = undefined;
-                }
-                if (activeTranscription === transcription) activeTranscription = null;
-              }),
-            ),
-          );
+          });
         }),
     });
   });

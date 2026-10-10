@@ -120,6 +120,7 @@ describe("Scient skill session planning", () => {
     expect(ScientSkillSession.SCIENT_SKILL_DELIVERY.antigravity).toBe("mcp");
     expect(ScientSkillSession.SCIENT_SKILL_DELIVERY.cursor).toBe("mcp");
     expect(ScientSkillSession.SCIENT_SKILL_DELIVERY.omp).toBe("mcp");
+    expect(ScientSkillSession.SCIENT_SKILL_DELIVERY.muse).toBe("mcp");
   });
 
   it.effect("withholds project skills until the exact current lock is trusted", () =>
@@ -207,9 +208,10 @@ describe("Scient skill session planning", () => {
           }),
         ]);
 
-        for (const provider of ["antigravity", "cursor"] as const) {
+        for (const provider of ["antigravity", "cursor", "muse"] as const) {
           const plan = yield* resolvePlan(catalog, snapshot, {
             provider: ProviderDriverKind.make(provider),
+            mcpSessionAvailable: true,
           });
           expect(plan.delivery).toBe("mcp");
           expect(plan.releases).toEqual(new Map([[skillReleaseKey(release), release]]));
@@ -221,6 +223,17 @@ describe("Scient skill session planning", () => {
           ]);
           expect(plan.diagnostics.map((entry) => entry.code)).not.toContain("provider-unsupported");
         }
+
+        const unavailableMuse = yield* resolvePlan(catalog, snapshot, {
+          provider: ProviderDriverKind.make("muse"),
+          mcpSessionAvailable: false,
+        });
+        expect(unavailableMuse.delivery).toBe("unsupported");
+        expect(unavailableMuse.skills).toEqual([]);
+        expect(unavailableMuse.releases).toEqual(new Map());
+        expect(unavailableMuse.diagnostics).toContainEqual(
+          expect.objectContaining({ code: "provider-unsupported" }),
+        );
 
         const externalOpenCode = yield* resolvePlan(catalog, snapshot, {
           provider: ProviderDriverKind.make("opencode"),

@@ -11,7 +11,7 @@ import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
-function makeLayer(input: {
+function layer(input: {
   readonly detect: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
 }) {
   return GitWorkflowService.layer.pipe(
@@ -34,7 +34,7 @@ describe("GitWorkflowService", () => {
       assert.equal(isRepository, false);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layer({
           detect: () =>
             Effect.succeed({
               kind: "jj",
@@ -75,7 +75,7 @@ describe("GitWorkflowService", () => {
       });
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layer({
           detect: () => Effect.succeed(null),
         }),
       ),
@@ -107,7 +107,7 @@ describe("GitWorkflowService", () => {
       });
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layer({
           detect: () => Effect.succeed(null),
         }),
       ),
@@ -119,7 +119,7 @@ describe("GitWorkflowService", () => {
     const remoteStatus = vi.fn();
     const status = vi.fn();
 
-    const testLayer = GitWorkflowService.layer.pipe(
+    const layerTest = GitWorkflowService.layer.pipe(
       Layer.provide(
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
           detect: () => Effect.succeed(null),
@@ -144,7 +144,7 @@ describe("GitWorkflowService", () => {
       assert.equal(localStatus.mock.calls.length, 0);
       assert.equal(remoteStatus.mock.calls.length, 0);
       assert.equal(status.mock.calls.length, 0);
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 
   it.effect("reports missing Git as an available non-repository workspace", () => {
@@ -202,7 +202,7 @@ describe("GitWorkflowService", () => {
       });
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layer({
           detect: () => Effect.succeed(null),
         }),
       ),
@@ -229,7 +229,7 @@ describe("GitWorkflowService", () => {
       expect(error.message).not.toContain(cause.detail);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layer({
           detect: () => Effect.fail(cause),
         }),
       ),
@@ -257,7 +257,7 @@ describe("GitWorkflowService", () => {
       expect(error.message).not.toContain(cause.detail);
     }).pipe(
       Effect.provide(
-        makeLayer({
+        layer({
           detect: () => Effect.fail(cause),
         }),
       ),

@@ -88,110 +88,111 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  for (const response of ["supported", "unsupported", "invalid"] as const) {
-    it.effect(`delivers native history with ${response} app-server protocol`, () =>
-      Effect.gen(function* () {
-        const nativeThreadId = `inject-${response}`;
-        const prompt = "Only the current request";
-        const history: ProviderAdapterV2HistoricalContext = {
-          context: "Historical conversation",
-          messages: (["user", "assistant"] as const).map((role) => ({
-            role,
-            text:
-              role === "user"
-                ? "Original request\n" + "界".repeat(300)
-                : "Partial interrupted work",
-            threadId: ThreadId.make("source"),
-            runId: RunId.make("source-run"),
-            itemId: TurnItemId.make(`source-${role}`),
-            providerThreadId: null,
-            kind: `${role}_message`,
-            status: "interrupted",
-          })),
-        };
-        const items = historyResponseItems(history.messages, history.context);
-        const preamble = codexReplayPreamble({
-          nativeThreadId,
-          nativeTurnId: "current-turn",
-          prompt,
-        });
-        const transcript = makeCodexReplayTranscript({
-          scenario: `inject-${response}`,
-          entries: [
-            ...preamble.slice(0, -3),
-            {
-              type: "expect_outbound",
-              label: "inject",
-              frame: {
-                id: 3,
-                method: "thread/inject_items",
-                params: { threadId: nativeThreadId, items },
-              },
+  it.effect.each(
+    (["supported", "unsupported", "invalid"] as const).map((response) => ({
+      caseTitle: `delivers native history with ${response} app-server protocol`,
+      response,
+    })),
+  )("$caseTitle", ({ response }) =>
+    Effect.gen(function* () {
+      const nativeThreadId = `inject-${response}`;
+      const prompt = "Only the current request";
+      const history: ProviderAdapterV2HistoricalContext = {
+        context: "Historical conversation",
+        messages: (["user", "assistant"] as const).map((role) => ({
+          role,
+          text:
+            role === "user" ? "Original request\n" + "界".repeat(300) : "Partial interrupted work",
+          threadId: ThreadId.make("source"),
+          runId: RunId.make("source-run"),
+          itemId: TurnItemId.make(`source-${role}`),
+          providerThreadId: null,
+          kind: `${role}_message`,
+          status: "interrupted",
+        })),
+      };
+      const items = historyResponseItems(history.messages, history.context);
+      const preamble = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "current-turn",
+        prompt,
+      });
+      const transcript = makeCodexReplayTranscript({
+        scenario: `inject-${response}`,
+        entries: [
+          ...preamble.slice(0, -3),
+          {
+            type: "expect_outbound",
+            label: "inject",
+            frame: {
+              id: 3,
+              method: "thread/inject_items",
+              params: { threadId: nativeThreadId, items },
             },
-            {
-              type: "emit_inbound",
-              label: "inject-result",
-              frame:
-                response === "supported"
-                  ? { id: 3, result: {} }
-                  : {
-                      id: 3,
-                      error: {
-                        code: response === "unsupported" ? -32601 : -32602,
-                        message: "Injection rejected",
-                      },
+          },
+          {
+            type: "emit_inbound",
+            label: "inject-result",
+            frame:
+              response === "supported"
+                ? { id: 3, result: {} }
+                : {
+                    id: 3,
+                    error: {
+                      code: response === "unsupported" ? -32601 : -32602,
+                      message: "Injection rejected",
                     },
-            },
-            ...(response === "invalid"
-              ? []
-              : preamble
-                  .slice(-3)
-                  .map((entry) =>
-                    "frame" in entry && Predicate.isObject(entry.frame) && "id" in entry.frame
-                      ? { ...entry, frame: { ...entry.frame, id: 4 } }
-                      : entry,
-                  )),
-          ],
-        });
-        const requests: string[] = [];
-        const harness = yield* makeCodexReplayHarness(
-          transcript,
-          () => Effect.void,
-          (method) =>
-            Effect.sync(() => {
-              requests.push(method);
-            }),
-        );
-        const injection = yield* harness.runtime.injectHistory!({
-          providerThread: harness.providerThread,
-          ...history,
-        }).pipe(Effect.result);
-        if (response === "invalid") {
-          assert.equal(injection._tag, "Failure");
-          if (injection._tag === "Failure") {
-            assert.equal(injection.failure._tag, "ProviderAdapterProtocolError");
-            assert.propertyVal(injection.failure.cause, "code", -32602);
-            assert.notProperty(injection.failure, "payload");
-          }
-          assert.notInclude(requests, "turn/start");
-          return;
-        }
-        assert.equal(injection._tag, "Success");
-        if (injection._tag === "Success") assert.equal(injection.success, response === "supported");
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("inject-attempt"),
-            text: prompt,
+                  },
+          },
+          ...(response === "invalid"
+            ? []
+            : preamble
+                .slice(-3)
+                .map((entry) =>
+                  "frame" in entry && Predicate.isObject(entry.frame) && "id" in entry.frame
+                    ? { ...entry, frame: { ...entry.frame, id: 4 } }
+                    : entry,
+                )),
+        ],
+      });
+      const requests: string[] = [];
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            requests.push(method);
           }),
-        );
-        assert.equal(requests.filter((method) => method === "turn/start").length, 1);
-        assert.isBelow(requests.indexOf("thread/inject_items"), requests.indexOf("turn/start"));
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
-    );
-  }
+      );
+      const injection = yield* harness.runtime.injectHistory!({
+        providerThread: harness.providerThread,
+        ...history,
+      }).pipe(Effect.result);
+      if (response === "invalid") {
+        assert.equal(injection._tag, "Failure");
+        if (injection._tag === "Failure") {
+          assert.equal(injection.failure._tag, "ProviderAdapterProtocolError");
+          assert.propertyVal(injection.failure.cause, "code", -32602);
+          assert.notProperty(injection.failure, "payload");
+        }
+        assert.notInclude(requests, "turn/start");
+        return;
+      }
+      assert.equal(injection._tag, "Success");
+      if (injection._tag === "Success") assert.equal(injection.success, response === "supported");
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("inject-attempt"),
+          text: prompt,
+        }),
+      );
+      assert.equal(requests.filter((method) => method === "turn/start").length, 1);
+      assert.isBelow(requests.indexOf("thread/inject_items"), requests.indexOf("turn/start"));
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
   it.effect("identifies sessions to Codex with the same client info as main", () =>
     Effect.gen(function* () {
@@ -223,6 +224,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
           capabilities: {
             experimentalApi: true,
+            extensions: {
+              "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] },
+            },
             optOutNotificationMethods: ["turn/diff/updated"],
           },
         },

@@ -2,6 +2,7 @@
 import * as NodePath from "node:path";
 
 import {
+  ChatAttachmentId,
   CheckpointId,
   CheckpointScopeId,
   CheckpointRef,
@@ -12,6 +13,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationV2TurnItem,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -24,9 +27,19 @@ import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
+import { reserveAttachment } from "../../orchestration-v2/AttachmentFileUse.ts";
+import {
+  ThreadFileRelease,
+  layer as threadFileReleaseLayer,
+} from "../../orchestration-v2/scient-fork/ThreadFileRelease.ts";
+import {
+  buildBoundedThreadProjection,
+  THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+} from "../../orchestration-v2/threadHistoryPaging.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { ConversationForkService } from "../../orchestration-v2/scient-fork/ConversationForkService.ts";
-import { makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import type { ProviderAdapterV2TurnInput } from "../../orchestration-v2/ProviderAdapter.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
 import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
@@ -37,30 +50,30 @@ import {
 } from "../../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
 import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
-import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
-import { live as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
+import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import {
+  createAttachmentId,
+  parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPath,
+  toSafeThreadAttachmentSegment,
+} from "../../attachmentStore.ts";
 import { CommandReceiptStoreV2 } from "../../orchestration-v2/CommandReceiptStore.ts";
 import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,
 } from "../../orchestration-v2/ProjectionMaintenance.ts";
-import {
-  ScientForkAttachmentCopier,
-  ScientForkAttachmentCopierLive,
-  ScientForkAttachmentCopyError,
-} from "../../orchestration-v2/scient-fork/ForkAttachmentCopier.ts";
 import { historicalMessage } from "../../orchestration-v2/ContextHandoffBudget.ts";
 import {
   ConversationImporter,
@@ -562,7 +575,7 @@ describe("native import continuation and forks", () => {
     ),
   );
 
-  it.live("a fork of an imported folded answer names the fork's copy of its message", () =>
+  it.live("a fork of an imported folded answer names the message it shows", () =>
     withImporter(
       Effect.gen(function* () {
         const fixture = importFixture({ turns: 2 });
@@ -616,9 +629,9 @@ describe("native import continuation and forks", () => {
           (activity) => activity.kind === "user-input.answer-submitted",
         )!;
         const folded = fork.messages.find((message) => message.text === "Blue")!;
-        assert.notInclude(
-          imported.messages.map((message) => message.id),
+        assert.strictEqual(
           folded.id,
+          imported.messages.find((message) => message.text === "Blue")!.id,
         );
         assert.strictEqual(
           (answer.payload as { readonly messageId?: string }).messageId,
@@ -1214,7 +1227,7 @@ describe("native import continuation and forks", () => {
           assert.deepStrictEqual(nativeFork.runs, []);
           assert.deepStrictEqual(nativeFork.providerThreads, []);
           const retained = new Set(
-            nativeFork.turnItems.flatMap((item) =>
+            nativeFork.visibleTurnItems.flatMap(({ item }) =>
               item.historyTurnId === undefined ? [] : [item.historyTurnId],
             ),
           );
@@ -1498,7 +1511,9 @@ it.live(
           workspaceMode: "local",
         });
         const frozen = yield* store.getThreadProjection(target);
-        const retainedThinking = frozen.turnItems.find((item) => item.type === "reasoning");
+        const retainedThinking = frozen.visibleTurnItems
+          .map((row) => row.item)
+          .find((item) => item.type === "reasoning");
         assert.ok(retainedThinking);
         assert.isUndefined(retainedThinking.historyTurnId);
         assert.equal(retainedThinking.inheritedFrom?.runId, source.runs.at(-1)?.id);
@@ -1953,8 +1968,8 @@ it.live(
         );
         const config = yield* ServerConfig;
         const runtimeOptions = {
-          databaseLayer: database,
-          serverConfigLayer: Layer.succeed(ServerConfig, config),
+          layerDatabase: database,
+          layerServerConfig: Layer.succeed(ServerConfig, config),
         };
         const replacing = yield* Deferred.make<void>();
         let pauseReplacement = false;
@@ -2090,30 +2105,764 @@ it.live(
 );
 
 it.live(
-  "native fork history and question files survive retry, deletion, rollback, replay and refork",
-  () => {
-    let attempts = 0;
-    const copier = Layer.effect(
-      ScientForkAttachmentCopier,
+  "a fork stays as it was when its source rolls back, and pages, counts, rebuilds and exports its shared history",
+  () =>
+    withImporter(
       Effect.gen(function* () {
-        const real = yield* ScientForkAttachmentCopier;
-        return {
-          ...real,
-          copyAll: (input: Parameters<typeof real.copyAll>[0]) =>
-            Effect.suspend(() => {
-              if (input.threadId === ThreadId.make("durable-history-fork") && ++attempts === 1)
-                return Effect.fail(
-                  new ScientForkAttachmentCopyError({
-                    threadId: input.threadId,
-                    reason: "target-write-failed",
-                    detail: "Temporary fixture disk failure",
-                  }),
-                );
-              return real.copyAll(input);
-            }),
-        };
+        const fixture = importFixture({
+          turns: 3,
+          reasoning: true,
+          workLog: true,
+          attachments: true,
+        });
+        const { lease } = yield* leaseFor(fixture);
+        const sourceId = (yield* importOnce(lease)).result.threadId;
+        const store = yield* ProjectionStoreV2;
+        const forks = yield* ConversationForkService;
+        yield* continueImport(sourceId, MessageId.make("frozen-live-request"), "Continue");
+        const live = yield* store.getThreadProjection(sourceId);
+        const answer = live.messages.find((message) => message.text === "Continued")!;
+        const forkId = ThreadId.make("frozen-live-fork");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("frozen-live-fork"),
+          originThreadId: sourceId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: answer.id,
+          workspaceMode: "local",
+        });
+        const frozen = yield* store.getThreadProjection(forkId);
+        const inherited = frozen.visibleTurnItems.filter((row) => row.visibility === "inherited");
+        assert.isAbove(inherited.length, 0);
+        // Settled history is shared; the fork copies only what it can act on.
+        for (const row of inherited)
+          if (row.sourceThreadId !== sourceId) {
+            assert.equal(row.sourceThreadId, forkId);
+            assert.include(["proposed_plan", "todo_list", "handoff"], row.item.type);
+          }
+        assert.deepEqual(
+          frozen.messages.slice(1).map((message) => message.text),
+          ["Answer 1", "Question 2", "Answer 2", "Question 3", "Answer 3", "Continue", "Continued"],
+        );
+        const exported = (yield* readThread(forkId))!;
+        assert.deepEqual(
+          exported.messages
+            .filter((message) => message.role === "user" || message.role === "assistant")
+            .map((message) => message.text),
+          frozen.messages.map((message) => message.text),
+        );
+
+        // Settlement sees the fork's shared conversation as its activity.
+        const latestShared = frozen.messages.findLast((message) => message.role === "user")!;
+        assert.equal(
+          DateTime.formatIso((yield* store.getThreadShell(forkId))!.latestUserMessageAt!),
+          DateTime.formatIso(latestShared.updatedAt),
+        );
+        assert.equal(
+          DateTime.formatIso(
+            (yield* store.getSettlementCandidates(forkId))[0]!.latestUserMessageAt!,
+          ),
+          DateTime.formatIso(latestShared.updatedAt),
+        );
+
+        // The source takes its live turn back; the fork keeps what it showed.
+        yield* rollbackToBaseline(sourceId, "frozen-live");
+        assert.notInclude(
+          (yield* readThread(sourceId))!.messages.map((message) => message.text),
+          "Continued",
+        );
+        assert.deepEqual(yield* store.getThreadProjection(forkId), frozen);
+        assert.deepEqual((yield* readThread(forkId))!, exported);
+
+        // The bounded snapshot clients load keeps the messages its rows show.
+        const snapshot = yield* store.getThreadSnapshotWindow(forkId, {
+          rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+          userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+        });
+        const bounded = buildBoundedThreadProjection({
+          projection: snapshot.projection,
+          snapshotSequence: snapshot.snapshotSequence,
+        }).projection;
+        const boundedMessages = new Set(bounded.messages.map((message) => message.id));
+        for (const { item } of bounded.visibleTurnItems)
+          if (item.type === "user_message" || item.type === "assistant_message")
+            assert.isTrue(boundedMessages.has(item.messageId), item.messageId);
+        assert.isTrue(boundedMessages.has(frozen.thread.forkLineage!.baselineAssistantMessageId!));
+        // Counts, pages and windows read the same shared history.
+        assert.equal(yield* store.getMessageCount(forkId), frozen.messages.length);
+        assert.equal(
+          (yield* store.getThreadShell(forkId))?.itemCount,
+          frozen.visibleTurnItems.length,
+        );
+        const paged: Array<(typeof frozen.visibleTurnItems)[number]> = [];
+        let afterPosition: number | undefined;
+        while (true) {
+          const page = yield* store.getTimelinePage(forkId, {
+            limit: 3,
+            view: "activity",
+            ...(afterPosition === undefined ? {} : { afterPosition }),
+          });
+          paged.push(...page.items);
+          if (!page.hasMore) break;
+          afterPosition = page.items.at(-1)!.position;
+        }
+        assert.deepEqual(paged, frozen.visibleTurnItems);
+        // A page anchored in shared history ends at its anchor.
+        const anchor = frozen.visibleTurnItems.find(
+          (row) => row.sourceThreadId === sourceId && row.item.type === "assistant_message",
+        )!;
+        const anchored = yield* store.getThreadSnapshotWindow(forkId, {
+          rowLimit: 2,
+          userTurnLimit: 1,
+          anchorItemId: anchor.sourceItemId,
+        });
+        assert.equal(
+          anchored.projection.visibleTurnItems.at(-1)?.sourceItemId,
+          anchor.sourceItemId,
+        );
+        assert.isTrue(
+          anchored.projection.visibleTurnItems.every((row) => row.sourceThreadId !== forkId),
+        );
+        const window = yield* store.getThreadSnapshotWindow(forkId, { rowLimit: 4 });
+        assert.deepEqual(
+          window.projection.visibleTurnItems.map((row) => row.item),
+          frozen.visibleTurnItems
+            .slice(-window.projection.visibleTurnItems.length)
+            .map((row) => row.item),
+        );
+
+        // A projection rebuild replays events; the fork's shared history is unchanged.
+        const verification = yield* ProjectionMaintenanceV2.use(
+          (maintenance) => maintenance.rebuild,
+        ).pipe(Effect.provide(projectionMaintenanceLayer));
+        assert.isTrue(verification.valid);
+        const rebuilt = yield* store.getThreadProjection(forkId);
+        assert.deepEqual(rebuilt.visibleTurnItems, frozen.visibleTurnItems);
+        assert.deepEqual(rebuilt.messages, frozen.messages);
+
+        // Rewriting history the fork shows leaves the fork as it was.
+        const shownText = (projection: typeof frozen) => ({
+          items: projection.visibleTurnItems.map(({ item }) =>
+            "text" in item ? [item.type, item.text] : [item.type],
+          ),
+          messages: projection.messages.map((message) => [message.role, message.text]),
+        });
+        const shownBefore = shownText(frozen);
+        const sharedAnswer = frozen.visibleTurnItems.find(
+          (row) => row.sourceThreadId === sourceId && row.item.type === "assistant_message",
+        )!;
+        const storedAnswer = (yield* store.getThreadProjection(sourceId)).turnItems.find(
+          (item) => item.id === sharedAnswer.sourceItemId,
+        )!;
+        assert.ok(storedAnswer.type === "assistant_message");
+        const storedQuestion = (yield* store.getThreadProjection(sourceId)).messages.find(
+          (message) => message.text === "Question 2",
+        )!;
+        const rewriteAt = yield* DateTime.now;
+        yield* (yield* EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("frozen-live-rewrite-item"),
+              threadId: sourceId,
+              type: "turn-item.updated",
+              occurredAt: rewriteAt,
+              payload: { ...storedAnswer, text: "Rewritten answer" },
+            },
+            {
+              id: EventId.make("frozen-live-rewrite-message"),
+              threadId: sourceId,
+              type: "message.updated",
+              occurredAt: rewriteAt,
+              payload: { ...storedQuestion, text: "Rewritten question" },
+            },
+          ],
+        });
+        assert.include(
+          (yield* store.getThreadProjection(sourceId)).messages.map((message) => message.text),
+          "Rewritten question",
+        );
+        const afterRewrite = yield* store.getThreadProjection(forkId);
+        assert.deepEqual(shownText(afterRewrite), shownBefore);
+        // Nothing a loaded client holds changes identity, and the baseline stays.
+        assert.deepEqual(
+          afterRewrite.visibleTurnItems.map((row) => [row.sourceThreadId, row.sourceItemId]),
+          frozen.visibleTurnItems.map((row) => [row.sourceThreadId, row.sourceItemId]),
+        );
+        assert.equal(
+          afterRewrite.thread.forkLineage?.baselineAssistantMessageId,
+          frozen.thread.forkLineage?.baselineAssistantMessageId,
+        );
+        assert.include(
+          afterRewrite.messages.map((message) => message.id),
+          frozen.thread.forkLineage?.baselineAssistantMessageId,
+        );
+        // Detail reads go through the fork, which serves the version it shows.
+        const shownAnswer = afterRewrite.visibleTurnItems.find(
+          (row) => row.sourceItemId === sharedAnswer.sourceItemId,
+        )!.item;
+        assert.equal(shownAnswer.threadId, forkId);
+        const detail = yield* store.getTurnItem({
+          threadId: shownAnswer.threadId,
+          itemId: sharedAnswer.sourceItemId,
+        });
+        assert.ok(detail?.type === "assistant_message");
+        assert.equal(detail.text, storedAnswer.text);
+        // A fork of the fork shows what the fork shows.
+        const grandchildId = ThreadId.make("frozen-live-grandchild");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("frozen-live-grandchild"),
+          originThreadId: forkId,
+          newThreadId: grandchildId,
+          sourceAssistantMessageId: frozen.thread.forkLineage!.baselineAssistantMessageId!,
+          workspaceMode: "local",
+        });
+        const grandchild = shownText(yield* store.getThreadProjection(grandchildId));
+        assert.deepEqual(grandchild.messages, shownBefore.messages);
+        assert.deepEqual(grandchild.items.slice(0, -1), shownBefore.items.slice(0, -1));
+        yield* ProjectionMaintenanceV2.use((maintenance) => maintenance.rebuild).pipe(
+          Effect.provide(projectionMaintenanceLayer),
+        );
+        assert.deepEqual(shownText(yield* store.getThreadProjection(forkId)), shownBefore);
+        assert.deepEqual(
+          shownText(yield* store.getThreadProjection(grandchildId)).messages,
+          shownBefore.messages,
+        );
+
+        // The fork can queue a file its shared history shows.
+        const sharedFile = frozen.messages.flatMap((message) => message.attachments)[0]!;
+        assert.notEqual(
+          parseThreadSegmentFromAttachmentId(sharedFile.id),
+          toSafeThreadAttachmentSegment(forkId),
+        );
+        yield* (yield* OrchestratorV2).dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("frozen-live-busy"),
+          threadId: forkId,
+          messageId: MessageId.make("frozen-live-busy"),
+          text: "Continue",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* (yield* OrchestratorV2).dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("frozen-live-resend"),
+          threadId: forkId,
+          messageId: MessageId.make("frozen-live-resend"),
+          text: "Look at this again",
+          attachments: [sharedFile],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queued = yield* store.getThreadProjection(forkId);
+        assert.equal(
+          queued.runs.find((run) => run.userMessageId === "frozen-live-resend")?.status,
+          "queued",
+        );
+        assert.deepEqual(
+          queued.messages.find((message) => message.id === "frozen-live-resend")?.attachments,
+          [sharedFile],
+        );
       }),
-    ).pipe(Layer.provide(ScientForkAttachmentCopierLive));
+    ).pipe(Effect.timeout("60 seconds")),
+);
+
+it.live("file release ignores name case and subagent conversations' copied fork metadata", () =>
+  withImporter(
+    Effect.gen(function* () {
+      const { lease } = yield* leaseFor(importFixture({ turns: 2, attachments: true }));
+      const sourceId = (yield* importOnce(lease)).result.threadId;
+      const store = yield* ProjectionStoreV2;
+      const forks = yield* ConversationForkService;
+      const orchestrator = yield* OrchestratorV2;
+      const source = yield* store.getThreadProjection(sourceId);
+      const forkId = ThreadId.make("release-rules-fork");
+      yield* forks.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("release-rules-fork"),
+        originThreadId: sourceId,
+        newThreadId: forkId,
+        sourceAssistantMessageId: source.messages.findLast(
+          (message) => message.role === "assistant",
+        )!.id,
+        workspaceMode: "local",
+      });
+      const fork = yield* store.getThreadProjection(forkId);
+      const file = fork.thread.conversationFork!.attachmentCopies[0]!.source;
+      const now = yield* DateTime.now;
+      const prompt = fork.messages.find((message) => message.role === "user")!;
+      // The fork names the shared file under an uppercase alias.
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("release-rules-alias"),
+            threadId: forkId,
+            type: "message.updated",
+            occurredAt: now,
+            payload: {
+              ...prompt,
+              id: MessageId.make("release-rules-alias"),
+              threadId: forkId,
+              attachments: [{ ...file, id: ChatAttachmentId.make(file.id.toUpperCase()) }],
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("release-rules-delete-fork"),
+        threadId: forkId,
+      });
+      // The source still shows the file, in any case.
+      assert.isFalse(
+        (yield* store.getReleasableFiles(forkId)).some(
+          (id) => id.toLowerCase() === file.id.toLowerCase(),
+        ),
+      );
+      // A subagent conversation of a fork carries its fork metadata but shows none of it.
+      const otherForkId = ThreadId.make("release-rules-other-fork");
+      yield* forks.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("release-rules-other-fork"),
+        originThreadId: sourceId,
+        newThreadId: otherForkId,
+        sourceAssistantMessageId: source.messages.findLast(
+          (message) => message.role === "assistant",
+        )!.id,
+        workspaceMode: "local",
+      });
+      const otherFork = yield* store.getThreadProjection(otherForkId);
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("release-rules-subagent"),
+            threadId: ThreadId.make("release-rules-subagent"),
+            type: "thread.created",
+            occurredAt: now,
+            payload: {
+              ...otherFork.thread,
+              id: ThreadId.make("release-rules-subagent"),
+              lineage: {
+                parentThreadId: otherForkId,
+                rootThreadId: otherFork.thread.lineage.rootThreadId,
+                relationshipToParent: "subagent",
+              },
+              forkedFrom: { type: "node", nodeId: NodeId.make("release-rules-node") },
+              historyOrigin: undefined,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      for (const threadId of [sourceId, otherForkId])
+        yield* orchestrator.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make(`release-rules-delete-${threadId}`),
+          threadId,
+        });
+      assert.include(yield* store.getReleasableFiles(otherForkId), file.id);
+    }),
+  ),
+);
+
+it.live(
+  "fork file release keeps files other conversations name and waits for admissions holding them",
+  () =>
+    withImporter(
+      Effect.gen(function* () {
+        const { lease } = yield* leaseFor(importFixture({ turns: 2, attachments: true }));
+        const sourceId = (yield* importOnce(lease)).result.threadId;
+        const store = yield* ProjectionStoreV2;
+        const forks = yield* ConversationForkService;
+        const orchestrator = yield* OrchestratorV2;
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig;
+        const source = yield* store.getThreadProjection(sourceId);
+        const forkId = ThreadId.make("guarded-release-fork");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("guarded-release-fork"),
+          originThreadId: sourceId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: source.messages.findLast(
+            (message) => message.role === "assistant",
+          )!.id,
+          workspaceMode: "local",
+        });
+        const files = (yield* store.getThreadProjection(
+          forkId,
+        )).thread.conversationFork!.attachmentCopies.map((copy) => copy.source);
+        assert.isAtLeast(files.length, 2);
+        const [sent, held] = [files[0]!, files[1]!];
+        // An unrelated conversation was sent one of the files.
+        const otherId = ThreadId.make("guarded-release-other");
+        const now = yield* DateTime.now;
+        const prompt = source.messages.find((message) => message.role === "user")!;
+        yield* (yield* EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("guarded-release-other-created"),
+              threadId: otherId,
+              type: "thread.created",
+              occurredAt: now,
+              payload: {
+                ...source.thread,
+                id: otherId,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: otherId,
+                },
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make("guarded-release-other-message"),
+              threadId: otherId,
+              type: "message.updated",
+              occurredAt: now,
+              payload: {
+                ...prompt,
+                id: MessageId.make("guarded-release-other-message"),
+                threadId: otherId,
+                attachments: [sent],
+              },
+            },
+          ],
+        });
+        // An admission holds the other file while the lineage is deleted.
+        const pin = yield* reserveAttachment(held);
+        for (const threadId of [sourceId, forkId])
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make(`guarded-release-delete-${threadId}`),
+            threadId,
+          });
+        const release = yield* ThreadFileRelease.pipe(Effect.provide(threadFileReleaseLayer));
+        const path = (attachment: (typeof files)[number]) =>
+          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!;
+        const deferred = yield* Effect.flip(release.release(forkId));
+        assert.equal(deferred._tag, "ThreadFileReleaseDeferred");
+        assert.isTrue(yield* fs.exists(path(held)));
+        assert.isTrue(yield* fs.exists(path(sent)));
+        yield* pin.release;
+        yield* release.release(forkId);
+        assert.isFalse(yield* fs.exists(path(held)));
+        assert.isTrue(yield* fs.exists(path(sent)));
+      }),
+    ),
+);
+
+it.live(
+  "file release keeps a file any live conversation or fork shows, and frees it once none does",
+  () =>
+    withImporter(
+      Effect.gen(function* () {
+        const { lease } = yield* leaseFor(importFixture({ turns: 2, attachments: true }));
+        const sourceId = (yield* importOnce(lease)).result.threadId;
+        const store = yield* ProjectionStoreV2;
+        const forks = yield* ConversationForkService;
+        const orchestrator = yield* OrchestratorV2;
+        const sink = yield* EventSinkV2;
+        const sql = yield* SqlClient.SqlClient;
+        const source = yield* store.getThreadProjection(sourceId);
+        const forkId = ThreadId.make("reuse-release-fork");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("reuse-release-fork"),
+          originThreadId: sourceId,
+          newThreadId: forkId,
+          sourceAssistantMessageId: source.messages.findLast(
+            (message) => message.role === "assistant",
+          )!.id,
+          workspaceMode: "local",
+        });
+        const fork = yield* store.getThreadProjection(forkId);
+        const file = fork.thread.conversationFork!.attachmentCopies[0]!.source;
+        const now = yield* DateTime.now;
+        const prompt = source.messages.find((message) => message.role === "user")!;
+        // An unrelated conversation that was sent `files`.
+        const conversation = (threadId: ThreadId, files: ReadonlyArray<typeof file>) =>
+          sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}-created`),
+                threadId,
+                type: "thread.created",
+                occurredAt: now,
+                payload: {
+                  ...source.thread,
+                  id: threadId,
+                  lineage: {
+                    parentThreadId: null,
+                    relationshipToParent: null,
+                    rootThreadId: threadId,
+                  },
+                  conversationImport: null,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+              {
+                id: EventId.make(`${threadId}-message`),
+                threadId,
+                type: "message.updated",
+                occurredAt: now,
+                payload: {
+                  ...prompt,
+                  id: MessageId.make(`${threadId}-message`),
+                  threadId,
+                  attachments: files,
+                },
+              },
+            ],
+          });
+        const remove = (threadId: ThreadId) =>
+          orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make(`reuse-release-delete-${threadId}`),
+            threadId,
+          });
+        const released = (threadId: ThreadId) =>
+          store
+            .getReleasableFiles(threadId)
+            .pipe(Effect.map((ids) => ids.map((id) => id.toLowerCase())));
+
+        // Deleting a conversation outside any fork lineage that reused the file
+        // keeps it for the source and fork, and frees the conversation's own file.
+        const otherId = ThreadId.make("reuse-release-other");
+        const own = { ...file, id: ChatAttachmentId.make(createAttachmentId(otherId, "png")!) };
+        yield* conversation(otherId, [file, own]);
+        yield* remove(otherId);
+        assert.deepEqual(yield* released(otherId), [own.id.toLowerCase()]);
+
+        // A conversation that reused the file forks; deleting it leaves its fork
+        // showing the file through history only.
+        const reuserId = ThreadId.make("reuse-release-reuser");
+        const reuserForkId = ThreadId.make("reuse-release-reuser-fork");
+        yield* conversation(reuserId, [file]);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("reuse-release-reuser-fork-created"),
+              threadId: reuserForkId,
+              type: "thread.created",
+              occurredAt: now,
+              payload: {
+                ...fork.thread,
+                id: reuserForkId,
+                lineage: {
+                  parentThreadId: reuserId,
+                  relationshipToParent: "fork",
+                  rootThreadId: reuserId,
+                },
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        yield* sql`
+          INSERT INTO scient_fork_history
+            (thread_id, position, source_thread_id, source_item_id, item_type, message_id,
+             turn_start, user_turn)
+          VALUES (${reuserForkId}, 0, ${reuserId}, 'reuse-release-item', 'user_message',
+            ${`${reuserId}-message`}, 1, 1)
+        `;
+        yield* remove(reuserId);
+        assert.notInclude(yield* released(reuserId), file.id.toLowerCase());
+
+        // The original lineage goes: the reuser's live fork still shows the file.
+        yield* remove(sourceId);
+        yield* remove(forkId);
+        assert.notInclude(yield* released(forkId), file.id.toLowerCase());
+        assert.notInclude(yield* released(sourceId), file.id.toLowerCase());
+
+        // The last conversation showing it goes: the file is freed, though
+        // another lineage minted it.
+        yield* remove(reuserForkId);
+        assert.include(yield* released(reuserForkId), file.id.toLowerCase());
+
+        // A tool's output can name any file: deleting its conversation frees
+        // only pages minted there, never another conversation's page.
+        const toolPage = (threadId: ThreadId, page: string) => ({
+          id: EventId.make(`${threadId}-tool`),
+          threadId,
+          type: "turn-item.updated" as const,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`${threadId}-tool`),
+            type: "dynamic_tool" as const,
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed" as const,
+            title: "Weather",
+            toolName: "weather.get_weather",
+            input: {},
+            output: {
+              t3McpApp: {
+                attachmentId: page,
+                server: "weather",
+                tool: "get_weather",
+                resourceUri: "ui://weather/dashboard",
+              },
+            },
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        });
+        const pageOwnerId = ThreadId.make("reuse-release-page-owner");
+        const firstToolId = ThreadId.make("reuse-release-first-tool");
+        const lastToolId = ThreadId.make("reuse-release-last-tool");
+        const ownersPage = createAttachmentId(pageOwnerId, "html")!;
+        const lastToolsPage = createAttachmentId(lastToolId, "html")!;
+        for (const threadId of [pageOwnerId, firstToolId, lastToolId])
+          yield* conversation(threadId, []);
+        yield* sink.write({
+          events: [
+            toolPage(pageOwnerId, ownersPage),
+            toolPage(firstToolId, ownersPage),
+            toolPage(lastToolId, lastToolsPage),
+          ],
+        });
+        yield* sink.write({
+          events: [
+            {
+              ...toolPage(lastToolId, ownersPage),
+              id: EventId.make("reuse-release-last-tool-foreign"),
+              payload: {
+                ...toolPage(lastToolId, ownersPage).payload,
+                id: TurnItemId.make("reuse-release-last-tool-foreign"),
+                ordinal: 2,
+              },
+            },
+          ],
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig;
+        // Pages are stored as `<id>.html`.
+        const pagePath = (id: string) => NodePath.join(config.attachmentsDir, `${id}.html`);
+        for (const page of [ownersPage, lastToolsPage]) {
+          yield* fs.makeDirectory(NodePath.dirname(pagePath(page)), { recursive: true });
+          yield* fs.writeFileString(pagePath(page), "<p>page</p>");
+        }
+        // A conversation whose tool output names a live conversation's page
+        // never frees it.
+        yield* remove(firstToolId);
+        assert.deepEqual(yield* released(firstToolId), []);
+        // The page's owner goes: the page stays while a live tool output shows it.
+        yield* remove(pageOwnerId);
+        assert.deepEqual(yield* released(pageOwnerId), []);
+        // The last conversation showing it goes: its release frees the orphaned
+        // page with its own.
+        yield* remove(lastToolId);
+        assert.sameMembers(yield* released(lastToolId), [
+          ownersPage.toLowerCase(),
+          lastToolsPage.toLowerCase(),
+        ]);
+        yield* (yield* ThreadFileRelease.pipe(Effect.provide(threadFileReleaseLayer))).release(
+          lastToolId,
+        );
+        assert.isFalse(yield* fs.exists(pagePath(ownersPage)));
+        assert.isFalse(yield* fs.exists(pagePath(lastToolsPage)));
+      }),
+    ),
+);
+
+it.live("opening a recent fork window never reads its older copies", () =>
+  withImporter(
+    Effect.gen(function* () {
+      const { lease } = yield* leaseFor(importFixture({ turns: 3 }));
+      const sourceId = (yield* importOnce(lease)).result.threadId;
+      const store = yield* ProjectionStoreV2;
+      for (const index of [4, 5, 6])
+        yield* continueImport(sourceId, MessageId.make(`later-${index}`), "Continue");
+      const source = yield* store.getThreadProjection(sourceId);
+      const forkId = ThreadId.make("recent-window-fork");
+      yield* (yield* ConversationForkService).dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("recent-window-fork"),
+        originThreadId: sourceId,
+        newThreadId: forkId,
+        sourceAssistantMessageId: source.messages.findLast(
+          (message) => message.role === "assistant",
+        )!.id,
+        workspaceMode: "local",
+      });
+      const plan = (yield* store.getThreadProjection(forkId)).turnItems.find(
+        (item) => item.type === "proposed_plan",
+      )!;
+      const tripwire = Effect.fn("test.tripwire")(function* (
+        anchorItemId?: TurnItemId,
+        rowsOnly = false,
+      ) {
+        // The fork's own copy of the old plan cannot be decoded.
+        yield* (yield* SqlClient.SqlClient)`
+          UPDATE orchestration_v2_projection_turn_items SET payload_json = '{invalid-copy-tripwire'
+          WHERE turn_item_id = ${plan.id}`;
+        const window = yield* store.getThreadSnapshotWindow(
+          forkId,
+          rowsOnly
+            ? { rowLimit: 2 }
+            : {
+                rowLimit: 10,
+                userTurnLimit: 1,
+                ...(anchorItemId === undefined ? {} : { anchorItemId }),
+              },
+        );
+        assert.isFalse(
+          window.projection.visibleTurnItems.some((row) => row.sourceItemId === plan.id),
+        );
+        return window;
+      });
+      const stored = yield* (yield* SqlClient.SqlClient)<{ readonly payload_json: string }>`
+        SELECT payload_json FROM orchestration_v2_projection_turn_items
+        WHERE turn_item_id = ${plan.id}`;
+      assert.equal((yield* tripwire()).projection.visibleTurnItems.at(-1)?.item.type, "fork");
+      // A row-only window too (the older compatibility endpoint).
+      assert.equal(
+        (yield* tripwire(undefined, true)).projection.visibleTurnItems.at(-1)?.item.type,
+        "fork",
+      );
+      yield* (yield* SqlClient.SqlClient)`
+        UPDATE orchestration_v2_projection_turn_items SET payload_json = ${stored[0]!.payload_json}
+        WHERE turn_item_id = ${plan.id}`;
+      // Nor after a turn of the fork's own is rolled back.
+      yield* continueImport(forkId, MessageId.make("recent-window-local"), "Temporary follow-up");
+      yield* rollbackToBaseline(forkId, "recent-window");
+      yield* tripwire();
+      yield* (yield* SqlClient.SqlClient)`
+        UPDATE orchestration_v2_projection_turn_items SET payload_json = ${stored[0]!.payload_json}
+        WHERE turn_item_id = ${plan.id}`;
+      // Nor a page anchored on a turn of the fork's own.
+      yield* continueImport(forkId, MessageId.make("recent-window-anchor"), "Continue");
+      const anchorItem = (yield* store.getThreadProjection(forkId)).turnItems.findLast(
+        (item) => item.type === "user_message",
+      )!;
+      const anchored = yield* tripwire(anchorItem.id);
+      assert.equal(anchored.projection.visibleTurnItems.at(-1)?.sourceItemId, anchorItem.id);
+    }),
+  ),
+);
+
+it.live(
+  "native fork history and question files survive deletion, rollback, replay and refork",
+  () => {
+    const shown = (projection: {
+      readonly visibleTurnItems: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>;
+    }) => projection.visibleTurnItems.map((row) => row.item);
     return withImporter(
       Effect.gen(function* () {
         const fixture = importFixture({
@@ -2163,22 +2912,25 @@ it.live(
           Effect.forkScoped,
         );
         const receipt = yield* forks.dispatch(command);
-        assert.equal(attempts, 2);
         const frozen = yield* store.getThreadProjection(childId);
         const baseline = (yield* readThread(childId))!;
-        const inherited = frozen.turnItems.filter((item) => item.type !== "fork");
+        const inherited = frozen.visibleTurnItems
+          .filter((row) => row.visibility === "inherited")
+          .map((row) => row.item);
+        assert.isAbove(inherited.length, 0);
         const files = frozen.thread.conversationFork!.attachmentCopies;
         assert.isAbove(files.length, 0);
         const bytes = new Map<string, Uint8Array>();
         for (const copy of files) {
+          // The fork shares the source's files.
+          assert.deepEqual(copy.target, copy.source);
           const path = resolveAttachmentPath({
             attachmentsDir: config.attachmentsDir,
             attachment: copy.target,
           })!;
           bytes.set(copy.target.id, yield* fs.readFile(path));
-          assert.notEqual(copy.source.id, copy.target.id);
         }
-        const question = frozen.turnItems.find((item) => item.type === "user_input_request");
+        const question = inherited.find((item) => item.type === "user_input_request");
         assert.ok(question?.type === "user_input_request" && question.questionAnswer);
         const questionFiles = Object.values(question.questionAnswer.attachmentsByQuestionId).flat();
         assert.isAbove(questionFiles.length, 0);
@@ -2259,7 +3011,7 @@ it.live(
         assert.equal(localRefork.thread.forkLineage?.originThreadId, childId);
         assert.deepEqual(localRefork.runs, []);
         assert.isTrue(
-          localRefork.turnItems.every(
+          shown(localRefork).every(
             (item) =>
               item.runId === null &&
               item.nativeItemRef === null &&
@@ -2288,7 +3040,9 @@ it.live(
         const reverted = yield* store.getThreadProjection(childId);
         assert.deepEqual((yield* readThread(childId))!.messages, baseline.messages);
         assert.deepEqual(
-          reverted.turnItems.filter((item) => item.runId === null && item.type !== "fork"),
+          reverted.visibleTurnItems
+            .filter((row) => row.visibility === "inherited")
+            .map((row) => row.item),
           inherited,
         );
         assert.equal(
@@ -2311,45 +3065,45 @@ it.live(
             yield* (yield* CommandReceiptStoreV2).getByCommandId(failedCommand.commandId),
           ),
         );
-        yield* orchestrator.dispatch({
-          type: "thread.delete",
-          commandId: CommandId.make("durable-delete-source"),
-          threadId: sourceId,
-        });
         const outbox = yield* EffectOutboxV2;
         const completion = yield* Stream.toPull(
           Stream.merge(yield* outbox.subscribeCompletions, Stream.tick("10 millis")),
         );
-        while (true) {
-          const jobs = yield* outbox.listByCommandId(CommandId.make("durable-delete-source"));
-          if (jobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.status))) {
-            assert.isTrue(jobs.every((job) => job.status === "succeeded"));
-            break;
+        const deleteThread = Effect.fn("test.deleteThread")(function* (threadId: ThreadId) {
+          const commandId = CommandId.make(`durable-delete-${threadId}`);
+          yield* orchestrator.dispatch({ type: "thread.delete", commandId, threadId });
+          while (true) {
+            const jobs = yield* outbox.listByCommandId(commandId);
+            if (jobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.status))) {
+              assert.isTrue(jobs.every((job) => job.status === "succeeded"));
+              return;
+            }
+            yield* completion;
           }
-          yield* completion;
-        }
+        });
+        yield* deleteThread(sourceId);
         assert.isNotNull((yield* store.getThreadProjection(sourceId)).thread.deletedAt);
+        // The deleted source's files stay while a fork still shows its history.
         for (const copy of files) {
-          const sourcePath = resolveAttachmentPath({
-            attachmentsDir: config.attachmentsDir,
-            attachment: copy.source,
-          })!;
-          assert.isFalse(yield* fs.exists(sourcePath));
           const path = resolveAttachmentPath({
             attachmentsDir: config.attachmentsDir,
             attachment: copy.target,
           })!;
           assert.deepEqual(yield* fs.readFile(path), bytes.get(copy.target.id));
         }
+        assert.deepEqual(
+          (yield* store.getThreadProjection(childId)).visibleTurnItems,
+          reverted.visibleTurnItems,
+        );
         const replayed = yield* forks.dispatch(command);
         assert.deepEqual(replayed, receipt);
-        assert.equal(attempts, 2);
         const verification = yield* ProjectionMaintenanceV2.use(
           (maintenance) => maintenance.rebuild,
         ).pipe(Effect.provide(projectionMaintenanceLayer));
         assert.isTrue(verification.valid);
         const rebuilt = yield* store.getThreadProjection(childId);
         assert.deepEqual(rebuilt.turnItems, reverted.turnItems);
+        assert.deepEqual(rebuilt.visibleTurnItems, reverted.visibleTurnItems);
         assert.deepEqual((yield* readThread(childId))!.messages, baseline.messages);
         assert.deepEqual(rebuilt.thread.conversationFork?.attachmentCopies, files);
         const reforkId = ThreadId.make("durable-baseline-refork");
@@ -2373,9 +3127,9 @@ it.live(
           refork.messages.map((message) => message.text),
           "Continued",
         );
-        assert.equal(refork.turnItems.filter((item) => item.type === "reasoning").length, 3);
-        assert.equal(refork.turnItems.filter((item) => item.type === "dynamic_tool").length, 3);
-        const reforkQuestion = refork.turnItems.find((item) => item.type === "user_input_request");
+        assert.equal(shown(refork).filter((item) => item.type === "reasoning").length, 3);
+        assert.equal(shown(refork).filter((item) => item.type === "dynamic_tool").length, 3);
+        const reforkQuestion = shown(refork).find((item) => item.type === "user_input_request");
         assert.ok(reforkQuestion?.type === "user_input_request" && reforkQuestion.questionAnswer);
         assert.equal(
           Object.values(reforkQuestion.questionAnswer.attachmentsByQuestionId).flat().length,
@@ -2397,7 +3151,7 @@ it.live(
           questionCopies.map((copy) => copy.target),
         );
         for (const [index, file] of reforkQuestionFiles.entries()) {
-          assert.notEqual(file.id, questionFiles[index]!.id);
+          assert.equal(file.id, questionFiles[index]!.id);
           assert.deepEqual(
             yield* fs.readFile(
               resolveAttachmentPath({
@@ -2410,7 +3164,7 @@ it.live(
         }
         for (const copy of refork.thread.conversationFork!.attachmentCopies) {
           assert.isTrue(bytes.has(copy.source.id));
-          assert.notEqual(copy.source.id, copy.target.id);
+          assert.deepEqual(copy.target, copy.source);
           assert.deepEqual(
             yield* fs.readFile(
               resolveAttachmentPath({
@@ -2440,16 +3194,26 @@ it.live(
         const encodedReferences = yield* encodeQuestionFileReferences(references);
         const suppliedAnswer = `Question: Which figure?\nAnswer: This one\nAttachment references (bytes not replayed): ${encodedReferences}`;
         assert.equal(sent.message.text.split(suppliedAnswer).length - 1, 1);
-        for (const file of questionFiles) assert.notInclude(sent.message.text, file.id);
         const delivered = (yield* store.getThreadProjection(reforkId)).contextHandoffs.at(
           -1,
         )!.delivery!;
         assert.include(delivered.itemIds, reforkQuestion.id);
         assert.notInclude(delivered.omittedItemIds ?? [], reforkQuestion.id);
+        // Deleting the last conversation that shows them releases the files.
+        const paths = files.map((copy) =>
+          resolveAttachmentPath({
+            attachmentsDir: config.attachmentsDir,
+            attachment: copy.source,
+          })!,
+        );
+        yield* deleteThread(childId);
+        yield* deleteThread(localReforkId);
+        for (const path of paths) assert.isTrue(yield* fs.exists(path));
+        yield* deleteThread(reforkId);
+        for (const path of paths) assert.isFalse(yield* fs.exists(path));
       }),
       {
         runtimeOptions: {
-          forkAttachmentCopierLayer: copier,
           resourceCleanupLayer: resourceCleanupLayer.pipe(
             Layer.provide(Layer.mock(TerminalManager)({ close: () => Effect.void })),
           ),
@@ -2497,7 +3261,9 @@ it.live("native steering reaches an accepted carrying turn before its long send 
           ),
           Stream.runHead,
           Effect.timeout("5 seconds"),
-          Effect.catchTag("TimeoutError", () => Effect.die("Native acceptance never reached SQL")),
+          Effect.catchTags({
+            TimeoutError: () => Effect.die("Native acceptance never reached SQL"),
+          }),
         );
         const before = Option.getOrThrow(accepted);
         const run = before.runs.at(-1)!;
@@ -2518,9 +3284,9 @@ it.live("native steering reaches an accepted carrying turn before its long send 
         assert.equal(
           yield* Deferred.await(steered).pipe(
             Effect.timeout("5 seconds"),
-            Effect.catchTag("TimeoutError", () =>
-              Effect.die("Steering remained blocked by the long send"),
-            ),
+            Effect.catchTags({
+              TimeoutError: () => Effect.die("Steering remained blocked by the long send"),
+            }),
           ),
           "Use the retained evidence",
         );
@@ -2580,8 +3346,8 @@ it.live(
         ).pipe(Layer.provide(NodeServices.layer));
         const config = yield* ServerConfig;
         const runtimeOptions = {
-          databaseLayer: database,
-          serverConfigLayer: Layer.succeed(ServerConfig, config),
+          layerDatabase: database,
+          layerServerConfig: Layer.succeed(ServerConfig, config),
         };
         const projectScope = yield* Scope.Scope;
         const selected = { instanceId: PROVIDER_ID, model: "reported-capacity-model" };
@@ -2789,8 +3555,8 @@ it.live(
             {
               modelContextWindow: () => undefined,
               runtimeOptions: {
-                databaseLayer: freshDatabase,
-                serverConfigLayer: Layer.succeed(ServerConfig, freshConfig),
+                layerDatabase: freshDatabase,
+                layerServerConfig: Layer.succeed(ServerConfig, freshConfig),
               },
             },
           );

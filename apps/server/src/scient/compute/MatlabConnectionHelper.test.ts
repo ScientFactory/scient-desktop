@@ -108,63 +108,66 @@ describe("MATLAB connection helper prerequisites", () => {
     ).not.toMatch(/numpy|pandas|scipy|jupyter/);
   });
 
-  for (const scenario of ["missing", "unsupported", "automatic-without-installation"] as const) {
-    it.live(`does not download, activate, or mutate an installation when ${scenario}`, () =>
-      Effect.gen(function* () {
-        const installation = NodePath.join(root, "MATLAB_R2024a.app");
-        const executable = NodePath.join(installation, "bin", "matlab");
-        if (scenario === "unsupported") {
-          yield* Effect.promise(async () => {
-            await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
-            await NodeFSP.writeFile(executable, "not-an-executable");
-            await NodeFSP.writeFile(
-              NodePath.join(installation, "VersionInfo.xml"),
-              "<release>R2024a</release>",
-            );
-          });
-        }
-        const start = vi.fn(() =>
-          Effect.die("A failed prerequisite must not launch an installer or MATLAB."),
-        );
-        const helper = makeMatlabConnectionHelper({
-          computeDir: NodePath.join(root, "compute"),
-          specDirectory: NodePath.join(import.meta.dirname, "managed-python", "matlab-connection"),
-          processes: { start },
-          environment: {},
-          platform: "win32",
-          arch: "x64",
-          selectedExecutable: async () =>
-            scenario === "automatic-without-installation" ? null : executable,
+  it.live.each(
+    (["missing", "unsupported", "automatic-without-installation"] as const).map((scenario) => ({
+      caseTitle: `does not download, activate, or mutate an installation when ${scenario}`,
+      scenario,
+    })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.gen(function* () {
+      const installation = NodePath.join(root, "MATLAB_R2024a.app");
+      const executable = NodePath.join(installation, "bin", "matlab");
+      if (scenario === "unsupported") {
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+          await NodeFSP.writeFile(executable, "not-an-executable");
+          await NodeFSP.writeFile(
+            NodePath.join(installation, "VersionInfo.xml"),
+            "<release>R2024a</release>",
+          );
         });
-        yield* Effect.addFinalizer(() => Effect.sync(() => helper.controller.dispose()));
-        yield* helper.controller.manage("install");
-        let status = yield* helper.controller.status();
-        for (let attempt = 0; status.operation !== null && attempt < 100; attempt += 1) {
-          yield* Effect.sleep("5 millis");
-          status = yield* helper.controller.status();
-        }
-        expect(status.operation).toBeNull();
-        expect(status.installed).toBe(false);
-        expect(status.failureMessage).not.toBeNull();
-        if (scenario === "unsupported") expect(status.failureMessage).toContain("R2024b–R2026a");
-        if (scenario === "automatic-without-installation")
-          expect(status.failureMessage).toContain("Install and activate MATLAB first");
-        expect(start).not.toHaveBeenCalled();
-        expect(yield* Effect.promise(() => helper.manager.inspect())).toBeNull();
-        const entries = yield* Effect.promise(() =>
-          NodeFSP.readdir(
-            NodePath.join(root, "compute", "environments", "matlab-connection"),
-          ).catch((cause: NodeJS.ErrnoException) => {
+      }
+      const start = vi.fn(() =>
+        Effect.die("A failed prerequisite must not launch an installer or MATLAB."),
+      );
+      const helper = makeMatlabConnectionHelper({
+        computeDir: NodePath.join(root, "compute"),
+        specDirectory: NodePath.join(import.meta.dirname, "managed-python", "matlab-connection"),
+        processes: { start },
+        environment: {},
+        platform: "win32",
+        arch: "x64",
+        selectedExecutable: async () =>
+          scenario === "automatic-without-installation" ? null : executable,
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => helper.controller.dispose()));
+      yield* helper.controller.manage("install");
+      let status = yield* helper.controller.status();
+      for (let attempt = 0; status.operation !== null && attempt < 100; attempt += 1) {
+        yield* Effect.sleep("5 millis");
+        status = yield* helper.controller.status();
+      }
+      expect(status.operation).toBeNull();
+      expect(status.installed).toBe(false);
+      expect(status.failureMessage).not.toBeNull();
+      if (scenario === "unsupported") expect(status.failureMessage).toContain("R2024b–R2026a");
+      if (scenario === "automatic-without-installation")
+        expect(status.failureMessage).toContain("Install and activate MATLAB first");
+      expect(start).not.toHaveBeenCalled();
+      expect(yield* Effect.promise(() => helper.manager.inspect())).toBeNull();
+      const entries = yield* Effect.promise(() =>
+        NodeFSP.readdir(NodePath.join(root, "compute", "environments", "matlab-connection")).catch(
+          (cause: NodeJS.ErrnoException) => {
             if (cause.code === "ENOENT") return [];
             throw cause;
-          }),
+          },
+        ),
+      );
+      expect(entries.filter((name) => name.startsWith("generation-"))).toEqual([]);
+      if (scenario === "unsupported")
+        expect(yield* Effect.promise(() => NodeFSP.readFile(executable, "utf8"))).toBe(
+          "not-an-executable",
         );
-        expect(entries.filter((name) => name.startsWith("generation-"))).toEqual([]);
-        if (scenario === "unsupported")
-          expect(yield* Effect.promise(() => NodeFSP.readFile(executable, "utf8"))).toBe(
-            "not-an-executable",
-          );
-      }).pipe(Effect.scoped),
-    );
-  }
+    }).pipe(Effect.scoped),
+  );
 });

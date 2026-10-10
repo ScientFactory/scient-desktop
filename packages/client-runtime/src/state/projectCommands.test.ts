@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -79,6 +79,8 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (meth
     registerPlatform: () => Effect.void,
     reconcilePlatform: () => Effect.void,
     remove: () => Effect.void,
+    removeRoute: () => Effect.void,
+    reorderRoutes: () => Effect.void,
     removeRelayEnvironments: () => Effect.void,
     setEnabled: () => Effect.die("Unexpected environment toggle"),
     setCompatibility: () => Effect.die("Unexpected compatibility update"),
@@ -102,76 +104,79 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (meth
     ),
   );
   return {
-    commands: createProjectEnvironmentAtoms(runtime),
+    commands: createProjectEnvironmentAtoms(runtime, { projectAtom: () => Atom.make(null) }),
     registry: AtomRegistry.make(),
   };
 });
 
 describe("ordered project file commands", () => {
-  for (const outcome of ["success", "failure"] as const) {
-    it.effect(`starts a same-file read only after a held write settles with ${outcome}`, () =>
-      Effect.gen(function* () {
-        const entered = Promise.withResolvers<void>();
-        const release = Promise.withResolvers<void>();
-        const events: string[] = [];
-        const { commands, registry } = yield* makeHarness({
-          [WS_METHODS.projectsWriteFile]: Effect.fn(function* (input) {
-            events.push(`write:${input.relativePath}`);
-            entered.resolve();
-            yield* Effect.promise(() => release.promise);
-            events.push(`settled:${outcome}`);
-            if (outcome === "failure") return yield* Effect.interrupt;
-            return { relativePath: input.relativePath, revision: "revision-written" };
+  it.effect.each(
+    (["success", "failure"] as const).map((outcome) => ({
+      caseTitle: `starts a same-file read only after a held write settles with ${outcome}`,
+      outcome,
+    })),
+  )("$caseTitle", ({ outcome }) =>
+    Effect.gen(function* () {
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const events: string[] = [];
+      const { commands, registry } = yield* makeHarness({
+        [WS_METHODS.projectsWriteFile]: Effect.fn(function* (input) {
+          events.push(`write:${input.relativePath}`);
+          entered.resolve();
+          yield* Effect.promise(() => release.promise);
+          events.push(`settled:${outcome}`);
+          if (outcome === "failure") return yield* Effect.interrupt;
+          return { relativePath: input.relativePath, revision: "revision-written" };
+        }),
+        [WS_METHODS.projectsReadFile]: (input) =>
+          Effect.sync(() => {
+            events.push(`read:${input.relativePath}`);
+            return {
+              ...input,
+              contents: "saved",
+              revision: "revision-written",
+              byteLength: 5,
+              truncated: false,
+            };
           }),
-          [WS_METHODS.projectsReadFile]: (input) =>
-            Effect.sync(() => {
-              events.push(`read:${input.relativePath}`);
-              return {
-                ...input,
-                contents: "saved",
-                revision: "revision-written",
-                byteLength: 5,
-                truncated: false,
-              };
-            }),
+      });
+      try {
+        const write = commands.writeFile.run(registry, {
+          ...target,
+          input: { ...target.input, contents: "saved" },
         });
-        try {
-          const write = commands.writeFile.run(registry, {
+        yield* Effect.promise(() => entered.promise);
+        const read = commands.readFileOrdered.run(registry, target);
+        // A different path makes progress while the same-file read stays queued.
+        yield* Effect.promise(() =>
+          commands.readFileOrdered.run(registry, {
             ...target,
-            input: { ...target.input, contents: "saved" },
-          });
-          yield* Effect.promise(() => entered.promise);
-          const read = commands.readFileOrdered.run(registry, target);
-          // A different path makes progress while the same-file read stays queued.
-          yield* Effect.promise(() =>
-            commands.readFileOrdered.run(registry, {
-              ...target,
-              input: { ...target.input, relativePath: "other.md" },
-            }),
-          );
-          expect(events).toEqual(["write:notes.md", "read:other.md"]);
+            input: { ...target.input, relativePath: "other.md" },
+          }),
+        );
+        expect(events).toEqual(["write:notes.md", "read:other.md"]);
 
-          release.resolve();
-          expect((yield* Effect.promise(() => write))._tag).toBe(
-            outcome === "success" ? "Success" : "Failure",
-          );
-          expect(yield* Effect.promise(() => read)).toMatchObject({
-            _tag: "Success",
-            value: { contents: "saved" },
-          });
-          expect(events).toEqual([
-            "write:notes.md",
-            "read:other.md",
-            `settled:${outcome}`,
-            "read:notes.md",
-          ]);
-        } finally {
-          release.resolve();
-          registry.dispose();
-        }
-      }),
-    );
-  }
+        release.resolve();
+        expect((yield* Effect.promise(() => write))._tag).toBe(
+          outcome === "success" ? "Success" : "Failure",
+        );
+        expect(yield* Effect.promise(() => read)).toMatchObject({
+          _tag: "Success",
+          value: { contents: "saved" },
+        });
+        expect(events).toEqual([
+          "write:notes.md",
+          "read:other.md",
+          `settled:${outcome}`,
+          "read:notes.md",
+        ]);
+      } finally {
+        release.resolve();
+        registry.dispose();
+      }
+    }),
+  );
 
   it.effect("does not serialize unrelated workspaces or environments", () =>
     Effect.gen(function* () {

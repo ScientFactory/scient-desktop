@@ -1,5 +1,5 @@
 import { WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
@@ -14,6 +14,24 @@ export function createBrowserPdfExportEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    exportServerPage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:browser-pdf-export:server-page",
+      tag: WS_METHODS.documentsExportServerBrowserPdf,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.tabId]),
+      },
+    }),
+    navigateServerPage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:browser-pdf-export:server-navigation",
+      tag: WS_METHODS.documentsNavigateServerBrowser,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.tabId]),
+      },
+    }),
     publish: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:browser-pdf-export:publish",
       tag: WS_METHODS.documentsPublishBrowserPdfExport,

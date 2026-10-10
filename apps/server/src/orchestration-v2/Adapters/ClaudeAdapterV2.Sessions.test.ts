@@ -1,3 +1,4 @@
+import * as Crypto from "effect/Crypto";
 import * as NodeOS from "node:os";
 import type { Query as ClaudeQuery, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -51,6 +52,8 @@ describe("ClaudeAdapterV2 executable path", () => {
               Effect.sync(() => {
                 executablePaths.push(input.options.pathToClaudeCodeExecutable);
                 return {
+                  setPermissionMode: () =>
+                    Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
@@ -103,6 +106,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         });
         let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -116,6 +120,8 @@ describe("ClaudeAdapterV2 resume compaction", () => {
               Effect.sync(() => {
                 openedOptions = input.options;
                 return {
+                  setPermissionMode: () =>
+                    Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
@@ -320,6 +326,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
         });
         const openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
@@ -333,6 +340,8 @@ describe("ClaudeAdapterV2 native session identity", () => {
               Effect.sync(() => {
                 openedQueries.push(input);
                 return {
+                  setPermissionMode: () =>
+                    Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.empty,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
@@ -418,7 +427,10 @@ describe("ClaudeAdapterV2 query message stream", () => {
         closed = true;
         releaseRead();
       };
-      const query = {
+      const unusedSdkControl = async (): Promise<never> => {
+        throw new Error("Unexpected SDK control in interrupted message-read fixture.");
+      };
+      const query: ClaudeQuery = {
         next: () => generator.next(),
         return: async (value?: void) => {
           close();
@@ -427,7 +439,38 @@ describe("ClaudeAdapterV2 query message stream", () => {
         throw: (error?: unknown) => generator.throw(error),
         [Symbol.asyncIterator]: () => generator,
         close,
-      } as unknown as ClaudeQuery;
+        [Symbol.asyncDispose]: async () => {
+          await query.return();
+        },
+        interrupt: unusedSdkControl,
+        setPermissionMode: unusedSdkControl,
+        setMcpPermissionModeOverride: unusedSdkControl,
+        setModel: unusedSdkControl,
+        setMaxThinkingTokens: unusedSdkControl,
+        applyFlagSettings: unusedSdkControl,
+        updateSettings: unusedSdkControl,
+        initializationResult: unusedSdkControl,
+        reinitialize: unusedSdkControl,
+        supportedCommands: unusedSdkControl,
+        supportedModels: unusedSdkControl,
+        supportedAgents: unusedSdkControl,
+        mcpServerStatus: unusedSdkControl,
+        getContextUsage: unusedSdkControl,
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: unusedSdkControl,
+        readFile: unusedSdkControl,
+        reloadPlugins: unusedSdkControl,
+        reloadSkills: unusedSdkControl,
+        reloadOutputStyles: unusedSdkControl,
+        accountInfo: unusedSdkControl,
+        rewindFiles: unusedSdkControl,
+        seedReadState: unusedSdkControl,
+        reconnectMcpServer: unusedSdkControl,
+        toggleMcpServer: unusedSdkControl,
+        setMcpServers: unusedSdkControl,
+        streamInput: unusedSdkControl,
+        stopTask: unusedSdkControl,
+        backgroundTasks: unusedSdkControl,
+      };
 
       const scope = yield* Scope.make();
       yield* Stream.fromAsyncIterable(

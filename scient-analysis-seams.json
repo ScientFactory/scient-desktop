@@ -12,6 +12,7 @@
     "apps/web/src/scient/latex",
     "apps/web/src/scient/layout",
     "apps/web/src/scient/artifacts",
+    "apps/web/src/scient/previewPresentation",
     "apps/web/src/scient/fileSurfaces",
     "packages/scient-analysis",
     "packages/scient-compute",
@@ -58,7 +59,7 @@
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
-    "(/|~)scient/(analysis|artifacts|compute|execution|fileSurfaces|layout)",
+    "(/|~)scient/(analysis|artifacts|compute|execution|fileSurfaces|layout|previewPresentation)",
     "Compute(Session|Execution|Transport|Output)",
     "DuplexProcess",
     "analysis-artifact",
@@ -79,6 +80,11 @@
     "MATLAB_"
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/server/src/observability/RpcInstrumentation.ts",
+      "anchor": "[WS_METHODS.computeInspectRuntimes]: \"compute\"",
+      "purpose": "Retain analysis and compute aggregate labels in the native typed RPC instrumentation middleware without changing telemetry authority."
+    },
     {
       "path": "apps/desktop/src/app/DesktopEnvironment.ts",
       "anchor": "developmentUserDataDirName",
@@ -142,7 +148,7 @@
     {
       "path": "apps/web/src/components/ChatView.tsx",
       "anchor": "ScientRightPanelContent",
-      "purpose": "Mount Scient artifact and compute content in the inherited right-panel layout."
+      "purpose": "Mount Scient artifacts and compute in the inherited right panel; useScientBrowserPresentation consumes fresh browser reveal intents and suppresses only the matching browser surface."
     },
     {
       "path": "apps/web/src/components/RightPanelTabs.tsx",
@@ -193,11 +199,6 @@
       "path": "apps/web/src/components/files/projectFilesQueryState.ts",
       "anchor": "revision",
       "purpose": "Carry authoritative file revisions through the shared file-query projection."
-    },
-    {
-      "path": "apps/web/src/components/preview/PreviewAutomationHosts.tsx",
-      "anchor": "selectThreadPreviewMiniPlayerTabId",
-      "purpose": "Scope automated browser mini-player transitions to browser tabs while sharing the tagged store with Scient artifacts."
     },
     {
       "path": "apps/web/src/components/preview/PreviewView.tsx",

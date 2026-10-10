@@ -20,7 +20,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ProviderAdapters from "./orchestration-v2/ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 
 import * as ServerConfig from "./config.ts";
@@ -44,11 +44,20 @@ it.effect("starts without scanning or rebuilding projection history", () =>
     const result = yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
       importLegacyShells: record("import"),
       recover: record("recover").pipe(Effect.as({ closedRequests: 2 })),
+      recoverDelegatedTasks: record("delegated"),
       startEffectWorker: record("worker"),
       autoBootstrap: record("bootstrap").pipe(Effect.as({ projectId: "project-1" })),
     });
 
-    assert.deepEqual(yield* Ref.get(calls), ["import", "recover", "worker", "bootstrap"]);
+    // Delegated recovery reads the runs recovery terminalizes, and settles them
+    // before the worker runs restart continuations that would otherwise race it.
+    assert.deepEqual(yield* Ref.get(calls), [
+      "import",
+      "recover",
+      "delegated",
+      "worker",
+      "bootstrap",
+    ]);
     assert.deepEqual(result, {
       recovery: { closedRequests: 2 },
       bootstrap: { projectId: "project-1" },
@@ -314,7 +323,7 @@ const bootstrapThreadsLayer = ThreadManagement.layer.pipe(
   Layer.provide(
     makeOrchestratorV2ReplayLayerWithRegistry(
       { name: "startup-bootstrap" },
-      ProviderAdapters.makeLayer([]),
+      ProviderAdapters.layerFromAdapters([]),
       { runEffectWorker: false },
     ),
   ),
@@ -434,6 +443,8 @@ it.effect.each([
               },
             }),
             Layer.succeed(ThreadLaunch.ThreadLaunchService, {
+              retryPreparation: () =>
+                Effect.die("Bootstrap fixture does not retry workspace preparation."),
               launch: (input) =>
                 createBootstrapThread(input).pipe(
                   Effect.provideService(ThreadManagement.ThreadManagementService, threads),

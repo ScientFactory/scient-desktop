@@ -14,14 +14,16 @@ import {
   resolveReviewedClaudeArtifact,
   resolveScientAgentArtifactPolicy,
   type ManagedRuntimeArtifact,
+  managedRuntimeArtifactReceipt,
+  resolveReviewedCursorArtifact,
 } from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import * as Stream from "effect/Stream";
 import { BUNDLED_MANAGED_RUNTIME_CATALOG, ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import type * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as ChildProcess from "effect/process/ChildProcess";
 import * as Sink from "effect/Sink";
 
 import {
@@ -129,6 +131,34 @@ describe("managed provider runtime source", () => {
 });
 
 describe("managed provider runtime policy", () => {
+  it("offers qualified Cursor replacements using the installed receipt, never hash order", () => {
+    const policy = resolveReviewedCursorArtifact({ platform: "darwin", arch: "arm64" })!;
+    const version = `${policy.version.split("-")[0]}-1111111`;
+    const artifact = { ...policy, version, supersedes: [policy.version] };
+    const input = {
+      source: "scient_managed" as const,
+      artifact,
+      installed: true,
+      installedVersion: policy.version,
+      installedArtifact: managedRuntimeArtifactReceipt(policy),
+      managedInstallationAllowed: true,
+      systemToManagedSwitchAllowed: false,
+    };
+    expect(resolveManagedRuntimePolicy(input).actions).toContain("update");
+    expect(
+      resolveManagedRuntimePolicy({ ...input, artifact: { ...artifact, supersedes: undefined } })
+        .actions,
+    ).not.toContain("update");
+    expect(
+      resolveManagedRuntimePolicy({
+        ...input,
+        artifact: policy,
+        installedVersion: version,
+        installedArtifact: managedRuntimeArtifactReceipt(artifact),
+      }).actions,
+    ).not.toContain("update");
+  });
+
   it("advertises system-to-managed installation only after explicit provider qualification", () => {
     const base = {
       source: "system" as const,

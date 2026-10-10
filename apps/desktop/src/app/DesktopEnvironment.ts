@@ -187,7 +187,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const devServerUrl = config.devServerUrl;
   // An unpackaged desktop is development even if a direct launch loses its
   // Vite URL. State identity must fail toward the development directory; the
-  // renderer can report a missing dev server without ever opening production.
+  // renderer may use bundled assets without ever opening production state.
   const isDevelopment = !input.isPackaged || Option.isSome(devServerUrl);
   const appDataDirectory =
     input.platform === "win32"

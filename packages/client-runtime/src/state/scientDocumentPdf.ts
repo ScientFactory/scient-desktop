@@ -1,8 +1,11 @@
 import { WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
 
 /**
  * Document PDF export is two commands: capture a saved document on the server,
@@ -15,6 +18,15 @@ export function createScientDocumentPdfEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    hostRequests: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:scient-document-pdf:host-requests",
+      tag: WS_METHODS.documentsHostConnect,
+      idleTtlMs: 0,
+    }),
+    respondToHost: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:scient-document-pdf:host-response",
+      tag: WS_METHODS.documentsHostRespond,
+    }),
     prepareMarkdown: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:scient-document-pdf:prepare-markdown",
       tag: WS_METHODS.documentsPrepareMarkdownPdf,

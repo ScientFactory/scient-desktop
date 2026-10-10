@@ -11,6 +11,7 @@ export * from "./environment.ts";
 export * from "./environmentHttp.ts";
 export * from "./relayClient.ts";
 export * from "./desktopBootstrap.ts";
+export * from "./desktopBrowser.ts";
 export * from "./desktopAppActivation.ts";
 export * from "./remoteAccess.ts";
 export * from "./ipc.ts";
@@ -106,6 +107,7 @@ export * from "./scientConversationImport.ts";
 // SCIENT-FORK:START — Scient managed Pandoc contracts (new file, no upstream edits).
 export * from "./scientPandoc.ts";
 // SCIENT-FORK:END
+export * from "./mcpApps.ts";
 export * from "./browserImport.ts";
 export * from "./browserProfile.ts";
 export * from "./device.ts";
@@ -124,3 +126,7 @@ export * from "./scientAnswerAttention.ts";
 export * from "./worktreeSetup.ts";
 
 export * from "./providerCitationPresentation.ts";
+export * from "./secretRequest.ts";
+export * from "./clientRpcPermissions.ts";
+
+export * from "./scientDocumentHost.ts";

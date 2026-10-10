@@ -21,6 +21,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
@@ -33,11 +34,7 @@ import {
   isManagedRuntimeActionDurablySettled,
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
-import {
-  isRuntimePlanStale,
-  managedRuntimeSwitchNeedsDecision,
-  managedRuntimeSwitchTitle,
-} from "./ManagedRuntimeSwitchDecision";
+import { isRuntimePlanStale } from "./isRuntimePlanStale";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import {
   cancelRuntimeActionLabel,
@@ -182,6 +179,8 @@ export function ProviderRuntimeSection(props: {
     useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(null);
   const [localFailure, setLocalFailure] = useState<LocalRuntimeFailure | null>(null);
   const [startedOperation, setStartedOperation] = useState<StartedRuntimeOperation | null>(null);
+  const requestingRuntimeRef = useRef(false);
+  const startingRuntimeRef = useRef(false);
   const providerInstanceIdRef = useRef(provider.instanceId);
   const initialPlanRequestRef = useRef<string | null>(null);
   const reportedOperationIdRef = useRef<ProviderRuntimeOperation["operationId"] | null>(null);
@@ -227,10 +226,9 @@ export function ProviderRuntimeSection(props: {
 
   const operation = runtime?.operation ?? null;
   const runtimeActions = runtime?.actions;
-  const runtimeSource = runtime?.source;
   const activeOperation = isActiveProviderRuntimeOperation(operation) ? operation : null;
   const plan =
-    !activeOperation && preparedPlan && runtimeActions?.includes(preparedPlan.action)
+    !activeOperation && preparedPlan?.action === "remove" && runtimeActions?.includes("remove")
       ? preparedPlan
       : null;
   const localError = runtime ? localRuntimeFailureMessage(localFailure, runtime) : null;
@@ -248,70 +246,86 @@ export function ProviderRuntimeSection(props: {
 
   const startPlan = useCallback(
     async (nextPlan: ProviderRuntimePlan) => {
-      if (!runtimeActions?.includes(nextPlan.action)) return;
-      const operationId = operation?.operationId ?? null;
-      setLocalFailure(null);
-      setPendingAction("start");
-      const result = await startRuntime({
-        environmentId,
-        input: {
-          instanceId: provider.instanceId,
-          action: nextPlan.action,
-          catalogRevision: nextPlan.catalogRevision,
-          // Reached only from the decision that showed both releases.
-          ...(managedRuntimeSwitchNeedsDecision(nextPlan) ? { acceptOlderThanSystem: true } : {}),
-        },
-      });
-      if (result._tag === "Failure") {
-        const failure = isAtomCommandInterrupted(result) ? null : squashAtomCommandFailure(result);
-        if (failure && isRuntimePlanStale(failure)) {
-          // The system runtime changed since the plan: show the switch as it
-          // is now, for a new decision, instead of starting or failing it.
+      if (startingRuntimeRef.current || !runtimeActions?.includes(nextPlan.action)) return;
+      startingRuntimeRef.current = true;
+      try {
+        const operationId = operation?.operationId ?? null;
+        setLocalFailure(null);
+        setPendingAction("start");
+        let result = await startRuntime({
+          environmentId,
+          input: {
+            instanceId: provider.instanceId,
+            action: nextPlan.action,
+            catalogRevision: nextPlan.catalogRevision,
+          },
+        });
+        if (
+          nextPlan.action !== "remove" &&
+          result._tag === "Failure" &&
+          !isAtomCommandInterrupted(result) &&
+          isRuntimePlanStale(squashAtomCommandFailure(result))
+        ) {
+          // Refresh once; the explicit action already chose Scient's managed release.
           const replanned = await planRuntime({
             environmentId,
             input: { instanceId: provider.instanceId, action: nextPlan.action },
           });
-          if (replanned._tag === "Success" && replanned.value.systemVersion !== undefined) {
-            setPendingAction(null);
-            setPreparedPlan(replanned.value);
-            onPlanOpenChange?.(true);
-            return;
+          result =
+            replanned._tag === "Failure"
+              ? AsyncResult.failure(replanned.cause)
+              : await startRuntime({
+                  environmentId,
+                  input: {
+                    instanceId: provider.instanceId,
+                    action: replanned.value.action,
+                    catalogRevision: replanned.value.catalogRevision,
+                  },
+                });
+        }
+        if (result._tag === "Failure") {
+          const failure = isAtomCommandInterrupted(result)
+            ? null
+            : squashAtomCommandFailure(result);
+          setPendingAction(null);
+          if (failure) {
+            setLocalFailure({
+              kind: "start",
+              action: nextPlan.action,
+              operationId,
+              message: providerLifecycleFailureMessage(
+                failure,
+                `Scient could not start the ${runtimeDisplayName} runtime operation.`,
+              ),
+            });
+          }
+          return;
+        }
+        const nextRuntime = runtimeFromResult(result.value.providers, provider.instanceId);
+        const nextOperation = nextRuntime?.operation;
+        if (nextOperation?.action === nextPlan.action) {
+          if (isActiveProviderRuntimeOperation(nextOperation)) {
+            setStartedOperation({
+              action: nextPlan.action,
+              operationId: nextOperation.operationId,
+            });
+          } else if (
+            nextOperation.status === "succeeded" &&
+            reportedOperationIdRef.current !== nextOperation.operationId
+          ) {
+            reportedOperationIdRef.current = nextOperation.operationId;
+            onActionSucceeded?.(nextPlan.action);
           }
         }
+        setLocalRuntimeSnapshot(
+          nextRuntime ? { baseProvider: provider, value: nextRuntime } : null,
+        );
+        setPreparedPlan(null);
+        onPlanOpenChange?.(false);
         setPendingAction(null);
-        if (failure) {
-          setLocalFailure({
-            kind: "start",
-            action: nextPlan.action,
-            operationId,
-            message: providerLifecycleFailureMessage(
-              failure,
-              `Scient could not start the ${runtimeDisplayName} runtime operation.`,
-            ),
-          });
-        }
-        return;
+      } finally {
+        startingRuntimeRef.current = false;
       }
-      const nextRuntime = runtimeFromResult(result.value.providers, provider.instanceId);
-      const nextOperation = nextRuntime?.operation;
-      if (nextOperation?.action === nextPlan.action) {
-        if (isActiveProviderRuntimeOperation(nextOperation)) {
-          setStartedOperation({
-            action: nextPlan.action,
-            operationId: nextOperation.operationId,
-          });
-        } else if (
-          nextOperation.status === "succeeded" &&
-          reportedOperationIdRef.current !== nextOperation.operationId
-        ) {
-          reportedOperationIdRef.current = nextOperation.operationId;
-          onActionSucceeded?.(nextPlan.action);
-        }
-      }
-      setLocalRuntimeSnapshot(nextRuntime ? { baseProvider: provider, value: nextRuntime } : null);
-      setPreparedPlan(null);
-      onPlanOpenChange?.(false);
-      setPendingAction(null);
     },
     [
       planRuntime,
@@ -328,51 +342,48 @@ export function ProviderRuntimeSection(props: {
 
   const requestPlan = useCallback(
     async (action: ProviderManagedRuntimeAction) => {
-      if (isActiveProviderRuntimeOperation(operation) || !runtimeActions?.includes(action)) {
-        setPendingAction(null);
-        setPreparedPlan(null);
-        setLocalFailure(null);
-        onPlanOpenChange?.(false);
-        return;
-      }
-      // Removal is destructive, and switching away from a working system
-      // installation changes the release in use: both wait for a decision made
-      // with the plan in view.
-      const needsDecision =
-        action === "remove" || (action === "install" && runtimeSource === "system");
-      setLocalFailure(null);
-      setPendingAction("plan");
-      if (needsDecision) onPlanOpenChange?.(true);
-      const result = await planRuntime({
-        environmentId,
-        input: { instanceId: provider.instanceId, action },
-      });
-      if (result._tag === "Failure") {
-        setPendingAction(null);
-        onPlanOpenChange?.(false);
-        if (!isAtomCommandInterrupted(result)) {
-          setLocalFailure({
-            kind: "plan",
-            action,
-            message: providerLifecycleFailureMessage(
-              squashAtomCommandFailure(result),
-              `Scient could not prepare the ${runtimeDisplayName} setup plan.`,
-            ),
-          });
+      if (requestingRuntimeRef.current) return;
+      requestingRuntimeRef.current = true;
+      try {
+        if (isActiveProviderRuntimeOperation(operation) || !runtimeActions?.includes(action)) {
+          setPendingAction(null);
+          setPreparedPlan(null);
+          setLocalFailure(null);
+          onPlanOpenChange?.(false);
+          return;
         }
-        return;
+        const needsDecision = action === "remove";
+        setLocalFailure(null);
+        setPendingAction("plan");
+        if (needsDecision) onPlanOpenChange?.(true);
+        const result = await planRuntime({
+          environmentId,
+          input: { instanceId: provider.instanceId, action },
+        });
+        if (result._tag === "Failure") {
+          setPendingAction(null);
+          onPlanOpenChange?.(false);
+          if (!isAtomCommandInterrupted(result)) {
+            setLocalFailure({
+              kind: "plan",
+              action,
+              message: providerLifecycleFailureMessage(
+                squashAtomCommandFailure(result),
+                `Scient could not prepare the ${runtimeDisplayName} setup plan.`,
+              ),
+            });
+          }
+          return;
+        }
+        if (!needsDecision) {
+          await startPlan(result.value);
+          return;
+        }
+        setPendingAction(null);
+        setPreparedPlan(result.value);
+      } finally {
+        requestingRuntimeRef.current = false;
       }
-      // Other installs, updates and repairs are already authorized by the
-      // action click. Keep the server preflight and its exact catalog revision.
-      // A plan that names a system runtime puts the managed copy in use in its
-      // place, whatever the action was called: that is decided here.
-      if (!needsDecision && result.value.systemVersion === undefined) {
-        await startPlan(result.value);
-        return;
-      }
-      if (!needsDecision) onPlanOpenChange?.(true);
-      setPendingAction(null);
-      setPreparedPlan(result.value);
     },
     [
       planRuntime,
@@ -382,7 +393,6 @@ export function ProviderRuntimeSection(props: {
       provider.instanceId,
       runtimeActions,
       operation,
-      runtimeSource,
       startPlan,
     ],
   );
@@ -531,7 +541,6 @@ export function ProviderRuntimeSection(props: {
   }
 
   if (plan) {
-    const removing = plan.action === "remove";
     return (
       <div
         className={
@@ -541,27 +550,12 @@ export function ProviderRuntimeSection(props: {
         }
       >
         <div className="flex items-start gap-3">
-          {managedRuntimeSwitchNeedsDecision(plan) ? (
-            <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
-          ) : (
-            <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
-          )}
+          <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
           <div className="min-w-0">
-            <p className="text-sm font-medium text-foreground">
-              {removing
-                ? `Remove ${runtimeDisplayName}?`
-                : managedRuntimeSwitchTitle(runtimeDisplayName, plan)}
-            </p>
+            <p className="text-sm font-medium text-foreground">Remove {runtimeDisplayName}?</p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              {removing ? (
-                <>
-                  Only Scient’s managed copy will be removed. Your account and other{" "}
-                  {runtimeDisplayName} installations stay unchanged.
-                </>
-              ) : (
-                // The server names the release it installs and the system one it replaces.
-                plan.message
-              )}
+              Only Scient’s managed copy will be removed. Your account and other{" "}
+              {runtimeDisplayName} installations stay unchanged.
             </p>
           </div>
         </div>
@@ -586,18 +580,12 @@ export function ProviderRuntimeSection(props: {
           <Button
             type="button"
             size="sm"
-            variant={removing ? "ghost-destructive-action" : "ghost-primary"}
+            variant="ghost-destructive-action"
             disabled={isWorking}
             onClick={() => void start()}
           >
-            {pendingAction === "start" ? (
-              <LoaderIcon className="animate-spin" />
-            ) : removing ? (
-              <Trash2Icon />
-            ) : (
-              <DownloadIcon />
-            )}
-            {removing ? "Remove" : "Use Scient-managed"}
+            {pendingAction === "start" ? <LoaderIcon className="animate-spin" /> : <Trash2Icon />}
+            Remove
           </Button>
         </div>
       </div>
@@ -680,7 +668,7 @@ export function ProviderRuntimeSection(props: {
                   type="button"
                   size={props.compact ? "compact" : "sm"}
                   variant={
-                    action === "update" || (action === "install" && !isSystemManagedSwitch)
+                    action === "update" || action === "install"
                       ? "ghost-primary"
                       : props.compact
                         ? action === "remove"

@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as Redacted from "effect/Redacted";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { DROID_DEFAULT_MODEL, type ModelReasoningMetadata } from "@t3tools/contracts";

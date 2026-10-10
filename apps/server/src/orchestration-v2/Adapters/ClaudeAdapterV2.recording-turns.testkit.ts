@@ -1,3 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
 import {
   type CanUseTool,
   type SDKAssistantMessage,
@@ -150,9 +153,16 @@ async function recordClaudeStreamingQuery(input: {
   try {
     for (const [index, prompt] of input.prompts.entries()) {
       // Like the adapter, give each prompt a uuid Claude echoes on its turn.
+      const promptUuid = await Effect.runPromise(
+        Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4).pipe(
+          Effect.provide(NodeCrypto.layer),
+        ),
+      );
+      if (!ClaudeAdapterV2.isClaudePromptUuid(promptUuid))
+        throw new Error("Failed to allocate a Claude recording prompt uuid.");
       const message = ClaudeAdapterV2.makeClaudeUserMessage({
         text: prompt,
-        uuid: ClaudeAdapterV2.claudePromptUuid(`${input.sessionId}:prompt:${index + 1}`),
+        uuid: promptUuid,
       });
       input.entries.push({
         type: "expect_outbound",

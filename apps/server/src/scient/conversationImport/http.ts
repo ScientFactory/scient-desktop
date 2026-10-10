@@ -10,8 +10,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
   annotateEnvironmentRequest,
@@ -38,25 +38,25 @@ export const scientConversationImportHttpApiLayer = HttpApiBuilder.group(
       .handle("createUpload", ({ endpoint, payload }) =>
         authorize(endpoint.name).pipe(
           Effect.andThen(staging.createUpload(payload)),
-          Effect.catchTag("ConversationImportStagingFailure", internal),
+          Effect.catchTags({ ConversationImportStagingFailure: internal }),
         ),
       )
       .handle("preview", ({ endpoint, payload }) =>
         authorize(endpoint.name).pipe(
           Effect.andThen(staging.preview(payload.importId)),
-          Effect.catchTag("ConversationImportStagingFailure", internal),
+          Effect.catchTags({ ConversationImportStagingFailure: internal }),
         ),
       )
       .handle("import", ({ endpoint, payload }) =>
         Effect.gen(function* () {
           const principal = yield* authorize(endpoint.name);
           return yield* staging.confirm(payload, principal);
-        }).pipe(Effect.catchTag("ConversationImportStagingFailure", internal)),
+        }).pipe(Effect.catchTags({ ConversationImportStagingFailure: internal })),
       )
       .handle("cancel", ({ endpoint, payload }) =>
         authorize(endpoint.name).pipe(
           Effect.andThen(staging.cancel(payload.importId)),
-          Effect.catchTag("ConversationImportStagingFailure", internal),
+          Effect.catchTags({ ConversationImportStagingFailure: internal }),
         ),
       );
   }),

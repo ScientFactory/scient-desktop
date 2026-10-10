@@ -9,7 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { AnalysisRunIndex, layer } from "./AnalysisRunIndex.ts";
 
 function summary(index: number, relativePath = "analysis.m"): AnalysisRunSummary {

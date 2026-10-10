@@ -11,7 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { ServerConfig } from "../../config.ts";
 import { ConversationImportCommit } from "./ConversationImportCommit.ts";
@@ -58,7 +58,7 @@ const attemptDirectory = (name = "attempt") =>
 
 const readThread = (threadId: ThreadId) =>
   Effect.flatMap(ProjectionStoreV2, (store) => store.getThreadProjection(threadId)).pipe(
-    Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(undefined)),
+    Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(undefined) }),
   );
 
 const threadCount = Effect.flatMap(

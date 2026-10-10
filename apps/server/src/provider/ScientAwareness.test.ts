@@ -162,6 +162,8 @@ describe("Scient awareness", () => {
     expect(SCIENT_AWARENESS_DELIVERY.acpRegistry).toBe("unsupported-no-private-system-seam");
     expect(SCIENT_AWARENESS_DELIVERY.antigravity).toBe("unsupported-no-private-system-seam");
     expect(SCIENT_AWARENESS_DELIVERY.cursor).toBe("unsupported-no-private-system-seam");
+    // MCP tool injection does not imply a private system-instruction channel.
+    expect(SCIENT_AWARENESS_DELIVERY.muse).toBe("unsupported-no-private-system-seam");
     // Oh My Pi uses Pi's session-local extension hook, appended to its string[] prompt.
     expect(SCIENT_AWARENESS_DELIVERY.omp).toBe(SCIENT_AWARENESS_DELIVERY.pi);
   });

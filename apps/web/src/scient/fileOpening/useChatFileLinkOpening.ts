@@ -5,7 +5,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
 
 import {
@@ -15,7 +15,7 @@ import {
 import { workspaceFileHostPath } from "~/components/files/filePath";
 import { useRightPanelStore } from "~/rightPanelStore";
 import type { usePreparedConnection } from "~/state/session";
-import { isAbsolutePath } from "~/terminal-links";
+import { isAbsolutePath } from "@t3tools/shared/path";
 import { claimWorkspaceBasenameLookup } from "~/workspaceBasenameLookup";
 
 import {

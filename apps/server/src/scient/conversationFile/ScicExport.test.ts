@@ -23,7 +23,7 @@ import * as yauzl from "yauzl";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as ConversationExportFiles from "../conversationExport/ConversationExportFiles.ts";
 import * as ConversationExportService from "../conversationExport/ConversationExportService.ts";
 import {

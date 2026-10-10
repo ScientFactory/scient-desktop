@@ -16,7 +16,7 @@ import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
 
-const TestLayer = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
+const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 
 function importedItem(
   input:
@@ -68,7 +68,7 @@ function importedItem(
       };
 }
 
-it.layer(TestLayer)("ContextHandoffService legacy import", (it) => {
+it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
   it.effect("prepares imported history for the first native v2 turn", () =>
     Effect.gen(function* () {
       const service = yield* ContextHandoffService.ContextHandoffServiceV2;
@@ -166,7 +166,7 @@ it.layer(TestLayer)("ContextHandoffService legacy import", (it) => {
   );
 });
 
-it.layer(TestLayer)("ContextHandoffService preparation policy", (it) => {
+it.layer(layerTest)("ContextHandoffService preparation policy", (it) => {
   it.effect("keeps generic switch preparation capped while Scient retains intact candidates", () =>
     Effect.gen(function* () {
       const service = yield* ContextHandoffService.ContextHandoffServiceV2;

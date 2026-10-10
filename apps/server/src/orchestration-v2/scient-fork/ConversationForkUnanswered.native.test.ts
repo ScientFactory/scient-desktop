@@ -23,7 +23,7 @@ import {
   PROVIDER_ID,
 } from "../../scient/conversationImport/conversationImport.test-fixtures.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 
@@ -84,12 +84,14 @@ const forkAt = Effect.fn("test.forkUnansweredPrefix")(function* (
   return yield* (yield* ProjectionStoreV2).getThreadProjection(ThreadId.make(target));
 });
 
+const shownItems = (projection: OrchestrationV2ThreadProjection) =>
+  projection.visibleTurnItems.map((row) => row.item);
+
 const assertUnansweredGroup = (projection: OrchestrationV2ThreadProjection) => {
-  const prompt = projection.turnItems.find(
-    (item) => item.type === "user_message" && item.text === "Question 2",
-  );
+  const shown = shownItems(projection);
+  const prompt = shown.find((item) => item.type === "user_message" && item.text === "Question 2");
   assert.ok(prompt?.historyTurnId);
-  const group = projection.turnItems.filter((item) => item.historyTurnId === prompt.historyTurnId);
+  const group = shown.filter((item) => item.historyTurnId === prompt.historyTurnId);
   assert.deepEqual(
     group.map((item) => item.type),
     ["user_message", "reasoning", "dynamic_tool"],
@@ -101,7 +103,7 @@ const assertUnansweredGroup = (projection: OrchestrationV2ThreadProjection) => {
       (item) => item.runId === null && item.nodeId === null && item.nativeItemRef === null,
     ),
   );
-  const answered = projection.turnItems.filter((item) => item.type === "assistant_message");
+  const answered = shown.filter((item) => item.type === "assistant_message");
   assert.isFalse(answered.some((item) => item.historyTurnId === prompt.historyTurnId));
   assert.equal(
     projection.thread.forkLineage?.baselineAssistantMessageId,
@@ -125,7 +127,7 @@ it.live(
         assertUnansweredGroup(fork);
         assert.equal(
           new Set(
-            fork.turnItems.flatMap((item) => (item.historyTurnId ? [item.historyTurnId] : [])),
+            shownItems(fork).flatMap((item) => (item.historyTurnId ? [item.historyTurnId] : [])),
           ).size,
           3,
         );
@@ -135,15 +137,15 @@ it.live(
           ["Question 1", "Answer 1"],
         );
         assert.isFalse(
-          earlier.turnItems.some(
+          shownItems(earlier).some(
             (item) => item.type === "reasoning" && item.text === "Thinking about 2",
           ),
         );
         assert.isFalse(
-          earlier.turnItems.some(
+          shownItems(earlier).some(
             (item) =>
               item.historyTurnId ===
-              fork.turnItems.find(
+              shownItems(fork).find(
                 (item) => item.type === "user_message" && item.text === "Question 2",
               )?.historyTurnId,
           ),
@@ -167,6 +169,8 @@ it.live(
           second.messages.map((message) => message.text),
           first.messages.map((message) => message.text),
         );
+        // The refork owns fresh copies of its plans and boundary; everything else
+        // it shows is the original item, one level deep.
         assert.isTrue(
           second.turnItems.every(
             (item) =>
@@ -174,10 +178,19 @@ it.live(
               !first.turnItems.some((prior) => prior.id === item.id),
           ),
         );
-        assert.isTrue(
-          second.messages.every(
-            (message) => !first.messages.some((prior) => prior.id === message.id),
-          ),
+        const shared = (projection: OrchestrationV2ThreadProjection) =>
+          projection.visibleTurnItems.filter(
+            (row) => row.visibility === "inherited" && row.sourceThreadId !== projection.thread.id,
+          );
+        assert.isNotEmpty(shared(second));
+        assert.isTrue(shared(second).every((row) => row.sourceThreadId === source.thread.id));
+        assert.deepEqual(
+          shared(second).map((row) => row.sourceItemId),
+          shared(first).map((row) => row.sourceItemId),
+        );
+        assert.deepEqual(
+          second.messages.map((message) => message.id),
+          first.messages.map((message) => message.id),
         );
         const earlier = yield* forkAt(first, "Answer 1", "unanswered-earlier-refork");
         assert.deepEqual(
@@ -189,7 +202,7 @@ it.live(
           earlier.messages.at(-1)?.id,
         );
         assert.isFalse(
-          earlier.turnItems.some(
+          shownItems(earlier).some(
             (item) => item.type === "reasoning" && item.text === "Thinking about 2",
           ),
         );
@@ -224,20 +237,19 @@ it.live(
         const lastAnswer = child.messages.find((message) => message.text === "Answer 1");
         assert.ok(lastAnswer);
         assert.equal(child.thread.forkLineage?.baselineAssistantMessageId, lastAnswer.id);
-        const unansweredPrompt = child.turnItems.find(
+        const shown = shownItems(child);
+        const unansweredPrompt = shown.find(
           (item) => item.type === "user_message" && item.text === "Question 2",
         );
         assert.ok(unansweredPrompt?.historyTurnId);
         assert.deepEqual(
-          child.turnItems
+          shown
             .filter((item) => item.historyTurnId === unansweredPrompt.historyTurnId)
             .map((item) => item.type),
           ["user_message", "reasoning", "dynamic_tool"],
         );
         assert.isFalse(
-          child.turnItems.some(
-            (item) => item.type === "reasoning" && item.text === "Thinking about 3",
-          ),
+          shown.some((item) => item.type === "reasoning" && item.text === "Thinking about 3"),
         );
         assert.deepEqual(child.runs, []);
         assert.deepEqual(child.runtimeRequests, []);
@@ -266,22 +278,21 @@ it.live("a user fork with only unanswered inherited requests has no invented ans
           workspaceMode: "local",
         });
         const child = yield* (yield* ProjectionStoreV2).getThreadProjection(targetId);
+        const shown = shownItems(child);
         assert.deepEqual(
           child.messages.map((message) => message.text),
           ["Question 1", "Question 2"],
         );
         assert.isNull(child.thread.forkLineage?.baselineAssistantMessageId);
-        assert.isFalse(child.turnItems.some((item) => item.type === "assistant_message"));
-        const inheritedItems = child.turnItems.filter((item) => item.inheritedFrom !== undefined);
+        assert.isFalse(shown.some((item) => item.type === "assistant_message"));
+        const inheritedItems = shown.filter((item) => item.inheritedFrom !== undefined);
         assert.equal(new Set(inheritedItems.map((item) => item.historyTurnId)).size, 2);
         assert.deepEqual(
-          child.turnItems
-            .filter((item) => item.inheritedFrom === undefined)
-            .map((item) => item.type),
+          shown.filter((item) => item.inheritedFrom === undefined).map((item) => item.type),
           ["fork"],
         );
         assert.deepEqual(
-          child.turnItems.map((item) => item.type),
+          shown.map((item) => item.type),
           [
             "user_message",
             "reasoning",
@@ -293,7 +304,7 @@ it.live("a user fork with only unanswered inherited requests has no invented ans
           ],
         );
         assert.isTrue(
-          child.turnItems.every(
+          shown.every(
             (item) => item.runId === null && item.nodeId === null && item.nativeItemRef === null,
           ),
         );

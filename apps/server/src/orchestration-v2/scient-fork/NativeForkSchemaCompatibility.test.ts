@@ -3,53 +3,55 @@ import { ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { makeForkLineageQueries, toForkLineageMarker } from "../legacy/LegacyForkLineageReader.ts";
 import { runScientMigrations, SCIENT_MIGRATIONS } from "./scientMigrator.ts";
 
-for (const first of ["Scient", "T3"] as const)
-  it.effect(
-    `native database initialization preserves independent migration ledgers: ${first} first`,
-    () =>
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        if (first === "Scient") {
-          yield* runScientMigrations(sql);
-          yield* runMigrations();
-        } else {
-          yield* runMigrations();
-          yield* runScientMigrations(sql);
-        }
-        const t3 =
-          yield* sql`SELECT migration_id, name, created_at FROM effect_sql_migrations ORDER BY migration_id`;
-        const scient = yield* sql<{
-          migration_id: number;
-          name: string;
-          created_at: string;
-        }>`SELECT migration_id, name, created_at FROM scient_schema_migrations ORDER BY migration_id`;
-        assert.deepEqual(
-          scient.map((row) => row.migration_id),
-          SCIENT_MIGRATIONS.map((migration) => migration.id),
-        );
-        assert.isTrue(t3.length > 0);
-        assert.isTrue(scient.length > 0);
-        const names = new Set(t3.map((row) => row.name));
-        assert.isTrue(scient.every((row) => !names.has(row.name)));
-        assert.isTrue(scient.some((row) => row.migration_id === 3));
-        assert.isTrue(t3.some((row) => row.migration_id === 3));
-        yield* runMigrations();
-        assert.deepEqual(yield* runScientMigrations(sql), []);
-        assert.deepEqual(
-          yield* sql`SELECT migration_id, name, created_at FROM effect_sql_migrations ORDER BY migration_id`,
-          t3,
-        );
-        assert.deepEqual(
-          yield* sql`SELECT migration_id, name, created_at FROM scient_schema_migrations ORDER BY migration_id`,
-          scient,
-        );
-      }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
-  );
+it.effect.each(
+  (["Scient", "T3"] as const).map((first) => ({
+    caseTitle: `native database initialization preserves independent migration ledgers: ${first} first`,
+    first,
+  })),
+)("$caseTitle", ({ first }) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    if (first === "Scient") {
+      yield* runScientMigrations(sql);
+      yield* runMigrations();
+    } else {
+      yield* runMigrations();
+      yield* runScientMigrations(sql);
+    }
+    const t3 =
+      yield* sql`SELECT migration_id, name, created_at FROM effect_sql_migrations ORDER BY migration_id`;
+    const scient = yield* sql<{
+      migration_id: number;
+      name: string;
+      created_at: string;
+    }>`SELECT migration_id, name, created_at FROM scient_schema_migrations ORDER BY migration_id`;
+    assert.deepEqual(
+      scient.map((row) => row.migration_id),
+      SCIENT_MIGRATIONS.map((migration) => migration.id),
+    );
+    assert.isTrue(t3.length > 0);
+    assert.isTrue(scient.length > 0);
+    const names = new Set(t3.map((row) => row.name));
+    assert.isTrue(scient.every((row) => !names.has(row.name)));
+    assert.isTrue(scient.some((row) => row.migration_id === 3));
+    assert.isTrue(t3.some((row) => row.migration_id === 3));
+    yield* runMigrations();
+    assert.deepEqual(yield* runScientMigrations(sql), []);
+    assert.deepEqual(
+      yield* sql`SELECT migration_id, name, created_at FROM effect_sql_migrations ORDER BY migration_id`,
+      t3,
+    );
+    assert.deepEqual(
+      yield* sql`SELECT migration_id, name, created_at FROM scient_schema_migrations ORDER BY migration_id`,
+      scient,
+    );
+  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+);
 
 it.effect(
   "native private lineage reads normalized prototype identity without adopting V1 lifecycle or provider authority",

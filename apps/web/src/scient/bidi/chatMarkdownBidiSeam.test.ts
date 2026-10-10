@@ -11,6 +11,10 @@ import remarkGfm from "remark-gfm";
 import { describe, expect, it } from "vite-plus/test";
 
 import { rehypeScientBidi } from "./rehypeScientBidi";
+import {
+  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
+} from "../markdown/scientMarkdownPipeline";
 
 const chatMarkdownSource = NodeFS.readFileSync(
   NodePath.resolve(import.meta.dirname, "../../components/ChatMarkdown.tsx"),
@@ -95,9 +99,21 @@ describe("ChatMarkdown BiDi seam", () => {
 
   it("keeps T3 HTML plugins behind parseRawHtml and always appends Scient BiDi", () => {
     expect(chatMarkdownSource).toMatch(
-      /\.\.\.\(parseRawHtml \? CHAT_MARKDOWN_REHYPE_PLUGINS : \[rehypePreserveImageSourceMeta\]\),\s*\[\s*rehypeScientBidi,/u,
+      /\.\.\.\(parseRawHtml\s*\? CHAT_MARKDOWN_REHYPE_PLUGINS\s*: CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW\),\s*\[\s*rehypeScientBidi,/u,
     );
     expect(chatMarkdownSource).not.toMatch(/rehypePlugins=\{\s*parseRawHtml\s*\?/u);
+    expect(CHAT_MARKDOWN_REHYPE_PLUGINS).toContain(rehypeRaw);
+    expect(
+      CHAT_MARKDOWN_REHYPE_PLUGINS.some(
+        (plugin) => Array.isArray(plugin) && plugin[0] === rehypeSanitize,
+      ),
+    ).toBe(true);
+    expect(CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW).not.toContain(rehypeRaw);
+    expect(
+      CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW.some(
+        (plugin) => Array.isArray(plugin) && plugin[0] === rehypeSanitize,
+      ),
+    ).toBe(false);
   });
 
   it("routes user messages through literal HTML and assistant messages through the default parser", () => {

@@ -49,7 +49,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -605,172 +605,176 @@ function makeTurnInput(input: {
 }
 
 describe("AcpAdapterV2", () => {
-  for (const fails of [false, true]) {
-    it.live(
-      `distinguishes local installation from the actual ACP prompt ${fails ? "failure" : "response"}`,
-      () =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const instanceId = ProviderInstanceId.make(`acp-native-acceptance-${fails}`);
-          const threadId = ThreadId.make(`acp-native-acceptance:${fails}`);
-          const adapter = makeAcpAdapterV2({
-            crypto: yield* Crypto.Crypto,
-            instanceId,
-            fileSystem: yield* FileSystem.FileSystem,
-            idAllocator: yield* IdAllocator.IdAllocatorV2,
-            serverConfig: yield* ServerConfig.ServerConfig,
-            selfInvocation: yield* resolveSelfInvocation(),
-            flavor: {
-              driver: ACP_TEST_DRIVER,
-              capabilities: AcpProviderCapabilitiesV2,
-              makeRuntime: makeMockRuntime({
-                childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-                mockAgentPath: yield* path.fromFileUrl(
-                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-                ),
-                environment: fails ? { T3_ACP_FAIL_PROMPT: "1" } : {},
-              }),
-            },
-          });
-          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: process.cwd(),
-          });
-          const modelSelection = { instanceId, model: "default" };
-          const runtime = yield* adapter.openSession({
-            threadId,
-            providerSessionId: ProviderSessionId.make(`${threadId}:session`),
-            modelSelection,
-            runtimePolicy,
-          });
-          const providerThread = yield* runtime.ensureThread({
-            threadId,
-            modelSelection,
-            runtimePolicy,
-          });
-          yield* runtime.startTurn(
-            makeTurnInput({
-              threadId,
-              providerThread,
-              instanceId,
-              runtimePolicy,
-              now: yield* DateTime.now,
-            }),
-          );
-          const events = yield* runtime.events.pipe(
-            Stream.takeUntil((event) => event.type === "turn.terminal"),
-            Stream.runCollect,
-            Effect.timeout("15 seconds"),
-          );
-          const turns = events.flatMap((event) =>
-            event.type === "provider_turn.updated" ? [event.providerTurn] : [],
-          );
-          assert.equal(turns[0]?.nativeAcceptance, "pending");
-          assert.equal(turns[0]?.acceptedAt, undefined);
-          if (fails) {
-            assert.isTrue(turns.every((turn) => turn.acceptedAt === undefined));
-            // An internal error after the native write is ambiguous, not a definite refusal.
-            assert.equal(turns.at(-1)?.nativeAcceptance, "unknown");
-            assert.equal(turns.at(-1)?.status, "failed");
-          } else {
-            assert.ok(turns.at(-1)?.acceptedAt);
-            assert.equal(turns.at(-1)?.nativeAcceptance, "accepted");
-            assert.equal(turns.at(-1)?.status, "completed");
-          }
-        }).pipe(Effect.provide(testLayer), Effect.scoped),
-    );
-  }
-  for (const outcome of ["failed", "recovered", "completed", "cancelled"] as const) {
-    it.live(`projects Mistral retry notices and their ${outcome} outcome`, () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const instanceId = ProviderInstanceId.make(`vibe-retry-${outcome}`);
-        const threadId = ThreadId.make(`thread-vibe-retry-${outcome}`);
-        const adapter = makeAcpAdapterV2({
-          crypto: yield* Crypto.Crypto,
-          instanceId,
-          fileSystem: yield* FileSystem.FileSystem,
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
-          serverConfig: yield* ServerConfig.ServerConfig,
-          selfInvocation: yield* resolveSelfInvocation(),
-          flavor: {
-            driver: ProviderDriverKind.make("acpRegistry"),
-            capabilities: AcpProviderCapabilitiesV2,
-            registerExtensions: registerMistralVibeAcpExtensions,
-            promptFailure: (cause) => acpRegistryPromptFailure("mistral-vibe", cause),
-            makeRuntime: makeMockRuntime({
-              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-              mockAgentPath: yield* path.fromFileUrl(
-                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-              ),
-              environment: { T3_ACP_VIBE_RETRY_OUTCOME: outcome },
-            }),
-          },
-        });
-        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-        });
-        const modelSelection = { instanceId, model: "default" } as const;
-        const runtime = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make(`session-vibe-retry-${outcome}`),
-          modelSelection,
-          runtimePolicy,
-        });
-        const providerThread = yield* runtime.ensureThread({
-          threadId,
-          modelSelection,
-          runtimePolicy,
-        });
-        yield* runtime.startTurn(
-          makeTurnInput({
-            threadId,
-            providerThread,
-            instanceId,
-            runtimePolicy,
-            now: yield* DateTime.now,
+  it.live.each(
+    [false, true].map((fails) => ({
+      caseTitle: `distinguishes local installation from the actual ACP prompt ${fails ? "failure" : "response"}`,
+      fails,
+    })),
+  )("$caseTitle", ({ fails }) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make(`acp-native-acceptance-${fails}`);
+      const threadId = ThreadId.make(`acp-native-acceptance:${fails}`);
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            environment: fails ? { T3_ACP_FAIL_PROMPT: "1" } : {},
           }),
-        );
-        const events = yield* runtime.events.pipe(
-          Stream.takeUntil((event) => event.type === "turn.terminal"),
-          Stream.runCollect,
-        );
-        const retries = events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "error"
-            ? [event.turnItem]
-            : [],
-        );
-        const running = retries.filter((item) => item.status === "running");
-        assert.deepEqual(
-          running.map((item) => item.retry?.attempt),
-          [1, 2],
-        );
-        assert.equal(new Set(retries.map((item) => item.id)).size, 1);
-        assert.include(running[0]!.failure.message, "Rate limit reached");
-        assert.notInclude(running[0]!.failure.message, "private-key");
-        const terminal = events.find((event) => event.type === "turn.terminal");
-        assert.isDefined(terminal);
-        if (terminal?.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
-        if (outcome === "failed") {
-          assert.equal(terminal.status, "failed");
-          assert.equal(terminal.failure?.class, "usage_limit");
-          assert.include(terminal.failure?.message ?? "", "Rate limit exceeded for mistral");
-          if (terminal.status === "failed") assert.equal(terminal.retry?.attempt, 2);
-        } else if (outcome === "cancelled") {
-          assert.equal(terminal.status, "cancelled");
-          assert.equal(retries.at(-1)?.status, "cancelled");
-          assert.equal(retries.at(-1)?.title, "Provider retry stopped");
-        } else {
-          assert.equal(terminal.status, "completed");
-          assert.equal(retries.at(-1)?.status, "completed");
-          assert.equal(retries.at(-1)?.title, "Provider recovered");
-        }
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
-    );
-  }
+        },
+      });
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(`${threadId}:session`),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.timeout("15 seconds"),
+      );
+      const turns = events.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn] : [],
+      );
+      assert.equal(turns[0]?.nativeAcceptance, "pending");
+      assert.equal(turns[0]?.acceptedAt, undefined);
+      if (fails) {
+        assert.isTrue(turns.every((turn) => turn.acceptedAt === undefined));
+        // An internal error after the native write is ambiguous, not a definite refusal.
+        assert.equal(turns.at(-1)?.nativeAcceptance, "unknown");
+        assert.equal(turns.at(-1)?.status, "failed");
+      } else {
+        assert.ok(turns.at(-1)?.acceptedAt);
+        assert.equal(turns.at(-1)?.nativeAcceptance, "accepted");
+        assert.equal(turns.at(-1)?.status, "completed");
+      }
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+  it.live.each(
+    (["failed", "recovered", "completed", "cancelled"] as const).map((outcome) => ({
+      caseTitle: `projects Mistral retry notices and their ${outcome} outcome`,
+      outcome,
+    })),
+  )("$caseTitle", ({ outcome }) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make(`vibe-retry-${outcome}`);
+      const threadId = ThreadId.make(`thread-vibe-retry-${outcome}`);
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          capabilities: AcpProviderCapabilitiesV2,
+          registerExtensions: registerMistralVibeAcpExtensions,
+          promptFailure: (cause) => acpRegistryPromptFailure("mistral-vibe", cause),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            environment: { T3_ACP_VIBE_RETRY_OUTCOME: outcome },
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(`session-vibe-retry-${outcome}`),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      const retries = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "error"
+          ? [event.turnItem]
+          : [],
+      );
+      const running = retries.filter((item) => item.status === "running");
+      assert.deepEqual(
+        running.map((item) => item.retry?.attempt),
+        [1, 2],
+      );
+      assert.equal(new Set(retries.map((item) => item.id)).size, 1);
+      assert.include(running[0]!.failure.message, "Rate limit reached");
+      assert.notInclude(running[0]!.failure.message, "private-key");
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.isDefined(terminal);
+      if (terminal?.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
+      if (outcome === "failed") {
+        assert.equal(terminal.status, "failed");
+        assert.equal(terminal.failure?.class, "usage_limit");
+        assert.include(terminal.failure?.message ?? "", "Rate limit exceeded for mistral");
+        if (terminal.status === "failed") assert.equal(terminal.retry?.attempt, 2);
+      } else if (outcome === "cancelled") {
+        assert.equal(terminal.status, "cancelled");
+        assert.equal(retries.at(-1)?.status, "cancelled");
+        assert.equal(retries.at(-1)?.title, "Provider retry stopped");
+      } else {
+        assert.equal(terminal.status, "completed");
+        assert.equal(retries.at(-1)?.status, "completed");
+        assert.equal(retries.at(-1)?.title, "Provider recovered");
+      }
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
 
   it("preserves legacy ids and scopes v2 ids by provider instance", () => {
     const instanceId = ProviderInstanceId.make("acp-identity-test");
@@ -1076,6 +1080,184 @@ describe("AcpAdapterV2", () => {
         snapshot.messages.map((message) => message.text),
         ["before plan", "after plan"],
       );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("persists a bounded subset of streamed root and child tool updates", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      // Devin streams a file write as it generates it: each update resends the
+      // whole file so far, a few characters longer, with no status.
+      const file = `${"x = 1\n".repeat(800)}END_OF_FILE\n`;
+      const chunks = 200;
+      const streamedWrite = (
+        toolCallId: string,
+        parentAgentId?: string,
+      ): Array<EffectAcpSchema.SessionUpdate> => {
+        const meta =
+          parentAgentId === undefined ? {} : { "cognition.ai/subagent_context": { parentAgentId } };
+        const write = (text: string, status?: "completed") => ({
+          sessionUpdate: "tool_call_update" as const,
+          toolCallId,
+          title: "Writing ./audit.py",
+          ...(status === undefined ? {} : { status }),
+          content: [
+            { type: "diff" as const, path: "/repo/audit.py", oldText: null, newText: text },
+          ],
+          rawInput: { file_path: "/repo/audit.py", content: text },
+          _meta: meta,
+        });
+        return [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Writing …",
+            kind: "edit",
+            status: "pending",
+            _meta: meta,
+          },
+          ...Array.from({ length: chunks }, (_, index) =>
+            write(file.slice(0, Math.ceil((file.length * (index + 1)) / chunks))),
+          ),
+          write(file, "completed"),
+        ];
+      };
+      const instanceId = ProviderInstanceId.make("devin-streamed-write");
+      const adapter = makeAcpAdapterV2({
+        instanceId,
+        crypto: yield* Crypto.Crypto,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          normalizeSessionUpdate: normalizeDevinSessionUpdate,
+          normalizeToolCall: normalizeDevinToolCall,
+          extractSubagentUpdate: extractDevinSubagentUpdate,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (next) =>
+                Effect.sync(() => {
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  const updates = [
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-a",
+                      status: "in_progress",
+                      _meta: {
+                        "cognition.ai/subagent_started": {
+                          agentId: "child-a",
+                          title: "Write audit script",
+                          task: "Write audit.py.",
+                        },
+                      },
+                    },
+                    ...streamedWrite("root-write"),
+                    ...streamedWrite("child-write", "child-a"),
+                    // Same-length output replacements are still live output.
+                    ...Array.from({ length: 5 }, (_, index) => ({
+                      sessionUpdate: "tool_call_update" as const,
+                      toolCallId: "ticker",
+                      title: "Watch ticks",
+                      kind: "execute" as const,
+                      status: "in_progress" as const,
+                      rawOutput: `tick ${index + 1}`,
+                    })),
+                    ...Array.from({ length: 5 }, (_, index) => ({
+                      sessionUpdate: "tool_call_update" as const,
+                      toolCallId: "text-ticker",
+                      title: "Watch ticks",
+                      kind: "execute" as const,
+                      status: "in_progress" as const,
+                      rawOutput: { type: "Text", text: `tock ${index + 1}` },
+                    })),
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-a",
+                      status: "completed",
+                      _meta: {
+                        "cognition.ai/subagent_completed": {
+                          agentId: "child-a",
+                          success: true,
+                          summary: "Wrote audit.py",
+                        },
+                      },
+                    },
+                  ] satisfies Array<EffectAcpSchema.SessionUpdate>;
+                  for (const update of updates)
+                    yield* handler!({ sessionId: "mock-session-1", update });
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("devin-streamed-write");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("devin-streamed-write-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const items = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+      for (const toolCallId of ["root-write", "child-write"]) {
+        const writes = items.filter((item) => item.nativeItemRef?.nativeId?.endsWith(toolCallId));
+        assert.isAtLeast(writes.length, chunks / 10, toolCallId);
+        assert.isAtMost(writes.length, chunks / 5, toolCallId);
+        assert.equal(writes.at(-1)?.status, "completed", toolCallId);
+        assert.include(JSON.stringify(writes.at(-1)), "END_OF_FILE", toolCallId);
+      }
+      for (const [toolCallId, word] of [
+        ["ticker", "tick"],
+        ["text-ticker", "tock"],
+      ] as const) {
+        const ticks = items.filter((item) => item.nativeItemRef?.nativeId?.endsWith(toolCallId));
+        for (let tick = 1; tick <= 5; tick++) {
+          assert.isTrue(
+            ticks.some((item) => JSON.stringify(item).includes(`${word} ${tick}`)),
+            `${word} ${tick} must persist`,
+          );
+        }
+      }
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
@@ -1994,521 +2176,520 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
-  for (const acpMcp of [false, true]) {
-    it.effect(
-      `negotiates and executes optional native session forks with Scient MCP over ${acpMcp ? "ACP" : "stdio"}`,
-      () =>
-        Effect.gen(function* () {
-          const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const idAllocator = yield* IdAllocator.IdAllocatorV2;
-          const path = yield* Path.Path;
-          const serverConfig = yield* ServerConfig.ServerConfig;
-          const selfInvocation = yield* resolveSelfInvocation();
-          const mockAgentPath = yield* path.fromFileUrl(
-            new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-          );
-          const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
-          type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
-          let createTerminal: Parameters<RuntimeService["handleCreateTerminal"]>[0] | undefined;
-          let readTerminalOutput: Parameters<RuntimeService["handleTerminalOutput"]>[0] | undefined;
-          let waitForTerminalExit:
-            | Parameters<RuntimeService["handleTerminalWaitForExit"]>[0]
-            | undefined;
-          const makeRuntime = makeMockRuntime({
-            childProcessSpawner,
-            mockAgentPath,
-            protocolEvents,
-            environment: acpMcp ? { T3_ACP_MCP_ACP: "1" } : {},
-            wrapRuntime: (runtime) => ({
-              ...runtime,
-              handleCreateTerminal: (handler) =>
-                Effect.sync(() => {
-                  createTerminal = handler;
-                }).pipe(Effect.andThen(runtime.handleCreateTerminal(handler))),
-              handleTerminalOutput: (handler) =>
-                Effect.sync(() => {
-                  readTerminalOutput = handler;
-                }).pipe(Effect.andThen(runtime.handleTerminalOutput(handler))),
-              handleTerminalWaitForExit: (handler) =>
-                Effect.sync(() => {
-                  waitForTerminalExit = handler;
-                }).pipe(Effect.andThen(runtime.handleTerminalWaitForExit(handler))),
-            }),
-          });
-
-          const instanceId = ProviderInstanceId.make("acp-test");
-          const adapter = makeAcpAdapterV2({
-            crypto: yield* Crypto.Crypto,
-            instanceId,
-            flavor: {
-              driver: ACP_TEST_DRIVER,
-              capabilities: AcpProviderCapabilitiesV2,
-              makeRuntime,
-            },
-            fileSystem,
-            idAllocator,
-            serverConfig,
-            selfInvocation,
-            clientTerminals: { childProcessSpawner },
-          });
-          const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
-          const targetThreadId = ThreadId.make("thread-acp-native-fork-target");
-          McpProviderSession.setMcpProviderSession({
-            environmentId: EnvironmentId.make("environment-acp-native-fork-source"),
-            threadId: sourceThreadId,
-            providerSessionId: "mcp-session-acp-native-fork-source",
-            providerInstanceId: instanceId,
-            endpoint: "http://127.0.0.1:43123/mcp",
-            authorizationHeader: "Bearer source-thread-token",
-            capabilities: new Set(["preview"] as const),
-          });
-          McpProviderSession.setMcpProviderSession({
-            environmentId: EnvironmentId.make("environment-acp-native-fork"),
-            threadId: targetThreadId,
-            providerSessionId: "mcp-session-acp-native-fork",
-            providerInstanceId: instanceId,
-            endpoint: "http://127.0.0.1:43123/mcp",
-            authorizationHeader: "Bearer target-thread-token",
-            capabilities: new Set(["preview"] as const),
-          });
-          yield* Effect.addFinalizer(() =>
+  it.effect.each(
+    [false, true].map((acpMcp) => ({
+      caseTitle: `negotiates and executes optional native session forks with Scient MCP over ${acpMcp ? "ACP" : "stdio"}`,
+      acpMcp,
+    })),
+  )("$caseTitle", ({ acpMcp }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let createTerminal: Parameters<RuntimeService["handleCreateTerminal"]>[0] | undefined;
+      let readTerminalOutput: Parameters<RuntimeService["handleTerminalOutput"]>[0] | undefined;
+      let waitForTerminalExit:
+        | Parameters<RuntimeService["handleTerminalWaitForExit"]>[0]
+        | undefined;
+      const makeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        protocolEvents,
+        environment: acpMcp ? { T3_ACP_MCP_ACP: "1" } : {},
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          handleCreateTerminal: (handler) =>
             Effect.sync(() => {
-              McpProviderSession.clearMcpProviderSession(sourceThreadId);
-              McpProviderSession.clearMcpProviderSession(targetThreadId);
-            }),
-          );
-          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: process.cwd(),
-          });
-          const modelSelection = { instanceId, model: "default" } as const;
-          const runtime = yield* adapter.openSession({
-            threadId: sourceThreadId,
-            providerSessionId: ProviderSessionId.make("provider-session-acp-native-fork"),
-            modelSelection,
-            runtimePolicy,
-          });
-
-          assert.isTrue(runtime.providerSession.capabilities.threads.canForkThread);
-          assert.isTrue(runtime.providerSession.capabilities.threads.canReadThreadSnapshot);
-          assert.isTrue(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
-          assert.isFalse(
-            runtime.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-          );
-
-          const sourceProviderThread = yield* runtime.ensureThread({
-            threadId: sourceThreadId,
-            modelSelection,
-            runtimePolicy,
-          });
-          const expectedMcpServers = (authorization: string) =>
-            acpMcp
-              ? [{ type: "acp", name: "scient", serverId: "t3-code" }]
-              : [
-                  {
-                    type: "stdio",
-                    name: "scient",
-                    command: process.execPath,
-                    args: [
-                      process.argv[1] === undefined ? "t3" : NodePath.resolve(process.argv[1]),
-                      "acp-mcp-bridge",
-                    ],
-                    env: [
-                      { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-                      { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
-                      { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
-                    ],
-                  },
-                ];
-          const createdRequest = Option.getOrThrow(
-            yield* Stream.fromQueue(protocolEvents).pipe(
-              Stream.filter(
-                (event) =>
-                  event.direction === "outgoing" && rawProtocolMethod(event) === "session/new",
-              ),
-              Stream.runHead,
-            ),
-          );
-          assert.deepEqual(
-            rawProtocolRequestParam(createdRequest, "mcpServers"),
-            expectedMcpServers("Bearer source-thread-token"),
-          );
-          const forkedProviderThread = yield* runtime.forkThread({
-            sourceProviderThread,
-            targetThreadId,
-          });
-          const forkRequestEvent = Option.getOrThrow(
-            yield* Stream.fromQueue(protocolEvents).pipe(
-              Stream.filter(
-                (event) =>
-                  event.direction === "outgoing" && rawProtocolMethod(event) === "session/fork",
-              ),
-              Stream.runHead,
-            ),
-          );
-          const forkRequest = Option.getOrThrow(
-            Option.fromNullishOr(rawProtocolRequest(forkRequestEvent)),
-          );
-
-          assert.equal(sourceProviderThread.nativeThreadRef?.nativeId, "mock-session-1");
-          assert.equal(forkedProviderThread.nativeThreadRef?.nativeId, "mock-session-1-fork");
-          assert.equal(forkedProviderThread.appThreadId, targetThreadId);
-          assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
-          assert.deepEqual(forkRequest.params, {
-            sessionId: "mock-session-1",
-            cwd: process.cwd(),
-            mcpServers: expectedMcpServers("Bearer target-thread-token"),
-          });
-          // Re-reading another binding must not reassign the forked native
-          // session's credential scope.
-          yield* runtime.ensureThread({
-            threadId: sourceThreadId,
-            modelSelection,
-            runtimePolicy,
-          });
-          if (
-            createTerminal === undefined ||
-            readTerminalOutput === undefined ||
-            waitForTerminalExit === undefined
-          ) {
-            return yield* Effect.die("ACP runtime must register terminal handlers");
-          }
-          const unknownTerminal = yield* createTerminal(
-            {
-              sessionId: "mock-child-session-without-credential-scope",
-              command: process.execPath,
-              args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
-            },
-            { requestId: "test-unknown-terminal-create", method: "terminal/create" },
-          );
-          yield* waitForTerminalExit(
-            {
-              sessionId: "mock-child-session-without-credential-scope",
-              terminalId: unknownTerminal.terminalId,
-            },
-            { requestId: "test-unknown-terminal-wait", method: "terminal/wait_for_exit" },
-          );
-          const unknownTerminalOutput = yield* readTerminalOutput(
-            {
-              sessionId: "mock-child-session-without-credential-scope",
-              terminalId: unknownTerminal.terminalId,
-            },
-            { requestId: "test-unknown-terminal-output", method: "terminal/output" },
-          );
-          assert.equal(unknownTerminalOutput.output, "");
-
-          const terminal = yield* createTerminal(
-            {
-              sessionId: "mock-session-1-fork",
-              command: process.execPath,
-              args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
-            },
-            { requestId: "test-terminal-create", method: "terminal/create" },
-          );
-          yield* waitForTerminalExit(
-            {
-              sessionId: "mock-session-1-fork",
-              terminalId: terminal.terminalId,
-            },
-            { requestId: "test-terminal-wait", method: "terminal/wait_for_exit" },
-          );
-          const terminalOutput = yield* readTerminalOutput(
-            {
-              sessionId: "mock-session-1-fork",
-              terminalId: terminal.terminalId,
-            },
-            { requestId: "test-terminal-output", method: "terminal/output" },
-          );
-          assert.equal(terminalOutput.output, "Bearer target-thread-token");
-        }).pipe(Effect.provide(testLayer), Effect.scoped),
-    );
-  }
-  for (const acpMcp of [false, true]) {
-    it.effect(
-      `refuses source-ID native forks without rebinding source credentials over ${acpMcp ? "ACP" : "stdio"}`,
-      () =>
-        Effect.gen(function* () {
-          const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const idAllocator = yield* IdAllocator.IdAllocatorV2;
-          const path = yield* Path.Path;
-          const serverConfig = yield* ServerConfig.ServerConfig;
-          const selfInvocation = yield* resolveSelfInvocation();
-          const mockAgentPath = yield* path.fromFileUrl(
-            new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-          );
-          const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
-          type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
-          let nativeRuntime: RuntimeService | undefined;
-          let createTerminal: Parameters<RuntimeService["handleCreateTerminal"]>[0] | undefined;
-          let readTerminalOutput: Parameters<RuntimeService["handleTerminalOutput"]>[0] | undefined;
-          let waitForTerminalExit:
-            | Parameters<RuntimeService["handleTerminalWaitForExit"]>[0]
-            | undefined;
-          const peerDir = yield* fileSystem.makeTempDirectoryScoped({
-            directory: NodePath.dirname(mockAgentPath),
-            prefix: ".source-fork-refusal-",
-          });
-          const peerPath = NodePath.join(peerDir, "source-id-agent.ts");
-          const originalPeer = yield* fileSystem.readFileString(mockAgentPath);
-          const response = "sessionId: `${request.sessionId}-fork`,";
-          assert.equal(originalPeer.split(response).length, 2);
-          yield* fileSystem.writeFileString(
-            peerPath,
-            originalPeer
-              .replace(
-                `${response}\n        configOptions: configOptions(),`,
-                'sessionId: request.sessionId,\n        configOptions: configOptions().map((option) => option.category === "mode" ? { ...option, currentValue: "plan" } : option.category === "model" ? { ...option, currentValue: "gpt-5.4" } : option),',
-              )
-              .replace(
-                '"./acpMockCancellationState.ts"',
-                encodeFixtureJson(
-                  NodePath.join(NodePath.dirname(mockAgentPath), "acpMockCancellationState.ts"),
-                ),
-              ),
-          );
-          const makeRuntime = makeMockRuntime({
-            childProcessSpawner,
-            mockAgentPath: peerPath,
-            protocolEvents,
-            environment: acpMcp ? { T3_ACP_MCP_ACP: "1" } : {},
-            wrapRuntime: (runtime) => {
-              nativeRuntime = runtime;
-              return {
-                ...runtime,
-                handleCreateTerminal: (handler) =>
-                  Effect.sync(() => {
-                    createTerminal = handler;
-                  }).pipe(Effect.andThen(runtime.handleCreateTerminal(handler))),
-                handleTerminalOutput: (handler) =>
-                  Effect.sync(() => {
-                    readTerminalOutput = handler;
-                  }).pipe(Effect.andThen(runtime.handleTerminalOutput(handler))),
-                handleTerminalWaitForExit: (handler) =>
-                  Effect.sync(() => {
-                    waitForTerminalExit = handler;
-                  }).pipe(Effect.andThen(runtime.handleTerminalWaitForExit(handler))),
-              };
-            },
-          });
-
-          const instanceId = ProviderInstanceId.make("acp-test");
-          const adapter = makeAcpAdapterV2({
-            crypto: yield* Crypto.Crypto,
-            instanceId,
-            flavor: {
-              driver: ACP_TEST_DRIVER,
-              capabilities: AcpProviderCapabilitiesV2,
-              makeRuntime,
-            },
-            fileSystem,
-            idAllocator,
-            serverConfig,
-            selfInvocation,
-            clientTerminals: { childProcessSpawner },
-          });
-          const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
-          const targetThreadId = ThreadId.make("thread-acp-native-fork-target");
-          McpProviderSession.setMcpProviderSession({
-            environmentId: EnvironmentId.make("environment-acp-native-fork-source"),
-            threadId: sourceThreadId,
-            providerSessionId: "mcp-session-acp-native-fork-source",
-            providerInstanceId: instanceId,
-            endpoint: "http://127.0.0.1:43123/mcp",
-            authorizationHeader: "Bearer source-thread-token",
-            capabilities: new Set(["preview"] as const),
-          });
-          McpProviderSession.setMcpProviderSession({
-            environmentId: EnvironmentId.make("environment-acp-native-fork"),
-            threadId: targetThreadId,
-            providerSessionId: "mcp-session-acp-native-fork",
-            providerInstanceId: instanceId,
-            endpoint: "http://127.0.0.1:43123/mcp",
-            authorizationHeader: "Bearer target-thread-token",
-            capabilities: new Set(["preview"] as const),
-          });
-          yield* Effect.addFinalizer(() =>
+              createTerminal = handler;
+            }).pipe(Effect.andThen(runtime.handleCreateTerminal(handler))),
+          handleTerminalOutput: (handler) =>
             Effect.sync(() => {
-              McpProviderSession.clearMcpProviderSession(sourceThreadId);
-              McpProviderSession.clearMcpProviderSession(targetThreadId);
-            }),
-          );
-          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: process.cwd(),
-          });
-          const modelSelection = { instanceId, model: "default" } as const;
-          const runtime = yield* adapter.openSession({
-            threadId: sourceThreadId,
-            providerSessionId: ProviderSessionId.make("provider-session-acp-native-fork"),
-            modelSelection,
-            runtimePolicy,
-          });
+              readTerminalOutput = handler;
+            }).pipe(Effect.andThen(runtime.handleTerminalOutput(handler))),
+          handleTerminalWaitForExit: (handler) =>
+            Effect.sync(() => {
+              waitForTerminalExit = handler;
+            }).pipe(Effect.andThen(runtime.handleTerminalWaitForExit(handler))),
+        }),
+      });
 
-          assert.isTrue(runtime.providerSession.capabilities.threads.canForkThread);
-          assert.isTrue(runtime.providerSession.capabilities.threads.canReadThreadSnapshot);
-          assert.isTrue(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
-          assert.isFalse(
-            runtime.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-          );
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime,
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
+        clientTerminals: { childProcessSpawner },
+      });
+      const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
+      const targetThreadId = ThreadId.make("thread-acp-native-fork-target");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-acp-native-fork-source"),
+        threadId: sourceThreadId,
+        providerSessionId: "mcp-session-acp-native-fork-source",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer source-thread-token",
+        capabilities: new Set(["preview"] as const),
+      });
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-acp-native-fork"),
+        threadId: targetThreadId,
+        providerSessionId: "mcp-session-acp-native-fork",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer target-thread-token",
+        capabilities: new Set(["preview"] as const),
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          McpProviderSession.clearMcpProviderSession(sourceThreadId);
+          McpProviderSession.clearMcpProviderSession(targetThreadId);
+        }),
+      );
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId: sourceThreadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-native-fork"),
+        modelSelection,
+        runtimePolicy,
+      });
 
-          const sourceProviderThread = yield* runtime.ensureThread({
-            threadId: sourceThreadId,
-            modelSelection,
-            runtimePolicy,
-          });
-          const expectedMcpServers = (authorization: string) =>
-            acpMcp
-              ? [{ type: "acp", name: "scient", serverId: "t3-code" }]
-              : [
-                  {
-                    type: "stdio",
-                    name: "scient",
-                    command: process.execPath,
-                    args: [
-                      process.argv[1] === undefined ? "t3" : NodePath.resolve(process.argv[1]),
-                      "acp-mcp-bridge",
-                    ],
-                    env: [
-                      { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-                      { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
-                      { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
-                    ],
-                  },
-                ];
-          const createdRequest = Option.getOrThrow(
-            yield* Stream.fromQueue(protocolEvents).pipe(
-              Stream.filter(
-                (event) =>
-                  event.direction === "outgoing" && rawProtocolMethod(event) === "session/new",
-              ),
-              Stream.runHead,
-            ),
-          );
-          assert.deepEqual(
-            rawProtocolRequestParam(createdRequest, "mcpServers"),
-            expectedMcpServers("Bearer source-thread-token"),
-          );
-          assert.ok(nativeRuntime);
-          const nativeBefore = encodeFixtureJson({
-            start: yield* nativeRuntime.start(),
-            mode: yield* nativeRuntime.getModeState,
-            config: yield* nativeRuntime.getConfigOptions,
-          });
-          const sourceBefore = encodeFixtureJson(sourceProviderThread);
-          const forkError = yield* runtime
-            .forkThread({ sourceProviderThread, targetThreadId })
-            .pipe(Effect.flip);
-          assert.equal(forkError._tag, "ProviderAdapterForkThreadError");
-          assert.include(Cause.pretty(Cause.fail(forkError)), "source native thread");
-          assert.equal(
-            encodeFixtureJson({
-              start: yield* nativeRuntime.start(),
-              mode: yield* nativeRuntime.getModeState,
-              config: yield* nativeRuntime.getConfigOptions,
-            }),
-            nativeBefore,
-            "Invalid fork response must not replace lower source mode/config/start state",
-          );
-          const forkEvents = yield* Queue.clear(protocolEvents);
-          const forkRequestEvent = forkEvents.find(
+      assert.isTrue(runtime.providerSession.capabilities.threads.canForkThread);
+      assert.isTrue(runtime.providerSession.capabilities.threads.canReadThreadSnapshot);
+      assert.isTrue(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
+      assert.isFalse(
+        runtime.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+      );
+
+      const sourceProviderThread = yield* runtime.ensureThread({
+        threadId: sourceThreadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const expectedMcpServers = (authorization: string) =>
+        acpMcp
+          ? [{ type: "acp", name: "scient", serverId: "t3-code" }]
+          : [
+              {
+                type: "stdio",
+                name: "scient",
+                command: process.execPath,
+                args: [
+                  process.argv[1] === undefined ? "t3" : NodePath.resolve(process.argv[1]),
+                  "acp-mcp-bridge",
+                ],
+                env: [
+                  { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+                  { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
+                  { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
+                ],
+              },
+            ];
+      const createdRequest = Option.getOrThrow(
+        yield* Stream.fromQueue(protocolEvents).pipe(
+          Stream.filter(
+            (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "session/new",
+          ),
+          Stream.runHead,
+        ),
+      );
+      assert.deepEqual(
+        rawProtocolRequestParam(createdRequest, "mcpServers"),
+        expectedMcpServers("Bearer source-thread-token"),
+      );
+      const forkedProviderThread = yield* runtime.forkThread({
+        sourceProviderThread,
+        targetThreadId,
+      });
+      const forkRequestEvent = Option.getOrThrow(
+        yield* Stream.fromQueue(protocolEvents).pipe(
+          Stream.filter(
             (event) =>
               event.direction === "outgoing" && rawProtocolMethod(event) === "session/fork",
-          );
-          assert.ok(
-            forkRequestEvent,
-            encodeFixtureJson(
-              forkEvents.map((event) => ({
-                direction: event.direction,
-                stage: event.stage,
-                method: rawProtocolMethod(event),
-              })),
-            ),
-          );
-          assert.deepEqual(
-            Option.getOrThrow(Option.fromNullishOr(rawProtocolRequest(forkRequestEvent))).params,
-            {
-              sessionId: "mock-session-1",
-              cwd: process.cwd(),
-              mcpServers: expectedMcpServers("Bearer target-thread-token"),
-            },
-          );
-          assert.equal(encodeFixtureJson(sourceProviderThread), sourceBefore);
-          if (
-            createTerminal === undefined ||
-            readTerminalOutput === undefined ||
-            waitForTerminalExit === undefined
-          ) {
-            return yield* Effect.die("ACP runtime must register terminal handlers");
-          }
-          const unknownTerminal = yield* createTerminal(
-            {
-              sessionId: "mock-child-session-without-credential-scope",
-              command: process.execPath,
-              args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
-            },
-            { requestId: "test-unknown-terminal-create", method: "terminal/create" },
-          );
-          yield* waitForTerminalExit(
-            {
-              sessionId: "mock-child-session-without-credential-scope",
-              terminalId: unknownTerminal.terminalId,
-            },
-            { requestId: "test-unknown-terminal-wait", method: "terminal/wait_for_exit" },
-          );
-          const unknownTerminalOutput = yield* readTerminalOutput(
-            {
-              sessionId: "mock-child-session-without-credential-scope",
-              terminalId: unknownTerminal.terminalId,
-            },
-            { requestId: "test-unknown-terminal-output", method: "terminal/output" },
-          );
-          assert.equal(unknownTerminalOutput.output, "");
+          ),
+          Stream.runHead,
+        ),
+      );
+      const forkRequest = Option.getOrThrow(
+        Option.fromNullishOr(rawProtocolRequest(forkRequestEvent)),
+      );
 
-          const terminal = yield* createTerminal(
-            {
-              sessionId: "mock-session-1",
-              command: process.execPath,
-              args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
-            },
-            { requestId: "test-terminal-create", method: "terminal/create" },
-          );
-          yield* waitForTerminalExit(
-            {
-              sessionId: "mock-session-1",
-              terminalId: terminal.terminalId,
-            },
-            { requestId: "test-terminal-wait", method: "terminal/wait_for_exit" },
-          );
-          const terminalOutput = yield* readTerminalOutput(
-            {
-              sessionId: "mock-session-1",
-              terminalId: terminal.terminalId,
-            },
-            { requestId: "test-terminal-output", method: "terminal/output" },
-          );
-          assert.equal(
-            terminalOutput.output,
-            "Bearer source-thread-token",
-            "Invalid fork response must leave source native terminal credentials bound to source",
-          );
-          assert.equal(encodeFixtureJson(sourceProviderThread), sourceBefore);
-          const events = [...forkEvents, ...(yield* Queue.clear(protocolEvents))];
-          assert.isFalse(
-            events.some(
-              (event) =>
-                event.direction === "outgoing" &&
-                ["session/prompt", "session/load", "session/resume"].includes(
-                  rawProtocolMethod(event) ?? "",
-                ),
+      assert.equal(sourceProviderThread.nativeThreadRef?.nativeId, "mock-session-1");
+      assert.equal(forkedProviderThread.nativeThreadRef?.nativeId, "mock-session-1-fork");
+      assert.equal(forkedProviderThread.appThreadId, targetThreadId);
+      assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
+      assert.deepEqual(forkRequest.params, {
+        sessionId: "mock-session-1",
+        cwd: process.cwd(),
+        mcpServers: expectedMcpServers("Bearer target-thread-token"),
+      });
+      // Re-reading another binding must not reassign the forked native
+      // session's credential scope.
+      yield* runtime.ensureThread({
+        threadId: sourceThreadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      if (
+        createTerminal === undefined ||
+        readTerminalOutput === undefined ||
+        waitForTerminalExit === undefined
+      ) {
+        return yield* Effect.die("ACP runtime must register terminal handlers");
+      }
+      const unknownTerminal = yield* createTerminal(
+        {
+          sessionId: "mock-child-session-without-credential-scope",
+          command: process.execPath,
+          args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
+        },
+        { requestId: "test-unknown-terminal-create", method: "terminal/create" },
+      );
+      yield* waitForTerminalExit(
+        {
+          sessionId: "mock-child-session-without-credential-scope",
+          terminalId: unknownTerminal.terminalId,
+        },
+        { requestId: "test-unknown-terminal-wait", method: "terminal/wait_for_exit" },
+      );
+      const unknownTerminalOutput = yield* readTerminalOutput(
+        {
+          sessionId: "mock-child-session-without-credential-scope",
+          terminalId: unknownTerminal.terminalId,
+        },
+        { requestId: "test-unknown-terminal-output", method: "terminal/output" },
+      );
+      assert.equal(unknownTerminalOutput.output, "");
+
+      const terminal = yield* createTerminal(
+        {
+          sessionId: "mock-session-1-fork",
+          command: process.execPath,
+          args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
+        },
+        { requestId: "test-terminal-create", method: "terminal/create" },
+      );
+      yield* waitForTerminalExit(
+        {
+          sessionId: "mock-session-1-fork",
+          terminalId: terminal.terminalId,
+        },
+        { requestId: "test-terminal-wait", method: "terminal/wait_for_exit" },
+      );
+      const terminalOutput = yield* readTerminalOutput(
+        {
+          sessionId: "mock-session-1-fork",
+          terminalId: terminal.terminalId,
+        },
+        { requestId: "test-terminal-output", method: "terminal/output" },
+      );
+      assert.equal(terminalOutput.output, "Bearer target-thread-token");
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+  it.effect.each(
+    [false, true].map((acpMcp) => ({
+      caseTitle: `refuses source-ID native forks without rebinding source credentials over ${acpMcp ? "ACP" : "stdio"}`,
+      acpMcp,
+    })),
+  )("$caseTitle", ({ acpMcp }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let nativeRuntime: RuntimeService | undefined;
+      let createTerminal: Parameters<RuntimeService["handleCreateTerminal"]>[0] | undefined;
+      let readTerminalOutput: Parameters<RuntimeService["handleTerminalOutput"]>[0] | undefined;
+      let waitForTerminalExit:
+        | Parameters<RuntimeService["handleTerminalWaitForExit"]>[0]
+        | undefined;
+      const peerDir = yield* fileSystem.makeTempDirectoryScoped({
+        directory: NodePath.dirname(mockAgentPath),
+        prefix: ".source-fork-refusal-",
+      });
+      const peerPath = NodePath.join(peerDir, "source-id-agent.ts");
+      const originalPeer = yield* fileSystem.readFileString(mockAgentPath);
+      const response = "sessionId: `${request.sessionId}-fork`,";
+      assert.equal(originalPeer.split(response).length, 2);
+      yield* fileSystem.writeFileString(
+        peerPath,
+        originalPeer
+          .replace(
+            `${response}\n        configOptions: configOptions(),`,
+            'sessionId: request.sessionId,\n        configOptions: configOptions().map((option) => option.category === "mode" ? { ...option, currentValue: "plan" } : option.category === "model" ? { ...option, currentValue: "gpt-5.4" } : option),',
+          )
+          .replace(
+            '"./acpMockCancellationState.ts"',
+            encodeFixtureJson(
+              NodePath.join(NodePath.dirname(mockAgentPath), "acpMockCancellationState.ts"),
             ),
-          );
-        }).pipe(Effect.provide(testLayer), Effect.scoped),
-    );
-  }
+          ),
+      );
+      const makeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath: peerPath,
+        protocolEvents,
+        environment: acpMcp ? { T3_ACP_MCP_ACP: "1" } : {},
+        wrapRuntime: (runtime) => {
+          nativeRuntime = runtime;
+          return {
+            ...runtime,
+            handleCreateTerminal: (handler) =>
+              Effect.sync(() => {
+                createTerminal = handler;
+              }).pipe(Effect.andThen(runtime.handleCreateTerminal(handler))),
+            handleTerminalOutput: (handler) =>
+              Effect.sync(() => {
+                readTerminalOutput = handler;
+              }).pipe(Effect.andThen(runtime.handleTerminalOutput(handler))),
+            handleTerminalWaitForExit: (handler) =>
+              Effect.sync(() => {
+                waitForTerminalExit = handler;
+              }).pipe(Effect.andThen(runtime.handleTerminalWaitForExit(handler))),
+          };
+        },
+      });
+
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime,
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
+        clientTerminals: { childProcessSpawner },
+      });
+      const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
+      const targetThreadId = ThreadId.make("thread-acp-native-fork-target");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-acp-native-fork-source"),
+        threadId: sourceThreadId,
+        providerSessionId: "mcp-session-acp-native-fork-source",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer source-thread-token",
+        capabilities: new Set(["preview"] as const),
+      });
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-acp-native-fork"),
+        threadId: targetThreadId,
+        providerSessionId: "mcp-session-acp-native-fork",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer target-thread-token",
+        capabilities: new Set(["preview"] as const),
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          McpProviderSession.clearMcpProviderSession(sourceThreadId);
+          McpProviderSession.clearMcpProviderSession(targetThreadId);
+        }),
+      );
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId: sourceThreadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-native-fork"),
+        modelSelection,
+        runtimePolicy,
+      });
+
+      assert.isTrue(runtime.providerSession.capabilities.threads.canForkThread);
+      assert.isTrue(runtime.providerSession.capabilities.threads.canReadThreadSnapshot);
+      assert.isTrue(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
+      assert.isFalse(
+        runtime.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+      );
+
+      const sourceProviderThread = yield* runtime.ensureThread({
+        threadId: sourceThreadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const expectedMcpServers = (authorization: string) =>
+        acpMcp
+          ? [{ type: "acp", name: "scient", serverId: "t3-code" }]
+          : [
+              {
+                type: "stdio",
+                name: "scient",
+                command: process.execPath,
+                args: [
+                  process.argv[1] === undefined ? "t3" : NodePath.resolve(process.argv[1]),
+                  "acp-mcp-bridge",
+                ],
+                env: [
+                  { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+                  { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
+                  { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
+                ],
+              },
+            ];
+      const createdRequest = Option.getOrThrow(
+        yield* Stream.fromQueue(protocolEvents).pipe(
+          Stream.filter(
+            (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "session/new",
+          ),
+          Stream.runHead,
+        ),
+      );
+      assert.deepEqual(
+        rawProtocolRequestParam(createdRequest, "mcpServers"),
+        expectedMcpServers("Bearer source-thread-token"),
+      );
+      assert.ok(nativeRuntime);
+      const nativeBefore = encodeFixtureJson({
+        start: yield* nativeRuntime.start(),
+        mode: yield* nativeRuntime.getModeState,
+        config: yield* nativeRuntime.getConfigOptions,
+      });
+      const sourceBefore = encodeFixtureJson(sourceProviderThread);
+      const forkError = yield* runtime
+        .forkThread({ sourceProviderThread, targetThreadId })
+        .pipe(Effect.flip);
+      assert.equal(forkError._tag, "ProviderAdapterForkThreadError");
+      assert.include(Cause.pretty(Cause.fail(forkError)), "source native thread");
+      assert.equal(
+        encodeFixtureJson({
+          start: yield* nativeRuntime.start(),
+          mode: yield* nativeRuntime.getModeState,
+          config: yield* nativeRuntime.getConfigOptions,
+        }),
+        nativeBefore,
+        "Invalid fork response must not replace lower source mode/config/start state",
+      );
+      const forkEvents = yield* Queue.clear(protocolEvents);
+      const forkRequestEvent = forkEvents.find(
+        (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "session/fork",
+      );
+      assert.ok(
+        forkRequestEvent,
+        encodeFixtureJson(
+          forkEvents.map((event) => ({
+            direction: event.direction,
+            stage: event.stage,
+            method: rawProtocolMethod(event),
+          })),
+        ),
+      );
+      assert.deepEqual(
+        Option.getOrThrow(Option.fromNullishOr(rawProtocolRequest(forkRequestEvent))).params,
+        {
+          sessionId: "mock-session-1",
+          cwd: process.cwd(),
+          mcpServers: expectedMcpServers("Bearer target-thread-token"),
+        },
+      );
+      assert.equal(encodeFixtureJson(sourceProviderThread), sourceBefore);
+      if (
+        createTerminal === undefined ||
+        readTerminalOutput === undefined ||
+        waitForTerminalExit === undefined
+      ) {
+        return yield* Effect.die("ACP runtime must register terminal handlers");
+      }
+      const unknownTerminal = yield* createTerminal(
+        {
+          sessionId: "mock-child-session-without-credential-scope",
+          command: process.execPath,
+          args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
+        },
+        { requestId: "test-unknown-terminal-create", method: "terminal/create" },
+      );
+      yield* waitForTerminalExit(
+        {
+          sessionId: "mock-child-session-without-credential-scope",
+          terminalId: unknownTerminal.terminalId,
+        },
+        { requestId: "test-unknown-terminal-wait", method: "terminal/wait_for_exit" },
+      );
+      const unknownTerminalOutput = yield* readTerminalOutput(
+        {
+          sessionId: "mock-child-session-without-credential-scope",
+          terminalId: unknownTerminal.terminalId,
+        },
+        { requestId: "test-unknown-terminal-output", method: "terminal/output" },
+      );
+      assert.equal(unknownTerminalOutput.output, "");
+
+      const terminal = yield* createTerminal(
+        {
+          sessionId: "mock-session-1",
+          command: process.execPath,
+          args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
+        },
+        { requestId: "test-terminal-create", method: "terminal/create" },
+      );
+      yield* waitForTerminalExit(
+        {
+          sessionId: "mock-session-1",
+          terminalId: terminal.terminalId,
+        },
+        { requestId: "test-terminal-wait", method: "terminal/wait_for_exit" },
+      );
+      const terminalOutput = yield* readTerminalOutput(
+        {
+          sessionId: "mock-session-1",
+          terminalId: terminal.terminalId,
+        },
+        { requestId: "test-terminal-output", method: "terminal/output" },
+      );
+      assert.equal(
+        terminalOutput.output,
+        "Bearer source-thread-token",
+        "Invalid fork response must leave source native terminal credentials bound to source",
+      );
+      assert.equal(encodeFixtureJson(sourceProviderThread), sourceBefore);
+      const events = [...forkEvents, ...(yield* Queue.clear(protocolEvents))];
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.direction === "outgoing" &&
+            ["session/prompt", "session/load", "session/resume"].includes(
+              rawProtocolMethod(event) ?? "",
+            ),
+        ),
+      );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
   it.effect(
     "answers fs requests method-not-found when the flavor does not opt into client fs",
     () =>
@@ -3304,62 +3485,65 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  for (const model of ["grok-build", "composer-2"]) {
-    it.effect(`Grok configures the native session for ${model}`, () =>
-      Effect.gen(function* () {
-        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const path = yield* Path.Path;
-        const serverConfig = yield* ServerConfig.ServerConfig;
-        const selfInvocation = yield* resolveSelfInvocation();
-        const mockAgentPath = yield* path.fromFileUrl(
-          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-        );
-        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
-        const instanceId = ProviderInstanceId.make("grok-test");
-        const adapter = makeGrokAdapterV2({
-          instanceId,
-          settings: DEFAULT_GROK_SETTINGS,
-          environment: {},
-          hostPlatform: yield* HostProcessPlatform,
-          childProcessSpawner,
-          crypto: yield* Crypto.Crypto,
-          fileSystem,
-          idAllocator,
-          serverConfig,
-          selfInvocation,
-          // Production Grok runtimes are wrapped by the x.ai prompt runtime.
-          makeRuntime: (input) =>
-            makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents })(input).pipe(
-              Effect.flatMap(makeXAiPromptCompletionRuntime),
-            ),
-        });
-        yield* adapter.openSession({
-          threadId: ThreadId.make(`grok-model-${model}`),
-          providerSessionId: ProviderSessionId.make(`grok-model-${model}`),
-          modelSelection: { instanceId, model },
-          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: process.cwd(),
-          }),
-        });
-        const requests = (yield* Queue.takeAll(protocolEvents)).map(rawProtocolRequest);
-        assert.equal(
-          requests.filter(
-            (request) =>
-              request?.method === "session/set_config_option" &&
-              typeof request.params === "object" &&
-              request.params !== null &&
-              "configId" in request.params &&
-              request.params.configId === "model",
-          ).length,
-          model === "grok-build" ? 0 : 1,
-        );
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
-    );
-  }
+  it.effect.each(
+    ["grok-build", "composer-2"].map((model) => ({
+      caseTitle: `Grok configures the native session for ${model}`,
+      model,
+    })),
+  )("$caseTitle", ({ model }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("grok-test");
+      const adapter = makeGrokAdapterV2({
+        instanceId,
+        settings: DEFAULT_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: yield* HostProcessPlatform,
+        childProcessSpawner,
+        crypto: yield* Crypto.Crypto,
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
+        // Production Grok runtimes are wrapped by the x.ai prompt runtime.
+        makeRuntime: (input) =>
+          makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents })(input).pipe(
+            Effect.flatMap(makeXAiPromptCompletionRuntime),
+          ),
+      });
+      yield* adapter.openSession({
+        threadId: ThreadId.make(`grok-model-${model}`),
+        providerSessionId: ProviderSessionId.make(`grok-model-${model}`),
+        modelSelection: { instanceId, model },
+        runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+      const requests = (yield* Queue.takeAll(protocolEvents)).map(rawProtocolRequest);
+      assert.equal(
+        requests.filter(
+          (request) =>
+            request?.method === "session/set_config_option" &&
+            typeof request.params === "object" &&
+            request.params !== null &&
+            "configId" in request.params &&
+            request.params.configId === "model",
+        ).length,
+        model === "grok-build" ? 0 : 1,
+      );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
 
   it.live("Grok reapplies an explicit return to the session's setup-time model", () =>
     Effect.gen(function* () {

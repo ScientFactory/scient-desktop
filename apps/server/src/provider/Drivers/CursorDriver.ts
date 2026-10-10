@@ -15,15 +15,16 @@ import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { readCursorUsageLimits } from "../Layers/cursorUsageLimits.ts";
+import { HttpClient } from "effect/http";
+import { readCursorUsageLimits } from "../cursorUsageLimits.ts";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 // SCIENT-FORK:START — managed runtime and assisted sign-in for this instance.
 import { makeCursorInstanceRuntime } from "../../scient/providerLifecycle/CursorManagedRuntimeActions.ts";
+import { makeCursorSdkConnectionActions } from "../../scient/providerLifecycle/CursorSdkConnectionActions.ts";
 export { assistedCursorConnectionMethods } from "../../scient/providerLifecycle/CursorConnectionActions.ts";
 // SCIENT-FORK:END
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
@@ -36,8 +37,8 @@ import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
   makeCursorCommandCatalog,
-} from "../Layers/CursorProvider.ts";
-import * as CursorSdkCatalog from "../Layers/CursorSdkCatalog.ts";
+} from "../CursorProvider.ts";
+import * as CursorSdkCatalog from "../CursorSdkCatalog.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -175,6 +176,10 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
           },
         });
 
+      const connectionActions = auth.usesApiKey
+        ? undefined
+        : yield* makeCursorSdkConnectionActions(auth.controller);
+
       const orchestrationAdapter = yield* CursorAdapterV2Driver.create({
         instanceId,
         displayName,
@@ -276,7 +281,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.map(stampSnapshot),
-        Effect.provide(CursorSdkCatalog.CursorSdkCatalogLive),
+        Effect.provide(CursorSdkCatalog.layer),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
@@ -332,6 +337,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
               ),
         orchestrationAdapter,
         textGeneration,
+        connectionActions,
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
     }),

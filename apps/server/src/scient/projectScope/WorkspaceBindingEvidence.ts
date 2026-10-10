@@ -158,7 +158,11 @@ const make = Effect.gen(function* () {
         RepositoryIdentityResolver.parseRemoteFetchUrls(remotes.stdout),
       );
       const identity = remote
-        ? RepositoryIdentityResolver.buildRepositoryIdentity({ ...remote, rootPath })
+        ? RepositoryIdentityResolver.buildRepositoryIdentity({
+            ...remote,
+            originUrl: undefined,
+            rootPath,
+          })
         : null;
       return {
         worktreeIdentity: { kind: "git" as const, rootPath, metadataPath },

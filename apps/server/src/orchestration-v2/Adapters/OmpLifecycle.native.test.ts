@@ -512,124 +512,130 @@ describe("native OMP lifecycle", () => {
     ),
   );
 
-  for (const step of ["makeProcess", "ready", "protocol", "get_state"] as const) {
-    it.live(`cleans native OMP ${step} failure in shutdown-before-unlock order`, () =>
-      run(
-        Effect.gen(function* () {
-          const f = yield* fixture();
-          const p = peer(
-            step === "protocol"
-              ? { supportedProtocolVersions: [1] }
-              : step === "get_state"
-                ? {
-                    commandError: (frame) =>
-                      frame.type === "get_state" ? "State refused" : undefined,
-                  }
-                : {},
-          );
-          const order: string[] = [];
-          const failed = yield* f
-            .open((options) =>
-              step === "makeProcess"
-                ? Effect.fail(new OmpRpcProtocolError({ detail: "Synthetic launch failure" }))
-                : p.makeProcess(options).pipe(
-                    Effect.map((client) => ({
-                      ...client,
-                      ...(step === "ready"
-                        ? {
-                            ready: Effect.fail(
-                              new OmpRpcProtocolError({ detail: "Synthetic readiness failure" }),
-                            ),
-                          }
-                        : {}),
-                      shutdown: Effect.sync(() =>
-                        order.push(
-                          NodeFS.existsSync(f.lock()) ? "shutdown:locked" : "shutdown:unlocked",
-                        ),
-                      ).pipe(Effect.andThen(client.shutdown)),
-                    })),
-                  ),
-            )
-            .pipe(Effect.result);
-          expect(failed._tag).toBe("Failure");
-          expect(order).toEqual(step === "makeProcess" ? [] : ["shutdown:locked"]);
-          expect(NodeFS.existsSync(f.lock())).toBe(false);
-          const healthy = peer();
-          yield* f.open(healthy.makeProcess);
-          expect(NodeFS.existsSync(f.lock())).toBe(true);
-          expect(healthy.state.shutdowns).toBe(0);
-        }),
-      ),
-    );
-  }
-  for (const ending of ["interrupt", "owner-close", "process-loss"] as const) {
-    it.live(`settles the native OMP child before its parent outcome on ${ending}`, () =>
-      run(
-        Effect.gen(function* () {
-          const f = yield* fixture();
-          const p = peer();
-          const s = yield* f.open(p.makeProcess);
-          const seen = yield* observe(s);
-          yield* s.start({ text: "Delegate a retained child" });
-          yield* p.promptDelivered();
-          yield* p.emit([
-            { type: "agent_start" },
-            {
-              type: "subagent_lifecycle",
-              payload: {
-                id: "owned-child",
-                agent: "task",
-                detached: true,
-                status: "started",
-                description: "Review the parent",
-              },
+  it.live.each(
+    (["makeProcess", "ready", "protocol", "get_state"] as const).map((step) => ({
+      caseTitle: `cleans native OMP ${step} failure in shutdown-before-unlock order`,
+      step,
+    })),
+  )("$caseTitle", ({ step }) =>
+    run(
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        const p = peer(
+          step === "protocol"
+            ? { supportedProtocolVersions: [1] }
+            : step === "get_state"
+              ? {
+                  commandError: (frame) =>
+                    frame.type === "get_state" ? "State refused" : undefined,
+                }
+              : {},
+        );
+        const order: string[] = [];
+        const failed = yield* f
+          .open((options) =>
+            step === "makeProcess"
+              ? Effect.fail(new OmpRpcProtocolError({ detail: "Synthetic launch failure" }))
+              : p.makeProcess(options).pipe(
+                  Effect.map((client) => ({
+                    ...client,
+                    ...(step === "ready"
+                      ? {
+                          ready: Effect.fail(
+                            new OmpRpcProtocolError({ detail: "Synthetic readiness failure" }),
+                          ),
+                        }
+                      : {}),
+                    shutdown: Effect.sync(() =>
+                      order.push(
+                        NodeFS.existsSync(f.lock()) ? "shutdown:locked" : "shutdown:unlocked",
+                      ),
+                    ).pipe(Effect.andThen(client.shutdown)),
+                  })),
+                ),
+          )
+          .pipe(Effect.result);
+        expect(failed._tag).toBe("Failure");
+        expect(order).toEqual(step === "makeProcess" ? [] : ["shutdown:locked"]);
+        expect(NodeFS.existsSync(f.lock())).toBe(false);
+        const healthy = peer();
+        yield* f.open(healthy.makeProcess);
+        expect(NodeFS.existsSync(f.lock())).toBe(true);
+        expect(healthy.state.shutdowns).toBe(0);
+      }),
+    ),
+  );
+  it.live.each(
+    (["interrupt", "owner-close", "process-loss"] as const).map((ending) => ({
+      caseTitle: `settles the native OMP child before its parent outcome on ${ending}`,
+      ending,
+    })),
+  )("$caseTitle", ({ ending }) =>
+    run(
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        const p = peer();
+        const s = yield* f.open(p.makeProcess);
+        const seen = yield* observe(s);
+        yield* s.start({ text: "Delegate a retained child" });
+        yield* p.promptDelivered();
+        yield* p.emit([
+          { type: "agent_start" },
+          {
+            type: "subagent_lifecycle",
+            payload: {
+              id: "owned-child",
+              agent: "task",
+              detached: true,
+              status: "started",
+              description: "Review the parent",
             },
-          ]);
-          const started = yield* seen.take(
-            (event) => event.type === "subagent.updated" && event.subagent.status === "running",
-          );
-          if (started.type !== "subagent.updated") return yield* Effect.die("Missing native child");
-          if (ending === "interrupt") yield* s.interrupt;
-          else if (ending === "owner-close") yield* s.close;
-          else yield* p.close();
-          const terminal = yield* seen.terminal();
-          expect(terminal).toMatchObject({
+          },
+        ]);
+        const started = yield* seen.take(
+          (event) => event.type === "subagent.updated" && event.subagent.status === "running",
+        );
+        if (started.type !== "subagent.updated") return yield* Effect.die("Missing native child");
+        if (ending === "interrupt") yield* s.interrupt;
+        else if (ending === "owner-close") yield* s.close;
+        else yield* p.close();
+        const terminal = yield* seen.terminal();
+        expect(terminal).toMatchObject({
+          status:
+            ending === "interrupt"
+              ? "interrupted"
+              : ending === "owner-close"
+                ? "cancelled"
+                : "failed",
+        });
+        yield* f.released;
+        yield* s.close;
+        yield* seen.ended;
+        const children = seen.events.filter(
+          (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
+        );
+        expect(children).toHaveLength(1);
+        expect(children[0]).toMatchObject({
+          subagent: {
+            id: started.subagent.id,
+            runId: started.subagent.runId,
             status:
               ending === "interrupt"
                 ? "interrupted"
                 : ending === "owner-close"
                   ? "cancelled"
                   : "failed",
-          });
-          yield* f.released;
-          yield* s.close;
-          yield* seen.ended;
-          const children = seen.events.filter(
-            (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
-          );
-          expect(children).toHaveLength(1);
-          expect(children[0]).toMatchObject({
-            subagent: {
-              id: started.subagent.id,
-              runId: started.subagent.runId,
-              status:
-                ending === "interrupt"
-                  ? "interrupted"
-                  : ending === "owner-close"
-                    ? "cancelled"
-                    : "failed",
-            },
-          });
-          expect(seen.events.indexOf(children[0]!)).toBeLessThan(seen.events.indexOf(terminal));
-          expect(seen.events.filter((event) => event.type === "turn.terminal")).toHaveLength(1);
-          const pending = s.runtime.hasPendingBackgroundWork;
-          if (!pending) return yield* Effect.die("Missing native background-work getter");
-          expect(yield* pending).toBe(false);
-          expect(p.state.shutdowns).toBe(1);
-          expect(p.state.frames.some((frame) => frame.type === "abort")).toBe(false);
-          expect(NodeFS.existsSync(f.lock())).toBe(false);
-        }),
-      ),
-    );
-  }
+          },
+        });
+        expect(seen.events.indexOf(children[0]!)).toBeLessThan(seen.events.indexOf(terminal));
+        expect(seen.events.filter((event) => event.type === "turn.terminal")).toHaveLength(1);
+        const pending = s.runtime.hasPendingBackgroundWork;
+        if (!pending) return yield* Effect.die("Missing native background-work getter");
+        expect(yield* pending).toBe(false);
+        expect(p.state.shutdowns).toBe(1);
+        expect(p.state.frames.some((frame) => frame.type === "abort")).toBe(false);
+        expect(NodeFS.existsSync(f.lock())).toBe(false);
+      }),
+    ),
+  );
 });

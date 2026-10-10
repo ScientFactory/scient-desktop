@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import type { Editor } from "@pierre/diffs/editor";
+import type { Editor } from "@pierre/diffs/edit";
 import { EditorState, TextSelection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { history, undo, redo } from "prosemirror-history";
@@ -173,7 +173,7 @@ describe("host editor integration", () => {
     );
     const editor = {
       isComposing: false,
-      getState: () => ({ selections }),
+      getViewState: () => ({ selections }),
       getFile: () => ({ name: "main.tex", contents: source }),
       getText: () => source,
       applyEdits,

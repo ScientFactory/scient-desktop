@@ -35,6 +35,7 @@ function renderPicker(input: {
   options: ReadonlyArray<ModelEsque>;
   includeEntry?: boolean;
   triggerLabel?: string;
+  iconOnly?: boolean;
 }) {
   const instanceId = ProviderInstanceId.make(input.instanceId);
   const entry = providerEntry(input.instanceId, input.driver);
@@ -47,11 +48,27 @@ function renderPicker(input: {
       modelOptionsByInstance={new Map([[instanceId, input.options]])}
       onInstanceModelChange={() => {}}
       {...(input.triggerLabel ? { triggerLabel: input.triggerLabel } : {})}
+      {...(input.iconOnly ? { iconOnly: true } : {})}
     />,
   );
 }
 
 describe("ProviderModelPicker", () => {
+  it("retains the provider icon and accessible model name while voice hides picker details", () => {
+    const markup = renderPicker({
+      instanceId: "codex",
+      driver: "codex",
+      model: "gpt-5",
+      iconOnly: true,
+      options: [{ slug: "gpt-5", name: "GPT 5", providerCostLabel: "2x", isUnavailable: true }],
+    });
+    expect(markup).toContain('aria-label="GPT 5 (Unavailable)"');
+    expect(markup).toContain("relative isolate z-30");
+    expect(markup).not.toContain("data-chat-provider-model-picker-label");
+    expect(markup).not.toContain("data-composer-control-chevron");
+    expect(markup).not.toContain(">2x<");
+    expect(markup).not.toContain(">Unavailable<");
+  });
   it("shows a neutral aggregate value without a representative model or availability badge", () => {
     const markup = renderPicker({
       instanceId: "codex_personal",

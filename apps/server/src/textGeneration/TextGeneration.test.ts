@@ -15,7 +15,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
-import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as Layer from "effect/Layer";
@@ -121,206 +121,222 @@ const nativeSnapshot = (
 });
 
 describe("TextGeneration.make", () => {
-  for (const driver of ["pi", "omp", "scient"] as const) {
-    it.effect(`resolves ${driver} automatic models for title, regeneration and SCM`, () =>
-      Effect.gen(function* () {
-        const instanceId = ProviderInstanceId.make(`${driver}_work`);
-        const calls: ModelSelection[] = [];
-        const record = (input: { modelSelection: ModelSelection }) =>
-          Effect.sync(() => calls.push(input.modelSelection));
-        const instance = makeStubInstance(
-          instanceId,
-          makeStubTextGeneration({
-            generateThreadTitle: (input) => record(input).pipe(Effect.as({ title: "Generated" })),
-            generateCommitMessage: (input) =>
-              record(input).pipe(Effect.as({ subject: "fix: generated", body: "" })),
-            generatePrContent: (input) =>
-              record(input).pipe(Effect.as({ title: "Generated", body: "" })),
-            generateBranchName: (input) => record(input).pipe(Effect.as({ branch: "generated" })),
-          }),
-          { driver, snapshot: Effect.succeed(nativeSnapshot(instanceId, driver)) },
-        );
-        const otherId = ProviderInstanceId.make(`${driver}_personal`);
-        const generation = yield* makeGeneration([
-          makeStubInstance(otherId, makeStubTextGeneration({}), {
-            driver,
-            snapshot: Effect.die("Another instance's catalog must not determine the model"),
-          }),
-          instance,
-        ]);
-        const base = {
-          cwd: process.cwd(),
-          modelSelection: createModelSelection(instanceId, `${driver}-default`),
-        };
-        yield* generation.generateThreadTitle({ ...base, message: "First message" });
-        yield* generation.generateThreadTitle({
-          ...base,
-          message: "Conversation history",
-          previousTitle: "Previous title",
-        });
-        yield* generation.generateCommitMessage({
-          ...base,
-          branch: "main",
-          stagedSummary: "Changed file",
-          stagedPatch: "Patch",
-        });
-        yield* generation.generatePrContent({
-          ...base,
-          baseBranch: "main",
-          headBranch: "feature",
-          commitSummary: "Commit",
-          diffSummary: "Changed file",
-          diffPatch: "Patch",
-        });
-        yield* generation.generateBranchName({ ...base, message: "Feature" });
-        expect(calls).toEqual(
-          Array.from({ length: 5 }, () => createModelSelection(instanceId, "local/team%2Fmodel")),
-        );
-      }),
-    );
-
-    it.effect(`keeps ${driver} explicit selections and options without consulting discovery`, () =>
-      Effect.gen(function* () {
-        const instanceId = ProviderInstanceId.make(driver);
-        const selection = createModelSelection(instanceId, "missing/exact-model", [
-          { id: "thinkingLevel", value: "high" },
-        ]);
-        const nativeError = new TextGenerationError({
-          operation: "generateBranchName",
-          detail: "The explicitly selected model is unavailable.",
-        });
-        let received: ModelSelection | undefined;
-        const instance = makeStubInstance(
-          instanceId,
-          makeStubTextGeneration({
-            generateBranchName: (input) => {
-              received = input.modelSelection;
-              return Effect.fail(nativeError);
-            },
-          }),
-          { driver, snapshot: Effect.die("Explicit choices must retain native validation") },
-        );
-        const result = yield* (yield* makeGeneration([instance]))
-          .generateBranchName({
-            cwd: process.cwd(),
-            message: "Explicit",
-            modelSelection: selection,
-          })
-          .pipe(Effect.result);
-        expect(received).toBe(selection);
-        expect(Result.isFailure(result)).toBe(true);
-        if (Result.isFailure(result)) expect(result.failure).toBe(nativeError);
-      }),
-    );
-
-    it.effect(`uses ${driver}'s own catalog order when no native default or price is known`, () =>
-      Effect.gen(function* () {
-        const instanceId = ProviderInstanceId.make(driver);
-        let received: ModelSelection | undefined;
-        const snapshot = nativeSnapshot(instanceId, driver, {
-          models: [
-            { slug: "local/keyless", name: "Local", isCustom: false, capabilities: null },
-            {
-              slug: "openai/unknown-price",
-              name: "Unknown price",
-              isCustom: false,
-              providerCostLabel: "Free",
-              capabilities: null,
-            },
-          ],
-        });
-        const generation = yield* makeGeneration([
-          makeStubInstance(
-            instanceId,
-            makeStubTextGeneration({
-              generateBranchName: (input) => {
-                received = input.modelSelection;
-                return Effect.succeed({ branch: "local" });
+  it.effect.each(
+    (["pi", "omp", "scient"] as const).flatMap((driver) => {
+      return [
+        {
+          caseTitle: `resolves ${driver} automatic models for title, regeneration and SCM`,
+          run: () =>
+            Effect.gen(function* () {
+              const instanceId = ProviderInstanceId.make(`${driver}_work`);
+              const calls: ModelSelection[] = [];
+              const record = (input: { modelSelection: ModelSelection }) =>
+                Effect.sync(() => calls.push(input.modelSelection));
+              const instance = makeStubInstance(
+                instanceId,
+                makeStubTextGeneration({
+                  generateThreadTitle: (input) =>
+                    record(input).pipe(Effect.as({ title: "Generated" })),
+                  generateCommitMessage: (input) =>
+                    record(input).pipe(Effect.as({ subject: "fix: generated", body: "" })),
+                  generatePrContent: (input) =>
+                    record(input).pipe(Effect.as({ title: "Generated", body: "" })),
+                  generateBranchName: (input) =>
+                    record(input).pipe(Effect.as({ branch: "generated" })),
+                }),
+                { driver, snapshot: Effect.succeed(nativeSnapshot(instanceId, driver)) },
+              );
+              const otherId = ProviderInstanceId.make(`${driver}_personal`);
+              const generation = yield* makeGeneration([
+                makeStubInstance(otherId, makeStubTextGeneration({}), {
+                  driver,
+                  snapshot: Effect.die("Another instance's catalog must not determine the model"),
+                }),
+                instance,
+              ]);
+              const base = {
+                cwd: process.cwd(),
+                modelSelection: createModelSelection(instanceId, `${driver}-default`),
+              };
+              yield* generation.generateThreadTitle({ ...base, message: "First message" });
+              yield* generation.generateThreadTitle({
+                ...base,
+                message: "Conversation history",
+                previousTitle: "Previous title",
+              });
+              yield* generation.generateCommitMessage({
+                ...base,
+                branch: "main",
+                stagedSummary: "Changed file",
+                stagedPatch: "Patch",
+              });
+              yield* generation.generatePrContent({
+                ...base,
+                baseBranch: "main",
+                headBranch: "feature",
+                commitSummary: "Commit",
+                diffSummary: "Changed file",
+                diffPatch: "Patch",
+              });
+              yield* generation.generateBranchName({ ...base, message: "Feature" });
+              expect(calls).toEqual(
+                Array.from({ length: 5 }, () =>
+                  createModelSelection(instanceId, "local/team%2Fmodel"),
+                ),
+              );
+            }),
+        },
+        {
+          caseTitle: `keeps ${driver} explicit selections and options without consulting discovery`,
+          run: () =>
+            Effect.gen(function* () {
+              const instanceId = ProviderInstanceId.make(driver);
+              const selection = createModelSelection(instanceId, "missing/exact-model", [
+                { id: "thinkingLevel", value: "high" },
+              ]);
+              const nativeError = new TextGenerationError({
+                operation: "generateBranchName",
+                detail: "The explicitly selected model is unavailable.",
+              });
+              let received: ModelSelection | undefined;
+              const instance = makeStubInstance(
+                instanceId,
+                makeStubTextGeneration({
+                  generateBranchName: (input) => {
+                    received = input.modelSelection;
+                    return Effect.fail(nativeError);
+                  },
+                }),
+                { driver, snapshot: Effect.die("Explicit choices must retain native validation") },
+              );
+              const result = yield* (yield* makeGeneration([instance]))
+                .generateBranchName({
+                  cwd: process.cwd(),
+                  message: "Explicit",
+                  modelSelection: selection,
+                })
+                .pipe(Effect.result);
+              expect(received).toBe(selection);
+              expect(Result.isFailure(result)).toBe(true);
+              if (Result.isFailure(result)) expect(result.failure).toBe(nativeError);
+            }),
+        },
+        {
+          caseTitle: `uses ${driver}'s own catalog order when no native default or price is known`,
+          run: () =>
+            Effect.gen(function* () {
+              const instanceId = ProviderInstanceId.make(driver);
+              let received: ModelSelection | undefined;
+              const snapshot = nativeSnapshot(instanceId, driver, {
+                models: [
+                  { slug: "local/keyless", name: "Local", isCustom: false, capabilities: null },
+                  {
+                    slug: "openai/unknown-price",
+                    name: "Unknown price",
+                    isCustom: false,
+                    providerCostLabel: "Free",
+                    capabilities: null,
+                  },
+                ],
+              });
+              const generation = yield* makeGeneration([
+                makeStubInstance(
+                  instanceId,
+                  makeStubTextGeneration({
+                    generateBranchName: (input) => {
+                      received = input.modelSelection;
+                      return Effect.succeed({ branch: "local" });
+                    },
+                  }),
+                  { driver, snapshot: Effect.succeed(snapshot) },
+                ),
+              ]);
+              yield* generation.generateBranchName({
+                cwd: process.cwd(),
+                message: "Automatic",
+                modelSelection: createModelSelection(instanceId, `${driver}-default`),
+              });
+              expect(received).toEqual(createModelSelection(instanceId, "local/keyless"));
+            }),
+        },
+        ...(
+          [
+            ["pending discovery", { probePending: true }],
+            ["a stale failed catalog", { status: "error" }],
+            ["an unavailable instance", { availability: "unavailable" }],
+            ["a disabled instance", { enabled: false }],
+            ["a mismatched catalog", { instanceId: ProviderInstanceId.make("another_instance") }],
+            [
+              "only legacy models",
+              {
+                models: [
+                  {
+                    slug: "local/retired",
+                    name: "Retired",
+                    isCustom: false,
+                    isLegacy: true,
+                    capabilities: null,
+                  },
+                ],
               },
-            }),
-            { driver, snapshot: Effect.succeed(snapshot) },
-          ),
-        ]);
-        yield* generation.generateBranchName({
-          cwd: process.cwd(),
-          message: "Automatic",
-          modelSelection: createModelSelection(instanceId, `${driver}-default`),
-        });
-        expect(received).toEqual(createModelSelection(instanceId, "local/keyless"));
-      }),
-    );
-
-    for (const [caseName, overrides] of [
-      ["pending discovery", { probePending: true }],
-      ["a stale failed catalog", { status: "error" }],
-      ["an unavailable instance", { availability: "unavailable" }],
-      ["a disabled instance", { enabled: false }],
-      ["a mismatched catalog", { instanceId: ProviderInstanceId.make("another_instance") }],
-      [
-        "only legacy models",
-        {
-          models: [
-            {
-              slug: "local/retired",
-              name: "Retired",
-              isCustom: false,
-              isLegacy: true,
-              capabilities: null,
-            },
-          ],
-        },
-      ],
-      ["no models", { models: [] }],
-      [
-        "only known unavailable models",
-        {
-          models: [
-            {
-              slug: "local/blocked",
-              name: "Blocked",
-              isCustom: false,
-              isDefault: true,
-              unavailableReason: "Account access required.",
-              capabilities: null,
-            },
-          ],
-        },
-      ],
-      [
-        "only invalid native models",
-        {
-          models: [
-            { slug: "gpt-6-luna", name: "Wrong driver", isCustom: false, capabilities: null },
-          ],
-        },
-      ],
-    ] as const) {
-      it.effect(`fails clearly for ${driver} automatic selection with ${caseName}`, () =>
-        Effect.gen(function* () {
-          const instanceId = ProviderInstanceId.make(driver);
-          const generation = yield* makeGeneration([
-            makeStubInstance(instanceId, makeStubTextGeneration({}), {
-              driver,
-              snapshot: Effect.succeed(nativeSnapshot(instanceId, driver, overrides)),
-            }),
-          ]);
-          const result = yield* generation
-            .generateBranchName({
-              cwd: process.cwd(),
-              message: "Automatic",
-              modelSelection: createModelSelection(instanceId, `${driver}-default`),
-            })
-            .pipe(Effect.result);
-          expect(Result.isFailure(result)).toBe(true);
-          if (Result.isFailure(result)) {
-            expect(result.failure.operation).toBe("generateBranchName");
-            expect(result.failure.detail).toContain(instanceId);
-            expect(result.failure.detail).toContain("Settings");
-          }
-        }),
-      );
-    }
-  }
+            ],
+            ["no models", { models: [] }],
+            [
+              "only known unavailable models",
+              {
+                models: [
+                  {
+                    slug: "local/blocked",
+                    name: "Blocked",
+                    isCustom: false,
+                    isDefault: true,
+                    unavailableReason: "Account access required.",
+                    capabilities: null,
+                  },
+                ],
+              },
+            ],
+            [
+              "only invalid native models",
+              {
+                models: [
+                  { slug: "gpt-6-luna", name: "Wrong driver", isCustom: false, capabilities: null },
+                ],
+              },
+            ],
+          ] as const
+        ).map(
+          ([caseName, overrides]) =>
+            ({
+              caseTitle: `fails clearly for ${driver} automatic selection with ${caseName}`,
+              run: () =>
+                Effect.gen(function* () {
+                  const instanceId = ProviderInstanceId.make(driver);
+                  const generation = yield* makeGeneration([
+                    makeStubInstance(instanceId, makeStubTextGeneration({}), {
+                      driver,
+                      snapshot: Effect.succeed(nativeSnapshot(instanceId, driver, overrides)),
+                    }),
+                  ]);
+                  const result = yield* generation
+                    .generateBranchName({
+                      cwd: process.cwd(),
+                      message: "Automatic",
+                      modelSelection: createModelSelection(instanceId, `${driver}-default`),
+                    })
+                    .pipe(Effect.result);
+                  expect(Result.isFailure(result)).toBe(true);
+                  if (Result.isFailure(result)) {
+                    expect(result.failure.operation).toBe("generateBranchName");
+                    expect(result.failure.detail).toContain(instanceId);
+                    expect(result.failure.detail).toContain("Settings");
+                  }
+                }),
+            }) as const,
+        ),
+      ];
+    }),
+  )("$caseTitle", ({ run }) => run());
   it.effect("retains supplied subject context in the provider prompt", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");

@@ -16,14 +16,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectionMaintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
 import WorkspaceAuthorityCutover from "../../orchestration-v2/scient-fork/migrations/019_WorkspaceAuthorityCutover.ts";
 
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as Authority from "./WorkspaceAuthorityProjection.ts";
 import { WorkspaceAuthorityScopeRevision } from "./WorkspaceBinding.ts";
 import * as BindingResolver from "./WorkspaceBindingResolver.ts";

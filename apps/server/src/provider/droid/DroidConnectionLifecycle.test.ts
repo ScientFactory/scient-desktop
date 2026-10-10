@@ -11,7 +11,7 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { ServerConfig } from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
@@ -172,28 +172,29 @@ const fixture = () =>
     };
   });
 
-for (const change of ["rotate", "remove"] as const) {
-  it.effect(
-    `terminates revoked background generation and cleans up its replacement after ${change}`,
-    () =>
-      Effect.gen(function* () {
-        const f = yield* fixture();
-        const generation = yield* makeDroidTextGeneration(f.settings, {}, f.factory);
-        const input = { cwd: f.root, message: "test", modelSelection: f.selection };
-        const pending = yield* generation
-          .generateThreadTitle(input)
-          .pipe(Effect.exit, Effect.forkChild);
-        yield* Deferred.await(f.partial);
-        yield* f.update(change);
-        expect((yield* Fiber.join(pending))._tag).toBe("Failure");
-        expect(f.processes).toHaveLength(1);
-        expect(yield* f.processes[0]!.isRunning).toBe(false);
-        const modelSelection = change === "remove" ? { instanceId, model: "default" } : f.selection;
-        expect(yield* generation.generateThreadTitle({ ...input, modelSelection })).toEqual({
-          title: "Recovered",
-        });
-        expect(f.processes).toHaveLength(2);
-        expect(yield* f.processes[1]!.isRunning).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-}
+it.effect.each(
+  (["rotate", "remove"] as const).map((change) => ({
+    caseTitle: `terminates revoked background generation and cleans up its replacement after ${change}`,
+    change,
+  })),
+)("$caseTitle", ({ change }) =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    const generation = yield* makeDroidTextGeneration(f.settings, {}, f.factory);
+    const input = { cwd: f.root, message: "test", modelSelection: f.selection };
+    const pending = yield* generation
+      .generateThreadTitle(input)
+      .pipe(Effect.exit, Effect.forkChild);
+    yield* Deferred.await(f.partial);
+    yield* f.update(change);
+    expect((yield* Fiber.join(pending))._tag).toBe("Failure");
+    expect(f.processes).toHaveLength(1);
+    expect(yield* f.processes[0]!.isRunning).toBe(false);
+    const modelSelection = change === "remove" ? { instanceId, model: "default" } : f.selection;
+    expect(yield* generation.generateThreadTitle({ ...input, modelSelection })).toEqual({
+      title: "Recovered",
+    });
+    expect(f.processes).toHaveLength(2);
+    expect(yield* f.processes[1]!.isRunning).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);

@@ -5,6 +5,8 @@ import {
   ProducingOperationId,
 } from "@scientfactory/document-artifacts";
 import * as Schema from "effect/Schema";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PreviewTabId } from "./preview.ts";
 
 /** The one-click profile honors the page's native print and fragmentation rules. */
 export const BrowserPdfExportProfile = Schema.Literal("document-layout");
@@ -55,6 +57,33 @@ export const BrowserPdfExportInput = Schema.Struct({
   ),
 });
 export type BrowserPdfExportInput = typeof BrowserPdfExportInput.Type;
+
+/** A lease on one existing environment-owned browser page; no caller-selected workspace. */
+export const ServerBrowserDocumentTarget = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  expectedServerEpoch: TrimmedNonEmptyString,
+  expectedSourceUrl: ExportUrl,
+});
+export type ServerBrowserDocumentTarget = typeof ServerBrowserDocumentTarget.Type;
+
+/** Prints the current DOM/storage session and publishes on the owning environment. */
+export const ServerBrowserPdfExportInput = Schema.Struct({
+  ...ServerBrowserDocumentTarget.fields,
+  logicalDocumentKey: LogicalDocumentKey,
+  operationId: ProducingOperationId,
+  producerId: ArtifactProducerId,
+});
+export type ServerBrowserPdfExportInput = typeof ServerBrowserPdfExportInput.Type;
+
+/** Reloads a linked source in that same browser session before a PDF revision. */
+export const ServerBrowserDocumentNavigateInput = Schema.Struct({
+  ...ServerBrowserDocumentTarget.fields,
+  authorizedUrl: ExportUrl,
+  controllingViewerId: Schema.optionalKey(TrimmedNonEmptyString),
+  expectedControlGeneration: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+});
+export type ServerBrowserDocumentNavigateInput = typeof ServerBrowserDocumentNavigateInput.Type;
 
 export const BrowserPdfExportReceipt = Schema.Struct({
   operationId: ProducingOperationId,

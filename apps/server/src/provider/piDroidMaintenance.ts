@@ -5,7 +5,7 @@ import {
 } from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,

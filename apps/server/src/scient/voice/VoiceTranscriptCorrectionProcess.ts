@@ -2,8 +2,8 @@ import { VoiceTranscriptCorrectionError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { ChildProcess } from "effect/unstable/process";
-import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { ChildProcess } from "effect/process";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 const MAX_PROVIDER_STDOUT_CHARS = 64 * 1024;
 

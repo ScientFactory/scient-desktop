@@ -10,9 +10,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import {
-  makeSqlitePersistenceLive,
-  SqlitePersistenceMemory,
-} from "../../persistence/Layers/Sqlite.ts";
+  layerFromPath as makeSqlitePersistenceLive,
+  layerMemory as SqlitePersistenceMemory,
+} from "../../persistence/Sqlite.ts";
 import {
   type ObservedWorkspaceEvidence,
   WorkspaceAuthorityGeneration,

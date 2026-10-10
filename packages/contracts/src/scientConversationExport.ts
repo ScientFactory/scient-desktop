@@ -1,7 +1,7 @@
 import { ProviderCitationPresentation } from "./providerCitationPresentation.ts";
 import * as Schema from "effect/Schema";
-import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
   ForwardCompatibleArray,
@@ -393,7 +393,7 @@ export const ConversationSnapshotWarning = Schema.Union([
     messageN: Schema.NullOr(PositiveInt),
   }),
   Schema.TaggedStruct("records-skipped", {
-    kind: Schema.Literals(["activity", "question-answer", "context"]),
+    kind: Schema.Literals(["activity", "question-answer", "context", "rendered-output"]),
     count: PositiveInt,
   }),
 ]);

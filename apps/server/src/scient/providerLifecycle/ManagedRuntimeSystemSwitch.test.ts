@@ -25,7 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makeOmpExecutableGate, OmpExecutableGate } from "../../provider/omp/OmpExecutableGate.ts";
 import {
@@ -373,7 +373,6 @@ describe("switching from a system runtime to the Scient-managed one", () => {
       yield* Effect.promise(() =>
         NodeFSP.writeFile(
           NodePath.join(baseDir, "provider-runtimes", "cursor", "state.json"),
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           `${JSON.stringify({
             schemaVersion: 1,
             targetKey: state.targetKey,

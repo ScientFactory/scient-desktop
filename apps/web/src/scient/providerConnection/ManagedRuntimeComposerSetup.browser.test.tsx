@@ -78,28 +78,6 @@ function OnboardingPopover(props: { readonly children: ReactNode }) {
   );
 }
 
-/** The model picker's setup overlay, a flex row (ModelPickerContent). */
-function ModelPickerOverlay(props: { readonly children: ReactNode }) {
-  return (
-    <div
-      className="relative flex h-screen max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
-      data-model-picker-content="true"
-    >
-      <div className="w-11 shrink-0 bg-muted/30 p-1" />
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-l border-border/70">
-        <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
-          <div
-            className="absolute inset-0 z-10 flex overflow-y-auto bg-muted/40"
-            data-test-container="true"
-          >
-            {props.children}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 
@@ -110,10 +88,7 @@ afterEach(() => {
   host = undefined;
 });
 
-const CONTAINERS = [
-  ["onboarding popover", OnboardingPopover],
-  ["model picker overlay", ModelPickerOverlay],
-] as const;
+const CONTAINERS = [["onboarding popover", OnboardingPopover]] as const;
 const STATES = [
   ["ready", true, "is ready"],
   ["no models", false, "Connect a model provider"],

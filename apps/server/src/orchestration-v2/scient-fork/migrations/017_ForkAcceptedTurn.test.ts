@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../../../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { layerMemory as SqlitePersistenceMemory } from "../../../persistence/Sqlite.ts";
 import { runScientMigrations } from "../scientMigrator.ts";
 import Migration017 from "./017_ForkAcceptedTurn.ts";
 
@@ -10,6 +10,7 @@ it.effect("upgrades fork receipts without inventing a carrying turn for old deli
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE scient_context_handoffs DROP COLUMN accepted_turn_id`;
     yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 17`;
+    yield* sql`DROP TABLE scient_fork_checkpoint_ownership`;
     yield* sql`INSERT INTO scient_context_handoffs
       (handoff_id, thread_id, delivery_status, created_at, updated_at, turn_id)
       VALUES ('old', 'fork', 'inline', '2026-09-29T00:00:00Z', '2026-09-29T00:00:00Z', 'confirmed')`;

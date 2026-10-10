@@ -29,108 +29,107 @@ import {
 } from "./PiAdapterV2.fixture.ts";
 
 describe("PiAdapterV2", () => {
-  for (const failedEdit of [false, true]) {
-    it.effect(
-      `preserves native built-in tool details and identity, failed edit=${failedEdit}`,
-      () =>
-        Effect.gen(function* () {
-          const fake = yield* makeFakePi;
-          const { runtime, takeEvent, observed } = yield* openRuntime(fake);
-          const providerThread = yield* runtime.ensureThread({
-            threadId: THREAD_ID,
-            modelSelection: modelSelection("default"),
-            runtimePolicy,
-          });
-          yield* startTurn(runtime, providerThread);
-          yield* fake.takeRequest("prompt");
-          yield* fake.emit({ type: "response", command: "prompt", success: true });
-          yield* fake.emit({ type: "agent_start" });
-          const command = "git status --short";
-          const output = " M src/app.ts";
-          for (const event of [
-            {
-              type: "tool_execution_start",
-              toolCallId: "bash-1",
-              toolName: "bash",
-              args: { command },
-            },
-            {
-              type: "tool_execution_update",
-              toolCallId: "bash-1",
-              toolName: "bash",
-              partialResult: { content: [{ type: "text", text: output }] },
-            },
-            {
-              type: "tool_execution_end",
-              toolCallId: "bash-1",
-              toolName: "bash",
-              result: { content: [{ type: "text", text: output }], details: { exitCode: 0 } },
-              isError: false,
-            },
-            {
-              type: "tool_execution_start",
-              toolCallId: "edit-1",
-              toolName: "edit",
-              args: { path: "src/app.ts", oldText: "old", newText: "new" },
-            },
-            {
-              type: "tool_execution_update",
-              toolCallId: "edit-1",
-              toolName: "edit",
-              partialResult: { content: [{ type: "text", text: "Editing src/app.ts" }] },
-            },
-            {
-              type: "tool_execution_end",
-              toolCallId: "edit-1",
-              toolName: "edit",
-              result: {
-                content: [
-                  { type: "text", text: failedEdit ? "Edit refused" : "Edited src/app.ts" },
-                ],
-                details: failedEdit ? {} : { diff: "-old\n+new" },
-              },
-              isError: failedEdit,
-            },
-          ])
-            yield* fake.emit(event);
-          yield* fake.emit({ type: "agent_settled" });
-          const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-          assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
-          const commands = observed.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
-              ? [event.turnItem]
-              : [],
-          );
-          const edits = observed.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "file_change"
-              ? [event.turnItem]
-              : [],
-          );
-          assert.lengthOf(commands, 3);
-          assert.lengthOf(edits, 3);
-          for (const items of [commands, edits]) {
-            assert.equal(new Set(items.map((item) => item.id)).size, 1);
-            assert.equal(new Set(items.map((item) => item.ordinal)).size, 1);
-            assert.deepEqual(
-              items.map((item) => item.status),
-              ["running", "running", items === edits && failedEdit ? "failed" : "completed"],
-            );
-          }
-          assert.isTrue(commands.every((item) => item.input === command));
-          assert.equal(commands[1]?.output, output);
-          assert.equal(commands[2]?.output, output);
-          assert.equal(commands[2]?.exitCode, 0);
-          assert.isTrue(edits.every((item) => item.fileName === "src/app.ts"));
-          assert.isTrue(edits.every((item) => item.oldStr === "old" && item.newStr === "new"));
-          assert.deepEqual(edits[2]?.changes, [{ operation: "edit", path: "src/app.ts" }]);
-          assert.equal(edits[2]?.diffStr, failedEdit ? undefined : "-old\n+new");
-          assert.lengthOf(
-            observed.filter((event) => event.type === "turn.terminal"),
-            1,
-          );
-        }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+  it.effect.each(
+    [false, true].map((failedEdit) => ({
+      caseTitle: `preserves native built-in tool details and identity, failed edit=${failedEdit}`,
+      failedEdit,
+    })),
+  )("$caseTitle", ({ failedEdit }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "agent_start" });
+      const command = "git status --short";
+      const output = " M src/app.ts";
+      for (const event of [
+        {
+          type: "tool_execution_start",
+          toolCallId: "bash-1",
+          toolName: "bash",
+          args: { command },
+        },
+        {
+          type: "tool_execution_update",
+          toolCallId: "bash-1",
+          toolName: "bash",
+          partialResult: { content: [{ type: "text", text: output }] },
+        },
+        {
+          type: "tool_execution_end",
+          toolCallId: "bash-1",
+          toolName: "bash",
+          result: { content: [{ type: "text", text: output }], details: { exitCode: 0 } },
+          isError: false,
+        },
+        {
+          type: "tool_execution_start",
+          toolCallId: "edit-1",
+          toolName: "edit",
+          args: { path: "src/app.ts", oldText: "old", newText: "new" },
+        },
+        {
+          type: "tool_execution_update",
+          toolCallId: "edit-1",
+          toolName: "edit",
+          partialResult: { content: [{ type: "text", text: "Editing src/app.ts" }] },
+        },
+        {
+          type: "tool_execution_end",
+          toolCallId: "edit-1",
+          toolName: "edit",
+          result: {
+            content: [{ type: "text", text: failedEdit ? "Edit refused" : "Edited src/app.ts" }],
+            details: failedEdit ? {} : { diff: "-old\n+new" },
+          },
+          isError: failedEdit,
+        },
+      ])
+        yield* fake.emit(event);
+      yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      const commands = observed.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+          ? [event.turnItem]
+          : [],
+      );
+      const edits = observed.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "file_change"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(commands, 3);
+      assert.lengthOf(edits, 3);
+      for (const items of [commands, edits]) {
+        assert.equal(new Set(items.map((item) => item.id)).size, 1);
+        assert.equal(new Set(items.map((item) => item.ordinal)).size, 1);
+        assert.deepEqual(
+          items.map((item) => item.status),
+          ["running", "running", items === edits && failedEdit ? "failed" : "completed"],
+        );
+      }
+      assert.isTrue(commands.every((item) => item.input === command));
+      assert.equal(commands[1]?.output, output);
+      assert.equal(commands[2]?.output, output);
+      assert.equal(commands[2]?.exitCode, 0);
+      assert.isTrue(edits.every((item) => item.fileName === "src/app.ts"));
+      assert.isTrue(edits.every((item) => item.oldStr === "old" && item.newStr === "new"));
+      assert.deepEqual(edits[2]?.changes, [{ operation: "edit", path: "src/app.ts" }]);
+      assert.equal(edits[2]?.diffStr, failedEdit ? "Edit refused" : "-old\n+new");
+      assert.lengthOf(
+        observed.filter((event) => event.type === "turn.terminal"),
+        1,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 
   it.effect("delivers core awareness through the native extension without a grant", () =>
     Effect.gen(function* () {
@@ -175,90 +174,87 @@ describe("PiAdapterV2", () => {
     ),
   );
 
-  for (const historical of [false, true]) {
-    it.effect(
-      `natively forks ${historical ? "a historical turn" : "the latest turn"} into an independent session`,
-      () =>
-        Effect.gen(function* () {
-          const fake = yield* makeFakePi;
-          const forkFake = yield* makeFakePi;
-          const forkFile = "/fake/forked.jsonl";
-          const { runtime, takeEvent } = yield* openRuntime(
-            fake,
-            "default",
-            THREAD_ID,
-            SESSION_ID,
-            forkFake,
-          );
-          const source = yield* runtime.ensureThread({
-            threadId: THREAD_ID,
-            modelSelection: modelSelection("default"),
-            runtimePolicy,
-          });
-          const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
-            id: ProviderTurnId.make(`turn-${ordinal}`),
-            providerThreadId: source.id,
-            nodeId: NodeId.make(`node-${ordinal}`),
-            runAttemptId: null,
-            nativeTurnRef: { driver: PI_PROVIDER, nativeId: `u${ordinal}`, strength: "strong" },
-            ordinal,
-            status: "completed",
-            startedAt: null,
-            completedAt: null,
-          });
-          forkFake.queueState({ sessionFile: forkFile });
-          fake.queueState({ sessionFile: forkFile });
-          const target = ThreadId.make("fork-target");
-          const forked = yield* runtime.forkThread({
-            sourceProviderThread: source,
-            sourceProviderTurns: historical ? [turn(1), turn(2)] : [turn(1)],
-            providerTurnId: turn(1).id,
-            targetThreadId: target,
-          });
-          assert.equal(forked.appThreadId, target);
-          assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
-          assert.notEqual(forked.id, source.id);
-          assert.equal(source.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
-          const args = forkFake.lastSpawn().args;
-          assert.equal(args[args.indexOf("--fork") + 1], FAKE_SESSION_FILE);
-          assert.include(args, "--no-extensions");
-          assert.include(args, "--no-tools");
-          assert.notInclude(args, "--no-session");
-          assert.deepEqual(
-            forkFake
-              .allRequests()
-              .filter((request) => request.type === "fork")
-              .map((request) => request.entryId),
-            historical ? ["u2"] : [],
-          );
-          assert.isFalse(
-            fake
-              .allRequests()
-              .some((request) => request.type === "fork" || request.type === "clone"),
-          );
-          // ProviderTurnStartService adopts the fork into its pending row.
-          const adopted = { ...forked, id: ProviderThreadId.make("pending-fork-row") };
-          yield* startTurn(runtime, adopted, "default", [], "Continue", undefined, 1, target);
-          yield* fake.emit({ type: "agent_start" });
-          yield* fake.emit({ type: "agent_settled" });
-          const updated = yield* takeEvent(
-            (event) =>
-              event.type === "provider_thread.updated" &&
-              event.providerThread.appThreadId === target,
-          );
-          assert.isTrue(
-            updated.type === "provider_thread.updated" && updated.providerThread.id === adopted.id,
-          );
-          yield* takeEvent((event) => event.type === "turn.terminal");
-          yield* runtime.resumeThread({ providerThread: adopted });
-          assert.equal(
-            fake.allRequests().findLast((request) => request.type === "switch_session")
-              ?.sessionPath,
-            forkFile,
-          );
-        }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+  it.effect.each(
+    [false, true].map((historical) => ({
+      caseTitle: `natively forks ${historical ? "a historical turn" : "the latest turn"} into an independent session`,
+      historical,
+    })),
+  )("$caseTitle", ({ historical }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const forkFile = "/fake/forked.jsonl";
+      const { runtime, takeEvent } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        forkFake,
+      );
+      const source = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`turn-${ordinal}`),
+        providerThreadId: source.id,
+        nodeId: NodeId.make(`node-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: `u${ordinal}`, strength: "strong" },
+        ordinal,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      });
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      const target = ThreadId.make("fork-target");
+      const forked = yield* runtime.forkThread({
+        sourceProviderThread: source,
+        sourceProviderTurns: historical ? [turn(1), turn(2)] : [turn(1)],
+        providerTurnId: turn(1).id,
+        targetThreadId: target,
+      });
+      assert.equal(forked.appThreadId, target);
+      assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
+      assert.notEqual(forked.id, source.id);
+      assert.equal(source.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+      const args = forkFake.lastSpawn().args;
+      assert.equal(args[args.indexOf("--fork") + 1], FAKE_SESSION_FILE);
+      assert.include(args, "--no-extensions");
+      assert.include(args, "--no-tools");
+      assert.notInclude(args, "--no-session");
+      assert.deepEqual(
+        forkFake
+          .allRequests()
+          .filter((request) => request.type === "fork")
+          .map((request) => request.entryId),
+        historical ? ["u2"] : [],
+      );
+      assert.isFalse(
+        fake.allRequests().some((request) => request.type === "fork" || request.type === "clone"),
+      );
+      // ProviderTurnStartService adopts the fork into its pending row.
+      const adopted = { ...forked, id: ProviderThreadId.make("pending-fork-row") };
+      yield* startTurn(runtime, adopted, "default", [], "Continue", undefined, 1, target);
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      const updated = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.appThreadId === target,
+      );
+      assert.isTrue(
+        updated.type === "provider_thread.updated" && updated.providerThread.id === adopted.id,
+      );
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      yield* runtime.resumeThread({ providerThread: adopted });
+      assert.equal(
+        fake.allRequests().findLast((request) => request.type === "switch_session")?.sessionPath,
+        forkFile,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 
   it.effect("observes official subagent results without inventing child threads", () =>
     Effect.gen(function* () {
@@ -382,110 +378,105 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  for (const timing of [
-    "answer-first",
-    "timeout-first",
-    "same-tick",
-    "close",
-    "write-failure",
-  ] as const) {
-    it.effect(`resolves a native Pi question exactly once (${timing})`, () =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakePi;
-        let failResponse = timing === "write-failure";
-        const attemptedResponses: PiRpcRecord[] = [];
-        const makeConnection: typeof makePiRpcConnection = (input) =>
-          makePiRpcConnection(input).pipe(
-            Effect.map((connection) => ({
-              ...connection,
-              send: (record) => {
-                if (record.type === "extension_ui_response") attemptedResponses.push(record);
-                if (record.type === "extension_ui_response" && failResponse) {
-                  failResponse = false;
-                  return Effect.fail(
-                    new PiRpcError({ operation: "stdin write", detail: "fixture rejection" }),
-                  );
-                }
-                return connection.send(record);
-              },
-            })),
-          );
-        const scope = yield* Scope.make();
-        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-        const { runtime, takeEvent, observed } = yield* openRuntime(
-          fake,
-          "default",
-          THREAD_ID,
-          SESSION_ID,
-          undefined,
-          makeConnection,
-        ).pipe(Effect.provideService(Scope.Scope, scope));
-        yield* runtime.ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        });
-        yield* fake.emit({
-          type: "extension_ui_request",
-          id: "expiring",
-          method: "confirm",
-          title: "Proceed?",
-          timeout: 100,
-        });
-        const pending = yield* takeEvent(
-          (event) =>
-            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+  it.effect.each(
+    (["answer-first", "timeout-first", "same-tick", "close", "write-failure"] as const).map(
+      (timing) => ({ caseTitle: `resolves a native Pi question exactly once (${timing})`, timing }),
+    ),
+  )("$caseTitle", ({ timing }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      let failResponse = timing === "write-failure";
+      const attemptedResponses: PiRpcRecord[] = [];
+      const makeConnection: typeof makePiRpcConnection = (input) =>
+        makePiRpcConnection(input).pipe(
+          Effect.map((connection) => ({
+            ...connection,
+            send: (record) => {
+              if (record.type === "extension_ui_response") attemptedResponses.push(record);
+              if (record.type === "extension_ui_response" && failResponse) {
+                failResponse = false;
+                return Effect.fail(
+                  new PiRpcError({ operation: "stdin write", detail: "fixture rejection" }),
+                );
+              }
+              return connection.send(record);
+            },
+          })),
         );
-        if (pending.type !== "runtime_request.updated") return;
-        const answer = runtime.respondToRuntimeRequest({
-          requestId: pending.runtimeRequest.id,
-          decision: "accept",
+      const scope = yield* Scope.make();
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+      const { runtime, takeEvent, observed } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        makeConnection,
+      ).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "expiring",
+        method: "confirm",
+        title: "Proceed?",
+        timeout: 100,
+      });
+      const pending = yield* takeEvent(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      if (pending.type !== "runtime_request.updated") return;
+      const answer = runtime.respondToRuntimeRequest({
+        requestId: pending.runtimeRequest.id,
+        decision: "accept",
+      });
+      if (timing === "answer-first") {
+        yield* answer;
+        yield* TestClock.adjust("101 millis");
+      } else if (timing === "same-tick") {
+        yield* Effect.all([answer.pipe(Effect.result), TestClock.adjust("100 millis")], {
+          concurrency: "unbounded",
         });
-        if (timing === "answer-first") {
-          yield* answer;
-          yield* TestClock.adjust("101 millis");
-        } else if (timing === "same-tick") {
-          yield* Effect.all([answer.pipe(Effect.result), TestClock.adjust("100 millis")], {
-            concurrency: "unbounded",
-          });
-        } else if (timing === "write-failure") {
-          assert.equal((yield* answer.pipe(Effect.result))._tag, "Failure");
-          yield* TestClock.adjust("101 millis");
-        } else if (timing === "close") {
-          yield* Scope.close(scope, Exit.void);
-          yield* TestClock.adjust("101 millis");
-        } else {
-          yield* TestClock.adjust("101 millis");
-        }
+      } else if (timing === "write-failure") {
         assert.equal((yield* answer.pipe(Effect.result))._tag, "Failure");
-        const responses = fake
-          .allRequests()
-          .filter((record) => record.type === "extension_ui_response");
-        if (timing === "close") {
-          // Scope closure has already stopped the native stdin writer. The
-          // request is cancelled once locally and can never be answered later.
-          assert.equal(attemptedResponses.length, 1);
-          assert.equal(attemptedResponses[0]?.cancelled, true);
-          assert.equal(responses.length, 0);
-        } else {
-          assert.equal(responses.length, 1);
-          assert.equal(responses[0]?.id, "expiring");
-        }
-        if (timing === "answer-first") assert.equal(responses[0]?.confirmed, true);
-        if (timing === "timeout-first" || timing === "write-failure")
-          assert.equal(responses[0]?.cancelled, true);
-        if (timing !== "close")
-          assert.equal(
-            observed.filter(
-              (event) =>
-                event.type === "runtime_request.updated" &&
-                event.runtimeRequest.status !== "pending",
-            ).length,
-            1,
-          );
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+        yield* TestClock.adjust("101 millis");
+      } else if (timing === "close") {
+        yield* Scope.close(scope, Exit.void);
+        yield* TestClock.adjust("101 millis");
+      } else {
+        yield* TestClock.adjust("101 millis");
+      }
+      assert.equal((yield* answer.pipe(Effect.result))._tag, "Failure");
+      const responses = fake
+        .allRequests()
+        .filter((record) => record.type === "extension_ui_response");
+      if (timing === "close") {
+        // Scope closure has already stopped the native stdin writer. The
+        // request is cancelled once locally and can never be answered later.
+        assert.equal(attemptedResponses.length, 1);
+        assert.equal(attemptedResponses[0]?.cancelled, true);
+        assert.equal(responses.length, 0);
+      } else {
+        assert.equal(responses.length, 1);
+        assert.equal(responses[0]?.id, "expiring");
+      }
+      if (timing === "answer-first") assert.equal(responses[0]?.confirmed, true);
+      if (timing === "timeout-first" || timing === "write-failure")
+        assert.equal(responses[0]?.cancelled, true);
+      if (timing !== "close")
+        assert.equal(
+          observed.filter(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status !== "pending",
+          ).length,
+          1,
+        );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 
   it.effect("answers native Pi UI while initial prompt acceptance waits", () =>
     Effect.gen(function* () {

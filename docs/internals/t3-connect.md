@@ -6,6 +6,35 @@
 > not use it as Scient setup guidance. See Scient's supported
 > [remote access](../user/remote-access.md).
 
+T3 Connect uses Clerk for cloud identity. The relay manages environment links,
+credentials for reaching environments, and managed tunnel allocations. After
+bootstrap, clients send application traffic through the environment's tunnel
+hostname; the relay Worker does not proxy their HTTP or WebSocket sessions.
+The one exception is automation webhooks: the relay forwards
+`/v1/hooks/:environmentId/:hookId/:token` to the environment's tunnel so
+senders get a stable URL. It keeps bodies and tokens out of its traces and
+leaves token and signature verification to the environment
+([forwarder](../../infra/relay/src/hooks/HookForwarder.ts)).
+
+By default the forwarder stores nothing. An environment can opt in to having
+the relay hold requests while it is offline
+(`hold_webhooks_while_offline` on its link). Only then does the relay store the
+raw request, including the hook token in the path, in a Durable Object for
+that environment, with SQLite storage. The object pushes held requests back
+through the tunnel from its alarm, oldest first, and backs off while the
+environment stays away. When the tunnel reconnects, the environment asks the
+relay to deliver right away. Requests are deleted once the environment
+answers, after 24 hours, or when no user has the environment linked. The relay
+still never checks the token; delivery goes through the same environment route.
+Every forward carries `x-t3-relay-delivery-id`, so a request that reached the
+environment before a timeout and is delivered again later runs once
+([inbox object](../../infra/relay/src/hooks/HookInboxObject.ts)).
+
+A Durable Object, not Postgres or Queues, because held requests are write-once,
+read-once bodies of up to 1 MiB that need per-environment order, caps, and
+retry timing. Queues cap messages at 128 KB and cannot hold one environment's
+requests back while it is away.
+
 T3 Connect uses one Clerk application for web, desktop, and mobile authentication. The relay verifies
 two kinds of bearer credential: template JWTs generated from the `t3-relay` template with the shared
 `t3-code-relay` audience, and Clerk OAuth tokens issued to the CLI. `verifyRelayClientBearerToken` in
@@ -19,6 +48,16 @@ For deployment prerequisites, see the inherited [Connect setup reference](../ope
 
 T3 Connect is disabled in a fresh clone. To enable it for source builds against the production
 deployment, copy the repository-root example file:
+
+Both sides authenticate this exchange. The environment accepts only bounded,
+replay-guarded relay proofs for its own identity, linked user, and requested
+operation. Signed environment responses bind the result to the request nonce;
+mint responses also bind the credential to the client proof key. The relay
+verifies those bindings before returning a credential. This prevents a different
+process behind the tunnel from impersonating the linked environment. The checks
+meet in the
+[environment link service](../../apps/server/src/cloud/CloudLink.ts) and
+[relay connector](../../infra/relay/src/environments/EnvironmentConnector.ts).
 
 ```sh
 cp .env.example .env
@@ -44,6 +83,12 @@ Configuration precedence is:
 1. Process or CI environment variables.
 2. Repository-root `.env.local`.
 3. Repository-root `.env`.
+
+Two cases must retain the tunnel across shutdown. A link installed through a
+client has no startup provisioning path and depends on its stored connector
+token. An update handoff immediately starts a replacement server, and replacing
+the tunnel would add routing propagation delay to every update. These exceptions
+belong to [shutdown handling](../../apps/server/src/cloud/CloudLink.ts).
 
 The Clerk publishable key, JWT template name, CLI OAuth client ID, and relay URL are public
 identifiers, not secrets.
@@ -114,6 +159,30 @@ provisions under the same allocation, so the hostname and DNS record survive
 and clients keep their bindings. Every mutation on an allocation bumps its
 `generation`, and deletion locks the row at the generation it claimed, so a
 host that reconnects mid-sweep wins.
+
+## The relay client follows the server's pin
+
+The host runs `cloudflared` pinned by `CLOUDFLARED_VERSION` in
+[`relayClient.ts`](../../packages/shared/src/relayClient.ts), and bumping it there
+(version, URLs, and checksums) is the whole release step. A linked host that
+starts a server with a new pin keeps its connector up on the newest older managed
+release, installs the pinned one in the background, then restarts only the
+connector child on it. If that restart fails to spawn, the host requests recovery
+as it would for an exited connector. A host with no relay client installs one
+first. A `cloudflared` on `PATH` or an explicit `T3CODE_CLOUDFLARED_PATH` is the
+user's choice and is never replaced, since linking asks before downloading.
+
+Once the pinned release registers a connection, managed releases older than the
+pin are deleted except the newest of them. That one, and any newer release, can
+belong to another server sharing the same T3 home, such as a rollback after a
+failed update, which could not run again without it.
+
+The version comes from running `cloudflared version`, not from the folder name.
+Connectors from before `--no-autoupdate` replaced themselves in place, so a
+managed folder can hold another release. Such a binary still runs as a fallback
+while the pin installs. Every binary needs `CLOUDFLARED_MIN_VERSION`, the oldest
+release that accepts every flag the connector is started with. Raise it whenever
+a new flag is added.
 
 ## Headless CLI OAuth Application
 

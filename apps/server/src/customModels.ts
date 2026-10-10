@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The settings transaction assigns an opaque credential ID synchronously before committing.
 import * as NodeCrypto from "node:crypto";
 import {
   CustomModelError,

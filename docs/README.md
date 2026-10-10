@@ -34,6 +34,7 @@ require a cosmetic folder migration.
   - [Droid](./user/providers-droid.md)
   - [Cursor](./user/providers-cursor.md)
   - [OpenCode](./user/providers-opencode.md)
+  - [Muse Code](./user/providers-muse.md)
   - [Pi](./user/providers-pi.md)
   - [Oh My Pi](./user/providers-omp.md)
   - [ACP registry](./user/providers-acp.md)
@@ -51,6 +52,7 @@ require a cosmetic folder migration.
 - [Environment themes](./user/environment-theme.md)
 - [Appearance and themes](./user/appearance.md)
 - [SnapShots](./user/snap-shot.md)
+- [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
@@ -70,6 +72,7 @@ require a cosmetic folder migration.
 - [Run a MATLAB file](./user/matlab-run-file.md)
 - [Sources and Zotero import](./user/sources.md)
 - [Background service (Linux and macOS)](./user/background-service.md)
+- [Outside agents (MCP)](./user/outside-agents.md)
 
 ---
 
@@ -84,6 +87,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Composer context references](./internals/composer-context-references.md)
 - [Assistant citations](./internals/assistant-citations.md)
 - [Unread answers and Dock badge](./internals/answer-attention.md)
+- [Chat scrolling and motion](./internals/chat-scrolling-and-motion.md)
 - [Workspace layout](../AGENTS.md#where-code-lives)
 - [Glossary](./internals/glossary.md)
 - [Scripts](./internals/scripts.md)
@@ -93,6 +97,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Provider lifecycle architecture](./internals/provider-lifecycle.md)
 - [Provider lifecycle capability audit](./internals/provider-lifecycle-capability-audit.md)
 - [Codex runtime and authentication](./internals/scient-codex-runtime-auth.md)
+- [Adding a provider](./internals/adding-a-provider.md)
 - [Pull request file revisions](./internals/pull-request-file-revisions.md)
 - [Model classification](./internals/model-manifest.md)
 - [Remote environments](./internals/remote.md)
@@ -180,3 +185,7 @@ Follow their linked successors for current behavior.
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
 - [Inherited mobile source](../apps/mobile/README.md)
+
+## Manuscript integration foundation
+
+- [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — unmounted foundation and local application invariants.

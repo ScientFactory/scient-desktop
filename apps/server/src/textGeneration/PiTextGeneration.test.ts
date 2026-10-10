@@ -154,82 +154,91 @@ it.effect("closes the RPC client when generation fails", () => {
   });
 });
 
-for (const failure of ["unsupported", "model mismatch", "thinking mismatch"] as const) {
-  it.effect(`rejects ${failure} before background prompt and closes the client`, () => {
-    const client = new FakeClient();
-    if (failure === "unsupported") client.getThinkingLevels = () => Effect.succeed({ levels: [] });
-    if (failure === "model mismatch") client.getState = () => Effect.succeed({});
-    if (failure === "thinking mismatch") client.setThinkingLevel = () => Effect.void;
-    return Effect.gen(function* () {
-      const result = yield* makeHarness(client, []).pipe(Effect.result);
-      assert.equal(result._tag, "Failure");
-      if (result._tag === "Failure") {
-        assert.equal(result.failure.operation, "generateCommitMessage");
-        assert.match(
-          result.failure.detail,
-          failure === "unsupported" ? /not supported/ : /did not apply/,
-        );
-      }
-      assert.equal(client.promptCalls, 0);
-      assert.equal(client.closeCalls, 1);
-    });
+it.effect.each(
+  (["unsupported", "model mismatch", "thinking mismatch"] as const).map((failure) => ({
+    caseTitle: `rejects ${failure} before background prompt and closes the client`,
+    failure,
+  })),
+)("$caseTitle", ({ failure }) => {
+  const client = new FakeClient();
+  if (failure === "unsupported") client.getThinkingLevels = () => Effect.succeed({ levels: [] });
+  if (failure === "model mismatch") client.getState = () => Effect.succeed({});
+  if (failure === "thinking mismatch") client.setThinkingLevel = () => Effect.void;
+  return Effect.gen(function* () {
+    const result = yield* makeHarness(client, []).pipe(Effect.result);
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.equal(result.failure.operation, "generateCommitMessage");
+      assert.match(
+        result.failure.detail,
+        failure === "unsupported" ? /not supported/ : /did not apply/,
+      );
+    }
+    assert.equal(client.promptCalls, 0);
+    assert.equal(client.closeCalls, 1);
   });
-}
+});
 
-for (const thinking of [undefined, "off"] as const) {
-  it.effect(`background generation preserves thinking selection ${String(thinking)}`, () => {
-    const client = new FakeClient();
-    client.getThinkingLevels = () => Effect.succeed({ levels: ["off"] });
-    const selected = createModelSelection(
-      selection.instanceId,
-      selection.model,
-      thinking === undefined ? [] : [{ id: "thinkingLevel", value: thinking }],
-    );
-    return Effect.gen(function* () {
-      yield* makeHarness(client, [], undefined, selected);
-      assert.deepEqual(client.thinking, thinking === undefined ? [] : ["off"]);
-      assert.equal(client.state.thinkingLevel, thinking);
-      assert.equal(client.promptCalls, 1);
-    });
+it.effect.each(
+  ([undefined, "off"] as const).map((thinking) => ({
+    caseTitle: `background generation preserves thinking selection ${String(thinking)}`,
+    thinking,
+  })),
+)("$caseTitle", ({ thinking }) => {
+  const client = new FakeClient();
+  client.getThinkingLevels = () => Effect.succeed({ levels: ["off"] });
+  const selected = createModelSelection(
+    selection.instanceId,
+    selection.model,
+    thinking === undefined ? [] : [{ id: "thinkingLevel", value: thinking }],
+  );
+  return Effect.gen(function* () {
+    yield* makeHarness(client, [], undefined, selected);
+    assert.deepEqual(client.thinking, thinking === undefined ? [] : ["off"]);
+    assert.equal(client.state.thinkingLevel, thinking);
+    assert.equal(client.promptCalls, 1);
   });
-}
+});
 
-for (const recovers of [false, true]) {
-  it.effect(`handles exhausted background output after native recovery=${recovers}`, () => {
-    const client = new FakeClient();
-    client.promptEvents = [
-      {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          stopReason: "length",
-          content: [{ type: "text", text: client.output }],
-        },
+it.effect.each(
+  [false, true].map((recovers) => ({
+    caseTitle: `handles exhausted background output after native recovery=${recovers}`,
+    recovers,
+  })),
+)("$caseTitle", ({ recovers }) => {
+  const client = new FakeClient();
+  client.promptEvents = [
+    {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        stopReason: "length",
+        content: [{ type: "text", text: client.output }],
       },
-      { type: "agent_end" },
-      ...(recovers
-        ? [
-            {
-              type: "message_end",
-              message: {
-                role: "assistant",
-                stopReason: "stop",
-                content: [{ type: "text", text: client.output }],
-              },
+    },
+    { type: "agent_end" },
+    ...(recovers
+      ? [
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              stopReason: "stop",
+              content: [{ type: "text", text: client.output }],
             },
-          ]
-        : []),
-      { type: "agent_settled" },
-    ];
-    return Effect.gen(function* () {
-      const result = yield* makeHarness(client, []).pipe(Effect.result);
-      assert.equal(result._tag, recovers ? "Success" : "Failure");
-      if (result._tag === "Failure") assert.equal(result.failure.errorReason, "token_limit");
-      if (result._tag === "Failure") assert.equal(result.failure.detail, MODEL_TOKEN_LIMIT_MESSAGE);
-      assert.equal(client.closeCalls, 1);
-    });
+          },
+        ]
+      : []),
+    { type: "agent_settled" },
+  ];
+  return Effect.gen(function* () {
+    const result = yield* makeHarness(client, []).pipe(Effect.result);
+    assert.equal(result._tag, recovers ? "Success" : "Failure");
+    if (result._tag === "Failure") assert.equal(result.failure.errorReason, "token_limit");
+    if (result._tag === "Failure") assert.equal(result.failure.detail, MODEL_TOKEN_LIMIT_MESSAGE);
+    assert.equal(client.closeCalls, 1);
   });
-}
+});
 
 it.effect("uses only the last completed assistant message across attempts", () => {
   const client = new FakeClient();

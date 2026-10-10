@@ -11,6 +11,13 @@ export interface ShownStatus<A> {
   readonly value: A;
 }
 
+// SCIENT-FORK:START delayed-status-show-delay
+export interface DelayedStatusOptions {
+  /** Overrides `STATUS_SHOW_DELAY_MS` for a status that usually settles later. */
+  readonly showDelayMs?: number;
+}
+// SCIENT-FORK:END delayed-status-show-delay
+
 export interface DelayedStatus<A> {
   /** Reports the real status for `key`. A new key drops the shown status at once. */
   readonly update: (key: string, value: A | null) => void;
@@ -28,7 +35,13 @@ export interface DelayedStatus<A> {
  */
 export function createDelayedStatus<A>(
   onChange: (shown: ShownStatus<A> | null) => void,
+  // SCIENT-FORK:START delayed-status-show-delay
+  options?: DelayedStatusOptions,
+  // SCIENT-FORK:END delayed-status-show-delay
 ): DelayedStatus<A> {
+  // SCIENT-FORK:START delayed-status-show-delay
+  const showDelayMs = options?.showDelayMs ?? STATUS_SHOW_DELAY_MS;
+  // SCIENT-FORK:END delayed-status-show-delay
   let key = "";
   let latest: A | null = null;
   let shown: A | null = null;
@@ -67,10 +80,12 @@ export function createDelayedStatus<A>(
         if (value === null) {
           clearTimer();
         } else if (timer === undefined) {
+          // SCIENT-FORK:START delayed-status-show-delay
           timer = setTimeout(() => {
             timer = undefined;
             if (latest !== null) show(latest);
-          }, STATUS_SHOW_DELAY_MS);
+          }, showDelayMs);
+          // SCIENT-FORK:END delayed-status-show-delay
         }
         return;
       }

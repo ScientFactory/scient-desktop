@@ -1,14 +1,15 @@
 /**
  * The single source of truth for packages the server CLI bundle must NOT inline.
  *
- * Two consumers derive from this list, and they must never disagree:
+ * Three consumers derive from this list, and they must never disagree:
  *
  * - apps/server/vite.config.ts decides what stays external to the bundle.
  * - scripts/build-desktop-artifact.ts selects the runtime dependency roots for
  *   the Windows server sidecar.
+ * - scripts/package-scient-server.ts selects the remote tarball runtime roots.
  *
  * A runtime package that is external but absent from the sidecar fails as soon
- * as Node resolves it from the emitted bundle. Keeping both consumers on one
+ * as Node resolves it from the emitted bundle. Keeping all consumers on one
  * list prevents packaging from drifting away from the bundle boundary.
  *
  * Entries are matched as prefixes (`id.startsWith(prefix)`), so they also cover
@@ -30,6 +31,8 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // installed JS dependency tree stays on disk with the SDK. Those dependency
   // names remain bundleable at other providers' locked import resolutions.
   "@cursor/sdk",
+  // Playwright reads package.json and browsers.json beside its runtime modules.
+  "playwright-core",
   "node-pty",
   // PDF.js loads this native canvas implementation through createRequire at
   // runtime, which the bundler cannot see. Keep the wrapper and its

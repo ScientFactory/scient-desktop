@@ -13,6 +13,7 @@ import {
   type VoiceWorkletMessage,
 } from "./voiceWorkletProcessor.ts";
 import { acquireCurrentMicrophone } from "./voiceMedia.ts";
+import { VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
 
 export type VoiceRecorderStatus = "idle" | "requesting-permission" | "recording" | "error";
 
@@ -24,7 +25,6 @@ export type VoiceRecorderErrorKind =
   | "unknown";
 
 export const MAX_RECORDING_MS = 180_000;
-export const VOICE_WAVEFORM_LEVEL_COUNT = 96;
 const WORKLET_FLUSH_TIMEOUT_MS = 500;
 
 export interface UseVoiceRecorderOptions {
@@ -330,6 +330,9 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
     return () => {
       mountedRef.current = false;
       generationRef.current += 1;
+      // A stop in flight already owns the teardown. Cutting it short here would
+      // resolve its flush early and drop the final samples of committed audio.
+      if (finalizeInFlightRef.current) return;
       void teardownAudio(false);
     };
   }, [teardownAudio]);
