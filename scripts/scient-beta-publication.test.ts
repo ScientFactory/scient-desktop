@@ -117,7 +117,7 @@ process.stdout.write(process.env.SOURCE_SHA + '\\trefs/tags/' + process.env.RELE
     const qualified = {
       sourceSha,
       version: betaVersion,
-      artifactDigest: "sha256:fixture",
+      artifactDigest: `sha256:${"c".repeat(64)}`,
       paths: ["stable-to-beta", "beta-to-beta", "beta-to-stable", "stable-isolation"].map(
         (name) => ({ name, passed: true, receipt: "https://example.org/native-receipt" }),
       ),
@@ -138,12 +138,15 @@ process.stdout.write(process.env.SOURCE_SHA + '\\trefs/tags/' + process.env.RELE
             QUALIFICATION: JSON.stringify(receipt),
             SOURCE_SHA: sourceSha,
             RELEASE_VERSION: betaVersion,
-            ARTIFACT_DIGEST: qualified.artifactDigest,
+            ARTIFACT_DIGEST: qualified.artifactDigest.slice("sha256:".length),
           },
           stdio: "pipe",
         },
       ).status;
     expect(qualify(qualified)).toBe(0);
+    expect(
+      qualify({ ...qualified, artifactDigest: qualified.artifactDigest.slice("sha256:".length) }),
+    ).toBe(0);
     expect(qualify({})).not.toBe(0);
     expect(qualify({ ...qualified, sourceSha: "b".repeat(40) })).not.toBe(0);
     expect(qualify({ ...qualified, artifactDigest: "sha256:another-candidate" })).not.toBe(0);

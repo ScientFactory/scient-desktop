@@ -121,7 +121,9 @@ installed versions. Do not mark a path passed based on mocked events.
 ```
 
 The publisher checks the receipt identity against this run's immutable artifact
-digest and refuses missing, stale or incomplete qualification. Set the Beta
+digest and refuses missing, stale or incomplete qualification. Copy the digest
+from the run's handoff; the optional `sha256:` prefix is accepted for receipts
+and normalized before comparison. Set the Beta
 enable variable to `true` only after review, then approve that same pending run.
 Beta is published as a prerelease with `latest=false`; the publisher downloads
 the staged draft and compares every byte before making it public, then verifies

@@ -47,7 +47,7 @@ describe("Scient release machinery", () => {
     assert.include(workflow, "SCIENT_BETA_RELEASE_TOKEN");
     assert.include(workflow, "SCIENT_DESKTOP_BETA_RELEASES_ENABLED == 'true'");
     assert.include(workflow, "SCIENT_DESKTOP_BETA_QUALIFICATION");
-    assert.include(workflow, ".artifactDigest == $digest");
+    assert.include(workflow, "ARTIFACT_DIGEST: ${{ needs.assemble.outputs.artifact_digest }}");
     assert.include(workflow, "stable-to-beta");
     assert.include(workflow, "beta-to-stable");
     assert.include(workflow, "stable-isolation");

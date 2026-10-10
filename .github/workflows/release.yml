@@ -911,7 +911,8 @@ jobs:
           set -euo pipefail
           [[ -n "$BETA_TOKEN" ]] || { echo "SCIENT_BETA_RELEASE_TOKEN is required for the isolated artifact repository." >&2; exit 1; }
           jq -e --arg sha "$SOURCE_SHA" --arg version "$RELEASE_VERSION" --arg digest "$ARTIFACT_DIGEST" '
-            .sourceSha == $sha and .version == $version and .artifactDigest == $digest and
+            .sourceSha == $sha and .version == $version and
+            (.artifactDigest | sub("^sha256:"; "")) == ($digest | sub("^sha256:"; "")) and
             ([.paths[] | select(.passed == true and (.receipt | test("^https://"))) | .name] | sort) ==
             (["beta-to-beta", "beta-to-stable", "stable-isolation", "stable-to-beta"] | sort) and
             ([.platforms[] | select(.passed == true and (.receipt | test("^https://"))) | .name] | sort) ==
