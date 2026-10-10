@@ -1073,3 +1073,10 @@ successful aggregate and static/build gates. This receipt qualifies local
 source; hosted CI must separately qualify the final pushed head. No merge,
 queue, updater activation, release, publication or app launch is authorized
 by this record.
+
+The initial hosted Documentation job at `afe6dc5cbd` found a stale link in
+`adding-a-provider.md` after the canonical continuation-module rename. It is
+corrected to `packages/provider-core/src/server/ProviderContinuationRequests.ts`.
+The complete PR-changed Markdown set is checked for formatting and local links
+after this documentation-only repair; prior runtime qualification is unchanged.
+Hosted checks must still qualify the subsequent pushed head.
