@@ -60,6 +60,11 @@ import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
 import { stageScientSyncTexRuntimeForDesktopBuild } from "./lib/scient-synctex-build.ts";
+import {
+  FILE_EXCHANGE_RESOURCE,
+  stageFileExchangeForDesktopBuild,
+  validatePackagedFileExchange,
+} from "./lib/scient-file-exchange-build.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1036,6 +1041,10 @@ import {
 export { renderWindowsConversationAssociationInclude, WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE };
 // SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
+  "!apps/desktop/resources/file-exchange",
+  "!apps/desktop/resources/file-exchange/**/*",
+  "!apps/desktop/prod-resources/file-exchange",
+  "!apps/desktop/prod-resources/file-exchange/**/*",
   // Cursor finds platform assets by walking up from argv[1]. Keep them outside
   // asar so spawning helpers and loading native addons both use real paths.
   "!**/node_modules/@cursor/sdk-*/**/*",
@@ -2948,6 +2957,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : { asarUnpack: [`${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "mac" ? [FILE_EXCHANGE_RESOURCE] : []),
       ...(platform === "win" && nativePreviewPath
         ? [
             { from: nativePreviewPath, to: `conversation-preview/${WINDOWS_PREVIEW_DLL}` },
@@ -4023,6 +4033,21 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
   yield* Effect.tryPromise({
     try: () =>
+      stageFileExchangeForDesktopBuild({
+        repoRoot,
+        stageResourcesDir,
+        platform: options.platform,
+        arch: options.arch,
+      }),
+    catch: (cause) =>
+      new BuildCommandFailedError({
+        command: `stage file exchange (${options.platform}/${options.arch})`,
+        exitCode: 1,
+        stderrTail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+  yield* Effect.tryPromise({
+    try: () =>
       stageScientVoiceRuntimeForDesktopBuild({
         repoRoot,
         stageResourcesDir,
@@ -4340,6 +4365,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     delete buildEnv.SCIC_PREVIEW_EXPECTED;
     delete buildEnv.SCIC_PREVIEW_EXPECTED_BUNDLE_ID;
   }
+  if (options.platform === "mac") buildEnv.SCIENT_FILE_EXCHANGE_EXPECTED = "1";
+  else delete buildEnv.SCIENT_FILE_EXCHANGE_EXPECTED;
 
   if (hostPlatform === "win32") {
     const python = yield* resolvePythonForNodeGyp();
@@ -4395,6 +4422,36 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       platform: options.platform,
       arch: options.arch,
     });
+  }
+  if (options.platform === "mac") {
+    const macDirectories = (yield* fs.readDirectory(stageDistDir)).filter((entry) =>
+      entry.startsWith("mac"),
+    );
+    let bundles = 0;
+    for (const directory of macDirectories) {
+      const app = path.join(
+        stageDistDir,
+        directory,
+        `${resolveDesktopProductName(appVersion)}.app`,
+      );
+      if (!(yield* fs.exists(app))) continue;
+      bundles++;
+      yield* Effect.tryPromise({
+        try: () => validatePackagedFileExchange(app, options.arch),
+        catch: (cause) =>
+          new BuildCommandFailedError({
+            command: "verify packaged file exchange",
+            exitCode: 1,
+            stderrTail: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+    }
+    if (bundles === 0)
+      return yield* new BuildCommandFailedError({
+        command: "verify packaged file exchange",
+        exitCode: 1,
+        stderrTail: "No packaged macOS app found for helper validation.",
+      });
   }
   if (options.platform === "mac" && nativePreviewPath !== undefined) {
     const macDirectories = (yield* fs.readDirectory(stageDistDir)).filter((entry) =>
