@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -254,6 +255,11 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
    * not retried; they wait for the next session or `resubscribe` signal.
    */
   readonly retryExpectedFailureAfter?: Duration.Input;
+  /**
+   * Delay before resubscribing on the same session after the server completes
+   * the stream. Unset, a completed stream stays closed until the next session.
+   */
+  readonly resubscribeOnCompleteAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
 }
 
@@ -322,6 +328,12 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                       return stream.pipe(Stream.ensuring(completeObservation));
                     }),
                   ).pipe(
+                    (attempt) =>
+                      options?.resubscribeOnCompleteAfter === undefined
+                        ? attempt
+                        : attempt.pipe(
+                            Stream.repeat(Schedule.spaced(options.resubscribeOnCompleteAfter)),
+                          ),
                     Stream.tapCause((cause) =>
                       options?.onDefect !== undefined &&
                       cause.reasons.some(

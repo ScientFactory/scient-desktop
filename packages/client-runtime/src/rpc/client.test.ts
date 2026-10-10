@@ -466,6 +466,143 @@ describe("environment RPC", () => {
     }),
   );
 
+  it.effect("resubscribes on the same session after the server completes the stream", () =>
+    Effect.gen(function* () {
+      const subscriptionCount = yield* Ref.make(0);
+      const received = yield* Ref.make<ReadonlyArray<number>>([]);
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () =>
+          Stream.unwrap(
+            Ref.getAndUpdate(subscriptionCount, (count) => count + 1).pipe(
+              Effect.map((count) =>
+                count === 0 ? Stream.make(1) : Stream.concat(Stream.make(2), Stream.never),
+              ),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const subscriptionFiber = yield* subscribe(
+        WS_METHODS.subscribeTerminalEvents,
+        {},
+        { resubscribeOnCompleteAfter: "100 millis" },
+      ).pipe(
+        Stream.runForEach((value) =>
+          Ref.update(received, (values) => [...values, value as unknown as number]),
+        ),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(received)).length >= 1) break;
+        yield* Effect.yieldNow;
+      }
+
+      expect(yield* Ref.get(subscriptionCount)).toBe(1);
+
+      yield* TestClock.adjust("100 millis");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(received)).length >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      yield* Fiber.interrupt(subscriptionFiber);
+
+      expect(yield* Ref.get(subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(received)).toEqual([1, 2]);
+    }),
+  );
+
+  it.effect(
+    "waits for the next session after a transport failure even when completion resubscribes",
+    () =>
+      Effect.gen(function* () {
+        const subscriptionCount = yield* Ref.make(0);
+        const client = {
+          [WS_METHODS.subscribeTerminalEvents]: () =>
+            Stream.unwrap(
+              Ref.update(subscriptionCount, (count) => count + 1).pipe(
+                Effect.as(
+                  Stream.fail(
+                    new RpcClientError.RpcClientError({
+                      reason: new RpcClientError.RpcClientDefect({
+                        message: "socket closed",
+                        cause: new Error("socket closed"),
+                      }),
+                    }),
+                  ),
+                ),
+              ),
+            ),
+        } as unknown as WsRpcProtocolClient;
+        const { activeSession, supervisor } = yield* makeHarness();
+
+        yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+        const subscriptionFiber = yield* subscribe(
+          WS_METHODS.subscribeTerminalEvents,
+          {},
+          { resubscribeOnCompleteAfter: "100 millis" },
+        ).pipe(
+          Stream.runDrain,
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if ((yield* Ref.get(subscriptionCount)) >= 1) break;
+          yield* Effect.yieldNow;
+        }
+        yield* TestClock.adjust("1 second");
+        for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
+        yield* Fiber.interrupt(subscriptionFiber);
+
+        expect(yield* Ref.get(subscriptionCount)).toBe(1);
+      }),
+  );
+
+  it.effect("reports one defect after many completed resubscriptions", () =>
+    Effect.gen(function* () {
+      const completions = 20;
+      const subscriptionCount = yield* Ref.make(0);
+      const defectCount = yield* Ref.make(0);
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () =>
+          Stream.unwrap(
+            Ref.getAndUpdate(subscriptionCount, (count) => count + 1).pipe(
+              Effect.map((count) =>
+                count < completions ? Stream.make(count) : Stream.die(new Error("boom")),
+              ),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const subscriptionFiber = yield* subscribe(
+        WS_METHODS.subscribeTerminalEvents,
+        {},
+        {
+          resubscribeOnCompleteAfter: "100 millis",
+          onDefect: () => Ref.update(defectCount, (count) => count + 1),
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.exit,
+        Effect.forkChild,
+      );
+      for (let attempt = 0; attempt < 1_000; attempt += 1) {
+        if ((yield* Ref.get(subscriptionCount)) > completions) break;
+        yield* TestClock.adjust("100 millis");
+        yield* Effect.yieldNow;
+      }
+      const exit = yield* Fiber.join(subscriptionFiber);
+
+      expect(yield* Ref.get(subscriptionCount)).toBe(completions + 1);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* Ref.get(defectCount)).toBe(1);
+    }),
+  );
+
   it.effect("doubles the retry delay for repeated failures and resets it after a value", () =>
     Effect.gen(function* () {
       const domainError = new Error("thread not hydrated yet");
