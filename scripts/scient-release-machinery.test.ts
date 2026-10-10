@@ -37,7 +37,7 @@ describe("Scient release machinery", () => {
     );
   });
 
-  it("isolates Beta artifacts and requires candidate-bound native update qualification", () => {
+  it("isolates automatic Beta publication and requires updater and immutable-artifact verification", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
       "utf8",
@@ -46,11 +46,13 @@ describe("Scient release machinery", () => {
     assert.include(workflow, "SCIENT_DESKTOP_BETA_REPOSITORY: ScientFactory/scient-desktop-beta");
     assert.include(workflow, "SCIENT_BETA_RELEASE_TOKEN");
     assert.include(workflow, "SCIENT_DESKTOP_BETA_RELEASES_ENABLED == 'true'");
-    assert.include(workflow, "SCIENT_DESKTOP_BETA_QUALIFICATION");
-    assert.include(workflow, "ARTIFACT_DIGEST: ${{ needs.assemble.outputs.artifact_digest }}");
-    assert.include(workflow, "stable-to-beta");
-    assert.include(workflow, "beta-to-stable");
-    assert.include(workflow, "stable-isolation");
+    assert.notInclude(workflow, "SCIENT_DESKTOP_BETA_QUALIFICATION");
+    assert.include(workflow, "node apps/desktop/scripts/qualify-update-channels.cjs");
+    assert.include(
+      workflow,
+      "EXPECTED_ARTIFACT_DIGEST: ${{ needs.assemble.outputs.artifact_digest }}",
+    );
+    assert.include(workflow, "steps.inputs.outputs.publish_release");
     assert.include(workflow, "--draft=false --prerelease --latest=false");
     assert.include(workflow, '"$stable_latest_before" == "$stable_latest_after"');
     assert.include(workflow, "--latest-stable-version");

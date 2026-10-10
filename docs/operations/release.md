@@ -5,7 +5,7 @@ Observed source, promoted source, packaged artifacts, signed artifacts,
 published artifacts, installed updates, and accepted migration behavior are
 separate states and must be reported separately.
 
-For the isolated Beta lane and its required update qualification, see
+For the automatic, isolated Beta lane and its updater checks, see
 [Beta releases](./beta-releases.md). The workflow defaults to Stable, preserving
 the stable scheduler and production gate.
 
@@ -15,13 +15,14 @@ the stable scheduler and production gate.
 - `release/stable` contains an exact commit already present on `main`; promotion
   creates no commit and changes no tree.
 - `.github/workflows/promote-release.yml` is the only normal promotion path.
-- `.github/workflows/release.yml` is manual-only. Its default is a build-only
-  proof and creates no tag or release.
+- `.github/workflows/release.yml` is manual-only. Its Stable default is a build-only
+  proof and creates no tag or release. Selecting Beta authorizes automatic
+  publication without release notes or a second approval.
 - `.github/workflows/scheduled-stable-candidate.yml` may dispatch those two
   guarded workflows at 04:00 Asia/Jerusalem, but it has no direct publication
   or branch-write authority. The existing promotion and production gates remain
   authoritative.
-- Publication additionally requires the protected `production` environment and
+- Stable publication additionally requires the protected `production` environment and
   repository variable `SCIENT_DESKTOP_RELEASES_ENABLED=true`.
 - Never publish from an arbitrary branch, an unreviewed commit, or a dirty local
   build.
@@ -96,7 +97,7 @@ when current-main CI is missing or unsuccessful, the next release note is not
 approved, the stable tag history is inconsistent, promotion fails, or a target
 tag or release already exists.
 
-### Manual path
+### Manual Stable path
 
 1. Select the exact current `main` SHA after its CI workflow is successful.
 2. Manually run **Promote main to release/stable** with that full SHA. Promotion
@@ -153,8 +154,9 @@ Normal Windows publication requires Azure Trusted Signing secrets
 
 Build-only proof may produce unsigned artifacts when credentials are absent.
 It labels them unsigned and cannot publish them unless the explicit
-`allow_unsigned_windows=true` publication exception is selected. That exception
-applies only to Windows; macOS signing and notarization remain mandatory.
+`allow_unsigned_windows=true` publication exception is selected. Beta applies
+the same owner-approved Windows exception automatically. That exception applies
+only to Windows; macOS signing and notarization remain mandatory.
 
 Release jobs expose Apple credentials only to macOS packaging and Azure
 credentials only to Windows packaging. Publication additionally verifies the
@@ -194,10 +196,11 @@ and calls `validateScientReleaseNotesCatalog`; it does not define a second
 schema. The exact version normally requires an approved entry, and the
 publisher renders that same approved entry as the GitHub release body rather
 than generating a noisy changelog from inherited T3 history.
-`allow_note_free=true` is an explicit product decision, not a missing-work
-fallback.
+`allow_note_free=true` is an explicit product decision for Stable, not a missing-work
+fallback. Beta intentionally omits catalog notes and publishes automatically; see
+[Beta releases](./beta-releases.md).
 
-## Required manual acceptance
+## Required Stable manual acceptance
 
 The historical non-destructive old-app-to-new-app rehearsal is documented in
 the [v0.6.0 migration rehearsal](./v060-migration-rehearsal.md). Current
