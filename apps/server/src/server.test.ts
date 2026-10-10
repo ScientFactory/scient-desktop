@@ -777,6 +777,7 @@ const buildAppUnderTest = (options?: {
       getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
       updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
       streamChanges: Stream.empty,
+      subscribeChanges: Effect.succeed(Stream.empty),
       committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
       ...options?.layers?.serverSettings,
     });
