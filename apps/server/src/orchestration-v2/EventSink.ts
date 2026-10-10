@@ -106,6 +106,8 @@ export {
 interface EventSinkTransactionHooks {
   readonly transactionHooks?: {
     readonly prepare: Effect.Effect<void, unknown>;
+    /** SCIENT-FORK: decide import events against projections inside the write transaction. */
+    readonly prepareEvents?: Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, unknown>;
     readonly finalize: Effect.Effect<void, unknown>;
   };
 }
@@ -420,8 +422,16 @@ const layerBase: Layer.Layer<
         Effect.gen(function* () {
           if (input.transactionHooks !== undefined) yield* input.transactionHooks.prepare;
           // SCIENT-FORK:START — legacy V1 history repairs recheck ownership in this transaction.
-          const legacyRepairs = applyLegacyHistoryRepairGuards(sql, input, input.events);
-          const positionGuarded = legacyRepairs === undefined ? input.events : yield* legacyRepairs;
+          const prepared =
+            input.transactionHooks?.prepareEvents === undefined
+              ? input.events
+              : yield* input.transactionHooks.prepareEvents;
+          yield* Effect.annotateCurrentSpan({
+            "orchestration_v2.event_count": prepared.length,
+            "orchestration_v2.thread_id": prepared[0]?.threadId ?? null,
+          });
+          const legacyRepairs = applyLegacyHistoryRepairGuards(sql, input, prepared);
+          const positionGuarded = legacyRepairs === undefined ? prepared : yield* legacyRepairs;
           // SCIENT-FORK:END
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true

@@ -2,10 +2,35 @@
 
 Orchestration v2 snapshots `state.sqlite` into `statev2.sqlite` before opening writable persistence
 on its first launch. Only the copy receives v2 migrations; the original remains available to v1.
-Subsequent launches reuse the copy without refreshing it from v1. It creates v2 thread shell events first and imports
-the complete user and assistant transcript lazily when a client reads or continues the thread. The
-v1 projection tables remain the import source and provide a read-only recovery source if an import
-needs investigation.
+Subsequent launches preserve V2 state and reconcile newer V1 history from the sibling original
+database. This covers profiles that first created V2 and then continued using V1. It creates V2
+thread shell events first and imports the complete transcript lazily when a client reads or
+continues the thread, with a background pass for remaining history.
+
+The original is attached read-only during a consistent startup transaction. Only inert historical
+inputs are refreshed in the copied legacy tables; source before-images and pending revisions are
+retained in Scient's separate migration ledger. Existing projects, native V2 threads, V2 deletion
+tombstones, provider sessions, execution queues, and checkpoint authority are preserved. A V1
+thread-event ancestry check rejects an unrelated original database when the copied event boundary
+is available. A committed source event watermark avoids rescanning unchanged history on every
+launch.
+
+Reconciliation rechecks current V2 content inside the EventSink transaction. Untouched imported
+content receives newer V1 text or historical outcomes. If V2 content has changed, its identity and
+content remain intact and a labelled **Recovered V1 version** is added as inert history. Thread
+metadata is merged field by field against the copied baseline; conflicting V2 values are retained.
+Threads already continued in V2 retain their execution settings and workspace binding even if
+those settings subsequently changed in V1.
+Rows removed by a V1 rewind are retained as before-images and removed from the import inputs, so
+an unfinished import cannot resurrect them. Facts already committed to V2 remain V2 history,
+including their positions. Source reconciliation never deletes existing V2 history.
+
+Pending revisions reset only the affected transcript completion markers. Stable event and recovered
+version identities make an interrupted import retryable without duplicating committed history or
+overwriting edits made before the retry. A revision is acknowledged only after all its history,
+attachments, and metadata have been reconciled. Failure to inspect the original rolls back the
+staging transaction and leaves restoration visibly incomplete, while the existing V2 state remains
+usable. Neither a missing transcript nor a source failure is repaired by replacing the V2 database.
 
 ## Imported data
 
@@ -26,7 +51,8 @@ are still visible in its imported messages. Retrying does not duplicate history 
 edits. Persistent malformed source data requires investigation rather than an automatic database
 reset. This does not rewrite imports already acknowledged by an earlier build.
 
-Background restoration reports completion only after the import ledger has no pending threads.
+Background restoration reports completion only after the import ledger has no pending threads
+and the original-source check has succeeded (or no original is present).
 An incomplete pass or failed completion check produces a persistent restoration notice, including
 the remaining thread count when it can be verified. Failure details are optional on the existing
 lifecycle payload: older clients can still decode it and see restoration as incomplete, while

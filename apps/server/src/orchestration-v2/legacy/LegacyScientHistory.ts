@@ -17,6 +17,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import type { EventSinkV2Shape } from "../EventSink.ts";
 import { readInheritedTurnIds } from "./LegacyConversationOriginReader.ts";
 import { decodeTurnItemRow } from "../scient-fork/projectionRowJson.ts";
+import { writeLegacySourceEvents } from "./LegacySourceReconciliation.ts";
 import {
   groupToolLifecycles,
   mergeToolLifecyclePayloads,
@@ -247,6 +248,14 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
     .map((row, index) => ({ ...row, ordinal: index + 1 }));
   // Reassign only the legacy prefix atomically: old message-only positions can
   // occupy the new artifact slots, and the ordinal index is unique per thread.
+  const latestIds = new Set(rows.map((row) => row.item_id));
+  const retained = (yield* sql<{ turn_item_id: string }>`
+    SELECT position.turn_item_id FROM orchestration_v2_turn_item_positions AS position
+    INNER JOIN orchestration_v2_projection_turn_items AS item
+      ON item.thread_id = position.thread_id AND item.turn_item_id = position.turn_item_id
+    WHERE position.thread_id = ${threadId}
+      AND (position.turn_item_id LIKE 'migration:v1:turn-item:%' OR position.turn_item_id LIKE 'migration:v1:history:%')
+    ORDER BY position.ordinal`).filter((position) => !latestIds.has(position.turn_item_id));
   yield* sql`DELETE FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId}
     AND (turn_item_id LIKE 'migration:v1:turn-item:%' OR turn_item_id LIKE 'migration:v1:history:%')`;
   // Completed imports may already have native runless notices after the old
@@ -254,7 +263,7 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
   const suffix = yield* sql<{ turn_item_id: string; ordinal: number }>`
     SELECT turn_item_id, ordinal FROM orchestration_v2_turn_item_positions
     WHERE thread_id = ${threadId} AND ordinal < 1000000 ORDER BY ordinal`;
-  let previousOrdinal = rows.length;
+  let previousOrdinal = rows.length + retained.length;
   const moved = suffix.flatMap((position) => {
     const ordinal = Math.max(position.ordinal, previousOrdinal + 1);
     previousOrdinal = ordinal;
@@ -271,6 +280,10 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
     yield* sql`INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
       VALUES (${threadId}, ${row.item_id}, ${row.ordinal})`;
   }
+  for (const [index, position] of retained.entries()) {
+    yield* sql`INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
+      VALUES (${threadId}, ${position.turn_item_id}, ${rows.length + index + 1})`;
+  }
   return rows;
 });
 
@@ -280,6 +293,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
   eventSink: EventSinkV2Shape,
   threadId: ThreadId,
   rows: ReadonlyArray<HistoryRow>,
+  sourceRevision = 0,
 ) {
   const existing = new Set(
     (yield* sql<{ event_id: string }>`SELECT event_id FROM orchestration_events
@@ -339,7 +353,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
   for (const row of rows) {
     if (row.source === "message") continue;
     const alreadyImported = existing.has(row.item_id);
-    if (alreadyImported && row.source !== "plan") continue;
+    if (alreadyImported && row.source !== "plan" && sourceRevision === 0) continue;
     const base = {
       id: TurnItemId.make(row.item_id),
       threadId,
@@ -430,7 +444,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
       }
       case "plan": {
         const record = yield* decodePlan(row.record_json);
-        if (alreadyImported && existingPlans.has(record.planId)) continue;
+        if (alreadyImported && existingPlans.has(record.planId) && sourceRevision === 0) continue;
         const nodeId = NodeId.make(`migration:v1:history:plan-node:${record.planId}`);
         // Repair imports from the earlier message/item-only format without
         // replacing text that a user has since edited in V2.
@@ -441,7 +455,10 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
               WHERE thread_id = ${threadId} AND turn_item_id = ${row.item_id}`
           : [];
         const previous = prior[0] ? yield* decodeTurnItemRow(prior[0].payload_json) : undefined;
-        const markdown = previous?.type === "proposed_plan" ? previous.markdown : record.markdown;
+        const markdown =
+          sourceRevision === 0 && previous?.type === "proposed_plan"
+            ? previous.markdown
+            : record.markdown;
         item = {
           ...base,
           type: "proposed_plan",
@@ -451,7 +468,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
           markdown,
           streaming: false,
         };
-        if (previous?.type === "proposed_plan") {
+        if (previous?.type === "proposed_plan" && sourceRevision === 0) {
           item = { ...previous, nodeId };
           events.push({
             id: EventId.make(`${row.item_id}:artifact-item`),
@@ -513,7 +530,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
         };
         break;
     }
-    if (!alreadyImported)
+    if (!alreadyImported || sourceRevision > 0)
       events.push({
         id: EventId.make(row.item_id),
         type: "turn-item.updated",
@@ -522,10 +539,15 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
         payload: item,
       });
     if (events.length >= 100) {
-      yield* eventSink.write({ events, guardLegacyQuestionInsertions: true });
+      if (sourceRevision > 0)
+        yield* writeLegacySourceEvents(sql, eventSink, events, sourceRevision);
+      else yield* eventSink.write({ events, guardLegacyQuestionInsertions: true });
       events = [];
       yield* Effect.yieldNow;
     }
   }
-  if (events.length > 0) yield* eventSink.write({ events, guardLegacyQuestionInsertions: true });
+  if (events.length > 0) {
+    if (sourceRevision > 0) yield* writeLegacySourceEvents(sql, eventSink, events, sourceRevision);
+    else yield* eventSink.write({ events, guardLegacyQuestionInsertions: true });
+  }
 });
