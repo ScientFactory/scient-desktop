@@ -335,7 +335,7 @@ function toDesktopSettingsDocument(
   if (settings.tailscaleServePort !== defaults.tailscaleServePort) {
     document.tailscaleServePort = settings.tailscaleServePort;
   }
-  if (settings.updateChannel !== defaults.updateChannel) {
+  if (settings.updateChannelConfiguredByUser || settings.updateChannel !== defaults.updateChannel) {
     document.updateChannel = settings.updateChannel;
   }
   if (settings.updateChannelConfiguredByUser !== defaults.updateChannelConfiguredByUser) {

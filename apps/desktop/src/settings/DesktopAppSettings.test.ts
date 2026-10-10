@@ -197,6 +197,43 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect.each([
+    { channel: "beta", first: "0.6.22", middle: "0.6.23-beta.20261010.1", last: "0.6.23" },
+    {
+      channel: "latest",
+      first: "0.6.23-beta.20261010.1",
+      middle: "0.6.23",
+      last: "0.6.24-beta.20261010.1",
+    },
+  ] as const)("keeps explicit $channel across Stable and Beta build defaults", (scenario) =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.load;
+        yield* settings.setUpdateChannel(scenario.channel);
+
+        for (const appVersion of [scenario.middle, scenario.last]) {
+          yield* Effect.gen(function* () {
+            const reopened = yield* DesktopAppSettings.DesktopAppSettings;
+            assert.equal((yield* reopened.load).updateChannel, scenario.channel);
+            // A normal settings write must retain a choice even when this build defaults to it.
+            yield* reopened.setTailscaleServe({ enabled: true, port: Option.some(8443) });
+            assert.isTrue((yield* reopened.get).updateChannelConfiguredByUser);
+          }).pipe(
+            Effect.provide(
+              DesktopAppSettings.layer.pipe(
+                Layer.provideMerge(layerEnvironment(environment.baseDir, appVersion)),
+                Layer.provideMerge(NodeServices.layer),
+              ),
+            ),
+          );
+        }
+      }),
+      { appVersion: scenario.first },
+    ),
+  );
+
   it.effect("persists and reloads the selected voice model", () =>
     withSettings(
       Effect.gen(function* () {
