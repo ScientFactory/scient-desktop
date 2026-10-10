@@ -42,7 +42,7 @@ export const SCIENT_DESKTOP_IDENTITY = {
   projectlessThreadsEnabled: true,
   createProjectFromNameEnabled: false,
   // SCIENT-FORK:END
-  desktopUpdateChannelPolicy: "stable-only" as DesktopUpdateChannelPolicy,
+  desktopUpdateChannelPolicy: "user-selectable" as DesktopUpdateChannelPolicy,
   outboundTelemetryEnabled: false,
 } as const;
 

@@ -72,6 +72,15 @@ describe("branding", () => {
 });
 
 describe("branding logic", () => {
+  it("identifies a Beta server explicitly", () => {
+    expect(
+      resolveServerBackedAppStageLabel({
+        primaryServerVersion: "0.6.23-beta.20261010.1",
+        fallbackStageLabel: "Alpha",
+      }),
+    ).toBe("Beta");
+  });
+
   it("returns Nightly for nightly primary server versions", () => {
     expect(
       resolveServerBackedAppStageLabel({

@@ -3,6 +3,11 @@ name: Promote main to release/stable
 on:
   workflow_dispatch:
     inputs:
+      beta_version:
+        description: "Optional published Beta version whose exact source was accepted"
+        required: false
+        default: ""
+        type: string
       source_sha:
         description: "Exact green main commit to promote"
         required: true
@@ -31,14 +36,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          BETA_VERSION: ${{ inputs.beta_version }}
         run: |
           set -euo pipefail
           git fetch origin main release/stable || git fetch origin main
           main_sha="$(git rev-parse origin/main)"
-          [[ "$SOURCE_SHA" == "$main_sha" ]] || {
-            echo "Selected source $SOURCE_SHA is not current origin/main $main_sha." >&2
-            exit 1
-          }
+          if [[ -n "$BETA_VERSION" ]]; then
+            [[ "$BETA_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]{8}\.[1-9][0-9]*$ ]] || exit 1
+            [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+            beta_repository="ScientFactory/scient-desktop-beta"
+            gh release view "v$BETA_VERSION" --repo "$beta_repository" --json isDraft,isPrerelease |
+              jq -e '.isDraft == false and .isPrerelease == true' >/dev/null
+            mkdir "$RUNNER_TEMP/accepted-beta"
+            gh release download "v$BETA_VERSION" --repo "$beta_repository" --pattern scient-release-handoff.json --dir "$RUNNER_TEMP/accepted-beta"
+            source_tree="$(git rev-parse "$SOURCE_SHA^{tree}")"
+            jq -e --arg sha "$SOURCE_SHA" --arg tree "$source_tree" --arg version "$BETA_VERSION" --arg repository "$GITHUB_REPOSITORY" --arg distribution "$beta_repository" '
+              .schemaVersion == 1 and .product == "Scient" and .version == $version and
+              .tag == ("v" + $version) and .source.repository == $repository and
+              .source.commit == $sha and .source.tree == $tree and
+              .distribution.channel == "beta" and .distribution.repository == $distribution
+            ' "$RUNNER_TEMP/accepted-beta/scient-release-handoff.json" >/dev/null
+          else
+            [[ "$SOURCE_SHA" == "$main_sha" ]] || {
+              echo "Selected source $SOURCE_SHA is not current origin/main $main_sha." >&2
+              exit 1
+            }
+          fi
           result="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SOURCE_SHA" --limit 20 --json headSha,status,conclusion)"
           jq -e --arg sha "$SOURCE_SHA" \
             'any(.[]; .headSha == $sha and .status == "completed" and .conclusion == "success")' \

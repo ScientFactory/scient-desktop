@@ -19,7 +19,7 @@ import {
 } from "./scient-release-preflight.ts";
 
 describe("Scient release machinery", () => {
-  it("keeps stable releases manual-only and globally serialized", () => {
+  it("keeps stable releases manual-only and serialized within each channel", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
       "utf8",
@@ -28,13 +28,45 @@ describe("Scient release machinery", () => {
     assert.match(workflow, /^on:\n  workflow_dispatch:\n/mu);
     assert.notMatch(workflow, /^  push:\n/mu);
     assert.notMatch(workflow, /^  schedule:\n/mu);
-    assert.include(workflow, "group: scient-stable-release");
+    assert.include(workflow, "group: scient-${{ inputs.channel || 'stable' }}-release");
     assert.include(workflow, "cancel-in-progress: false");
     assert.include(workflow, "SCIENT_DESKTOP_CANONICAL_REPOSITORY: ScientFactory/scient-desktop");
     assert.include(
       workflow,
       '"$PUBLISH_RELEASE" == "true" && "$GITHUB_REPOSITORY" != "$SCIENT_DESKTOP_CANONICAL_REPOSITORY"',
     );
+  });
+
+  it("isolates Beta artifacts and requires candidate-bound native update qualification", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    assert.include(workflow, "default: stable");
+    assert.include(workflow, "SCIENT_DESKTOP_BETA_REPOSITORY: ScientFactory/scient-desktop-beta");
+    assert.include(workflow, "SCIENT_BETA_RELEASE_TOKEN");
+    assert.include(workflow, "SCIENT_DESKTOP_BETA_RELEASES_ENABLED == 'true'");
+    assert.include(workflow, "SCIENT_DESKTOP_BETA_QUALIFICATION");
+    assert.include(workflow, "ARTIFACT_DIGEST: ${{ needs.assemble.outputs.artifact_digest }}");
+    assert.include(workflow, "stable-to-beta");
+    assert.include(workflow, "beta-to-stable");
+    assert.include(workflow, "stable-isolation");
+    assert.include(workflow, "--draft=false --prerelease --latest=false");
+    assert.include(workflow, '"$stable_latest_before" == "$stable_latest_after"');
+    assert.include(workflow, "--latest-stable-version");
+  });
+
+  it("promotes a published Beta's exact source with main ancestry and CI, preserving the current-main default", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/promote-release.yml"),
+      "utf8",
+    );
+    assert.include(workflow, 'git merge-base --is-ancestor "$SOURCE_SHA" origin/main');
+    assert.include(workflow, ".source.commit == $sha and .source.tree == $tree");
+    assert.include(workflow, '.distribution.channel == "beta"');
+    assert.include(workflow, '"$SOURCE_SHA" == "$main_sha"');
+    assert.include(workflow, 'git push origin "$SOURCE_SHA:refs/heads/release/stable"');
+    assert.notInclude(workflow, "--force");
   });
 
   it("prepares stable candidates at 04:00 Jerusalem without direct publication authority", () => {
@@ -90,7 +122,10 @@ describe("Scient release machinery", () => {
     assert.include(assemble, "artifact-id");
     assert.include(assemble, "artifact-url");
     assert.include(assemble, 'echo "- Artifact: \\`$ARTIFACT_NAME\\`"');
-    assert.include(publish, "environment: production");
+    assert.include(
+      publish,
+      "environment: ${{ needs.preflight.outputs.channel == 'beta' && 'beta' || 'production' }}",
+    );
     assert.include(publish, "actions: read");
     assert.include(publish, "name: scient-release-v${{ needs.preflight.outputs.version }}");
     assert.include(publish, "Verify accepted candidate identity and checksums");
@@ -288,7 +323,22 @@ describe("Scient release machinery", () => {
         root: process.cwd(),
         allowNoteFree: true,
       }),
-    ).rejects.toThrow("exact x.y.z version");
+    ).rejects.toThrow("canonical x.y.z version");
+  });
+
+  it("rejects a Beta older than the published Beta before any source or packaging work", async () => {
+    await expect(
+      runScientReleasePreflight({
+        version: "0.6.23-beta.20261010.1",
+        channel: "beta",
+        latestStableVersion: "0.6.22",
+        latestBetaVersion: "0.6.24-beta.20261010.1",
+        sourceSha: "a".repeat(40),
+        releaseSha: "a".repeat(40),
+        root: process.cwd(),
+        allowNoteFree: true,
+      }),
+    ).rejects.toThrow("must be newer than published Beta");
   });
 
   it("uses the validated owned What's New catalog for the exact release", () => {
@@ -496,6 +546,42 @@ describe("Scient release machinery", () => {
         NodeFS.readFileSync(NodePath.join(root, "SHA256SUMS.txt"), "utf8"),
         `${expectedHash}  Scient-0.6.0-x64.AppImage\n`,
       );
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("attests Beta source in the canonical repository separately from distribution tags", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-beta-handoff-"));
+    try {
+      NodeFS.writeFileSync(NodePath.join(root, "fixture.zip"), "beta fixture");
+      const output = NodePath.join(root, "scient-release-handoff.json");
+      createScientReleaseHandoff([
+        "--assets-dir",
+        root,
+        "--version",
+        "0.6.23-beta.20261010.1",
+        "--channel",
+        "beta",
+        "--repository",
+        "ScientFactory/scient-desktop",
+        "--source-sha",
+        "a".repeat(40),
+        "--source-tree",
+        "b".repeat(40),
+        "--output",
+        output,
+      ]);
+      const handoff = JSON.parse(NodeFS.readFileSync(output, "utf8")) as {
+        source: { repository: string; commit: string };
+        distribution: { repository: string; channel: string };
+      };
+      expect(handoff.source.repository).toBe("ScientFactory/scient-desktop");
+      expect(handoff.source.commit).toBe("a".repeat(40));
+      expect(handoff.distribution).toEqual({
+        repository: "ScientFactory/scient-desktop-beta",
+        channel: "beta",
+      });
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }

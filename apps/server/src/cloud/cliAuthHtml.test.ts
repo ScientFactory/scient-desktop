@@ -18,6 +18,9 @@ it("renders the branded loopback authorization completion page", () => {
 it("renders the matching header treatment for each release channel", () => {
   const nightly = renderLoopbackAuthorizationCompleteHtml("nightly");
   const latest = renderLoopbackAuthorizationCompleteHtml("latest");
+  const beta = renderLoopbackAuthorizationCompleteHtml("beta");
+  expect(beta).toContain("Scient (Beta)");
+  expect(beta).toContain('class="stage stage-beta"');
 
   expect(nightly).toContain("Scient (Nightly)");
   expect(nightly).toContain('class="stage stage-nightly"');

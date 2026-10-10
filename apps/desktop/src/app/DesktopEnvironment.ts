@@ -15,7 +15,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
-import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
+import { isBetaDesktopVersion, isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import type { OtlpProtocol } from "@t3tools/shared/observability";
 
@@ -133,7 +133,11 @@ function resolveDesktopAppStageLabel(input: {
     return "Dev";
   }
 
-  return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
+  return isBetaDesktopVersion(input.appVersion)
+    ? "Beta"
+    : isNightlyDesktopVersion(input.appVersion)
+      ? "Nightly"
+      : "Alpha";
 }
 
 export function resolveDesktopAppBranding(input: {

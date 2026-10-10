@@ -28,6 +28,12 @@ const nightlyState: DesktopUpdateState = {
 };
 
 describe("sidebar update release notes popover", () => {
+  it("shows release notes for Beta updates", () => {
+    expect(
+      shouldUseSidebarUpdateReleaseNotesPopover(true, { ...nightlyState, channel: "beta" }),
+    ).toBe(true);
+  });
+
   it("uses the popover only for visible nightly release notes", () => {
     expect(shouldUseSidebarUpdateReleaseNotesPopover(true, nightlyState)).toBe(true);
     expect(shouldUseSidebarUpdateReleaseNotesPopover(false, nightlyState)).toBe(false);

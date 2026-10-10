@@ -38,6 +38,7 @@ export interface UpdatesHarnessOptions {
   readonly platform?: NodeJS.Platform;
   /** Contents of the resources/package-type marker a Linux package ships. */
   readonly packageType?: string | undefined;
+  readonly appUpdateYml?: string;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}): {
@@ -60,6 +61,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
   readonly downloadCount: () => number;
   readonly feedUrls: () => ElectronUpdater.ElectronUpdaterFeedUrl[];
   readonly fullChangelog: () => boolean;
+  readonly allowDowngrade: () => boolean;
   readonly listenerCount: () => number;
   readonly sentStates: DesktopUpdateState[];
   readonly emit: (eventName: string, payload?: unknown) => void;
@@ -98,7 +100,10 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
       }),
     setAutoDownload: () => Effect.void,
     setAutoInstallOnAppQuit: () => Effect.void,
-    setChannel: () => Effect.void,
+    setChannel: () =>
+      Effect.sync(() => {
+        allowDowngrade = true;
+      }),
     setAllowPrerelease: () => Effect.void,
     allowDowngrade: Effect.sync(() => allowDowngrade),
     setAllowDowngrade: (value) =>
@@ -241,16 +246,18 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
   const updateRestartMarkers = new Set<string>();
   const layerFileSystem = FileSystem.layerNoop({
     readFileString: (path) =>
-      path === "/missing/resources/package-type" && options.packageType !== undefined
-        ? Effect.succeed(options.packageType)
-        : Effect.fail(
-            PlatformError.systemError({
-              module: "FileSystem",
-              method: "readFileString",
-              _tag: "NotFound",
-              pathOrDescriptor: path,
-            }),
-          ),
+      path === "/missing/resources/app-update.yml" && options.appUpdateYml !== undefined
+        ? Effect.succeed(options.appUpdateYml)
+        : path === "/missing/resources/package-type" && options.packageType !== undefined
+          ? Effect.succeed(options.packageType)
+          : Effect.fail(
+              PlatformError.systemError({
+                module: "FileSystem",
+                method: "readFileString",
+                _tag: "NotFound",
+                pathOrDescriptor: path,
+              }),
+            ),
     makeDirectory: () => Effect.void,
     writeFileString: (path) =>
       Effect.sync(() => {
@@ -290,6 +297,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
+    allowDowngrade: () => allowDowngrade,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,

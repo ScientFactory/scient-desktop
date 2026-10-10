@@ -1,14 +1,20 @@
-name: Scient stable release
+name: Scient desktop release
 
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: "Release channel (Beta uses its isolated artifact repository)"
+        required: true
+        default: stable
+        type: choice
+        options: [stable, beta]
       version:
-        description: "Exact stable version, for example 0.6.0"
+        description: "Exact version: 0.6.23 or 0.6.24-beta.20261010.1"
         required: true
         type: string
       source_sha:
-        description: "Exact green main commit promoted to release/stable"
+        description: "Exact green main commit (Stable must be promoted to release/stable)"
         required: true
         type: string
       publish_release:
@@ -32,11 +38,13 @@ permissions:
   actions: read
 
 concurrency:
-  group: scient-stable-release
+  group: scient-${{ inputs.channel || 'stable' }}-release
   cancel-in-progress: false
 
 env:
   SCIENT_DESKTOP_CANONICAL_REPOSITORY: ScientFactory/scient-desktop
+  SCIENT_DESKTOP_BETA_REPOSITORY: ScientFactory/scient-desktop-beta
+  RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
 
 jobs:
   preflight:
@@ -44,6 +52,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      channel: ${{ steps.meta.outputs.channel }}
+      repository: ${{ steps.meta.outputs.repository }}
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
       source_sha: ${{ steps.meta.outputs.source_sha }}
@@ -52,13 +62,17 @@ jobs:
       allow_unsigned_windows: ${{ steps.meta.outputs.allow_unsigned_windows }}
       release_notes_base64: ${{ steps.meta.outputs.release_notes_base64 }}
     steps:
-      - name: Require release/stable
+      - name: Require the channel's source branch
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_NAME}" != "release/stable" ]]; then
-            echo "Run this workflow from release/stable, not ${GITHUB_REF_NAME}." >&2
+          set -euo pipefail
+          expected_ref="release/stable"
+          [[ "$RELEASE_CHANNEL" == "beta" ]] && expected_ref="main"
+          [[ "$GITHUB_REF_NAME" == "$expected_ref" ]] || {
+            echo "Run $RELEASE_CHANNEL from $expected_ref, not $GITHUB_REF_NAME." >&2
             exit 1
-          fi
+          }
+          [[ "$RELEASE_CHANNEL" == "stable" || "$RELEASE_CHANNEL" == "beta" ]] || exit 1
 
       - name: Refuse an existing tag or release before builds
         shell: bash
@@ -67,13 +81,15 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          distribution_repository="$GITHUB_REPOSITORY"
+          [[ "$RELEASE_CHANNEL" == "beta" ]] && distribution_repository="$SCIENT_DESKTOP_BETA_REPOSITORY"
           version="${RELEASE_VERSION#v}"
           release_tag="v$version"
-          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if gh release view "$release_tag" --repo "$distribution_repository" >/dev/null 2>&1; then
             echo "Release $release_tag already exists; refusing to rebuild it." >&2
             exit 1
           fi
-          if git ls-remote --exit-code --tags "https://github.com/$GITHUB_REPOSITORY.git" \
+          if git ls-remote --exit-code --tags "https://github.com/$distribution_repository.git" \
             "refs/tags/$release_tag" >/dev/null 2>&1; then
             echo "Tag $release_tag already exists; refusing to rebuild or repurpose it." >&2
             exit 1
@@ -116,15 +132,23 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           ALLOW_NOTE_FREE: ${{ inputs.allow_note_free }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           args=(
             --version "$RELEASE_VERSION"
+            --channel "$RELEASE_CHANNEL"
             --source-sha "$SOURCE_SHA"
             --release-sha "${GITHUB_SHA}"
             --notes-output "$RUNNER_TEMP/scient-release-notes.md"
           )
           if [[ "$ALLOW_NOTE_FREE" == "true" ]]; then
             args+=(--allow-note-free)
+          fi
+          if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
+            stable_version="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
+            args+=(--latest-stable-version "$stable_version")
+            beta_version="$(gh api "repos/$SCIENT_DESKTOP_BETA_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == true and (.tag_name | contains("-beta.")))] | .[0].tag_name // ""')"
+            [[ -z "$beta_version" ]] || args+=(--latest-beta-version "$beta_version")
           fi
           node scripts/scient-release-preflight.ts "${args[@]}"
 
@@ -168,6 +192,10 @@ jobs:
           fi
           version="$RELEASE_VERSION"
           version="${version#v}"
+          echo "channel=$RELEASE_CHANNEL" >> "$GITHUB_OUTPUT"
+          distribution_repository="$GITHUB_REPOSITORY"
+          [[ "$RELEASE_CHANNEL" == "beta" ]] && distribution_repository="$SCIENT_DESKTOP_BETA_REPOSITORY"
+          echo "repository=$distribution_repository" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
@@ -530,7 +558,7 @@ jobs:
           RELEASE_ARCH: ${{ matrix.arch }}
           PUBLISH_RELEASE: ${{ needs.preflight.outputs.publish_release }}
           ALLOW_UNSIGNED_WINDOWS: ${{ needs.preflight.outputs.allow_unsigned_windows }}
-          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ needs.preflight.outputs.repository }}
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
           T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS: ${{ steps.capture_helper_cache.outputs.cache-hit == 'true' }}
           CSC_LINK: ${{ matrix.platform == 'mac' && secrets.CSC_LINK || '' }}
@@ -584,7 +612,7 @@ jobs:
           trap - EXIT
           mkdir -p release-publish
           shopt -s nullglob
-          for pattern in release/*.dmg release/*.zip release/*.AppImage release/*.exe release/*.blockmap release/latest*.yml; do
+          for pattern in release/*.dmg release/*.zip release/*.AppImage release/*.exe release/*.blockmap release/latest*.yml release/beta*.yml; do
             for file in $pattern; do cp "$file" release-publish/; done
           done
           if [[ "$RELEASE_PLATFORM" == "mac" && "$RELEASE_ARCH" == "x64" ]]; then
@@ -795,7 +823,8 @@ jobs:
         run: |
           node scripts/verify-scient-release-assets.ts \
             --assets-dir release-assets \
-            --version "$RELEASE_VERSION"
+            --version "$RELEASE_VERSION" \
+            --channel "$RELEASE_CHANNEL"
       - name: Create checksums and compatibility handoff
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
@@ -806,6 +835,7 @@ jobs:
             --assets-dir release-assets \
             --version "$RELEASE_VERSION" \
             --repository "$GITHUB_REPOSITORY" \
+            --channel "$RELEASE_CHANNEL" \
             --source-sha "$SOURCE_SHA" \
             --source-tree "$SOURCE_TREE" \
             --output "release-assets/scient-release-handoff.json"
@@ -842,7 +872,7 @@ jobs:
             echo "- Artifact URL: $ARTIFACT_URL"
             echo
             if [[ "$PUBLISH_RELEASE" == "true" ]]; then
-              echo "Download and accept this exact candidate before approving the pending production deployment."
+              echo "Download and accept this exact candidate before approving the pending $RELEASE_CHANNEL deployment."
               echo "Approval publishes this run's assembled artifact without rebuilding it."
             else
               echo "This is a non-publishing rehearsal. It cannot be promoted by rerunning publication against rebuilt artifacts."
@@ -855,17 +885,40 @@ jobs:
     needs: [preflight, assemble]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    environment: production
+    environment: ${{ needs.preflight.outputs.channel == 'beta' && 'beta' || 'production' }}
     permissions:
       actions: read
       contents: write
     steps:
       - name: Require explicit repository release gate
         env:
-          RELEASES_ENABLED: ${{ vars.SCIENT_DESKTOP_RELEASES_ENABLED }}
+          RELEASES_ENABLED: ${{ (needs.preflight.outputs.channel == 'beta' && vars.SCIENT_DESKTOP_BETA_RELEASES_ENABLED == 'true') || (needs.preflight.outputs.channel == 'stable' && vars.SCIENT_DESKTOP_RELEASES_ENABLED == 'true') }}
         run: |
           [[ "$RELEASES_ENABLED" == "true" ]] || {
-            echo "SCIENT_DESKTOP_RELEASES_ENABLED must equal true." >&2
+            echo "The selected channel release gate must equal true." >&2
+            exit 1
+          }
+      - name: Require Beta update-path qualification for this candidate
+        if: needs.preflight.outputs.channel == 'beta'
+        shell: bash
+        env:
+          QUALIFICATION: ${{ vars.SCIENT_DESKTOP_BETA_QUALIFICATION }}
+          BETA_TOKEN: ${{ secrets.SCIENT_BETA_RELEASE_TOKEN }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          ARTIFACT_DIGEST: ${{ needs.assemble.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          [[ -n "$BETA_TOKEN" ]] || { echo "SCIENT_BETA_RELEASE_TOKEN is required for the isolated artifact repository." >&2; exit 1; }
+          jq -e --arg sha "$SOURCE_SHA" --arg version "$RELEASE_VERSION" --arg digest "$ARTIFACT_DIGEST" '
+            .sourceSha == $sha and .version == $version and
+            (.artifactDigest | sub("^sha256:"; "")) == ($digest | sub("^sha256:"; "")) and
+            ([.paths[] | select(.passed == true and (.receipt | test("^https://"))) | .name] | sort) ==
+            (["beta-to-beta", "beta-to-stable", "stable-isolation", "stable-to-beta"] | sort) and
+            ([.platforms[] | select(.passed == true and (.receipt | test("^https://"))) | .name] | sort) ==
+            (["linux-x64", "mac-arm64", "mac-x64", "windows-x64"] | sort)
+          ' <<<"$QUALIFICATION" >/dev/null || {
+            echo "Beta publication requires native update receipts tied to this source, version and artifact digest. See docs/operations/beta-releases.md." >&2
             exit 1
           }
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -881,6 +934,7 @@ jobs:
           EXPECTED_SOURCE_TREE: ${{ needs.preflight.outputs.source_tree }}
           EXPECTED_TAG: ${{ needs.preflight.outputs.tag }}
           EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
+          DISTRIBUTION_REPOSITORY: ${{ needs.preflight.outputs.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -898,7 +952,9 @@ jobs:
             --arg tag "$EXPECTED_TAG" \
             --arg tree "$EXPECTED_SOURCE_TREE" \
             --arg version "$EXPECTED_VERSION" \
-            '.schemaVersion == 1 and .product == "Scient" and .version == $version and .tag == $tag and .source.repository == $repository and .source.commit == $commit and .source.tree == $tree' \
+            --arg distribution "$DISTRIBUTION_REPOSITORY" \
+            --arg channel "$RELEASE_CHANNEL" \
+            '.schemaVersion == 1 and .product == "Scient" and .version == $version and .tag == $tag and .source.repository == $repository and .source.commit == $commit and .source.tree == $tree and .distribution.repository == $distribution and .distribution.channel == $channel' \
             release-assets/scient-release-handoff.json >/dev/null
           (cd release-assets && sha256sum --check SHA256SUMS.txt)
           jq -r '.assets[] | "\(.sha256)  \(.name)"' \
@@ -908,15 +964,16 @@ jobs:
       - name: Refuse to overwrite an existing tag or release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ needs.preflight.outputs.channel == 'beta' && secrets.SCIENT_BETA_RELEASE_TOKEN || github.token }}
+          DISTRIBUTION_REPOSITORY: ${{ needs.preflight.outputs.repository }}
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" --repo "$DISTRIBUTION_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
             exit 1
           fi
-          if git ls-remote --exit-code --tags "https://github.com/$GITHUB_REPOSITORY.git" \
+          if git ls-remote --exit-code --tags "https://github.com/$DISTRIBUTION_REPOSITORY.git" \
             "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Tag $RELEASE_TAG already exists; refusing to repurpose it." >&2
             exit 1
@@ -924,7 +981,8 @@ jobs:
       - name: Stage, verify, and publish the immutable release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ needs.preflight.outputs.channel == 'beta' && secrets.SCIENT_BETA_RELEASE_TOKEN || github.token }}
+          DISTRIBUTION_REPOSITORY: ${{ needs.preflight.outputs.repository }}
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
           SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
@@ -939,34 +997,48 @@ jobs:
           > **Windows note:** This release includes an unsigned Windows installer. Windows may show an Unknown Publisher or SmartScreen warning. macOS artifacts remain Developer ID signed and notarized.
           NOTICE
           fi
+          target="$SOURCE_SHA"
+          release_args=(--draft --latest=false)
+          if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
+            [[ "$DISTRIBUTION_REPOSITORY" == "$SCIENT_DESKTOP_BETA_REPOSITORY" ]] || exit 1
+            stable_latest_before="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
+            jq -ne --arg beta "$RELEASE_VERSION" --arg stable "$stable_latest_before" '
+              ($beta | split("-")[0] | split(".") | map(tonumber)) >
+              ($stable | ltrimstr("v") | split(".") | map(tonumber))
+            ' >/dev/null || { echo "Beta target is no longer ahead of Stable; prepare a newer candidate." >&2; exit 1; }
+            target="$(gh api "repos/$DISTRIBUTION_REPOSITORY" --jq .default_branch)"
+            release_args+=(--prerelease)
+          fi
           gh release create "$RELEASE_TAG" release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$SOURCE_SHA" \
+            --repo "$DISTRIBUTION_REPOSITORY" \
+            --target "$target" \
             --title "Scient v$RELEASE_VERSION" \
             --notes-file "$RUNNER_TEMP/scient-release-notes.md" \
-            --draft \
-            --latest=false
+            "${release_args[@]}"
 
           mkdir published-assets
           gh release download "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "$DISTRIBUTION_REPOSITORY" \
             --dir published-assets
           (cd release-assets && sha256sum -- * | sort) > "$RUNNER_TEMP/expected-release-sha256.txt"
           (cd published-assets && sha256sum -- * | sort) > "$RUNNER_TEMP/published-release-sha256.txt"
           diff -u "$RUNNER_TEMP/expected-release-sha256.txt" "$RUNNER_TEMP/published-release-sha256.txt"
 
-          gh release edit "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft=false \
-            --latest
-          latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
-          [[ "$latest_tag" == "$RELEASE_TAG" ]] || {
-            echo "Published release is not current Latest ($latest_tag)." >&2
-            exit 1
-          }
-          tag_sha="$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" \
-            "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')"
-          [[ "$tag_sha" == "$SOURCE_SHA" ]] || {
-            echo "$RELEASE_TAG resolves to $tag_sha, not $SOURCE_SHA." >&2
-            exit 1
-          }
+          if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
+            gh release edit "$RELEASE_TAG" --repo "$DISTRIBUTION_REPOSITORY" --draft=false --prerelease --latest=false
+            gh release view "$RELEASE_TAG" --repo "$DISTRIBUTION_REPOSITORY" --json isDraft,isPrerelease | jq -e '.isDraft == false and .isPrerelease == true' >/dev/null
+            stable_latest_after="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
+            [[ "$stable_latest_before" == "$stable_latest_after" ]] || {
+              echo "Stable Latest changed during Beta publication; investigate before accepting the release." >&2
+              exit 1
+            }
+          else
+            gh release edit "$RELEASE_TAG" --repo "$DISTRIBUTION_REPOSITORY" --draft=false --latest
+            latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+            [[ "$latest_tag" == "$RELEASE_TAG" ]] || exit 1
+            tag_sha="$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_TAG" | awk 'NR == 1 { print $1 }')"
+            [[ "$tag_sha" == "$SOURCE_SHA" ]] || {
+              echo "$RELEASE_TAG resolves to $tag_sha, not $SOURCE_SHA." >&2
+              exit 1
+            }
+          fi
