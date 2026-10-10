@@ -1144,3 +1144,18 @@ unaffected code; these fresh affected suites qualify the bounded runtime event
 ordering change, supplemented by the product build and independent review.
 No fresh desktop or live-provider interaction is claimed. Hosted CI must
 qualify the subsequent pushed head, and the development app remains stopped.
+
+### Project-scope icon correction after user review
+
+Upstream `22ccf8a3df` changed the unscoped project picker from `FolderIcon`
+to `ListFilterIcon`, colliding with Scient's unchanged section-grouping
+toggle beside it. The user selected stacked folders (`FoldersIcon`) for the
+project picker. Replace only that fallback icon; section grouping, Add project,
+selected-project favicons and scope-selection behavior remain unchanged.
+
+Observed the stacked-folders icon in the running isolated Electron candidate
+after renderer hot reload. Focused formatting and web typecheck pass; focused
+lint completes with warnings. This UI correction is not covered by the hosted
+checks that passed on `42cc6ac3cf`; hosted checks must qualify its new commit.
+At the user's request, stopped the owning candidate and verified all four
+recorded processes had exited and ports 6009/14049 had no listeners.

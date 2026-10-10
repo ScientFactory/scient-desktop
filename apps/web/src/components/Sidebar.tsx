@@ -72,8 +72,8 @@ import {
   CircleDashedIcon,
   ClockIcon,
   FolderIcon,
+  FoldersIcon,
   GitBranchIcon,
-  ListFilterIcon,
   MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
@@ -5351,7 +5351,7 @@ export default function Sidebar() {
                         <ProjectFavicon project={scopedProjectGroup} className="size-4" />
                       </span>
                     ) : (
-                      <ListFilterIcon className="size-4" />
+                      <FoldersIcon className="size-4" />
                     )}
                   </ComboboxTrigger>
                   <ComboboxPopup
