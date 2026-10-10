@@ -2474,6 +2474,100 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         : [],
     );
 
+  it.effect("makes the approval item available to a consumer that answers immediately", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "immediate-approval-thread";
+      const nativeTurnId = "immediate-approval-turn";
+      const transcript = makeCodexReplayTranscript({
+        scenario: "immediate-approval-response",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Run the command." }),
+          {
+            type: "emit_inbound",
+            label: "approval",
+            frame: {
+              id: 99,
+              method: "item/commandExecution/requestApproval",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                itemId: "immediate-command",
+                command: "printf approved",
+                cwd: "/workspace",
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "approval response",
+            frame: { id: 99, result: { decision: "accept" } },
+          },
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      let sawRequest = false;
+      let hadApprovalItem = false;
+      let hadApprovalNode = false;
+      const observed: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const runtimeReady = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2SessionRuntime>();
+      const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+        Effect.gen(function* () {
+          observed.push(event);
+          if (event.type !== "runtime_request.updated") return;
+          sawRequest = true;
+          hadApprovalItem = observed.some(
+            (previous) =>
+              previous.type === "turn_item.updated" &&
+              previous.turnItem.type === "approval_request" &&
+              previous.turnItem.requestId === event.runtimeRequest.id &&
+              previous.turnItem.nodeId === event.runtimeRequest.nodeId,
+          );
+          hadApprovalNode = observed.some(
+            (previous) =>
+              previous.type === "node.updated" && previous.node.id === event.runtimeRequest.nodeId,
+          );
+          const runtime = yield* Deferred.await(runtimeReady);
+          yield* runtime
+            .respondToRuntimeRequest({
+              requestId: event.runtimeRequest.id,
+              decision: "accept",
+            })
+            .pipe(Effect.orDie);
+        }),
+      );
+      yield* Deferred.succeed(runtimeReady, harness.runtime);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("immediate-approval-attempt"),
+          text: "Run the command.",
+        }),
+      );
+      yield* harness.firstTerminal;
+      assert.isTrue(sawRequest);
+      assert.isTrue(hadApprovalNode, "an actionable request has its approval node");
+      assert.isTrue(hadApprovalItem, "an immediate response can complete the approval item");
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
       Effect.gen(function* () {

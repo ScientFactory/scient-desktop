@@ -1112,3 +1112,35 @@ unchanged. Recheck the complete PR diff against owned base `397befbdaab` using
 the same provenance and seam arguments as hosted CI, not inventory-only mode.
 The previous cancelled server result remains failed evidence; the next pushed
 head still needs all hosted checks to pass.
+
+Hosted CI at `62d91ea47a` passed the other jobs and transfer ceilings. Server
+shard 2 finished its complete assigned suite within the job limit, but one
+nested Codex approval replay found a resolved request and completed node whose
+approval turn item still said `waiting`. The focused replay passed locally;
+that did not establish that the event-order race was absent.
+
+Codex published each request's node, actionable runtime request and transcript
+item as separate FIFO events, in that order. An immediate answer could commit
+between the latter two: the response's transactional context had no item to
+complete, and the original waiting item arrived afterward. A new recorded
+command-approval regression answers as soon as the request is published and
+checks that its correlated node and item are already available. It fails
+without the production repair, without a sleep or a larger budget.
+
+Publish the node and item before the actionable request at all eight Codex
+request handlers, including native questions, asynchronous message questions,
+modern and legacy approvals and MCP elicitation. Existing pending-decision
+registration, event payloads, root/nested ownership, ordinals, responses and
+provider frames are unchanged. FIFO ingestion commits both artifacts before
+an actionable request can be answered. The generic classifier, orchestration
+response transaction, assertions and test/job limits are unchanged.
+
+Fresh complete Codex core/replay and affected Codex background/session,
+ingestion, EventSink, runtime layer and request-service suites pass: 654 distinct
+tests across 26 files, with repeated core cases counted once. The regression's
+initial test-type errors and first failed lint attempt remain failed evidence;
+the corrected server typecheck and lint pass. Prior complete matrices qualify
+unaffected code; these fresh affected suites qualify the bounded runtime event
+ordering change, supplemented by the product build and independent review.
+No fresh desktop or live-provider interaction is claimed. Hosted CI must
+qualify the subsequent pushed head, and the development app remains stopped.
