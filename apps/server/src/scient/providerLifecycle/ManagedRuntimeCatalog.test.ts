@@ -18,6 +18,7 @@ import {
   type ManagedRuntimeTarget,
 } from "@scientfactory/provider-runtime";
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -883,7 +884,7 @@ describe("ManagedRuntimeCatalog service", () => {
       yield* fs.writeFileString(
         cachePath,
         JSON.stringify({
-          fetchedAtMs: Date.now(),
+          fetchedAtMs: yield* Clock.currentTimeMillis,
           etag: validator,
           catalog: BUNDLED_MANAGED_RUNTIME_CATALOG,
         }),
