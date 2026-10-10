@@ -58,7 +58,6 @@ export type ScientAgentDriverEnv =
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
-  | ProviderContinuationRequests.ProviderContinuationRequests
   | OmpExecutableGate
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers

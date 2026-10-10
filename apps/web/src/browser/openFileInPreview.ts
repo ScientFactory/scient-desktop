@@ -156,8 +156,7 @@ export async function openUrlInPreview<E>(input: {
  */
 export async function openFileInPreview<AssetError, PreviewError>(input: {
   readonly threadRef: ScopedThreadRef;
-  readonly workspaceRoot: string;
-  readonly relativePath: string;
+  readonly workspaceRoot?: string;
   readonly filePath: string;
   readonly httpBaseUrl: string;
   readonly createAssetUrl: (input: {
@@ -180,10 +179,12 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       ),
     );
   }
-  const fileReference = mediaFileReference(input.filePath, input.workspaceRoot);
-  const workspaceRelativePath = fileReference.relativePath;
+  const workspaceRelativePath =
+    input.workspaceRoot === undefined
+      ? undefined
+      : mediaFileReference(input.filePath, input.workspaceRoot).relativePath;
   const resource: AssetResource =
-    workspaceRelativePath === undefined
+    workspaceRelativePath === undefined || input.workspaceRoot === undefined
       ? {
           _tag: "media-file",
           threadId: input.threadRef.threadId,
@@ -191,6 +192,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
         }
       : workspaceFilePreviewAssetResource({
           ...input,
+          workspaceRoot: input.workspaceRoot,
           relativePath: workspaceRelativePath,
         });
   const assetResult = await input.createAssetUrl({
@@ -211,7 +213,11 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     url: assetUrl,
     openPreview: input.openPreview,
     onOpened: (snapshot) => {
-      if (workspaceRelativePath === undefined || !isTrackableWorkspaceHtml(workspaceRelativePath)) {
+      if (
+        input.workspaceRoot === undefined ||
+        workspaceRelativePath === undefined ||
+        !isTrackableWorkspaceHtml(workspaceRelativePath)
+      ) {
         return;
       }
       useHtmlPdfSourceStore.getState().bind({

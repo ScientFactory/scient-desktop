@@ -34,6 +34,7 @@ import { makeAntigravityTextGeneration } from "../../textGeneration/LegacyAntigr
 import { makeLegacyAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/LegacyAntigravityAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   buildInitialAntigravityProviderSnapshot,
@@ -82,7 +83,7 @@ export type LegacyAntigravityDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | IdAllocator.IdAllocatorV2
-  | ProviderContinuationRequests.ProviderContinuationRequests
+  | ProviderLatestVersions.ProviderLatestVersions
   | Path.Path
   | PtyAdapter
   | ServerConfig
@@ -133,8 +134,8 @@ export const LegacyAntigravityDriver = {
       const ptyAdapter = yield* PtyAdapter;
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const serverSettings = yield* ServerSettingsService;
-      const host = yield* ProviderHost;
       // Antigravity is intentionally the Google-account/subscription provider.
       // Do not let ambient Gemini/API-key variables silently change billing or
       // make an unauthenticated account appear connected.
@@ -230,7 +231,7 @@ export const LegacyAntigravityDriver = {
         Effect.provideService(Path.Path, path),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<AntigravitySettings>
       >({
@@ -251,6 +252,7 @@ export const LegacyAntigravityDriver = {
             publishSnapshot,
             stampIdentity,
             httpClient,
+            latestVersions,
           }),
       }).pipe(
         Effect.mapError(

@@ -2242,7 +2242,7 @@ function useChatMarkdownState({
     [canOperatePreview, openPreview, threadRef],
   );
   const openMarkdownFileInPreview = useCallback(
-    (path: string, workspaceRelativePath: string) => {
+    (path: string) => {
       if (!threadRef || !cwd || !canOperatePreview || preparedConnection._tag === "None") {
         return Promise.resolve(
           AsyncResult.failure<void, BrowserPreviewUnavailableError>(
@@ -2257,7 +2257,6 @@ function useChatMarkdownState({
       return openFileInPreview({
         threadRef,
         workspaceRoot: cwd,
-        relativePath: workspaceRelativePath,
         filePath: path,
         httpBaseUrl: preparedConnection.value.httpBaseUrl,
         createAssetUrl,

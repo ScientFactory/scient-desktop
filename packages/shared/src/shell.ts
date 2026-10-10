@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
@@ -32,6 +33,36 @@ function canExecuteFile(filePath: string): boolean {
     return false;
   }
 }
+
+/**
+ * Atomically removes only an empty directory on POSIX and Windows. Effect's
+ * FileSystem.remove uses fs.rm, which rejects directories without recursion.
+ * rmdir must not become a readDirectory check followed by recursive removal:
+ * files created between those operations would be destroyed.
+ */
+export const removeEmptyDirectory: (
+  directory: string,
+) => Effect.Effect<void, PlatformError.PlatformError> = Effect.effectify(
+  (directory: string, callback: (error: NodeJS.ErrnoException | null) => void) =>
+    NodeFS.rmdir(directory, callback),
+  (error, [directory]) =>
+    PlatformError.systemError({
+      _tag: "Unknown",
+      module: "FileSystem",
+      method: "removeEmptyDirectory",
+      pathOrDescriptor: directory,
+      syscall: error.syscall ?? "rmdir",
+      description: error.message,
+      cause: error,
+    }),
+  (cause, [directory]) =>
+    PlatformError.badArgument({
+      module: "FileSystem",
+      method: "removeEmptyDirectory",
+      description: `Invalid directory path: ${directory}`,
+      cause,
+    }),
+);
 
 export interface CommandAvailabilityOptions {
   readonly env?: NodeJS.ProcessEnv;

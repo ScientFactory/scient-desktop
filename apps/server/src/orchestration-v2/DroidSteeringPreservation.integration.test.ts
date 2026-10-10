@@ -59,6 +59,7 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
@@ -86,6 +87,7 @@ const decodeNativePrompt = Schema.decodeUnknownSync(
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
   Config.layerTest(process.cwd(), { prefix: "droid-steer-preservation-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -189,6 +191,7 @@ type NativeHooks = {
 };
 const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   const fs = yield* FileSystem.FileSystem;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   // Optional synthetic receipts survive the test reporter suppressing successful stdout.
   const receiptDirectory = process.env.DROID_STEER_RECEIPTS;
   if (receiptDirectory !== undefined)
@@ -369,6 +372,10 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
       makeLayer([adapter, otherAdapter]),
       {
         configureMcp: false,
+        mcpProviderSessionsLayer: Layer.succeed(
+          McpProviderSessions.McpProviderSessions,
+          mcpSessions,
+        ),
         runEffectWorker: false,
         databaseLayer: databaseLayer,
         runtimePolicyLayer: policyLayer,

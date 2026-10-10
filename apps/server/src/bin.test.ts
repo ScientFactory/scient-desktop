@@ -144,7 +144,7 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
   const replay = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "project-cli" },
     ProviderAdapterRegistryV2.layerFromAdapters([]),
-    { layerDatabase: database, runEffectWorker: false },
+    { databaseLayer: database, runEffectWorker: false },
   );
   return Layer.mergeAll(
     ProjectServiceLayerLive,

@@ -36,7 +36,7 @@ import {
   makeOmpAdapterV2,
   type OmpAdapterV2Options,
 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
-import type { EventNdjsonLogger } from "../EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { OmpTarget } from "../omp/OmpTarget.ts";
 
 const decodeSettings = Schema.decodeEffect(OmpSettings);

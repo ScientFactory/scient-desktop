@@ -2379,7 +2379,7 @@ describe("AcpAdapterV2", () => {
           makeRuntime,
         },
         selfInvocation,
-        clientTerminals: { childProcessSpawner },
+        clientTerminals: {},
       });
       const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
       const targetThreadId = ThreadId.make("thread-acp-native-fork-target");

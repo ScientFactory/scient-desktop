@@ -37,6 +37,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   buildDroidCapabilitiesFromEfforts,
   buildDroidModelsFromConfigOptions,
@@ -654,6 +655,7 @@ export const enrichDroidSnapshot = (input: {
   readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly httpClient: HttpClient.HttpClient;
+  readonly latestVersions: ProviderLatestVersions.ProviderLatestVersions["Service"];
 }): Effect.Effect<void> => {
   const { snapshot, publishSnapshot } = input;
 
@@ -661,6 +663,7 @@ export const enrichDroidSnapshot = (input: {
     enableProviderUpdateChecks: input.enableProviderUpdateChecks,
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, input.httpClient),
+    Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, input.latestVersions),
     Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
     Effect.catchCause((cause) =>
       Effect.logWarning("Droid version advisory enrichment failed", {

@@ -973,6 +973,7 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           },
         });
         const config = yield* ServerConfig;
+        const providerSessions = yield* McpProviderSessions.McpProviderSessions;
         const cwd = yield* checkpointWorkspace("legacy-idle-recovery");
         const threadId = ThreadId.make("legacy-agy-idle-recovery");
         const modelSelection = h.input(first).modelSelection;
@@ -982,9 +983,13 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
             Layer.provide(Layer.succeed(ProviderInstanceRegistry, h.registry)),
           ),
           {
-            layerDatabase: SqlitePersistenceMemory,
+            databaseLayer: SqlitePersistenceMemory,
             configureMcp: false,
             layerServerConfig: Layer.succeed(ServerConfig, config),
+            mcpProviderSessionsLayer: Layer.succeed(
+              McpProviderSessions.McpProviderSessions,
+              providerSessions,
+            ),
           },
         );
         yield* Effect.gen(function* () {

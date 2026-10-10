@@ -97,7 +97,6 @@ export type DroidDriverEnv =
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
-  | ProviderContinuationRequests.ProviderContinuationRequests
   | ProviderLatestVersions.ProviderLatestVersions
   | HttpClient.HttpClient
   | Path.Path
@@ -369,6 +368,7 @@ export const DroidDriver: ScientProviderDriver<DroidSettings, DroidDriverEnv> = 
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
                 publishSnapshot,
                 httpClient,
+                latestVersions,
               }),
             ),
           ),

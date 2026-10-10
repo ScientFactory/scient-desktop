@@ -317,21 +317,30 @@ it.live(
             ),
         );
         const allocator = yield* IdAllocatorV2;
-        const runtime = {
-          connectToOpenCodeServer: () =>
-            Effect.sync(() => {
-              connectCount++;
-              return { url, external: false, exitCode: null };
+        const runtime = yield* Effect.service(OpenCodeRuntime.OpenCodeRuntime).pipe(
+          Effect.provide(
+            Layer.mock(OpenCodeRuntime.OpenCodeRuntime)({
+              connectToOpenCodeServer: () =>
+                Effect.sync(() => {
+                  connectCount++;
+                  return {
+                    url,
+                    version: OpenCodeRuntime.MINIMUM_OPENCODE_VERSION,
+                    external: false,
+                    exitCode: null,
+                  };
+                }),
+              createOpenCodeSdkClient: (input: { baseUrl: string; directory: string }) => {
+                sdkDirectory = input.directory;
+                return createOpencodeClient({
+                  baseUrl: input.baseUrl,
+                  directory: input.directory,
+                  throwOnError: true,
+                });
+              },
             }),
-          createOpenCodeSdkClient: (input: { baseUrl: string; directory: string }) => {
-            sdkDirectory = input.directory;
-            return createOpencodeClient({
-              baseUrl: input.baseUrl,
-              directory: input.directory,
-              throwOnError: true,
-            });
-          },
-        } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+          ),
+        );
         const settings = yield* decodeSettings({});
         const adapterDriver = makeOpenCodeAdapterV2Driver({
           runtimeGuidance: buildOpenCodeRuntimeGuidance,
@@ -341,7 +350,7 @@ it.live(
         });
         const createAdapter = (
           id: ProviderInstanceId,
-          ownedRuntime: OpenCodeRuntime.OpenCodeRuntimeShape,
+          ownedRuntime: OpenCodeRuntime.OpenCodeRuntime["Service"],
         ) =>
           adapterDriver
             .create({

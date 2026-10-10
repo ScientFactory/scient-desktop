@@ -260,9 +260,8 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
         ),
       );
       const changes = yield* PubSub.unbounded<ServerSettings>();
-      const cleanup = yield* StorageCleanup.StorageCleanup.pipe(
-        Effect.provide(StorageCleanup.layer),
-        Effect.provide(
+      const cleanupLayer = StorageCleanup.layer.pipe(
+        Layer.provide(
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, {
               ...settings,
@@ -313,8 +312,8 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                       assert.lengthOf(args, 4);
                       const source = args[2]!;
                       const destination = args[3]!;
-                      assert.isFalse(yield* fs.exists(destination));
-                      assert.isTrue(yield* fs.exists(path.join(source, ".git")));
+                      assert.isFalse(yield* fs.exists(destination).pipe(Effect.orDie));
+                      assert.isTrue(yield* fs.exists(path.join(source, ".git")).pipe(Effect.orDie));
                       yield* fs.rename(source, destination).pipe(Effect.orDie);
                       moves.push(args);
                     } else {
@@ -326,8 +325,10 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                         "remove",
                         isolatedPath,
                       ]);
-                      assert.isFalse(yield* fs.exists(worktreePath));
-                      assert.isTrue(yield* fs.exists(path.join(isolatedPath, ".git")));
+                      assert.isFalse(yield* fs.exists(worktreePath).pipe(Effect.orDie));
+                      assert.isTrue(
+                        yield* fs.exists(path.join(isolatedPath, ".git")).pipe(Effect.orDie),
+                      );
                       removals.push(isolatedPath);
                       yield* fs.remove(isolatedPath, { recursive: true }).pipe(Effect.orDie);
                     }
@@ -344,6 +345,7 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
           ),
         ),
       );
+      const cleanup = Context.get(yield* Layer.build(cleanupLayer), StorageCleanup.StorageCleanup);
       let sweepOrdinal = 0;
       const sweep = Effect.fnUntraced(function* () {
         sweepRead = yield* Deferred.make<void>();

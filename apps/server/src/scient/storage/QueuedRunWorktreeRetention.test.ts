@@ -11,6 +11,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -175,9 +176,8 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
           }),
         ),
       );
-      const cleanup = yield* StorageCleanup.StorageCleanup.pipe(
-        Effect.provide(StorageCleanup.layer),
-        Effect.provide(
+      const cleanupLayer = StorageCleanup.layer.pipe(
+        Layer.provide(
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, settings),
             Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
@@ -211,8 +211,8 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                       assert.lengthOf(args, 4);
                       const source = args[2]!;
                       const destination = args[3]!;
-                      assert.isFalse(yield* fs.exists(destination));
-                      assert.isTrue(yield* fs.exists(path.join(source, ".git")));
+                      assert.isFalse(yield* fs.exists(destination).pipe(Effect.orDie));
+                      assert.isTrue(yield* fs.exists(path.join(source, ".git")).pipe(Effect.orDie));
                       yield* fs.rename(source, destination).pipe(Effect.orDie);
                       moves.push(args);
                     } else {
@@ -224,8 +224,10 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
                         "remove",
                         isolatedPath,
                       ]);
-                      assert.isFalse(yield* fs.exists(worktreePath));
-                      assert.isTrue(yield* fs.exists(path.join(isolatedPath, ".git")));
+                      assert.isFalse(yield* fs.exists(worktreePath).pipe(Effect.orDie));
+                      assert.isTrue(
+                        yield* fs.exists(path.join(isolatedPath, ".git")).pipe(Effect.orDie),
+                      );
                       removals.push(isolatedPath);
                       yield* fs.remove(isolatedPath, { recursive: true }).pipe(Effect.orDie);
                     }
@@ -242,6 +244,7 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
           ),
         ),
       );
+      const cleanup = Context.get(yield* Layer.build(cleanupLayer), StorageCleanup.StorageCleanup);
       yield* cleanup.runNow;
       yield* cleanup.drain;
       if (scenario.kept) {

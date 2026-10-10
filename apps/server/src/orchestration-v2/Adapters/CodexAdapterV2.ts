@@ -1700,7 +1700,6 @@ const layer: Layer.Layer<
   | McpProviderSessions.McpProviderSessions
   | ServerConfig
   | Path.Path
-  | ProviderContinuationRequests.ProviderContinuationRequests
 > = Layer.effect(
   ProviderAdapter.ProviderAdapterV2,
   Effect.gen(function* () {
@@ -1808,7 +1807,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
         // SCIENT-FORK: the exact launch identity of this app-server process.
         const configuration = codexLaunchConfiguration({ settings, launch, environment });
-        const textGenerationEnded = yield* Deferred.make<never, ProviderTextSnapshotError>();
+        const textGenerationEnded = yield* Deferred.make<
+          never,
+          ProviderAdapter.ProviderTextSnapshotError
+        >();
         let textGenerationIsEnded = false;
         const client = yield* clientFactory.open({
           onTermination: (cause) =>

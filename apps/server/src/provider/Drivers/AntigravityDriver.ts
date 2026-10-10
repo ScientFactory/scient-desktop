@@ -207,7 +207,7 @@ export const AntigravityDriver: ScientProviderDriver<
       // preserve the account's native legacy status for unlisted models.
       const classifyModels = (draft: ServerProviderDraft) =>
         currentCatalog.pipe(
-          Effect.map((catalog) =>
+          Effect.flatMap((catalog) =>
             stampIdentity(
               ModelCatalog.applyModelCatalog(draft, catalog, antigravityCatalogMatching),
             ),

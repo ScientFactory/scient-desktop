@@ -257,10 +257,10 @@ import {
 } from "./provider/AntigravityInstallation.ts";
 import { CodexInstallation } from "./provider/CodexInstallation.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
-import {
-  makeManualOnlyProviderMaintenanceCapabilities,
-  ProviderVersionCache,
-} from "@t3tools/provider-core/server/maintenanceResolver";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as StorageCleanup from "./storageCleanup.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -588,6 +588,7 @@ const buildAppUnderTest = (options?: {
     environmentTheme?: Partial<EnvironmentTheme.EnvironmentThemeService["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     modelManifest?: Partial<ModelManifest.ModelManifest["Service"]>;
+    providerLatestVersions?: ProviderLatestVersions.ProviderLatestVersions["Service"];
     usageLimitSources?: Partial<UsageLimitSources.UsageLimitSources["Service"]>;
     providerAuth?: Partial<ProviderAuthService["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
@@ -901,28 +902,34 @@ const buildAppUnderTest = (options?: {
                     );
                     launch = Context.get(controlled, ThreadLaunchV2.ThreadLaunchService);
                   }
+                  const cleanupContext = yield* Layer.build(StorageCleanup.layer).pipe(
+                    Effect.provide(context),
+                  );
                   context = Context.add(
                     context,
                     ThreadLaunchV2.ThreadLaunchService,
                     options?.transformThreadLaunchV2?.(launch) ?? launch,
                   );
-                  return Context.add(
+                  return Context.merge(
+                    cleanupContext,
                     Context.add(
-                      Context.add(context, ConversationFork.ConversationForkService, {
-                        ...forks,
-                        ...options?.layers?.conversationFork,
-                      }),
-                      ThreadManagementV2.ThreadManagementService,
+                      Context.add(
+                        Context.add(context, ConversationFork.ConversationForkService, {
+                          ...forks,
+                          ...options?.layers?.conversationFork,
+                        }),
+                        ThreadManagementV2.ThreadManagementService,
+                        {
+                          ...(options?.transformThreadManagementV2?.(threads) ?? threads),
+                          ...options?.layers?.threadManagementV2,
+                        },
+                      ),
+                      OrchestrationEventStore,
                       {
-                        ...(options?.transformThreadManagementV2?.(threads) ?? threads),
-                        ...options?.layers?.threadManagementV2,
+                        ...(options?.transformApplicationEventStore?.(events) ?? events),
+                        ...options?.layers?.applicationEventStore,
                       },
                     ),
-                    OrchestrationEventStore,
-                    {
-                      ...(options?.transformApplicationEventStore?.(events) ?? events),
-                      ...options?.layers?.applicationEventStore,
-                    },
                   );
                 }),
               ),
@@ -1396,6 +1403,15 @@ const buildAppUnderTest = (options?: {
         Layer.provide(serverSettingsLayer),
         Layer.provide(ThreadCommandExecutor.layer),
         Layer.provide(VcsProcess.layer),
+        Layer.provideMerge(McpProviderSessions.layer),
+        Layer.provideMerge(
+          options?.layers?.providerLatestVersions === undefined
+            ? ProviderLatestVersions.layer
+            : Layer.succeed(
+                ProviderLatestVersions.ProviderLatestVersions,
+                options.layers.providerLatestVersions,
+              ),
+        ),
         Layer.provideMerge(SqlitePersistence.layerMemory),
         Layer.provideMerge(IdAllocatorV2.layer),
         Layer.provide(layerConfig),
@@ -7934,15 +7950,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     const driver = ProviderDriverKind.make("codex");
     const instanceIds = [ProviderInstanceId.make("codex"), ProviderInstanceId.make("codex_work")];
     const packageNames = ["@example/personal", "@example/work"];
-    const versionCache = new Map(
-      packageNames.map((name) => [
-        name,
-        {
-          expiresAt: Number.MAX_SAFE_INTEGER,
-          version: "1.0.0",
-        },
-      ]),
-    );
     const invalidated: string[] = [];
     const freshMaintenance: string[] = [];
     let manifestRefreshed = false;
@@ -7981,22 +7988,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     );
     const expected =
       mode === "background" ? [] : mode === "targeted" ? [instanceIds[1]!] : instanceIds;
-    const probe = Effect.sync(() => {
-      probed = true;
-      assert.equal(manifestRefreshed, mode !== "background");
-      assert.deepEqual(invalidated.toSorted(), expected.toSorted());
-      assert.deepEqual(freshMaintenance.toSorted(), expected.toSorted());
-      for (let index = 0; index < instanceIds.length; index++) {
-        assert.equal(
-          versionCache.has(packageNames[index]!),
-          !expected.includes(instanceIds[index]!),
-        );
-      }
-      return [];
-    });
+    const probe = (versionCache: ProviderLatestVersions.ProviderLatestVersions["Service"]) =>
+      Effect.gen(function* () {
+        probed = true;
+        assert.equal(manifestRefreshed, mode !== "background");
+        assert.deepEqual(invalidated.toSorted(), expected.toSorted());
+        assert.deepEqual(freshMaintenance.toSorted(), expected.toSorted());
+        for (let index = 0; index < instanceIds.length; index++) {
+          assert.equal(
+            yield* versionCache.cached(packageNames[index]!, Effect.succeed("2.0.0")),
+            expected.includes(instanceIds[index]!) ? "2.0.0" : "1.0.0",
+          );
+        }
+        return [];
+      });
     return Effect.gen(function* () {
+      const versionCache = yield* ProviderLatestVersions.make(
+        packageNames.map((name) => [name, "1.0.0"] as const),
+      );
       yield* buildAppUnderTest({
         layers: {
+          providerLatestVersions: versionCache,
           modelManifest: {
             forceRefresh: Effect.sync(() => {
               manifestRefreshed = true;
@@ -8004,7 +8016,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             }),
           },
           providerInstanceRegistry: { listInstances: Effect.succeed(instances) },
-          providerRegistry: { refresh: () => probe, refreshInstance: () => probe },
+          providerRegistry: {
+            refresh: () => probe(versionCache),
+            refreshInstance: () => probe(versionCache),
+          },
         },
       });
       const wsUrl = yield* getWsServerUrl("/ws");
@@ -8017,10 +8032,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.isTrue(probed);
-    }).pipe(
-      Effect.provideService(ProviderVersionCache, versionCache),
-      Effect.provide(NodeHttpServer.layerTest),
-    );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest));
   });
 
   it.effect("serves config on reconnect without starting provider probes", () =>
@@ -11524,6 +11536,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 restoreCheckpoint: () => Effect.die("Rejected capture must not restore a checkout"),
                 diffCheckpoints: () => Effect.die("Rejected capture must not read a diff"),
                 deleteCheckpointRefs: () => Effect.die("Rejected capture must not publish cleanup"),
+                listAuthoredPaths: () =>
+                  Effect.die("Rejected capture must not list authored paths"),
               },
             },
           },

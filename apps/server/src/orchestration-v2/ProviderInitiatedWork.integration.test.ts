@@ -1058,7 +1058,9 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
           const observed = yield* Queue.unbounded<void>();
           const observedNoncurrent = yield* Deferred.make<void>();
           let current = true;
-          const guard: NonNullable<ProviderContinuationRequest["dispatchIfCurrent"]> = (dispatch) =>
+          const guard: NonNullable<
+            ProviderContinuationRequests.ProviderContinuationRequest["dispatchIfCurrent"]
+          > = (dispatch) =>
             Effect.suspend(() => {
               if (!current) {
                 return Deferred.succeed(observedNoncurrent, undefined).pipe(

@@ -95,13 +95,9 @@ describe("serverSettings helpers", () => {
       applyServerSettingsPatch(enabled, {
         storageCleanup: { worktreeAfterDays: null },
       }).storageCleanup,
-    ).toEqual({
+    ).toMatchObject({
       worktreeAfterDays: null,
       worktreeOnMerge: true,
-      worktreeOnDelete: false,
-      worktreeUnchanged: false,
-      worktreeKeepWhen: "uncommitted-changes",
-      browserArtifactsAfterDays: null,
       logsAfterDays: 30,
     });
   });

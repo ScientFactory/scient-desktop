@@ -707,6 +707,8 @@ describe("OpenCodeAdapterV2", () => {
           children: async () => ({ data: [] }),
         },
       });
+      // The first connection event is the stream handshake, not a reconnect.
+      yield* Effect.promise(() => nativeEvents.push({ type: "server.connected", properties: {} }));
       yield* harness.startTurn();
       const received = yield* harness.runtime.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
@@ -1296,7 +1298,7 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
-  it.effect("titles OpenCode reads and searches from their input", () =>
+  it.effect("projects OpenCode search queries and omits blank results", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
       const nativeSessionId = "native-opencode-search";
@@ -1323,10 +1325,11 @@ describe("OpenCodeAdapterV2", () => {
         Stream.runCollect,
         Effect.forkScoped,
       );
-      for (const [tool, input] of [
-        ["read", { filePath: "src/env.ts" }],
-        ["grep", { pattern: "TODO", path: "apps/web" }],
-        ["websearch", { query: "OpenCode documentation" }],
+      for (const [tool, input, output] of [
+        ["grep", { pattern: "TODO", path: "apps/web" }, "---\nfile body"],
+        ["websearch", { query: "OpenCode documentation" }, "---\nfile body"],
+        ["glob", { pattern: "missing", path: "apps/web" }, ""],
+        ["codesearch", {}, " \n\t"],
       ] as const) {
         yield* Effect.promise(() =>
           nativeEvents.push({
@@ -1343,7 +1346,7 @@ describe("OpenCodeAdapterV2", () => {
                 state: {
                   status: "completed",
                   input,
-                  output: "---\nfile body",
+                  output,
                   title: tool,
                   metadata: {},
                   time: { start: 1, end: 2 },
@@ -1362,11 +1365,11 @@ describe("OpenCodeAdapterV2", () => {
       const items = (yield* Fiber.join(received)).flatMap((event) =>
         event.type === "turn_item.updated" ? [event.turnItem] : [],
       );
-      const read = items.find((item) => item.type === "dynamic_tool");
-      assert.equal(read?.title, "Read src/env.ts");
       const grep = items.find((item) => item.type === "file_search");
-      assert.equal(grep?.title, "Searched TODO in web");
       assert.equal(grep?.type === "file_search" ? grep.pattern : null, "TODO");
+      assert.deepEqual(grep?.type === "file_search" ? grep.results : null, [
+        { fileName: "apps/web", preview: "---\nfile body" },
+      ]);
       const webSearch = items.find((item) => item.type === "web_search");
       assert.deepEqual(webSearch?.type === "web_search" ? webSearch.patterns : null, [
         "OpenCode documentation",

@@ -37,6 +37,7 @@ import { scriptedDroid } from "../provider/testUtils/scriptedDroid.ts";
 import { makeDroidAdapterV2 } from "./Adapters/DroidAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
@@ -70,6 +71,7 @@ export const selection = { instanceId, model: "droid-native" };
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
   Config.layerTest(process.cwd(), { prefix: "droid-native-scheduling-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -133,6 +135,7 @@ export const withDroid = <A, E, R>(
       const injected = yield* Queue.unbounded<ProviderAdapterV2Event>();
       const peer = yield* scriptedDroid(body);
       const config = yield* Config.ServerConfig;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const fs = yield* FileSystem.FileSystem;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const receiptDirectory = process.env.DROID_SCHED_RECEIPTS;
@@ -256,6 +259,10 @@ export const withDroid = <A, E, R>(
         makeLayer([adapter]),
         {
           configureMcp: false,
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
+          ),
           databaseLayer: SqlitePersistenceMemory,
           runEffectWorker: !options.manualWorker,
           layerServerConfig: Layer.succeed(Config.ServerConfig, config),

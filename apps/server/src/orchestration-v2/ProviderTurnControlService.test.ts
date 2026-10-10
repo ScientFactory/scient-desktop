@@ -393,7 +393,7 @@ it.effect(
       const selection = yield* Ref.make<ReadonlyArray<string>>([release.name]);
       const delivered = yield* Ref.make<ReadonlyArray<string>>([]);
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      const runtime: ProviderAdapterV2SessionRuntime = {
+      const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
         instanceId: providerInstanceId,
         driver,
         providerSessionId,

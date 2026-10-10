@@ -4,7 +4,7 @@
  * HTTP server. Frames reuse the shapes recorded against 2.0.18.
  */
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
   EnvironmentId,
@@ -475,7 +475,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             }
           : undefined,
       );
-      const seen: ProviderAdapterV2Event[] = [];
+      const seen: ProviderAdapter.ProviderAdapterV2Event[] = [];
       const terminal = yield* Deferred.make<void>();
       const confirmed = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
@@ -2326,10 +2326,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       const requested =
         yield* Deferred.make<
-          Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }>["runtimeRequest"]
+          Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "runtime_request.updated" }
+          >["runtimeRequest"]
         >();
       const terminal =
-        yield* Deferred.make<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
+        yield* Deferred.make<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+        >();
       // Runtime events are a unicast queue. One reader must route both facts:
       // competing request/terminal streams can consume each other's events.
       yield* runtime.events.pipe(

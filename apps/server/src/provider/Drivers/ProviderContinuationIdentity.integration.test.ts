@@ -43,10 +43,14 @@ const baseLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-native-continuation-identity-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 const providerDependenciesLayer = baseLayer.pipe(
-  Layer.provideMerge(IdAllocator.layer),
-  Layer.provideMerge(ProviderContinuationRequests.layer),
-  Layer.provideMerge(ProviderLatestVersions.layer),
-  Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      IdAllocator.layer,
+      ProviderContinuationRequests.layer,
+      ProviderLatestVersions.layer,
+      McpProviderSessions.layer,
+    ),
+  ),
   Layer.provideMerge(
     Layer.succeed(CursorKeychain.CursorKeychain, {
       accessToken: Effect.die("Continuation identity must not read real Keychain credentials"),

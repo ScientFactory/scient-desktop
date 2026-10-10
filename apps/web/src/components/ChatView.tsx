@@ -362,7 +362,6 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
-  PaperclipIcon,
   TargetIcon,
   WifiOffIcon,
 } from "lucide-react";

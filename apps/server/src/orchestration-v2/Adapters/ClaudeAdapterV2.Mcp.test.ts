@@ -14,7 +14,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ScientThreadsToolkit } from "../../mcp/toolkits/threads/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
-import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 

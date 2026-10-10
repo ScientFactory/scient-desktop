@@ -34,6 +34,7 @@ import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
@@ -76,6 +77,7 @@ const targetAnswer = "LONG-DROID-COMPLETE: retained cobalt exactly once.";
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "long-droid-portable-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -152,6 +154,7 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
           );
           yield* fs.chmod(binaryPath, 0o755);
           const config = yield* ServerConfig.ServerConfig;
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
           const instanceId = ProviderInstanceId.make("long-droid-instance");
           const sourceId = ThreadId.make("long-droid-source");
           const targetId = ThreadId.make("long-droid-target");
@@ -198,6 +201,10 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
             makeLayer([adapter]),
             {
               configureMcp: true,
+              mcpProviderSessionsLayer: Layer.succeed(
+                McpProviderSessions.McpProviderSessions,
+                mcpSessions,
+              ),
               runEffectWorker: false,
               layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
             },

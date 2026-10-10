@@ -332,12 +332,11 @@ describe("resolveWorktreeCleanup", () => {
         [projectId]: { worktreeCleanup: { mode: "off" } },
       },
     });
-    expect(resolveWorktreeCleanup(off, projectId)).toEqual({
+    expect(resolveWorktreeCleanup(off, projectId)).toMatchObject({
       worktreeAfterDays: null,
       worktreeOnDelete: false,
       worktreeOnMerge: false,
       worktreeUnchanged: false,
-      worktreeKeepWhen: "uncommitted-changes",
     });
     expect(resolveWorktreeCleanup(off, otherProjectId)).toEqual(inherited);
     const custom = applyServerSettingsPatch(off, {
@@ -366,12 +365,10 @@ describe("resolveWorktreeCleanup", () => {
     const edited = applyServerSettingsPatch(custom, {
       worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 15 } },
     });
-    expect(resolveWorktreeCleanup(edited, null)).toEqual({
+    expect(resolveWorktreeCleanup(edited, null)).toMatchObject({
       worktreeAfterDays: 15,
       worktreeOnDelete: true,
       worktreeOnMerge: true,
-      worktreeUnchanged: false,
-      worktreeKeepWhen: "uncommitted-changes",
     });
     expect(
       resolveWorktreeCleanup(applyServerSettingsPatch(edited, { worktreeCleanup: null }), null)

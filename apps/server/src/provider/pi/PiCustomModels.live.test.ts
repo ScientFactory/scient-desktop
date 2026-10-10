@@ -23,6 +23,7 @@ import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
 import { PiRpcProtocolError } from "./PiRpcClient.ts";
 import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
 const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -31,6 +32,7 @@ const piDriverTestLayer = Layer.mergeAll(
   TestProviderHost.layer({ runBackgroundWork: false }),
   IdAllocator.layer,
   McpProviderSessions.layer,
+  ProviderLatestVersions.layer,
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("Unexpected HTTP")),

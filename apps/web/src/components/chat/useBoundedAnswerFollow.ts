@@ -158,6 +158,7 @@ export function useBoundedAnswerFollow({
       onFinished?.(promptMessageId);
     };
     let observedAnswer: Element | null = null;
+    let stopAnswerResize: (() => void) | null = null;
     let mountAttempts = 12;
     let frame: number | null = null;
     let previousFrameTime = motionClock.now();
@@ -215,9 +216,9 @@ export function useBoundedAnswerFollow({
         return;
       }
       const answer = answerBox.element;
-      if (answer && observedAnswer !== answer) {
-        if (observedAnswer) observer.unobserve(observedAnswer);
-        observer.observe(answer);
+      if (observedAnswer !== answer) {
+        stopAnswerResize?.();
+        stopAnswerResize = answer ? observeResize(answer, schedule) : null;
         observedAnswer = answer;
       }
       const promptBox = rowRect(promptRow.id);
@@ -370,6 +371,7 @@ export function useBoundedAnswerFollow({
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
       stopResize();
+      stopAnswerResize?.();
       unsubscribeReveal();
       viewport.removeEventListener("wheel", onWheel);
       viewport.removeEventListener("scroll", onScroll);

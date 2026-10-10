@@ -309,7 +309,7 @@ export const makeCodexReplayHarness = (
   transcript: CodexReplay.CodexAppServerReplayTranscript,
   onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
   onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
-  readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+  readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
   configureMcp?: boolean,
   settings?: CodexSettings,
   options: {

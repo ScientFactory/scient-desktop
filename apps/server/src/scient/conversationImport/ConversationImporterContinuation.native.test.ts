@@ -1973,7 +1973,7 @@ it.live(
         );
         const config = yield* ServerConfig;
         const runtimeOptions = {
-          layerDatabase: database,
+          databaseLayer: database,
           layerServerConfig: Layer.succeed(ServerConfig, config),
         };
         const replacing = yield* Deferred.make<void>();
@@ -3356,7 +3356,7 @@ it.live(
         ).pipe(Layer.provide(NodeServices.layer));
         const config = yield* ServerConfig;
         const runtimeOptions = {
-          layerDatabase: database,
+          databaseLayer: database,
           layerServerConfig: Layer.succeed(ServerConfig, config),
         };
         const projectScope = yield* Scope.Scope;
@@ -3574,7 +3574,7 @@ it.live(
             {
               modelContextWindow: () => undefined,
               runtimeOptions: {
-                layerDatabase: freshDatabase,
+                databaseLayer: freshDatabase,
                 layerServerConfig: Layer.succeed(ServerConfig, freshConfig),
               },
             },

@@ -280,7 +280,7 @@ const makeProviderAdapter = Effect.fn("makeProviderAdapter")(function* (
       readonly initialProviderItemIdentityVersion?: 2;
       readonly threadId: ThreadId;
       readonly configureMcp?: boolean;
-    }) => Effect.Effect<void>;
+    }) => Effect.Effect<void, never, McpProviderSessions.McpProviderSessions>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly closeSession?: (id: ProviderSessionId) => Effect.Effect<void>;
@@ -309,7 +309,9 @@ const makeProviderAdapter = Effect.fn("makeProviderAdapter")(function* (
     openSession: (input) =>
       Effect.gen(function* () {
         if (options.spawnBeforeOpen !== true && options.beforeOpen !== undefined) {
-          yield* options.beforeOpen(input);
+          yield* options
+            .beforeOpen(input)
+            .pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
         }
         if (options.mcpConfigs !== undefined) {
           const config =
@@ -349,7 +351,9 @@ const makeProviderAdapter = Effect.fn("makeProviderAdapter")(function* (
         }
 
         if (options.spawnBeforeOpen === true && options.beforeOpen !== undefined) {
-          yield* options.beforeOpen(input);
+          yield* options
+            .beforeOpen(input)
+            .pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
         }
 
         return {
@@ -456,7 +460,7 @@ function makeTestLayer(input: {
     readonly initialProviderItemIdentityVersion?: 2;
     readonly threadId: ThreadId;
     readonly configureMcp?: boolean;
-  }) => Effect.Effect<void>;
+  }) => Effect.Effect<void, never, McpProviderSessions.McpProviderSessions>;
   readonly releaseWriteFailure?: ReleaseWriteFailureControl;
   readonly onAuthenticationFailure?: ProviderRegistry.ProviderRegistry["Service"]["setProviderAuthenticationFailure"];
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;

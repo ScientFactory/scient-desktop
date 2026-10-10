@@ -10,7 +10,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type {
@@ -320,11 +320,11 @@ export const makeGrokConnectionActions = Effect.fn("GrokConnectionActions.make")
           ...environment,
           [GROK_DEVICE_FLOW_ENV]: deviceFlow ? "true" : "false",
         },
-        childProcessSpawner: spawner,
         cwd: process.cwd(),
         clientInfo: { name: "scient-provider-connection", version: "0.0.0" },
       }).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.mapError((cause) => actionError("Grok could not start its local agent.", cause)),
         Effect.map((acp): GrokAcpConnection => ({
           initialize: () =>

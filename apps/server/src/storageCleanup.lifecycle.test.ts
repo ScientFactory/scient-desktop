@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, EventId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -33,7 +34,7 @@ const testLayer = Layer.merge(
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "storage-cleanup-lifecycle" },
     ProviderAdapterRegistry.layerFromAdapters([]),
-    { layerDatabase: database, runEffectWorker: false },
+    { databaseLayer: database, runEffectWorker: false },
   ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -145,9 +146,8 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
           }),
         ),
       );
-      const cleanup = yield* StorageCleanup.StorageCleanup.pipe(
-        Effect.provide(StorageCleanup.layer),
-        Effect.provide(
+      const cleanupLayer = StorageCleanup.layer.pipe(
+        Layer.provide(
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, settings),
             Layer.succeed(ProjectionStore.ProjectionStoreV2, {
@@ -219,6 +219,7 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
           ),
         ),
       );
+      const cleanup = Context.get(yield* Layer.build(cleanupLayer), StorageCleanup.StorageCleanup);
       yield* Deferred.await(initialRead);
       yield* cleanup.drain;
       assert.isTrue(yield* fs.exists(worktreePath));

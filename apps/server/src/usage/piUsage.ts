@@ -189,7 +189,7 @@ export async function scanPiUsage(input: {
   readonly untilDay: string;
 }): Promise<readonly PiUsageRow[]> {
   const reducer = makePiUsageReducer(input);
-  const files = await listTranscriptFiles(input.root, input.sinceMs);
+  const { files } = await listTranscriptFiles(input.root, input.sinceMs);
   for (const file of files) {
     await new Promise<void>((resolve) => {
       const stream = NodeFS.createReadStream(file.path, { encoding: "utf8" });

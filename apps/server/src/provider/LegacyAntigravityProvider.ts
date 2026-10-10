@@ -46,6 +46,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 
 type LegacyAntigravitySettings = Pick<
   AntigravitySettings,
@@ -555,6 +556,7 @@ export const enrichAntigravitySnapshot = (input: {
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly stampIdentity?: (snapshot: ServerProvider) => ServerProvider;
   readonly httpClient: HttpClient.HttpClient;
+  readonly latestVersions: ProviderLatestVersions.ProviderLatestVersions["Service"];
 }): Effect.Effect<void> => {
   const { snapshot, publishSnapshot } = input;
   const stampIdentity = input.stampIdentity ?? ((value) => value);
@@ -563,6 +565,7 @@ export const enrichAntigravitySnapshot = (input: {
     enableProviderUpdateChecks: input.enableProviderUpdateChecks,
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, input.httpClient),
+    Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, input.latestVersions),
     Effect.flatMap((enrichedSnapshot) =>
       publishSnapshot(stampIdentity(enrichedSnapshot)).pipe(Effect.as(enrichedSnapshot)),
     ),
@@ -571,5 +574,6 @@ export const enrichAntigravitySnapshot = (input: {
         errorTag: causeErrorTag(cause),
       }).pipe(Effect.asVoid),
     ),
+    Effect.asVoid,
   );
 };

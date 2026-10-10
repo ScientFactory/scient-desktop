@@ -404,7 +404,7 @@ const runRetainedCloseTest = <E>(
         ),
       );
     }),
-  ).pipe(Effect.provide(McpProviderSessions.layer), Effect.provide(NodeServices.layer));
+  ).pipe(Effect.provide(McpProviderSessions.layer.pipe(Layer.provideMerge(NodeServices.layer))));
 
 it.effect(
   "ProviderSessionManagerV2 retained close survives interrupted waiters and joins one actual child close",

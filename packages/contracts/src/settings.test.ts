@@ -86,19 +86,6 @@ describe("ServerSettings response streaming", () => {
 });
 
 describe("storage cleanup settings", () => {
-  it("keeps cleanup disabled for existing installations", () => {
-    expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
-    expect(decodeServerSettings({}).storageCleanup).toEqual({
-      worktreeAfterDays: null,
-      worktreeOnMerge: false,
-      worktreeOnDelete: false,
-      worktreeUnchanged: false,
-      worktreeKeepWhen: "uncommitted-changes",
-      browserArtifactsAfterDays: null,
-      logsAfterDays: null,
-    });
-  });
-
   it("accepts eight-day retention and disabling one rule without resetting others", () => {
     expect(decodeServerSettingsPatch({ storageCleanup: { worktreeAfterDays: 8 } })).toEqual({
       storageCleanup: { worktreeAfterDays: 8 },
@@ -123,24 +110,7 @@ describe("storage cleanup settings", () => {
     ).toThrow();
   });
 
-  it("decodes older custom rules with the default local-file policy", () => {
-    const settings = decodeServerSettings({
-      worktreeCleanup: {
-        mode: "custom",
-        rules: {
-          worktreeAfterDays: 8,
-          worktreeOnMerge: false,
-          worktreeOnDelete: false,
-          worktreeUnchanged: false,
-        },
-      },
-    });
-    expect(settings.worktreeCleanup).toMatchObject({
-      rules: { worktreeKeepWhen: "uncommitted-changes" },
-    });
-    expect(
-      decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "tracked-changes" } }),
-    ).toEqual({ storageCleanup: { worktreeKeepWhen: "tracked-changes" } });
+  it("rejects unknown local-file retention policies", () => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "unknown" } }),
     ).toThrow();

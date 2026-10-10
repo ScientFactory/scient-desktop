@@ -25,6 +25,7 @@ import { scriptedDroid } from "../provider/testUtils/scriptedDroid.ts";
 import { makeDroidAdapterV2 } from "./Adapters/DroidAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
@@ -34,6 +35,7 @@ const decodeSettings = Schema.decodeEffect(DroidSettings);
 const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-watchdog-sql-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -50,6 +52,7 @@ it.layer(layer)("Droid native idle supervision persistence", (it) => {
       update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "watchdog-ready" } });
     }`);
           const config = yield* ServerConfig.ServerConfig;
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           const instanceId = ProviderInstanceId.make("droid-watchdog-instance");
           const threadId = ThreadId.make("droid-watchdog-thread");
@@ -92,6 +95,10 @@ it.layer(layer)("Droid native idle supervision persistence", (it) => {
             ]),
             {
               configureMcp: false,
+              mcpProviderSessionsLayer: Layer.succeed(
+                McpProviderSessions.McpProviderSessions,
+                mcpSessions,
+              ),
               runEffectWorker: false,
               layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
             },

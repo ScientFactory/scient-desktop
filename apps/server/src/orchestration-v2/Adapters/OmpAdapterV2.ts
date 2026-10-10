@@ -43,7 +43,7 @@ import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
 import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
-import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   decodeOmpModelSlug,
   encodeOmpModelSlug,

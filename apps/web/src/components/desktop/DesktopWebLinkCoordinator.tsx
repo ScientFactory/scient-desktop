@@ -108,7 +108,6 @@ export function DesktopWebLinkCoordinator() {
         : await openFileInPreview({
             threadRef,
             filePath: decodeURIComponent(new URL(url).pathname),
-            workspaceRoot: undefined,
             httpBaseUrl,
             createAssetUrl,
             openPreview,

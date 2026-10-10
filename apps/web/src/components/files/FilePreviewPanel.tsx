@@ -1832,7 +1832,6 @@ export default function FilePreviewPanel({
       const result = await openFileInPreview({
         threadRef,
         workspaceRoot: cwd,
-        relativePath,
         filePath: absolutePath,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,

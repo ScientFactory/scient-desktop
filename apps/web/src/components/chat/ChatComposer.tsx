@@ -7375,42 +7375,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
               {!isComposerCollapsedMobile &&
                 !isComposerApprovalState &&
-                pendingUserInputs.length === 0 &&
-                editingQueuedAttachments !== null &&
-                editingQueuedAttachments.length > 0 && (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {editingQueuedAttachments.map(({ attachment, url }) => (
-                      <div
-                        key={attachment.id}
-                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                      >
-                        {attachment.type === "image" && url ? (
-                          <img
-                            src={url}
-                            alt={attachment.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
-                            {attachment.name}
-                          </div>
-                        )}
-                        <Button
-                          variant="media-close"
-                          size="icon-xs"
-                          className="absolute right-1 top-1"
-                          onClick={() => onRemoveEditingQueuedAttachment(attachment.id)}
-                          aria-label={`Remove ${attachment.name}`}
-                        >
-                          <XIcon />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-              {!isComposerCollapsedMobile &&
-                !isComposerApprovalState &&
                 (uncommittedSnapShotIds.length > 0 ||
                   composerVideos.length > 0 ||
                   expandedComposerImages.length > 0) && (
@@ -7845,7 +7809,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : // SCIENT-FORK:START — busy-state placeholder while the agent works.
                                     (composerWorkingPlaceholder ??
-                                    "Ask anything, @tag files/folders, $use skills, or / for commands")
+                                    "Ask anything, @tag files, folders or conversations, $use skills, or / for commands")
                       // SCIENT-FORK:END
                     }
                     disabled={

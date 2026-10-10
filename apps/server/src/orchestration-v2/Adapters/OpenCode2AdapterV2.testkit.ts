@@ -23,6 +23,7 @@ import * as UrlParams from "effect/http/UrlParams";
 import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
 import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
@@ -391,7 +392,16 @@ export const openCode2ReplayRuntime = (
         cwd: "/work/opencode2",
       },
     });
-  }).pipe(Effect.provide(Layer.mergeAll(layerReplayHost, IdAllocator.layer, NodeServices.layer)));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerReplayHost,
+        IdAllocator.layer,
+        NodeServices.layer,
+        McpProviderSessions.layer,
+      ),
+    ),
+  );
 
 export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   OpenCode2ReplayTranscript,

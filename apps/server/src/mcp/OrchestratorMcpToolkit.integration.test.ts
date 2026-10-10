@@ -96,6 +96,8 @@ import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 
 // Effect returns a declared tool failure as `isError` with its encoded payload
 // as JSON text, never as `structuredContent`.
@@ -779,6 +781,16 @@ describe("orchestrator MCP toolkit", () => {
             }),
           );
           const projectWrites = yield* Ref.make(0);
+          const layerRepositories = Layer.mock(
+            SourceControlRepositoryService.SourceControlRepositoryService,
+          )({});
+          const layerCloneTracker = ProjectCloneTracker.layer.pipe(
+            Layer.provide(layerRepositories),
+          );
+          const layerGit = GitVcsDriver.layer.pipe(
+            Layer.provide(layerOrchestration),
+            Layer.provide(NodeServices.layer),
+          );
           const projectGuardDependencies = Layer.mergeAll(
             Layer.mock(ProjectService.ProjectService)({
               update: (input) =>
@@ -794,7 +806,8 @@ describe("orchestrator MCP toolkit", () => {
               namedProjectsRoot: "/tmp/mcp-managed-projects",
             }),
             Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
-            Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
+            layerRepositories,
+            layerCloneTracker,
           );
           const projectGuardRegistration = McpHttpServer.toolkitRegistration(
             ProjectToolkit,
@@ -811,6 +824,7 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provide(layerRegistry),
             Layer.provide(layerProviderRegistry),
             Layer.provide(layerScheduledTaskStub),
+            Layer.provide(layerGit),
             Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
             Layer.provide(
               Layer.mock(ProjectService.ProjectService)({
@@ -2473,7 +2487,7 @@ describe("orchestrator MCP toolkit", () => {
               text: "Delegated task reached a terminal state.",
               attachments: [],
               modelSelection: claudeSelection,
-              dispatchMode: { type: "start_immediately" },
+              dispatchMode: { type: "queue_after_active" },
               delegatedCompletion: {
                 parentRunId: nestedFollowup.runId,
                 generation: descendantDelivery.generation,

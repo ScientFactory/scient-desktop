@@ -1,4 +1,3 @@
-import { rmdir } from "node:fs/promises";
 import {
   GitCommandError,
   OrchestrationV2AppThreadJson,
@@ -18,6 +17,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { removeEmptyDirectory } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
@@ -419,9 +419,8 @@ const make = Effect.gen(function* () {
         reason === null ? Effect.succeed(null) : restore.pipe(Effect.as(reason)),
       ),
       Effect.ensuring(
-        // rmdir is intentionally non-recursive: never delete recovery files,
-        // even if an outside writer populates the private container.
-        Effect.tryPromise({ try: () => rmdir(container), catch: (cause) => cause }).pipe(
+        // rmdir never removes recovery contents, including files racing this cleanup.
+        removeEmptyDirectory(container).pipe(
           Effect.catch((cause) =>
             Effect.logWarning("storage cleanup could not remove empty isolation container", {
               container,
@@ -662,16 +661,25 @@ const make = Effect.gen(function* () {
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
         // SCIENT-FORK:START compute-worktree-retention — physical owners block removal.
-        (effect) =>
-          withWorkspaceLease(
+        (effect) => {
+          let admitted = false;
+          return withWorkspaceLease(
             worktreePath,
-            withoutComputeWorkspaceOwners(worktreePath, effect.pipe(Effect.as(true))).pipe(
-              Effect.map((admitted) => {
-                if (admitted !== true)
-                  keep("Compute workspace is still owned or removal is in progress");
+            withoutComputeWorkspaceOwners(
+              worktreePath,
+              effect.pipe(
+                Effect.tap(() => {
+                  admitted = true;
+                  return Effect.void;
+                }),
+              ),
+            ).pipe(
+              Effect.map(() => {
+                if (!admitted) keep("Compute workspace is still owned or removal is in progress");
               }),
             ),
-          ),
+          );
+        },
         // SCIENT-FORK:END compute-worktree-retention
         Effect.catch((error) =>
           Effect.gen(function* () {

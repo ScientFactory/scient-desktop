@@ -7,9 +7,12 @@ import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Path, Redacted, Stream, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/process";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
+
+import { classifyDroidRuntimeTestRequest } from "./DroidRuntimeTestRequests.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;
 beforeAll(() => qualifyDroidTestBinary(binary), 10_000);
@@ -113,6 +116,7 @@ for (const explicitLimits of [true, false]) {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-droid-token-limit-" });
         const requests: Record<string, unknown>[] = [];
         const paths: string[] = [];
+        const unexpected: Record<string, unknown>[] = [];
         const server = yield* Effect.acquireRelease(
           Effect.sync(() =>
             NodeHttp.createServer(async (request, response) => {
@@ -124,9 +128,21 @@ for (const explicitLimits of [true, false]) {
               }
               let body = "";
               for await (const chunk of request) body += String(chunk);
-              requests.push(decodeFixtureRequest(body));
-              const limited = requests.length === 1;
-              const content = limited ? "Partial fixture answer" : "Recovered fixture answer";
+              const captured = decodeFixtureRequest(body);
+              const kind = classifyDroidRuntimeTestRequest(captured);
+              if (kind === "unexpected") {
+                unexpected.push(captured);
+                response.writeHead(400).end();
+                return;
+              }
+              if (kind === "agent") requests.push(captured);
+              const limited = kind === "agent" && requests.length === 1;
+              const content =
+                kind === "title"
+                  ? "Fixture session title"
+                  : limited
+                    ? "Partial fixture answer"
+                    : "Recovered fixture answer";
               response.writeHead(200, { "content-type": "text/event-stream" });
               for (const choice of [
                 { index: 0, delta: { role: "assistant", content }, finish_reason: null },
@@ -160,6 +176,31 @@ for (const explicitLimits of [true, false]) {
         const address = server.address();
         if (!address || typeof address === "string") throw new Error("Missing fixture port");
         const baseUrl = `http://127.0.0.1:${address.port}`;
+        const sendTitleRequest = Effect.fnUntraced(
+          function* () {
+            const response = yield* HttpClient.execute(
+              HttpClientRequest.post(`${baseUrl}/chat/completions`).pipe(
+                HttpClientRequest.bodyJsonUnsafe({
+                  model: "fixture",
+                  messages: [
+                    {
+                      role: "system",
+                      content:
+                        "You are a helper that generates concise session titles for a session picker.",
+                    },
+                  ],
+                }),
+              ),
+            );
+            expect(response.status).toBe(200);
+            expect(yield* response.text).toContain("Fixture session title");
+          },
+          Effect.provide(FetchHttpClient.layer),
+          Effect.timeout("5 seconds"),
+        );
+        // Deliberately put auxiliary traffic first, independent of vendor scheduling.
+        yield* sendTitleRequest();
+        expect(requests).toEqual([]);
         const instanceId = ProviderInstanceId.make("droid_limit_fixture");
         const connections: ReadonlyArray<ResolvedModelConnection> = [
           {
@@ -250,7 +291,8 @@ for (const explicitLimits of [true, false]) {
               }),
             ),
           );
-        // Droid may recover internally; an endpoint length stop is not yet an ACP failure.
+        expect(unexpected).toEqual([]);
+        // Only agent requests advance the simulated length stop and recovery.
         expect(requests.length).toBeGreaterThan(1);
         // Droid re-encodes input images; check the actual image part, not identical PNG bytes.
         const wire = encodeFixtureValue(requests[0]?.messages);
@@ -263,12 +305,16 @@ for (const explicitLimits of [true, false]) {
         expect(text).toContain("Partial fixture answer");
         expect(text).toContain("Recovered fixture answer");
         expect(first.stopReason).toBe("end_turn");
+        const recoveredRequestCount = requests.length;
+        yield* sendTitleRequest();
+        expect(requests).toHaveLength(recoveredRequestCount);
         text = "";
         const next = yield* runtime.prompt({
           prompt: [{ type: "text", text: "Continue briefly. Do not use tools." }],
         });
         expect(next.stopReason).toBe("end_turn");
         expect(text).toContain("Recovered fixture answer");
+        expect(unexpected).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
     30_000,
   );
@@ -282,6 +328,7 @@ it.effect.skipIf(!binary)(
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-droid-native-switch-" });
       const inference: Array<{ path: string; body: Record<string, unknown> }> = [];
+      const unexpected: Record<string, unknown>[] = [];
       // All Factory HTTP traffic is directed to a synthetic server. No account,
       // production profile, API key or hosted inference is used by this test.
       const server = yield* Effect.acquireRelease(
@@ -290,7 +337,10 @@ it.effect.skipIf(!binary)(
             if (request.url?.match(/\/(chat\/completions|responses|messages)(\?|$)/)) {
               let body = "";
               for await (const chunk of request) body += String(chunk);
-              inference.push({ path: request.url, body: decodeFixtureRequest(body) });
+              const captured = decodeFixtureRequest(body);
+              const kind = classifyDroidRuntimeTestRequest(captured);
+              if (kind === "agent") inference.push({ path: request.url, body: captured });
+              if (kind === "unexpected") unexpected.push(captured);
               response.writeHead(400, { "content-type": "application/json" });
               response.end(
                 '{"error":{"type":"invalid_request_error","message":"Intentional fixture rejection"}}',
@@ -387,9 +437,39 @@ it.effect.skipIf(!binary)(
               }
             }
             const before = inference.length;
+            const title =
+              "You are a helper that generates concise session titles for a session picker.";
+            const titleRequest =
+              connection.protocol === "anthropic-messages"
+                ? { system: [{ type: "text", text: title }], messages: [], tools: [] }
+                : connection.protocol === "openai-responses"
+                  ? { instructions: title, input: [], tools: [] }
+                  : { messages: [{ role: "system", content: title }], tools: [] };
+            yield* Effect.gen(function* () {
+              const route =
+                connection.protocol === "anthropic-messages"
+                  ? "messages"
+                  : connection.protocol === "openai-responses"
+                    ? "responses"
+                    : "chat/completions";
+              const auxiliary = yield* HttpClient.execute(
+                HttpClientRequest.post(`${baseUrl}/${route}`).pipe(
+                  HttpClientRequest.bodyJsonUnsafe({
+                    model: connection.models[0]!.modelId,
+                    ...titleRequest,
+                  }),
+                ),
+              );
+              // This fixture rejects inference intentionally, including recognized titles.
+              expect(auxiliary.status).toBe(400);
+              yield* auxiliary.text;
+            }).pipe(Effect.provide(FetchHttpClient.layer), Effect.timeout("5 seconds"));
+            expect(unexpected).toEqual([]);
+            expect(inference).toHaveLength(before);
             yield* runtime
               .prompt({ prompt: [{ type: "text", text: "Answer briefly without tools." }] })
               .pipe(Effect.timeout("8 seconds"), Effect.exit);
+            expect(unexpected).toEqual([]);
             expect(inference.length).toBeGreaterThan(before);
             const captured = inference[before]!;
             expect(captured.path).toContain(

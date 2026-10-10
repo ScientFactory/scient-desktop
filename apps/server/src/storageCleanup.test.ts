@@ -230,7 +230,14 @@ describe("merged pull request cleanup", () => {
 const cleanupFixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const config = yield* ServerConfig.ServerConfig;
+  const configured = yield* ServerConfig.ServerConfig;
+  yield* fs.makeDirectory(configured.browserArtifactsDir, { recursive: true });
+  yield* fs.makeDirectory(configured.logsDir, { recursive: true });
+  const config = {
+    ...configured,
+    browserArtifactsDir: yield* fs.realPath(configured.browserArtifactsDir),
+    logsDir: yield* fs.realPath(configured.logsDir),
+  };
   const git = yield* GitVcsDriver.GitVcsDriver;
   const repo = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-repo-" });
   const command = (cwd: string, args: string[]) =>
@@ -255,6 +262,7 @@ const cleanupFixture = Effect.gen(function* () {
   let recreateOriginal = false;
   let isolatedPath: string | undefined;
   const context = yield* Layer.build(StorageCleanup.layer).pipe(
+    Effect.provideService(ServerConfig.ServerConfig, config),
     Effect.provideService(GitVcsDriver.GitVcsDriver, {
       ...git,
       execute: (input) =>

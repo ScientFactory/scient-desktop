@@ -63,7 +63,6 @@ export type OmpDriverEnv =
   | HttpClient.HttpClient
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
-  | ProviderContinuationRequests.ProviderContinuationRequests
   | ProviderLatestVersions.ProviderLatestVersions
   | OmpExecutableGate
   | Path.Path
