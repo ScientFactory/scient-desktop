@@ -61,6 +61,23 @@ const migrationPayload = Effect.gen(function* () {
   );
 });
 
+it.effect("never reports complete when the original V1 source could not be inspected", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const importer = yield* Legacy.LegacyV1ThreadImporter;
+    yield* sql`UPDATE scient_legacy_reconciliation_state SET last_error = 'Original source unavailable' WHERE id = 1`;
+    assert.equal(yield* importer.pendingThreadCount, 0);
+    yield* importLegacyTranscriptsWithStatus(0);
+    const payload = yield* migrationPayload;
+    assert.equal(payload.status, "running");
+    assert.equal(payload.failed, true);
+    assert.equal(payload.pendingThreadCount, undefined);
+    yield* sql`UPDATE scient_legacy_reconciliation_state SET last_error = NULL WHERE id = 1`;
+    yield* importLegacyTranscriptsWithStatus(0);
+    assert.equal((yield* migrationPayload).status, "complete");
+  }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect(
   "reports incomplete imports from the ledger, keeps healthy threads usable, and completes on retry",
   () =>

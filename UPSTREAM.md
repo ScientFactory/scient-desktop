@@ -651,6 +651,13 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
+Scient's legacy-source reconciliation repairs stale V2 snapshots without replacing the live V2
+database. Preserve its read-only original source, before-images, source identity boundary, separate
+Scient migration ledger, and conflict versions. The `EventSink` transaction hook prepares recovery
+events against current projections before appending them, so edits and interrupted retries remain
+safe. Historical imports never acquire provider-session, queue, or checkpoint execution authority.
+See [legacy migration and recovery](docs/internals/legacy-orchestration-migration.md).
+
 The agent-capability foundation keeps workspace authority under
 `scient/projectScope`, not in T3's host project schema. Scient's existing
 thread-queue migration remains 011; binding migrations occupy 012–013.

@@ -98,14 +98,53 @@ it.effect(
           0,
         );
         v1.exec("UPDATE projection_threads SET title = 'Continued in V1'");
+        v1.exec(`
+          INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+          VALUES ('later-project', 'Later project', '/tmp/later', '[]', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z');
+          INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+          VALUES ('post-snapshot-thread', 'later-project', 'Added after the snapshot', '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z');
+          INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
+          VALUES ('later-user', 'post-snapshot-thread', 'user', 'Retained user message', 0, '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z'),
+            ('later-assistant', 'post-snapshot-thread', 'assistant', 'Retained answer', 0, '2026-02-01T00:00:01.000Z', '2026-02-01T00:00:01.000Z'),
+            ('later-reasoning', 'post-snapshot-thread', 'reasoning', 'Retained reasoning', 0, '2026-02-01T00:00:00.500Z', '2026-02-01T00:00:00.500Z');
+        `);
       } finally {
         v1.close();
       }
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         assert.equal((yield* sql`SELECT text FROM v2_work`)[0]?.text, "Keep V2 work");
-        assert.equal((yield* sql`SELECT title FROM projection_threads`)[0]?.title, "V1 thread");
+        assert.equal(
+          (yield* sql`SELECT title FROM projection_threads`)[0]?.title,
+          "Continued in V1",
+        );
       }).pipe(Effect.provide(layerDatabase));
+      const afterV1Continuation = NodeFS.readFileSync(sourcePath);
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const legacy = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const laterThreadId = ThreadId.make("post-snapshot-thread");
+        assert.equal(yield* legacy.pendingThreadCount, 2);
+        yield* legacy.reconcileShells;
+        yield* legacy.ensureTranscript(laterThreadId);
+        const restored = yield* projections.getThreadProjection(laterThreadId);
+        assert.equal(restored.thread.title, "Added after the snapshot");
+        assert.equal(restored.thread.projectId, "later-project");
+        assert.deepEqual(
+          restored.messages.map((message) => message.text),
+          ["Retained user message", "Retained answer"],
+        );
+        assert.isTrue(restored.turnItems.some((item) => item.type === "reasoning"));
+        yield* legacy.ensureTranscript(threadId);
+        assert.equal(yield* legacy.pendingThreadCount, 0);
+        assert.equal(
+          (yield* projections.getThreadProjection(threadId)).thread.title,
+          "Continued in V1",
+        );
+        assert.equal((yield* sql`SELECT text FROM v2_work`)[0]?.text, "Keep V2 work");
+      }).pipe(Effect.provide(layerImporter));
+      assert.deepEqual(NodeFS.readFileSync(sourcePath), afterV1Continuation);
     }).pipe(
       Effect.provide(
         ServerConfig.layerTest(directory, directory).pipe(Layer.provideMerge(NodeServices.layer)),

@@ -37,6 +37,7 @@ const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
 }, Layer.unwrap);
 
 import { initializeV2Database } from "./initializeV2Database.ts";
+import { refreshLegacyV1Snapshot } from "./refreshLegacyV1Snapshot.ts";
 import * as ServerConfig from "../config.ts";
 
 // Size the -wal file is cut back to on the first commit after a WAL reset.
@@ -95,6 +96,28 @@ export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig.ServerConfig;
     yield* initializeV2Database(dbPath);
-    return layerFromPath(dbPath);
+    return Layer.provideMerge(
+      Layer.effectDiscard(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* refreshLegacyV1Snapshot(dbPath).pipe(
+            Effect.tap((recoveredThreadCount) =>
+              recoveredThreadCount === 0
+                ? Effect.void
+                : Effect.logInfo("Recovered V1 conversations missing from the V2 snapshot", {
+                    recoveredThreadCount,
+                  }),
+            ),
+            Effect.catch((cause) =>
+              Effect.gen(function* () {
+                yield* sql`UPDATE scient_legacy_reconciliation_state SET last_error = ${cause.message} WHERE id = 1`;
+                yield* Effect.logWarning(cause.message);
+              }),
+            ),
+          );
+        }),
+      ),
+      layerFromPath(dbPath),
+    );
   }),
 );
