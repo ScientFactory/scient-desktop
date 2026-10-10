@@ -1080,3 +1080,23 @@ corrected to `packages/provider-core/src/server/ProviderContinuationRequests.ts`
 The complete PR-changed Markdown set is checked for formatting and local links
 after this documentation-only repair; prior runtime qualification is unchanged.
 Hosted checks must still qualify the subsequent pushed head.
+
+Hosted CI at `a39d3d474d` passed the other jobs, including mobile native static
+analysis, Windows installation/runtime and transfer ceilings. Server shard 1
+was cancelled at the unchanged 25-minute job limit while tests were still
+passing. Its import-continuation suite alone passed 27 tests in 520.341 seconds
+but had no recorded shard weight; the Droid adapter's 65.194 seconds were also
+unrecorded. The 65-entry profile no longer represented the composed server suite.
+
+Refresh the shard weights from that same CI run: completed shards 2/3 provide
+634 file timings and shard 1's passing/skipped summaries provide another 206.
+All 840 observations are disjoint members of the current 950-file suite.
+Retain the five existing weights for current files without fresh observations;
+remove obsolete paths and omit observed durations below the maintenance script's
+0.5-second threshold. The refreshed profile contains 260 weights. Unobserved
+files retain the sequencer's default cost. The existing deterministic greedy
+assignment, all three server jobs, their 25-minute limits, individual test
+limits, assertions and coverage remain unchanged. The existing sequencer tests
+and current-file assignment check prove each of the 950 files is scheduled
+exactly once. Timing estimates describe scheduling, not a completed CI pass;
+the next pushed head still requires all hosted checks to finish successfully.
