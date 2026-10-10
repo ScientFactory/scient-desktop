@@ -5,6 +5,10 @@ Observed source, promoted source, packaged artifacts, signed artifacts,
 published artifacts, installed updates, and accepted migration behavior are
 separate states and must be reported separately.
 
+For the isolated Beta lane and its required update qualification, see
+[Beta releases](./beta-releases.md). The workflow defaults to Stable, preserving
+the stable scheduler and production gate.
+
 ## Authority and invariants
 
 - `main` is the reviewed integration branch.
@@ -98,7 +102,7 @@ tag or release already exists.
 2. Manually run **Promote main to release/stable** with that full SHA. Promotion
    fails unless the SHA is current `origin/main`, has successful CI, and can
    fast-forward `release/stable`.
-3. Manually run **Scient stable release** from `release/stable` with the exact
+3. Manually run **Scient desktop release** from `release/stable` with the exact
    version and promoted SHA. For a real release candidate, select
    `publish_release=true`; this builds and assembles the candidate but does not
    publish it until the protected `production` job is separately approved. Use

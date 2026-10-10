@@ -307,6 +307,53 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
 
+  it.effect("packages real Beta with the isolated feed and the existing app identity", () =>
+    Effect.gen(function* () {
+      const version = "0.6.23-beta.20261010.1";
+      assert.equal(resolveDesktopUpdateChannel(version), "beta");
+      const beta = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        version,
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const stable = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.6.22",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.equal(beta.appId, stable.appId);
+      assert.equal(beta.productName, stable.productName);
+      assert.deepEqual(beta.publish, [
+        {
+          provider: "github",
+          owner: "ScientFactory",
+          repo: "scient-desktop-beta",
+          releaseType: "prerelease",
+          channel: "beta",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              GITHUB_REPOSITORY: "ScientFactory/scient-desktop",
+              T3CODE_DESKTOP_UPDATE_REPOSITORY: "ScientFactory/scient-desktop",
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+
   it("uses the stable Scient product name for every release build", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "Scient");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Scient");

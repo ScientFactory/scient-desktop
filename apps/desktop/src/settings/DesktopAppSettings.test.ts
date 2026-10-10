@@ -30,7 +30,7 @@ const DesktopSettingsPatch = Schema.Struct({
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
-  updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
+  updateChannel: Schema.optionalKey(Schema.Literals(["latest", "beta", "nightly"])),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
   wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
@@ -153,6 +153,50 @@ describe("DesktopSettings", () => {
     );
   });
 
+  it.effect("persists Beta enrollment and a return to Stable across reloads", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        assert.equal((yield* settings.load).updateChannel, "latest");
+        assert.isTrue((yield* settings.setUpdateChannel("beta")).changed);
+        assert.equal((yield* settings.load).updateChannel, "beta");
+        assert.equal((yield* settings.get).updateChannelConfiguredByUser, true);
+        yield* settings.setUpdateChannel("latest");
+        assert.equal((yield* settings.load).updateChannel, "latest");
+        assert.equal((yield* settings.get).updateChannelConfiguredByUser, true);
+      }),
+    ),
+  );
+
+  it.effect(
+    "defaults a direct Beta installation to Beta without overriding an explicit Stable preference",
+    () =>
+      withSettings(
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          assert.equal((yield* settings.load).updateChannel, "beta");
+          yield* settings.setUpdateChannel("latest");
+          assert.equal((yield* settings.load).updateChannel, "latest");
+        }),
+        { appVersion: "0.6.23-beta.20261010.1" },
+      ),
+  );
+
+  it.effect("keeps a migrated Nightly preference on Stable when a Beta installation reloads", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({ updateChannel: "nightly", tailscaleServePort: 8443 });
+        assert.equal((yield* settings.load).updateChannel, "latest");
+        const reloaded = yield* settings.load;
+        assert.equal(reloaded.updateChannel, "latest");
+        assert.isTrue(reloaded.updateChannelConfiguredByUser);
+        assert.equal(reloaded.tailscaleServePort, 8443);
+      }),
+      { appVersion: "0.6.23-beta.20261010.1" },
+    ),
+  );
+
   it.effect("persists and reloads the selected voice model", () =>
     withSettings(
       Effect.gen(function* () {
@@ -202,7 +246,7 @@ describe("DesktopSettings", () => {
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
           updateChannel: "latest",
-          updateChannelConfiguredByUser: false,
+          updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -223,7 +267,7 @@ describe("DesktopSettings", () => {
         const updateChannel = yield* settings.setUpdateChannel("nightly");
         assert.isFalse(updateChannel.changed);
         assert.equal(updateChannel.settings.updateChannel, "latest");
-        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, false);
+        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
       }),
     ),
   );
@@ -570,7 +614,7 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect("removes explicit stable overrides because Scient has one release track", () =>
+  it.effect("preserves explicit Stable preferences across reloads", () =>
     withSettings(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -593,7 +637,7 @@ describe("DesktopSettings", () => {
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
           updateChannel: "latest",
-          updateChannelConfiguredByUser: false,
+          updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -604,7 +648,11 @@ describe("DesktopSettings", () => {
           yield* decodeDesktopSettingsPatch(
             yield* fileSystem.readFileString(environment.desktopSettingsPath),
           ),
-          {} satisfies typeof DesktopSettingsPatch.Type,
+          {
+            serverExposureMode: "local-only",
+            updateChannel: "latest",
+            updateChannelConfiguredByUser: true,
+          } satisfies typeof DesktopSettingsPatch.Type,
         );
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },

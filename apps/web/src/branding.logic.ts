@@ -15,6 +15,8 @@ export function resolveServerBackedAppStageLabel(input: {
   readonly primaryServerVersion: string | null | undefined;
   readonly fallbackStageLabel: string;
 }): string {
+  if (input.primaryServerVersion && /-beta\.\d{8}\.\d+$/u.test(input.primaryServerVersion))
+    return "Beta";
   return input.primaryServerVersion &&
     NIGHTLY_SERVER_VERSION_PATTERN.test(input.primaryServerVersion)
     ? "Nightly"

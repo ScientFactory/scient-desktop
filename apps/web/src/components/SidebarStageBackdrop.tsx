@@ -8,7 +8,7 @@ import { primaryServerConfigAtom } from "../state/server";
 import { ScientSymbol } from "./ScientSymbol";
 
 export type SidebarStageBackdropVariant = "nightly" | "dev";
-export type EnvironmentIdentificationPillLabel = "Dev" | "Nightly";
+export type EnvironmentIdentificationPillLabel = "Dev" | "Beta" | "Nightly";
 
 export function resolveSidebarStageBackdropVariant(
   stageLabel: string,
@@ -17,6 +17,7 @@ export function resolveSidebarStageBackdropVariant(
   if (!enabled) return null;
   const normalized = stageLabel.trim().toLowerCase();
   if (normalized === "nightly") return "nightly";
+  if (normalized === "beta") return "nightly";
   if (normalized === "dev") return "dev";
   return null;
 }
@@ -26,6 +27,7 @@ export function resolveEnvironmentIdentificationPillLabel(
 ): EnvironmentIdentificationPillLabel | null {
   const normalized = stageLabel.trim().toLowerCase();
   if (normalized === "dev") return "Dev";
+  if (normalized === "beta") return "Beta";
   if (normalized === "nightly") return "Nightly";
   return null;
 }

@@ -143,6 +143,13 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "desktop-update-track",
+    title: "Update track",
+    to: "/settings/general",
+    searchTerms: ["stable beta release channel updates prerelease"],
+    desktopOnly: true,
+  },
+  {
     id: "custom-models",
     title: "Custom models",
     to: "/settings/custom-models",
@@ -272,7 +279,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
-    searchTerms: ["dev nightly artwork pill label hide none"],
+    searchTerms: ["dev beta nightly artwork pill label hide none"],
     // The setting is stage-dependent, so its parent section is the stable destination.
     targetId: "appearance-interface",
   },

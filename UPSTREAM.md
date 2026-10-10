@@ -281,8 +281,10 @@ composer default, multi-model thread creation in separate worktrees, automatic s
 directory-safe file navigation, broader command-palette discovery, improved pull-request and chat
 presentation, checkpoint and settlement reliability, Android Material surfaces, mobile worktree
 handoff, dictation wake-lock behavior, mobile model favorites, and the preview-picker navigation
-fix. Scient's approved stable-only update policy also removes the unsupported track selector and
-normalizes stale Nightly preferences without replacing download or install mechanics.
+fix. Scient's owned update policy exposes Stable and Beta. Beta uses the isolated
+`ScientFactory/scient-desktop-beta` artifact repository; Stable keeps its existing feed.
+Legacy Nightly preferences return to Stable, and channel changes never enable downgrades.
+Source, app identity and state roots remain canonical; Beta publication has separate gates.
 Scient's provider lifecycle, scientific surfaces,
 identity, signed npm-pinned server runtime, durable server-authoritative queue, project-first
 policy, state roots, and cloud/mobile publication holds remain.

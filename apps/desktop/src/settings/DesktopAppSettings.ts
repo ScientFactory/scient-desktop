@@ -34,7 +34,10 @@ import {
   normalizeLinuxPasswordStorePreference,
   type LinuxPasswordStorePreference,
 } from "../linuxSecretStorage.ts";
-import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
+import {
+  isNightlyDesktopVersion,
+  resolveDefaultDesktopUpdateChannel,
+} from "../updates/updateChannels.ts";
 import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
@@ -226,7 +229,8 @@ export function resolveDefaultDesktopSettings(appVersion: string): DesktopSettin
   return {
     ...DEFAULT_DESKTOP_SETTINGS,
     updateChannel:
-      SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy === "stable-only"
+      SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy === "stable-only" ||
+      isNightlyDesktopVersion(appVersion)
         ? "latest"
         : resolveDefaultDesktopUpdateChannel(appVersion),
   };
@@ -253,10 +257,10 @@ function normalizeDesktopSettingsDocument(
   const defaultSettings = resolveDefaultDesktopSettings(appVersion);
   const mainWindowBounds = normalizeMainWindowBounds(parsed.mainWindowBounds);
   const parsedUpdateChannel = Option.fromNullishOr(parsed.updateChannel);
-  const isLegacySettings = parsed.updateChannelConfiguredByUser === undefined;
-  const updateChannelConfiguredByUser =
-    parsed.updateChannelConfiguredByUser === true ||
-    (isLegacySettings && Option.contains(parsedUpdateChannel, "nightly"));
+  const legacyNightly = parsed.updateChannel === "nightly";
+  const updateChannelConfiguredByUser = legacyNightly
+    ? defaultSettings.updateChannel === "beta"
+    : parsed.updateChannelConfiguredByUser === true;
 
   // Newer form wins when both are present; otherwise fall back to the legacy
   // `wslMode === "wsl"` signal so users coming off the swap-mode build keep
@@ -276,11 +280,13 @@ function normalizeDesktopSettingsDocument(
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
-    updateChannel: updateChannelConfiguredByUser
-      ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
-      : defaultSettings.updateChannel,
+    updateChannel: legacyNightly
+      ? "latest"
+      : updateChannelConfiguredByUser
+        ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
+        : defaultSettings.updateChannel,
     updateChannelConfiguredByUser,
-    // SCIENT-FORK:START — stable-only products ignore a stored update channel.
+    // SCIENT-FORK:START — Scient owns update-channel selection policy.
     ...stableOnlyUpdateChannelFields(),
     // SCIENT-FORK:END
     wslBackendEnabled,
@@ -409,9 +415,10 @@ function setUpdateChannel(
       };
 }
 
-// SCIENT-FORK:START — stable-only products always stay on the latest channel.
+// SCIENT-FORK:START — Scient retires legacy Nightly preferences without enrolling users in Beta.
 const setProductUpdateChannel = (settings: DesktopSettings, channel: DesktopUpdateChannel) =>
-  stableOnlyUpdateChannel(settings) ?? setUpdateChannel(settings, channel);
+  stableOnlyUpdateChannel(settings) ??
+  setUpdateChannel(settings, channel === "nightly" ? "latest" : channel);
 // SCIENT-FORK:END
 
 function setWslBackendEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
@@ -472,9 +479,10 @@ function readSettings(
             Effect.map((parsed) => ({
               settings: normalizeDesktopSettingsDocument(parsed, appVersion),
               shouldRewrite:
-                SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy === "stable-only" &&
-                (parsed.updateChannel !== undefined ||
-                  parsed.updateChannelConfiguredByUser !== undefined),
+                parsed.updateChannel === "nightly" ||
+                (SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy === "stable-only" &&
+                  (parsed.updateChannel !== undefined ||
+                    parsed.updateChannelConfiguredByUser !== undefined)),
             })),
             Effect.orElseSucceed(() => ({ settings: defaultSettings, shouldRewrite: false })),
           ),

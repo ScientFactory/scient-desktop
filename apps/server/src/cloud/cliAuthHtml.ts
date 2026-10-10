@@ -1,6 +1,6 @@
-export type LoopbackAuthorizationStage = "dev" | "nightly" | "latest";
+export type LoopbackAuthorizationStage = "dev" | "beta" | "nightly" | "latest";
 
-declare const __T3CODE_BUILD_CHANNEL__: "nightly" | "latest" | undefined;
+declare const __T3CODE_BUILD_CHANNEL__: "beta" | "nightly" | "latest" | undefined;
 
 function resolveLoopbackAuthorizationStage(): LoopbackAuthorizationStage {
   return typeof __T3CODE_BUILD_CHANNEL__ === "undefined" ? "dev" : __T3CODE_BUILD_CHANNEL__;
@@ -9,6 +9,7 @@ function resolveLoopbackAuthorizationStage(): LoopbackAuthorizationStage {
 const stageBrands = {
   dev: "Scient (Dev)",
   nightly: "Scient (Nightly)",
+  beta: "Scient (Beta)",
   latest: "Scient",
 } as const satisfies Record<LoopbackAuthorizationStage, string>;
 
@@ -69,7 +70,7 @@ export function renderLoopbackAuthorizationCompleteHtml(
           radial-gradient(14rem 6rem at 14% 10%, rgba(71, 26, 26, 0.1), transparent 76%),
           #faf9f6;
       }
-      .stage-nightly {
+      .stage-nightly, .stage-beta {
         background:
           radial-gradient(18rem 7rem at 82% -30%, rgba(71, 26, 26, 0.2), transparent 72%),
           radial-gradient(14rem 6rem at 14% 10%, rgba(70, 88, 126, 0.12), transparent 76%),
@@ -106,7 +107,7 @@ export function renderLoopbackAuthorizationCompleteHtml(
         :root { background: #101115; color: #f1f3f7; }
         body { background: radial-gradient(48rem 22rem at 50% -8rem, rgba(70, 88, 126, 0.24), transparent), #101115; }
         main { border-color: rgba(255, 255, 255, 0.1); background: rgba(25, 27, 33, 0.96); }
-        .stage-latest, .stage-dev, .stage-nightly {
+        .stage-latest, .stage-dev, .stage-nightly, .stage-beta {
           color: #faf9f6;
           background:
             radial-gradient(18rem 7rem at 82% -30%, rgba(70, 88, 126, 0.28), transparent 72%),
