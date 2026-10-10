@@ -1,10 +1,10 @@
-# T3 upstream alignment — 43 commits through ec80933ac8
+# T3 upstream alignment — 160 commits through bd2346eda2
 
 This candidate preserves literal official history and current Scient product boundaries.
 Source qualification, maintainer structural review, hosted CI and visual acceptance are separate.
 This record does not authorize merging, release or publication.
 
-## Immutable boundaries
+## Original 43-commit boundaries (historical)
 
 | Input                        | Exact revision                                                                                       |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -541,3 +541,245 @@ claim. The current pointer and state advance to the exact official extension
 merge `eaa42295c2271f7b92acd7857615391dd54e783c`, retaining all historical
 bootstrap and exception records. Protected hosted checks still qualify the final
 pushed revision before GitHub's ordinary history-preserving merge queue delivers it.
+
+## Extension to bd2346eda2 — 2026-10-10
+
+This extends the same branch, worktree and Scient PR #498. The preceding
+43-commit receipts remain historical evidence; they do not qualify the new
+117-commit range. The original owned base remains
+`0cf6e0bd85c3d6be221b70164d2601e0b8e83e15`.
+
+| Input                             | Exact revision                                  |
+| --------------------------------- | ----------------------------------------------- |
+| Previous qualified candidate      | `96b6560e09efa74224193dae545523e9344b1e81`      |
+| Previous official boundary        | `ec80933ac8cd02fec5c97b342462ccc9567cdb1e`      |
+| Frozen official target            | `bd2346eda2e2c380d1844869c7fd16c279d2190f`      |
+| Literal official extension merge  | `de4f75bb7267e9bb0cbfcc5cc8ce8b2c8675222c`      |
+| Frozen owned main                 | `bb0dcff656c7dba467fa32d662a8f221025a76ff`      |
+| Owned-main composition merge      | `f0a053954fc1524286a1044a4cdb34892b4db9ee`      |
+| Final source qualification commit | `e55ed9fca43bbcd68a1e750a76dc18b76a5c2e07`      |
+| Final source tree                 | `5563028771fa67c1dab40bd427f3e679fd17caa4`      |
+| Target description                | `v0.0.46-nightly.20261009.2861-123-gbd2346eda2` |
+
+The official merge has exact parents `96b6560e09efa74224193dae545523e9344b1e81`
+and `bd2346eda2e2c380d1844869c7fd16c279d2190f`. The owned-main merge has exact
+parents `de4f75bb7267e9bb0cbfcc5cc8ce8b2c8675222c` and
+`bb0dcff656c7dba467fa32d662a8f221025a76ff`. Both frozen targets are ancestors
+of the final source commit. The full official range from
+`2a93885bac5798a79d55069a0b5dc3e53c6176bc` contains **160 first-parent commits**:
+the original 43 plus this extension's 117. Later official commits are outside
+this frozen receipt. The upstream push URL remains disabled.
+
+### Canonical cutover and owned composition
+
+- Adopt the upstream Effect 4.0.2 service contracts, `ModelCatalog`,
+  `ProviderLatestVersions`, scoped `McpProviderSessions`, driver-owned usage
+  readers and host-process references. Scient provider instruction, tool,
+  fork, queue and lifecycle authority remains at its existing application
+  boundaries rather than a parallel legacy provider API.
+- Adopt all extracted source-control packages, including GitCafe, provider
+  resolvers, per-item edit/resolve permissions, Azure token addressing and the
+  usage/account fixes. Managed Droid publication checks include the actual
+  provider-testing and source-control import closure; this does not publish
+  or activate a managed artifact.
+- Register Scient MCP tools using upstream toolkit schemas and the canonical
+  `Tool.Handler` service shape. Retain exact parameter/success/failure types;
+  no `Tool.Any` widening or cross-API `Effect`/`Layer` casts are used to hide
+  service requirements. Static registration contexts exclude request,
+  client, HTTP, log-level and invocation carriers. Each execution gets the
+  live MCP invocation; the original Scient guard supplies agent authority
+  only after catalogue, thread, capability and workspace admission.
+- Keep upstream scoped-session ownership in runtime and replay fixtures.
+  The retained-close fixture provides MCP sessions and Node services through
+  one combined layer, avoiding an actual service-lifetime warning rather than
+  suppressing the native compiler's diagnostic.
+- Compose real worktree-retention admission and cleanup. An admitted
+  operation, not a void acquisition result, controls deletion. Empty-directory
+  removal uses the existing Node filesystem owner and nonrecursive `rmdir`;
+  nonempty recovery directories and file remnants are preserved.
+- Preserve scientific source save/close ownership, rooted workspace assets,
+  scientific preview behavior, safe Markdown/BiDi rendering, the owned chat
+  lane, fork/queue/Resume ownership and existing privacy/publication guards.
+  Adopt upstream resize subscriptions and layout commits without substituting
+  no-op observers; test observers deliver actual target entries and unobserve
+  correctly.
+- Preserve Scient-first provider-family presentation. The upstream active
+  instance priority is retained in the composer: a selected Codex instance can
+  appear before the other families without changing provider defaults.
+- Keep canonical OpenCode connection/reconnection and partial-usage behavior
+  in the migrated fixtures. Windows archive fixtures contain real PE/ELF
+  native bytes and prove packed/unpacked/extracted availability; incidental
+  destination-copy assertions are not a native-payload guarantee.
+- Remove obsolete wiring/default/wording-copy assertions instead of repinning
+  them. Retain consumer-visible authorization, privacy, precedence,
+  lifecycle, usage and archive checks.
+- Preserve Scient product notices and storage-home copy. The latter was
+  found in the actual isolated native Storage page, corrected in the source,
+  rebuilt and observed as “Scient home folder.”
+- Review the changed skills, analysis, LaTeX and OMP seam classifications
+  alongside the new service ownership. The retired Cursor test harness now
+  uses `TestProviderHost.layer` and has no LaTeX state mount; remove that
+  obsolete manifest entry rather than point it at an unrelated locator.
+  Actual shared replay/Codex LaTeX mounts remain. All five changed-path seam
+  checks pass; locator classification is not behavior or ancestry proof.
+
+### Isolated native interaction evidence
+
+The worktree-owned development launcher ran the compiled candidate as
+**Scient (Dev)** at `scient-next-dev://app/`, using its private
+`.scient-next/scient-next-dev` profile and cache. The app was attached through
+its native CDP endpoint; Scient's ordinary web-preview tab could not attach
+to this Electron target. No live profile was copied or reset.
+
+- Observed Scient onboarding and skipped opt-in setup. Admitted a temporary
+  local folder through the actual project picker with **Open without setup**;
+  no project scaffold or provider run was created.
+- Opened a temporary HTML file through Files into the integrated browser's
+  signed `workspace-file` asset URL rooted at that folder.
+- Opened a Markdown file in the actual source workspace, typed
+  `Alignment source-save persisted final state.`, immediately closed it,
+  and observed that exact value on disk. Reloaded the native app, reopened
+  the file through Files and observed the identical editor value. This is
+  actual save/close/reload behavior, not a callback-forwarding test.
+- Typed and cleared an unsent mixed Arabic/Latin draft; collapsed and restored
+  the sidebar. The voice-message launcher remained available. No prompt was
+  dispatched and no microphone/audio session was started; this is not a live
+  conversation or speech-transcription acceptance claim.
+- Read the provider inventory: Scient appears first in family settings,
+  followed by Codex, Claude, Antigravity, OpenCode, Droid, Pi, Oh My Pi,
+  Cursor, Grok and Muse Code. Scient remained uninstalled; no provider setup,
+  credential connection, Cursor usage hub or billing source was activated.
+- Read Storage with inactive retention/artifact/log cleanup and a disabled
+  Delete-now action. After the final build and native reload, observed the
+  corrected Scient-home text and the same inactive cleanup hold.
+- Removed both temporary project admissions through the real scoped
+  project-removal UI, which explicitly preserves files on disk and clears
+  their drafts. Both persisted project rows are tombstoned; the native home
+  screen reports **No projects yet**. Removed the temporary Markdown/HTML
+  files, their empty fixture directories and the compiler diagnostic probe.
+
+These observations do not qualify native Windows/Linux execution, macOS
+passkeys/default-browser registration, mobile device gestures, live provider
+turns, audio capture or signed publication. Those platform/live acceptance
+boundaries remain explicit; no defaults, credentials, release authority,
+merge queue or auto-merge are activated by this receipt.
+
+### Literal extension inventory
+
+- `2cf0ff0643` — fix(web): Local environment switch stays reachable after turning it off (#17359)
+- `c5d4d2d04c` — fix(web): keep chat banners inside the lane beside the docked details card (#17094)
+- `a947f7c099` — fix(web): settled and snoozed lines line up with the messages above them (#17191)
+- `22ccf8a3df` — fix(web): distinguish project filter from new project (#12113)
+- `b1508672a6` — feat(web): assign a thread details panel shortcut (#16694)
+- `a6698271a4` — fix(web): chat content keeps pace with sidebar resizing (#17383)
+- `2c1915b319` — refactor(provider-core): expose model metadata through a ModelCatalog port (#17417)
+- `b66dd402e8` — refactor(provider-core): follow the Effect service conventions throughout (#17427)
+- `68ab16f308` — refactor(provider-core): latest-version lookups go through a ProviderLatestVersions service (#17434)
+- `784b5625f9` — refactor(provider-core): MCP provider sessions live in a McpProviderSessions service (#17446)
+- `31b04e2ee9` — refactor(provider): bring opencode, muse, pi, core and testing in line with Effect conventions (#17542)
+- `f853d514ca` — refactor(provider-acp): ACP, ACP Registry and Grok follow the Effect service conventions (#17544)
+- `33806e7355` — refactor(provider-cursor): follow the Effect service conventions (#17545)
+- `64972461c0` — fix(marketing): use app wordmark in header (#13240)
+- `aa8c6662e2` — fix(web): pr merge actions stay visible while the stack refreshes (#17559)
+- `91a6646efd` — chore(deps): upgrade Effect to 4.0.2 (#17571)
+- `ecfb7342ed` — fix(devices): recover stalled video without losing simulator input (#17566)
+- `7856908b84` — fix(web): keep checkout stable while pr actions load (#16625)
+- `1fd558d9e2` — fix(mobile): show waiting thread status (#16693)
+- `5722496b79` — feat(web): add parent thread breadcrumb navigation (#16666)
+- `0a4d789128` — fix(server): restart inactivity after snoozed threads wake (#16674)
+- `454b94a13a` — feat(desktop): passkeys in the in-app browser on macOS (#16952)
+- `a1db449fe4` — fix(client): load earlier turns works for MCP threads over T3 Connect (#17599)
+- `0e7abea7c9` — refactor(client): sign relay request URLs built from the HttpApi contract (#17602)
+- `28f11ed7a5` — refactor(source-control): add @t3tools/source-control-core (#17573)
+- `f6e45028ef` — refactor(source-control): Forgejo lives in @t3tools/source-control-forgejo (#17581)
+- `d01febb509` — refactor(source-control): Azure DevOps lives in @t3tools/source-control-azure-devops (#17592)
+- `eb459b5afa` — refactor(source-control): GitLab lives in @t3tools/source-control-gitlab (#17594)
+- `8d1858d9d6` — refactor(source-control): Bitbucket lives in @t3tools/source-control-bitbucket (#17597)
+- `507361bc73` — refactor(source-control): GitHub lives in @t3tools/source-control-github (#17607)
+- `e5dca2332f` — refactor(usage): transcript readers come from their drivers (#17576)
+- `23957c704b` — refactor(usage): OpenCode usage comes from provider-opencode (#17577)
+- `5a9c664b3e` — refactor(usage): Cursor account usage comes from provider-cursor (#17578)
+- `9a0766b023` — refactor(usage): Antigravity usage is a reader on its driver (#17579)
+- `b1ec4b3687` — refactor(usage): usage readers use Effect FileSystem and SqlClient (#17615)
+- `6586a01f41` — fix(web): composer context strip pads both edges evenly (#17562)
+- `a0a0e94822` — test(usage): v4 cache upgrade test waits for the migrated cache write (#17553)
+- `c85dc64268` — feat(mobile): support Duo in the shared iOS app (#12648)
+- `49f849ecce` — refactor(source-control): GitManager reads provider resolvers, not host kinds (#17617)
+- `2ce3e4ae74` — refactor(source-control): PullRequestService reads GitHub resolvers, not its kind (#17619)
+- `51347aca3a` — refactor(source-control): Forgejo identity and Azure DevOps addressing move into their packages (#17624)
+- `58916b6554` — refactor: home directory comes from a HostProcessHomeDirectory reference (#17628)
+- `e30852213e` — refactor(shared): host process references live in a HostProcess module (#17641)
+- `6cd02e98f7` — feat(web): filter PR comments by bots and resolved threads (#17645)
+- `0c4012055d` — fix(clients): remove redundant prefix from PR watch status (#17635)
+- `99d2651dd5` — fix(web): pending requests wait until you stop typing (#17637)
+- `08e18b7833` — fix(models): remove new badges from Claude Opus and Sonnet 5.5 (#17646)
+- `5dcb59ed6c` — fix(ui): keep focus and selection borders visible across the app (#16675)
+- `5fe9d024d9` — fix(mobile): prevent row presses during native back swipes (#17648)
+- `140ee145ac` — fix(server): Codex shadow homes replace stray sqlite maintenance locks (#17663)
+- `38571328a4` — feat(desktop): T3 Code can be your default web browser on macOS (#17587)
+- `202b95403a` — test(server): the ACP process-tree test no longer collides with the runner's own pid (#17647)
+- `cc62349c37` — fix(web): keep branch restore action inline in narrow composers (#14811)
+- `3e94afa7c2` — fix(web): composer banner actions stay inline whenever they fit (#17640)
+- `b744bded01` — feat(web): draft screen project picker is searchable (#17664)
+- `b87b13d414` — fix(server): report incomplete transcript usage scans (#15661)
+- `d97060709c` — fix(web): every resize-driven layout commits in the same frame (#17656)
+- `ca40de081c` — fix(web): right panel and terminal drawer follow the pointer while dragging (#17657)
+- `42e1a0fba2` — fix(web): terminal drawer keeps its height after the window shrinks (#17658)
+- `033866c7aa` — perf(web): sidebar drags restyle only the sidebar (#17659)
+- `eddc8fb817` — fix(web): server browser page resizes while the panel is dragged (#17660)
+- `0caa95d6eb` — fix(storage): make worktree cleanup work and show why it skipped (#17563)
+- `e858ddb656` — test(usage): usage service tests keep their state directory until cache writes land (#17636)
+- `f3a69c70c6` — fix(checkpoint): pulls and rebases no longer flood a turn's changed files (#17161)
+- `07b8080012` — fix(web): place notification icons after titles (#12209)
+- `0b9623fda1` — fix(web): attachments on an open question are visible again (#15537)
+- `f34adad34f` — fix(web): scale Files tree with interface font size (#8011)
+- `318201caa5` — fix(server): probe only owned preview listeners (#16687)
+- `ed4ea1083d` — fix(chat): surface pending subagent questions on parents (#16634)
+- `c1f21e53b3` — fix(web): section header chevrons point up when collapsed (#14273)
+- `e08c31e1a1` — fix(web): timeline divider pill shows a pointer, visible hover and focus ring (#15188)
+- `6e4ca6ce9d` — fix(git): allow creating prs from dirty worktrees (#15625)
+- `b822420e50` — docs(install): polish binary install destination phrasing (#15732)
+- `0981e6b9d4` — perf(server): keep passive terminal output flowing (#17178)
+- `b6aa268b12` — fix(web): stop button icon no longer shifts on hover (#16012)
+- `9bbbbbab2a` — fix(web): add bottom padding to expanded tool panels (#16525)
+- `2def3de4b9` — fix(web): keep incremental highlighter return type portable (#17259)
+- `391f813357` — fix(web): sidebar "Code" label no longer clips its letter tops (#16134)
+- `699da95689` — fix(tests): use POSIX paths for the simulated macOS device host (#17241)
+- `88edfacf5d` — fix(mobile): Android composer keeps the caret in view on AOSP-based keyboards (#17492)
+- `467fea963f` — test(web): allow cold timeline imports on CI (#16608)
+- `aa165e9b9c` — fix(mobile): pinch zooms chat images on Android (#15047)
+- `d1e56e79ff` — fix(web): selected provider ring no longer clipped during panel resize (#17534)
+- `d50a2a6fc5` — docs(usage): OpenCode Go limits need a Go API key (#15664)
+- `c116dacb83` — fix(web): improve usage scanning indicator alignment (#15498)
+- `97009b049a` — fix(server): print pairing credential expiry as ISO timestamp (#14128)
+- `2cc55f2f22` — chore(ci): use GPT 6.1 Sol Max for check agents (#14312)
+- `8b81a8880f` — fix(mobile): honor requested terminal native architectures (#10709)
+- `5c715c6941` — fix(server): keep preview browser connected after operation timeouts (#17693)
+- `aacefcd7e9` — fix(web): timeline divider focus ring stays inside the pill (#17702)
+- `03bd839554` — perf(desktop): reuse prepared shell environment in the local backend (#17384)
+- `f02002ab95` — fix(web): align settings page widths (#12158)
+- `a3d1505141` — test(server): resolve the temp dir before matching the symlinked entrypoint (#9400)
+- `6e83160cdf` — fix(web): keep inline code pills intact when they wrap (#12038)
+- `2aa033b11d` — Revert "chore(ci): use GPT 6.1 Sol Max for check agents" (#17698)
+- `f55c66b323` — fix(web): show the correct new thread shortcut in command palette (#8513)
+- `c1ade7db94` — fix(desktop): declare macOS local network usage (#11922)
+- `968ac2e82b` — docs: add Scoop as Windows installation method (#10509)
+- `a0a601c262` — fix(server): agents run in their own systemd scopes so an OOM kill spares the server (#17662)
+- `4ea735614b` — fix(web): welcome wizard says where imported projects come from (#14584)
+- `d02e292610` — fix(web): cite works on responses that end before a tool call (#17713)
+- `fa9f936ef5` — fix(desktop): sign Windows native addons (#8206)
+- `c572cb71d2` — fix(server): track resumed subagent follow-ups as separate tasks (#17696)
+- `c2a301b12a` — fix(web): nested corners follow their container's radius (#17695)
+- `1f093d119b` — feat(web): pr panel actions confirm in place (#17710)
+- `4107930420` — feat(web): reorder right panel tabs by dragging (#17730)
+- `c899a0c06a` — fix(azure-devops): list pull requests with token sign-in and check out into worktrees (#17725)
+- `0be20c86c2` — fix(usage): keep one email in two workspaces as two accounts (#17711)
+- `c3243f0508` — feat(pull-requests): hosts can report edit and resolve permissions per item (#17667)
+- `9cc57680cb` — perf(server): run Git for Windows' real git.exe, not its launcher (#17707)
+- `a7223f3969` — fix(clients): restart continuations show as a T3 Code notice, not another agent's message (#17723)
+- `57b3780770` — fix(mobile): browser picture in picture opens from the header button (#17731)
+- `65d33177b7` — feat(source-control): GitCafe lives in @t3tools/source-control-gitcafe (#17681)
+- `500cb4266f` — fix(web): add provider wizard no longer shifts sideways while it grows (#17292)
+- `42f71dfe07` — fix(web): PR search keeps the caret where you type (#17675)
+- `6d5ea190a4` — fix(server): thread PR badges catch up when another environment reads the PR (#17729)
+- `bd2346eda2` — fix(server): refuse editor paths with line breaks or quotes when the editor is a Windows command shim (#17749)
