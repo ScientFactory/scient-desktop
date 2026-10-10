@@ -306,7 +306,9 @@ handoff, dictation wake-lock behavior, mobile model favorites, and the preview-p
 fix. Scient's owned update policy exposes Stable and Beta. Beta uses the isolated
 `ScientFactory/scient-desktop-beta` artifact repository; Stable keeps its existing feed.
 Legacy Nightly preferences return to Stable, and channel changes never enable downgrades.
-Source, app identity and state roots remain canonical; Beta publication has separate gates.
+Source, app identity and state roots remain canonical. Beta publishes automatically
+when manually dispatched, without catalog notes, after CI, signing, updater and
+artifact verification. Stable retains its production approval.
 Scient's provider lifecycle, scientific surfaces,
 identity, signed npm-pinned server runtime, durable server-authoritative queue, project-first
 policy, state roots, and cloud/mobile publication holds remain.
