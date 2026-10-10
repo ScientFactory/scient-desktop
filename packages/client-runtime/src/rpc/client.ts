@@ -254,6 +254,11 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
    * not retried; they wait for the next session or `resubscribe` signal.
    */
   readonly retryExpectedFailureAfter?: Duration.Input;
+  /**
+   * Delay before resubscribing on the same session after the server completes
+   * the stream. Unset, a completed stream stays closed until the next session.
+   */
+  readonly resubscribeOnCompleteAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
 }
 
@@ -319,7 +324,16 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                           }),
                         ),
                       );
-                      return stream.pipe(Stream.ensuring(completeObservation));
+                      const observed = stream.pipe(Stream.ensuring(completeObservation));
+                      const resubscribeAfter = options?.resubscribeOnCompleteAfter;
+                      return resubscribeAfter === undefined
+                        ? observed
+                        : observed.pipe(
+                            Stream.concat(
+                              Stream.fromEffect(Effect.sleep(resubscribeAfter)).pipe(Stream.drain),
+                            ),
+                            Stream.concat(Stream.suspend(subscribeToSession)),
+                          );
                     }),
                   ).pipe(
                     Stream.tapCause((cause) =>
