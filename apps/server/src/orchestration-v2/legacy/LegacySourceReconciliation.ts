@@ -83,6 +83,7 @@ export const writeLegacySourceEvents = Effect.fn("writeLegacySourceEvents")(func
             event.type === "plan.updated",
         );
         const conflicts = new Set<string>();
+        const representedGroups = new Set(histories.map(group));
         const current = new Map<string, string>();
         for (const event of histories) {
           const rows =
@@ -98,13 +99,22 @@ export const writeLegacySourceEvents = Effect.fn("writeLegacySourceEvents")(func
                     payload_json: string;
                   }>`SELECT payload_json FROM orchestration_v2_projection_turn_items WHERE thread_id = ${event.threadId} AND turn_item_id = ${event.payload.id}`;
           const row = rows[0];
-          if (row === undefined) continue;
+          if (row === undefined) {
+            representedGroups.delete(group(event));
+            continue;
+          }
           current.set(event.id, row.payload_json);
           if (revision === 0 || sameContent(row.payload_json, encode(event))) continue;
           const [previous] = yield* sql<{
             source_json: string;
           }>`SELECT source_json FROM scient_legacy_reconciliation_entities
           WHERE thread_id = ${event.threadId} AND entity_type = ${entity(event)} AND entity_id = ${event.payload.id}`;
+          const [recovered] = yield* sql<{
+            source_json: string;
+          }>`SELECT source_json FROM scient_legacy_reconciliation_entities
+          WHERE thread_id = ${event.threadId} AND entity_type = ${`recovered:${entity(event)}`} AND entity_id = ${event.payload.id}`;
+          if (recovered === undefined || !sameContent(recovered.source_json, encode(event)))
+            representedGroups.delete(group(event));
           const fallback = expected.get(event.id);
           const [original] = yield* sql<{
             payload_json: string;
@@ -131,6 +141,12 @@ export const writeLegacySourceEvents = Effect.fn("writeLegacySourceEvents")(func
           }
           const event = candidate;
           const desired = encode(event);
+          yield* sql`INSERT INTO scient_legacy_reconciliation_entities (thread_id, entity_type, entity_id, source_json)
+          VALUES (${event.threadId}, ${entity(event)}, ${event.payload.id}, ${desired})
+          ON CONFLICT (thread_id, entity_type, entity_id) DO UPDATE SET source_json = excluded.source_json`;
+          // A different source revision may add history without changing this
+          // conflict. Keep its recovered version instead of adding it again.
+          if (representedGroups.has(group(event))) continue;
           const existing = current.get(event.id);
           const conflict = conflicts.has(group(event));
           if (
@@ -139,6 +155,9 @@ export const writeLegacySourceEvents = Effect.fn("writeLegacySourceEvents")(func
           )
             continue;
           if (conflict) {
+            yield* sql`INSERT INTO scient_legacy_reconciliation_entities (thread_id, entity_type, entity_id, source_json)
+            VALUES (${event.threadId}, ${`recovered:${entity(event)}`}, ${event.payload.id}, ${desired})
+            ON CONFLICT (thread_id, entity_type, entity_id) DO UPDATE SET source_json = excluded.source_json`;
             const identity = `migration:v1:recovered:${revision}:${group(event)}`;
             if (!labelled.has(identity)) {
               labelled.add(identity);
@@ -213,9 +232,6 @@ export const writeLegacySourceEvents = Effect.fn("writeLegacySourceEvents")(func
                   : EventId.make(`migration:v1:reconciliation:${revision}:${event.id}`),
             });
           }
-          yield* sql`INSERT INTO scient_legacy_reconciliation_entities (thread_id, entity_type, entity_id, source_json)
-          VALUES (${event.threadId}, ${entity(event)}, ${event.payload.id}, ${desired})
-          ON CONFLICT (thread_id, entity_type, entity_id) DO UPDATE SET source_json = excluded.source_json`;
         }
         // EventStore insertion is strict. A committed batch followed by a crash
         // must not append its notice or recovered version a second time.

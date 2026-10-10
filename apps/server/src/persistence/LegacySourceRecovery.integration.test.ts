@@ -227,6 +227,67 @@ it.effect.each([false, true])(
         assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
       }).pipe(Effect.provide(importerLayer));
       assert.deepEqual(NodeFS.readFileSync(sourcePath), originalBytes);
+
+      const advancedSource = new NodeSqlite.DatabaseSync(sourcePath);
+      try {
+        advancedSource.exec(`UPDATE projection_threads SET updated_at = '2026-02-03T00:00:00.000Z';
+          INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
+            VALUES ('even-later-user', 'continued-v1', 'user', 'Another V1 question', 0, '2026-02-03T00:00:00.000Z', '2026-02-03T00:00:00.000Z');`);
+      } finally {
+        advancedSource.close();
+      }
+      const advancedBytes = NodeFS.readFileSync(sourcePath);
+      yield* Effect.gen(function* () {
+        const importer = yield* Importer.LegacyV1ThreadImporter;
+        yield* importer.ensureTranscript(THREAD);
+        assert.equal(yield* importer.pendingThreadCount, 0);
+        const restored = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+          THREAD,
+        );
+        assert.equal(
+          restored.messages.find((message) => message.id === "even-later-user")?.text,
+          "Another V1 question",
+        );
+        for (const text of ["New V1 question", "New V1 answer"])
+          assert.equal(restored.messages.filter((message) => message.text === text).length, 1);
+        assert.equal(
+          restored.plans.filter(
+            (plan) => plan.kind === "proposed_plan" && plan.markdown === "# New V1 plan",
+          ).length,
+          1,
+        );
+        assert.equal(restored.thread.archivedAt, null);
+      }).pipe(Effect.provide(importerLayer));
+      assert.deepEqual(NodeFS.readFileSync(sourcePath), advancedBytes);
+
+      const changedSource = new NodeSqlite.DatabaseSync(sourcePath);
+      try {
+        changedSource.exec(`UPDATE projection_threads SET updated_at = '2026-02-04T00:00:00.000Z';
+          UPDATE projection_thread_messages SET text = 'Newest V1 answer', updated_at = '2026-02-04T00:00:00.000Z' WHERE message_id = 'answer';`);
+      } finally {
+        changedSource.close();
+      }
+      const changedBytes = NodeFS.readFileSync(sourcePath);
+      yield* Effect.gen(function* () {
+        const importer = yield* Importer.LegacyV1ThreadImporter;
+        yield* importer.ensureTranscript(THREAD);
+        const restored = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+          THREAD,
+        );
+        assert.equal(
+          restored.messages.find((message) => message.id === "answer")?.text,
+          "V2 edited answer",
+        );
+        for (const text of ["New V1 question", "New V1 answer", "Newest V1 answer"])
+          assert.equal(restored.messages.filter((message) => message.text === text).length, 1);
+        assert.equal(
+          restored.plans.filter(
+            (plan) => plan.kind === "proposed_plan" && plan.markdown === "# New V1 plan",
+          ).length,
+          1,
+        );
+      }).pipe(Effect.provide(importerLayer));
+      assert.deepEqual(NodeFS.readFileSync(sourcePath), changedBytes);
     }).pipe(
       Effect.provide(
         ServerConfig.layerTest(directory, directory).pipe(Layer.provideMerge(NodeServices.layer)),

@@ -32,6 +32,8 @@ overwriting edits made before the retry. A revision is acknowledged only after a
 attachments, and metadata have been reconciled. Failure to inspect the original rolls back the
 staging transaction and leaves restoration visibly incomplete, while the existing V2 state remains
 usable. Neither a missing transcript nor a source failure is repaired by replacing the V2 database.
+Later source revisions reuse an existing recovered conflict version when its V1 content is unchanged;
+another V1 edit retains a separate recovered version without replacing the primary V2 content.
 
 ## Imported data
 
