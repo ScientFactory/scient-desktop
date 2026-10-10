@@ -100,7 +100,7 @@ it.effect.each([false, true])(
 
       const source = new NodeSqlite.DatabaseSync(sourcePath);
       try {
-        source.exec(`UPDATE projection_threads SET title = 'New V1 title', model_selection_json = '{"instanceId":"claude","model":"claude-sonnet-4-6"}', updated_at = '2026-02-01T00:00:00.000Z';
+        source.exec(`UPDATE projection_threads SET title = 'New V1 title', archived_at = '2026-02-01T00:00:00.000Z', model_selection_json = '{"instanceId":"claude","model":"claude-sonnet-4-6"}', updated_at = '2026-02-01T00:00:00.000Z';
           UPDATE projection_thread_messages SET text = 'New V1 question', updated_at = '2026-02-01T00:00:00.000Z' WHERE message_id = 'question';
           UPDATE projection_thread_messages SET text = 'New V1 answer', updated_at = '2026-02-01T00:00:01.000Z' WHERE message_id = 'answer';
           UPDATE projection_thread_proposed_plans SET plan_markdown = '# New V1 plan', updated_at = '2026-02-01T00:00:00.000Z';
@@ -172,6 +172,7 @@ it.effect.each([false, true])(
         assert.equal(yield* importer.pendingThreadCount, 0);
         const restored = yield* projections.getThreadProjection(THREAD);
         assert.equal(restored.thread.title, "V2 title");
+        assert.equal(restored.thread.archivedAt, null);
         assert.equal(restored.thread.activeProviderThreadId, "native-v2-owner");
         assert.equal(restored.thread.providerInstanceId, "codex");
         assert.equal(restored.thread.modelSelection.instanceId, "codex");

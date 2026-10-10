@@ -19,8 +19,9 @@ Reconciliation rechecks current V2 content inside the EventSink transaction. Unt
 content receives newer V1 text or historical outcomes. If V2 content has changed, its identity and
 content remain intact and a labelled **Recovered V1 version** is added as inert history. Thread
 metadata is merged field by field against the copied baseline; conflicting V2 values are retained.
-Threads already continued in V2 retain their execution settings and workspace binding even if
-those settings subsequently changed in V1.
+Threads already continued in V2 retain their metadata, execution settings, and workspace binding
+even if those fields subsequently changed in V1. A V1 archive or snooze cannot hide continued V2
+work.
 Rows removed by a V1 rewind are retained as before-images and removed from the import inputs, so
 an unfinished import cannot resurrect them. Facts already committed to V2 remain V2 history,
 including their positions. Source reconciliation never deletes existing V2 history.

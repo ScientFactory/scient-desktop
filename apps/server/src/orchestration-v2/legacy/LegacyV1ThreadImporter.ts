@@ -893,16 +893,9 @@ const make = Effect.gen(function* () {
               "sectionId",
             ] as const;
             for (const key of keys) {
-              if (
-                continuedInV2 &&
-                (key === "projectId" ||
-                  key === "modelSelection" ||
-                  key === "runtimeMode" ||
-                  key === "interactionMode" ||
-                  key === "branch" ||
-                  key === "worktreePath")
-              )
-                continue;
+              // Once continued in V2, its metadata is authoritative too.
+              // A V1 archive/snooze must not hide newly continued V2 work.
+              if (continuedInV2) break;
               if (
                 !NodeUtil.isDeepStrictEqual(latestJson[key], baselineJson[key]) &&
                 NodeUtil.isDeepStrictEqual(currentJson[key], baselineJson[key])
