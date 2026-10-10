@@ -1,5 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -70,6 +71,21 @@ describe("environment query pending state", () => {
       false,
       false,
     ],
+    ["before a subscription starts", AsyncResult.initial<string, Error>(false), false, true],
+    [
+      "while a failed subscription reconnects",
+      AsyncResult.failure<string, Error>(Cause.fail(new Error("boom")), { waiting: true }),
+      true,
+      false,
+    ],
+    [
+      "after a failure that keeps an earlier value",
+      AsyncResult.failureWithPrevious<string, Error>(Cause.fail(new Error("boom")), {
+        previous: Option.some(AsyncResult.success<string, Error>("value")),
+      }),
+      false,
+      false,
+    ],
     ["without an atom", null, false, false],
   ])("reports pending %s", async (_label, result, queryPending, subscriptionPending) => {
     const { query, subscription } = await render(result);
@@ -88,6 +104,17 @@ describe("environment query pending state", () => {
 
     const failed = await render(AsyncResult.failure<string, Error>(Cause.fail(new Error("boom"))));
     expect(failed.subscription).toMatchObject({ data: null, error: "boom", isSuccess: false });
+
+    const failedAfterValue = await render(
+      AsyncResult.failureWithPrevious<string, Error>(Cause.fail(new Error("boom")), {
+        previous: Option.some(AsyncResult.success<string, Error>("value")),
+      }),
+    );
+    expect(failedAfterValue.subscription).toMatchObject({
+      data: "value",
+      error: "boom",
+      isPending: false,
+    });
     expect(failed.subscription.failure).toBeInstanceOf(Error);
   });
 });
