@@ -303,7 +303,12 @@ describe("writeFile metadata", () => {
       const renamed = yield* Effect.promise(() =>
         h.commands.renameFile.run(h.registry, {
           environmentId: ENVIRONMENT_ID,
-          input: { cwd: "/repo", relativePath: "foo", destinationRelativePath: "bar" },
+          input: {
+            cwd: "/repo",
+            relativePath: "foo",
+            destinationRelativePath: "bar",
+            expectedRevision: "synthetic-source-revision",
+          },
         }),
       );
       expect(renamed).toMatchObject({
