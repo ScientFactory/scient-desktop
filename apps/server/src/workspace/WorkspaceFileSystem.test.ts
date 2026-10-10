@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -1377,6 +1378,66 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("renames a file it cannot read whole without a revision, never replacing", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0, 1, 2, 3]);
+        yield* fileSystem.writeFile(path.join(cwd, "figure.pdf"), bytes);
+        yield* writeTextFile(cwd, "taken.pdf", "keep");
+
+        const refused = yield* workspaceFileSystem
+          .renameFile({ cwd, relativePath: "figure.pdf", destinationRelativePath: "taken.pdf" })
+          .pipe(Effect.flip);
+        expect(refused).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileExistsError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "taken.pdf"))).toBe("keep");
+
+        const renamed = yield* workspaceFileSystem.renameFile({
+          cwd,
+          relativePath: "figure.pdf",
+          destinationRelativePath: "figures/final.pdf",
+        });
+        expect(renamed.destinationRelativePath).toBe("figures/final.pdf");
+        expect(renamed.revision).toMatch(/^sha256:/u);
+        expect([...(yield* fileSystem.readFile(path.join(cwd, "figures/final.pdf")))]).toEqual([
+          ...bytes,
+        ]);
+        expect(
+          yield* fileSystem.stat(path.join(cwd, "figure.pdf")).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        ).toBe(false);
+      }),
+    );
+
+    it.effect("renames a truncated text file without a revision, reporting its leading bytes", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const contents = "x".repeat(1024 * 1024 + 4096);
+        yield* writeTextFile(cwd, "big.log", contents);
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "big.log" });
+        expect(opened.truncated).toBe(true);
+
+        const renamed = yield* workspaceFileSystem.renameFile({
+          cwd,
+          relativePath: "big.log",
+          destinationRelativePath: "big-renamed.log",
+        });
+        const leading = new TextEncoder().encode(contents).subarray(0, 1024 * 1024);
+        expect(renamed.revision).toBe(
+          `sha256:${NodeCrypto.createHash("sha256").update(leading).digest("hex")}`,
+        );
+        expect(renamed.revision).toBe(opened.revision);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "big-renamed.log"))).toBe(contents);
+      }),
+    );
+
     it.effect("allows only one concurrent rename of the same source", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1427,6 +1488,137 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             Effect.orElseSucceed(() => false),
           ),
         ).toBe(false);
+      }),
+    );
+    it.effect("removes the folders a move leaves empty when asked", () =>
+      Effect.gen(function* () {
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "thesis/chapters/introduction.tex", "intro");
+        yield* writeTextFile(cwd, "thesis/main.tex", "main");
+
+        const intro = yield* api.readFile({
+          cwd,
+          relativePath: "thesis/chapters/introduction.tex",
+        });
+        yield* api.renameFile({
+          cwd,
+          relativePath: "thesis/chapters/introduction.tex",
+          destinationRelativePath: "spectral-gaps/chapters/introduction.tex",
+          expectedRevision: intro.revision,
+          removeEmptyFolders: true,
+        });
+        expect(yield* fileSystem.exists(path.join(cwd, "thesis/chapters"))).toBe(false);
+        // Still holds main.tex.
+        expect(yield* fileSystem.exists(path.join(cwd, "thesis"))).toBe(true);
+
+        const main = yield* api.readFile({ cwd, relativePath: "thesis/main.tex" });
+        yield* api.renameFile({
+          cwd,
+          relativePath: "thesis/main.tex",
+          destinationRelativePath: "spectral-gaps/main.tex",
+          expectedRevision: main.revision,
+          removeEmptyFolders: true,
+        });
+        expect(yield* fileSystem.exists(path.join(cwd, "thesis"))).toBe(false);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "spectral-gaps/main.tex"))).toBe(
+          "main",
+        );
+      }),
+    );
+  });
+  describe("deleteFile", () => {
+    it.effect("deletes only the revision the client read", () =>
+      Effect.gen(function* () {
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "notes/draft.tex", "first");
+        const opened = yield* api.readFile({ cwd, relativePath: "notes/draft.tex" });
+        yield* writeTextFile(cwd, "notes/draft.tex", "edited elsewhere");
+
+        const error = yield* api
+          .deleteFile({ cwd, relativePath: "notes/draft.tex", expectedRevision: opened.revision })
+          .pipe(Effect.flip);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileRevisionConflictError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "notes/draft.tex"))).toBe(
+          "edited elsewhere",
+        );
+
+        const current = yield* api.readFile({ cwd, relativePath: "notes/draft.tex" });
+        const deleted = yield* api.deleteFile({
+          cwd,
+          relativePath: "notes/draft.tex",
+          expectedRevision: current.revision,
+        });
+        expect(deleted).toEqual({ relativePath: "notes/draft.tex" });
+        expect(yield* fileSystem.exists(path.join(cwd, "notes/draft.tex"))).toBe(false);
+        // Folders stay unless asked for.
+        expect(yield* fileSystem.exists(path.join(cwd, "notes"))).toBe(true);
+      }),
+    );
+
+    it.effect("removes the folders a file leaves empty, never the root or a folder in use", () =>
+      Effect.gen(function* () {
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "thesis/chapters/introduction.tex", "intro");
+        yield* writeTextFile(cwd, "thesis/main.tex", "main");
+        yield* writeTextFile(cwd, "only/deep/file.tex", "alone");
+
+        const intro = yield* api.readFile({
+          cwd,
+          relativePath: "thesis/chapters/introduction.tex",
+        });
+        yield* api.deleteFile({
+          cwd,
+          relativePath: "thesis/chapters/introduction.tex",
+          expectedRevision: intro.revision,
+          removeEmptyFolders: true,
+        });
+        expect(yield* fileSystem.exists(path.join(cwd, "thesis/chapters"))).toBe(false);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "thesis/main.tex"))).toBe("main");
+
+        const alone = yield* api.readFile({ cwd, relativePath: "only/deep/file.tex" });
+        yield* api.deleteFile({
+          cwd,
+          relativePath: "only/deep/file.tex",
+          expectedRevision: alone.revision,
+          removeEmptyFolders: true,
+        });
+        expect(yield* fileSystem.exists(path.join(cwd, "only"))).toBe(false);
+        expect(yield* fileSystem.exists(cwd)).toBe(true);
+      }),
+    );
+
+    it.effect("refuses a folder or a link", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "target.tex", "kept");
+        const target = yield* api.readFile({ cwd, relativePath: "target.tex" });
+        yield* fileSystem.symlink(path.join(cwd, "target.tex"), path.join(cwd, "link.tex"));
+
+        const viaLink = yield* api
+          .deleteFile({ cwd, relativePath: "link.tex", expectedRevision: target.revision })
+          .pipe(Effect.result);
+        expect(viaLink._tag).toBe("Failure");
+        expect(yield* fileSystem.readFileString(path.join(cwd, "target.tex"))).toBe("kept");
+
+        yield* fileSystem.makeDirectory(path.join(cwd, "folder"));
+        const folder = yield* api
+          .deleteFile({ cwd, relativePath: "folder", expectedRevision: target.revision })
+          .pipe(Effect.result);
+        expect(folder._tag).toBe("Failure");
+        expect(yield* fileSystem.exists(path.join(cwd, "folder"))).toBe(true);
       }),
     );
   });

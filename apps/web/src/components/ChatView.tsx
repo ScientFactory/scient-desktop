@@ -5686,6 +5686,7 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — openers for the right-panel surfaces Scient adds.
   const {
     addAgentsSurface,
+    addDocumentsSurface,
     addSourcesSurface,
     addComputeSurface,
     openScientSourcePdf,
@@ -11785,6 +11786,7 @@ function ChatViewContent(props: ChatViewProps) {
           keybindings={keybindings}
           closeRightPanelSurface={closeRightPanelSurface}
           openScientSourcePdf={openScientSourcePdf}
+          openFileSourceSurface={openFileSourceSurface}
         />
         {/* SCIENT-FORK:END */}
       </>
@@ -11868,13 +11870,17 @@ function ChatViewContent(props: ChatViewProps) {
               : null
           }
           onOpenFile={openFileSurface}
-          // SCIENT-FORK:START — an in-place rename moves the tab with its state
-          onFileMoved={(fromPath, toPath) =>
-            useRightPanelStore
-              .getState()
-              .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true })
-          }
-          // SCIENT-FORK:END
+          onFileRenamed={(fromPath, toPath) => {
+            if (activeThreadRef)
+              useRightPanelStore.getState().renameFileSurface(activeThreadRef, fromPath, toPath);
+          }}
+          onFileMoved={(fromPath, toPath) => {
+            if (activeThreadRef) {
+              useRightPanelStore
+                .getState()
+                .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true });
+            }
+          }}
           onOpenFileSource={openFileSourceSurface}
           onHtmlPresentationRequestHandled={handleHtmlPresentationRequestHandled}
           onLatexPresentationRequestHandled={handleLatexPresentationRequestHandled}
@@ -12859,6 +12865,8 @@ function ChatViewContent(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurface}
           onAddAgents={addAgentsSurface}
           onAddSources={addSourcesSurface}
+          onAddDocuments={addDocumentsSurface}
+          documentsAvailable={activeWorkspaceRoot !== undefined}
           onAddCompute={addComputeSurface}
           onAddDevice={addDeviceSurface}
           browserAvailable={canOperatePreview && browserAvailable}
@@ -12925,6 +12933,8 @@ function ChatViewContent(props: ChatViewProps) {
             onAddPullRequests={addPullRequestsSurface}
             onAddAgents={addAgentsSurface}
             onAddSources={addSourcesSurface}
+            onAddDocuments={addDocumentsSurface}
+            documentsAvailable={activeWorkspaceRoot !== undefined}
             onAddCompute={addComputeSurface}
             onAddDevice={addDeviceSurface}
             browserAvailable={canOperatePreview && browserAvailable}

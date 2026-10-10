@@ -17,7 +17,12 @@ import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
-  return { ...actual, open: vi.fn(actual.open) };
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    rename: vi.fn(actual.rename),
+    lstat: vi.fn(actual.lstat),
+  };
 });
 const native = await vi.importActual<typeof NodeFSP>("node:fs/promises");
 
@@ -41,6 +46,8 @@ const TestLayer = Layer.mergeAll(
 const roots: string[] = [];
 afterEach(async () => {
   vi.mocked(NodeFSP.open).mockImplementation(native.open);
+  vi.mocked(NodeFSP.rename).mockImplementation(native.rename);
+  vi.mocked(NodeFSP.lstat).mockImplementation(native.lstat as typeof NodeFSP.lstat);
   for (const root of roots.splice(0)) await native.rm(root, { recursive: true, force: true });
 });
 
@@ -156,6 +163,137 @@ describe("WorkspaceFileSystem.renameFile", () => {
         // that landed outside the workspace, and the source must survive.
         expect(renamed._tag).toBe("Failure");
         expect(yield* Effect.promise(() => native.readFile(source, "utf8"))).toBe("kept\n");
+      }).pipe(Effect.provide(TestLayer)),
+  );
+});
+
+describe("WorkspaceFileSystem.deleteFile", () => {
+  const workspaceOf = Effect.promise(async () => {
+    const base = await native.realpath(
+      await native.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-workspace-swap-")),
+    );
+    roots.push(base);
+    const workspace = NodePath.join(base, "workspace");
+    await native.mkdir(workspace);
+    return { base, workspace };
+  });
+
+  it.effect("keeps a file another program rewrote just before its removal", () =>
+    Effect.gen(function* () {
+      const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const { workspace } = yield* workspaceOf;
+      const file = NodePath.join(workspace, "chapter.tex");
+      yield* Effect.promise(() => native.writeFile(file, "as made\n"));
+      const read = yield* workspaceFileSystem.readFile({
+        cwd: workspace,
+        relativePath: "chapter.tex",
+      });
+      // After every check, at the moment the file is taken aside, an editor
+      // rewrites it in place.
+      let armed = true;
+      vi.mocked(NodeFSP.rename).mockImplementation(async (from, to) => {
+        if (armed && String(from) === file) {
+          armed = false;
+          await native.writeFile(file, "edited elsewhere\n");
+        }
+        return native.rename(from, to);
+      });
+
+      const result = yield* workspaceFileSystem
+        .deleteFile({
+          cwd: workspace,
+          relativePath: "chapter.tex",
+          expectedRevision: read.revision,
+        })
+        .pipe(Effect.result);
+
+      expect(armed).toBe(false);
+      expect(result._tag).toBe("Failure");
+      expect(yield* Effect.promise(() => native.readFile(file, "utf8"))).toBe("edited elsewhere\n");
+      // Nothing is left aside.
+      expect(yield* Effect.promise(() => native.readdir(workspace))).toEqual(["chapter.tex"]);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("puts the file back when it cannot be checked once set aside", () =>
+    Effect.gen(function* () {
+      const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const { workspace } = yield* workspaceOf;
+      const file = NodePath.join(workspace, "chapter.tex");
+      yield* Effect.promise(() => native.writeFile(file, "as made\n"));
+      const read = yield* workspaceFileSystem.readFile({
+        cwd: workspace,
+        relativePath: "chapter.tex",
+      });
+      let armed = true;
+      vi.mocked(NodeFSP.lstat).mockImplementation((async (target: string, options?: object) => {
+        // The moved file itself, once it sits in the recovery folder.
+        if (
+          armed &&
+          String(target).includes("scient-deleted-files") &&
+          String(target).endsWith("chapter.tex")
+        ) {
+          armed = false;
+          throw Object.assign(new Error("I/O error"), { code: "EIO" });
+        }
+        return native.lstat(target, options as never);
+      }) as typeof NodeFSP.lstat);
+
+      const result = yield* workspaceFileSystem
+        .deleteFile({
+          cwd: workspace,
+          relativePath: "chapter.tex",
+          expectedRevision: read.revision,
+        })
+        .pipe(Effect.result);
+
+      expect(armed).toBe(false);
+      expect(result._tag).toBe("Failure");
+      expect(yield* Effect.promise(() => native.readFile(file, "utf8"))).toBe("as made\n");
+      expect(yield* Effect.promise(() => native.readdir(workspace))).toEqual(["chapter.tex"]);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "stops removing empty folders at one swapped for a link out of the workspace",
+    () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const { base, workspace } = yield* workspaceOf;
+        const folder = NodePath.join(workspace, "thesis", "chapters");
+        const outside = NodePath.join(base, "outside");
+        yield* Effect.promise(async () => {
+          await native.mkdir(folder, { recursive: true });
+          await native.mkdir(NodePath.join(outside, "chapters"), { recursive: true });
+          await native.writeFile(NodePath.join(folder, "intro.tex"), "intro\n");
+        });
+        const read = yield* workspaceFileSystem.readFile({
+          cwd: workspace,
+          relativePath: "thesis/chapters/intro.tex",
+        });
+        // Once the file is gone, `thesis` becomes a link to a folder outside
+        // that has an empty `chapters` of its own.
+        let armed = true;
+        vi.mocked(NodeFSP.lstat).mockImplementation((async (target: string, options?: object) => {
+          if (armed && String(target) === folder) {
+            armed = false;
+            await native.rm(NodePath.join(workspace, "thesis"), { recursive: true });
+            await native.symlink(outside, NodePath.join(workspace, "thesis"));
+          }
+          return native.lstat(target, options as never);
+        }) as typeof NodeFSP.lstat);
+
+        yield* workspaceFileSystem.deleteFile({
+          cwd: workspace,
+          relativePath: "thesis/chapters/intro.tex",
+          expectedRevision: read.revision,
+          removeEmptyFolders: true,
+        });
+
+        expect(armed).toBe(false);
+        expect(
+          yield* Effect.promise(() => native.stat(NodePath.join(outside, "chapters"))),
+        ).toBeTruthy();
       }).pipe(Effect.provide(TestLayer)),
   );
 });

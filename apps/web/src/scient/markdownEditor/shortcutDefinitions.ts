@@ -1,5 +1,6 @@
 import type { KeybindingShortcut } from "@t3tools/contracts";
 import type { ScientMarkdownCommand } from "./prosemirror/commands";
+import type { ShortcutPresentation } from "../keyboard/presentation";
 
 export type ScientMarkdownShortcutId =
   | "bold"
@@ -89,12 +90,7 @@ export const SCIENT_MARKDOWN_COMMAND_SHORTCUTS = [
   ["hardBreak", "hard-break"],
 ] as const satisfies ReadonlyArray<readonly [ScientMarkdownShortcutId, ScientMarkdownCommand]>;
 
-export interface ScientMarkdownShortcutPresentation {
-  /** Human-facing platform label, kept out of the control's accessible name. */
-  readonly display: string;
-  /** One or more valid ARIA shortcut tokens, primary first. */
-  readonly ariaKeyShortcuts: string;
-}
+export type ScientMarkdownShortcutPresentation = ShortcutPresentation;
 
 export interface ShortcutDefinition {
   readonly bindings: readonly KeybindingShortcut[];

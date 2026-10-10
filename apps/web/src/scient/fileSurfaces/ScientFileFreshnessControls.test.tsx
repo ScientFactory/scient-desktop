@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { ScientFileFreshnessNotices, ScientFileReloadButton } from "./ScientFileFreshnessControls";
+import {
+  ScientFileFreshnessNotices,
+  ScientFileFreshnessStatus,
+  ScientFileReloadButton,
+} from "./ScientFileFreshnessControls";
 
 describe("ScientFileReloadButton", () => {
   it("renders the normal workspace reload action", () => {
@@ -38,6 +42,47 @@ describe("ScientFileReloadButton", () => {
     expect(markup).toContain('aria-busy="true"');
     expect(markup).toContain("disabled");
     expect(markup).toContain("animate-spin");
+  });
+});
+
+describe("ScientFileFreshnessStatus", () => {
+  const quiet = {
+    relativePath: "paper.tex",
+    notice: null,
+    readError: null,
+    saveError: null,
+    saveRetryReady: false,
+    hasFallbackData: true,
+    onCancel: vi.fn(),
+    onReload: vi.fn(),
+    onRequestOverwrite: vi.fn(),
+    onRetrySave: vi.fn(),
+    onResolve: vi.fn(),
+  };
+
+  it("says nothing is wrong only when the file's session agrees", () => {
+    const calm = renderToStaticMarkup(<ScientFileFreshnessStatus {...quiet} pending={false} />);
+    expect(calm).toContain('aria-label="File status: No file warnings"');
+    expect(calm).not.toContain("text-warning");
+
+    const conflict = renderToStaticMarkup(
+      <ScientFileFreshnessStatus {...quiet} pending sessionAttention="conflict" />,
+    );
+    expect(conflict).toContain('aria-label="File status: File changed: review your save options"');
+    expect(conflict).toContain("text-warning");
+
+    const failure = renderToStaticMarkup(
+      <ScientFileFreshnessStatus {...quiet} pending sessionAttention="failure" />,
+    );
+    expect(failure).toContain('aria-label="File status: Changes have not been saved"');
+    expect(failure).toContain("text-warning");
+
+    // Nothing unsaved: only the check of the disk version failed.
+    const refresh = renderToStaticMarkup(
+      <ScientFileFreshnessStatus {...quiet} pending={false} sessionAttention="refresh" />,
+    );
+    expect(refresh).toContain('aria-label="File status: The latest file could not be loaded"');
+    expect(refresh).not.toContain("Changes have not been saved");
   });
 });
 

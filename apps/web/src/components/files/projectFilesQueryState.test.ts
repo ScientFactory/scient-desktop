@@ -27,6 +27,7 @@ import {
   clearProjectFileQueryData,
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  getPendingOptimisticProjectFilePaths,
   projectReadFailure,
   getUnsavedProjectFileQueryData,
   resolveProjectFileQueryData,
@@ -283,6 +284,85 @@ describe("project files queries", () => {
     expect(
       resolveProjectFileQueryData(environmentId, "/repo", "convex.json", authoritative),
     ).toEqual(authoritative);
+  });
+});
+
+describe("pending optimistic project files", () => {
+  const otherEnvironmentId = EnvironmentId.make("other-pending-project-files-environment");
+  const targets = [
+    [environmentId, "/pending-repo", "data.txt"],
+    [environmentId, "/pending-repo", "chapters/introduction.tex"],
+    [environmentId, "/other-pending-repo", "data.txt"],
+    [otherEnvironmentId, "/pending-repo", "data.txt"],
+  ] as const;
+
+  afterEach(() => {
+    for (const [environment, cwd, path] of targets) {
+      clearProjectFileQueryData(environment, cwd, path);
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it("enumerates exact paths only within the requested environment and workspace", () => {
+    for (const [environment, cwd, path] of targets) {
+      setProjectFileQueryData(environment, cwd, path, "pending", "revision-1");
+    }
+
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([
+      "data.txt",
+      "chapters/introduction.tex",
+    ]);
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/other-pending-repo")).toEqual([
+      "data.txt",
+    ]);
+    expect(getPendingOptimisticProjectFilePaths(otherEnvironmentId, "/pending-repo")).toEqual([
+      "data.txt",
+    ]);
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo/")).toEqual([]);
+  });
+
+  it("keeps a newer draft pending when an older write is acknowledged", () => {
+    vi.stubGlobal("window", {});
+    setProjectFileQueryData(environmentId, "/pending-repo", "data.txt", "first", "revision-1");
+    setProjectFileQueryData(environmentId, "/pending-repo", "data.txt", "newer");
+
+    expect(
+      confirmProjectFileQueryData(
+        environmentId,
+        "/pending-repo",
+        "data.txt",
+        "first",
+        "revision-2",
+      ),
+    ).toBe(false);
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([
+      "data.txt",
+    ]);
+
+    expect(
+      confirmProjectFileQueryData(
+        environmentId,
+        "/pending-repo",
+        "data.txt",
+        "newer",
+        "revision-3",
+      ),
+    ).toBe(true);
+    expect(
+      getOptimisticProjectFileQueryData(environmentId, "/pending-repo", "data.txt"),
+    ).not.toBeNull();
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([]);
+
+    setProjectFileQueryData(environmentId, "/pending-repo", "data.txt", "latest");
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([
+      "data.txt",
+    ]);
+  });
+
+  it("stops reporting a discarded draft", () => {
+    setProjectFileQueryData(environmentId, "/pending-repo", "data.txt", "pending", "revision-1");
+    clearProjectFileQueryData(environmentId, "/pending-repo", "data.txt");
+    expect(getPendingOptimisticProjectFilePaths(environmentId, "/pending-repo")).toEqual([]);
   });
 });
 

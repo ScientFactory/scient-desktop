@@ -14,7 +14,7 @@ import {
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 
-import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
+import { isScientMarkdownDocumentPath } from "../markdownDocumentPaths";
 
 import {
   createMarkdownPersistenceTransport,
@@ -46,14 +46,27 @@ export type DocumentReconcileStrategy = ReconcileDocument<DocumentPatchReconcili
 export const keepBothVersions: DocumentReconcileStrategy = () => null;
 
 /**
- * The strategy for each kind of file the registry owns. LaTeX has no merge
- * yet: two changes that are far apart in the text can still depend on each
- * other (a macro and its uses, a label and its references).
+ * The strategy for each kind of file the registry owns. Only Markdown merges.
+ * LaTeX has no merge yet: two changes that are far apart in the text can still
+ * depend on each other (a macro and its uses, a label and its references). A
+ * file of any other kind is here only as part of a LaTeX document.
  */
 export function documentReconcileStrategy(
   target: MarkdownPersistenceTarget,
 ): DocumentReconcileStrategy | undefined {
-  return isLatexPreviewFile(target.relativePath) ? keepBothVersions : undefined;
+  return isScientMarkdownDocumentPath(target.relativePath) ? undefined : keepBothVersions;
+}
+
+/**
+ * Whether a file's unsaved draft is kept in the session's checkpoint store.
+ * A LaTeX document's files are not: their recovery belongs to the Visual
+ * editor, which offers recovered work for comparison and never applies it
+ * unasked. Two recovery copies of one file would answer that question twice.
+ * Bibliographies have no startup recovery UI, so .bib sessions keep unsaved
+ * source in memory only; References retains its form until a save is confirmed.
+ */
+export function documentKeepsCheckpoint(target: MarkdownPersistenceTarget): boolean {
+  return isScientMarkdownDocumentPath(target.relativePath);
 }
 
 export interface MarkdownPersistenceRegistryState extends MarkdownPersistenceTarget {
@@ -184,9 +197,9 @@ export function canMoveInPlace(lease: MarkdownPersistenceLease): boolean {
 
 /**
  * Raised whenever a registry built from older code could not serve this code:
- * a new lease method, a new rule for which strategy a file gets.
+ * a new lease method, a new rule for which strategy or checkpoint a file gets.
  */
-const REGISTRY_GENERATION = 7;
+const REGISTRY_GENERATION = 8;
 
 export class MarkdownPersistenceRegistry {
   readonly generation = REGISTRY_GENERATION;
@@ -222,6 +235,8 @@ export class MarkdownPersistenceRegistry {
         target: MarkdownPersistenceTarget,
       ) => MarkdownPersistenceTransport;
       readonly checkpointStore?: MarkdownDraftCheckpointStore;
+      /** Files whose unsaved draft is not kept in the checkpoint store. All are kept by default. */
+      readonly keepsCheckpoint?: (target: MarkdownPersistenceTarget) => boolean;
       /** The merge strategy for a file; Markdown's block merge where it names none. */
       readonly reconcile?: (
         target: MarkdownPersistenceTarget,
@@ -238,6 +253,14 @@ export class MarkdownPersistenceRegistry {
     return () => this.listeners.delete(listener);
   };
 
+  private checkpointStoreFor(
+    target: MarkdownPersistenceTarget,
+  ): MarkdownDraftCheckpointStore | undefined {
+    return this.options.keepsCheckpoint?.(target) === false
+      ? undefined
+      : this.options.checkpointStore;
+  }
+
   private strategyFor(target: MarkdownPersistenceTarget): DocumentReconcileStrategy {
     return this.options.reconcile?.(target) ?? reconcileMarkdown;
   }
@@ -246,6 +269,14 @@ export class MarkdownPersistenceRegistry {
     return this.entries.has(projectFileOperationKey(target));
   }
 
+  /** Read current ownership without admitting a second writer for a clean dependency. */
+  getTargetSnapshot(target: MarkdownPersistenceTarget): MarkdownPersistenceSnapshot | null {
+    return this.entries.get(projectFileOperationKey(target))?.coordinator.getSnapshot() ?? null;
+  }
+
+  isOpening(target: MarkdownPersistenceTarget): boolean {
+    return this.initializing.has(projectFileOperationKey(target));
+  }
   /** Told synchronously when an open document moves to a new path in place. */
   readonly onMoved = (listener: (move: MarkdownPersistenceMove) => void): (() => void) => {
     this.moveListeners.add(listener);
@@ -264,7 +295,7 @@ export class MarkdownPersistenceRegistry {
         const transport = (this.options.createTransport ?? createMarkdownPersistenceTransport)(
           target,
         );
-        const store = this.options.checkpointStore;
+        const store = this.checkpointStoreFor(target);
         opening = Promise.all([
           transport.read(),
           (this.retiring.get(key) ?? Promise.resolve())
@@ -383,6 +414,7 @@ export class MarkdownPersistenceRegistry {
       },
       ...(this.options.debounceMs === undefined ? {} : { debounceMs: this.options.debounceMs }),
     });
+    const checkpointStore = this.checkpointStoreFor(target);
     const entryKey = projectFileOperationKey(target);
     let id = this.documentIds.get(entryKey);
     if (id === undefined) this.documentIds.set(entryKey, (id = `document-${nextDocumentId++}`));
@@ -395,10 +427,10 @@ export class MarkdownPersistenceRegistry {
       leases: new Map(),
       projections,
       unsubscribe: coordinator.subscribe(() => this.changed(entry)),
-      checkpoint: this.options.checkpointStore
+      checkpoint: checkpointStore
         ? new MarkdownDraftCheckpointWriter(
             projectFileOperationKey(target),
-            this.options.checkpointStore,
+            checkpointStore,
             checkpoint,
           )
         : undefined,
@@ -652,6 +684,7 @@ export class MarkdownPersistenceRegistry {
       entry.pendingInput !== null ||
       // Same kind of document: same merge rule at both paths.
       this.strategyFor(destination) !== entry.reconcile ||
+      this.checkpointStoreFor(destination) !== this.checkpointStoreFor(from) ||
       this.entries.has(toKey) ||
       this.initializing.has(toKey) ||
       this.reserved.has(fromKey) ||
@@ -667,7 +700,7 @@ export class MarkdownPersistenceRegistry {
     this.reserved.set(toKey, reservation);
     let committed = false;
     let finished = false;
-    const store = this.options.checkpointStore;
+    const store = this.checkpointStoreFor(from);
     return {
       documentId: entry.id,
       preflight: async () => {
@@ -932,6 +965,7 @@ const adopted = adoptRendererRegistry(
   () =>
     new MarkdownPersistenceRegistry({
       reconcile: documentReconcileStrategy,
+      keepsCheckpoint: documentKeepsCheckpoint,
       ...(typeof indexedDB === "undefined" ? {} : { checkpointStore: indexedDbMarkdownDrafts }),
     }),
 );

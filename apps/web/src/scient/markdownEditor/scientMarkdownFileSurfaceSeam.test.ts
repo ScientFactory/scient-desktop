@@ -3,10 +3,14 @@ import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
 
-const panelSource = NodeFS.readFileSync(
-  new URL("../../components/files/FilePreviewPanel.tsx", import.meta.url),
-  "utf8",
-);
+import { RENDER_MARKDOWN_STORAGE_KEY } from "../fileOpening/fileOpeningPolicy";
+
+const panelSource = [
+  "../../components/files/FilePreviewPanel.tsx",
+  "../fileSurfaces/scientLazyFileSurfaces.tsx",
+]
+  .map((path) => NodeFS.readFileSync(new URL(path, import.meta.url), "utf8"))
+  .join("\n");
 const surfaceSource = NodeFS.readFileSync(
   new URL("./ScientMarkdownFileSurface.tsx", import.meta.url),
   "utf8",
@@ -85,7 +89,11 @@ describe("Scient Markdown file-preview seam", () => {
     expect(panelSource).not.toContain("editChrome=");
     expect(panelSource).toContain("renderMarkdown ?");
     expect(panelSource).not.toContain('aria-label="Markdown mode"');
-    expect(panelSource).toContain('const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";');
+    // One remembered Rich/Source choice, shared with Settings ▸ Documents.
+    expect(RENDER_MARKDOWN_STORAGE_KEY).toBe("t3code.renderMarkdown");
+    expect(panelSource).toContain(
+      "RENDER_MARKDOWN_STORAGE_KEY,\n    SCIENT_DEFAULT_RENDER_MARKDOWN,",
+    );
     expect(panelSource).toContain("runAfterPendingSave([relativePath], apply);");
     for (const retired of ['value="write"', 'value="read"', 'value="split"', 'value="source"']) {
       expect(panelSource).not.toContain(retired);
@@ -117,10 +125,11 @@ describe("Scient Markdown file-preview seam", () => {
 
   it("limits workspace lifecycle UI to one owned create and rename mount", () => {
     expect(browserSource.match(/<ScientMarkdownCreateButton\b/gu)).toHaveLength(1);
-    expect(panelSource.match(/<ScientMarkdownRenameButton\b/gu)).toHaveLength(1);
+    expect(panelSource.match(/<FileRenameButton\b/gu)).toHaveLength(1);
     expect(browserSource).not.toContain("createOnly: true");
     expect(panelSource).not.toContain("projects.renameFile");
-    expect(panelSource).toContain("isRichMarkdown && !file.data?.readOnly");
+    expect(panelSource).toContain("file.data?.readOnly !== true");
+    expect(panelSource).toContain("normalize: normalizeMarkdownCreatePath");
   });
 
   it("refreshes the current workspace tree and link index after refresh, creation, or agent edits", () => {
@@ -148,9 +157,9 @@ describe("Scient Markdown file-preview seam", () => {
     expect(surfaceSource).toContain("onOpenWikiLink={handleOpenWikiLink}");
   });
 
-  it("uses the current filename itself as the Markdown rename affordance", () => {
+  it("uses the current filename itself as the rename affordance, for every file", () => {
     expect(panelSource).toContain("currentFileControl={");
-    expect(panelSource).toContain("<ScientMarkdownRenameButton");
+    expect(panelSource).toContain("<FileRenameButton");
     expect(panelSource).toContain('label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}');
   });
 

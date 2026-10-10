@@ -12,10 +12,12 @@ import {
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../../auth/http.ts";
+import { uploadWorkspaceLatexImage } from "../assets/WorkspaceImageFiles.ts";
 import { LatexBuildService } from "./LatexBuildService.ts";
 import { LatexManagedToolchain } from "./LatexManagedToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
+import { LatexTikzPreview } from "./LatexTikzPreview.ts";
 
 function handle<A, E>(
   endpointName: string,
@@ -38,6 +40,7 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
     const toolchain = yield* LatexToolchain;
     const managed = yield* LatexManagedToolchain;
     const syncTex = yield* LatexSyncTex;
+    const artwork = yield* LatexTikzPreview;
 
     /** The probe result plus what this server can do about a missing engine. */
     const toolchainReport = (refresh: boolean) =>
@@ -57,6 +60,34 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
       });
 
     return handlers
+      .handle("artwork", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationOperateScope,
+          "scient_latex_build_failed",
+          artwork.render(args.payload),
+        ),
+      )
+      .handle("imageUpload", (args) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* uploadWorkspaceLatexImage({
+            cwd: args.payload.cwd,
+            documentRelativePath: args.payload.documentRelativePath,
+            temporaryPath: args.payload.file.path,
+            fileName: args.payload.file.name,
+            ...(args.payload.assetDirectory === undefined
+              ? {}
+              : { assetDirectory: args.payload.assetDirectory }),
+          }).pipe(
+            Effect.catchTags({
+              WorkspaceImageOperationError: (cause) =>
+                failEnvironmentInternal("scient_latex_build_failed", cause.cause),
+            }),
+          );
+        }),
+      )
       .handle("resolve", (args) =>
         handle(
           args.endpoint.name,

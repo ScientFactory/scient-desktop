@@ -73,8 +73,12 @@ export type RenameOpenDocumentResult =
    */
   | {
       readonly kind: "legacy-required";
-      /** `destination`: another view or recovery copy holds the new name; try another. */
-      readonly reason?: "destination";
+      /**
+       * `destination`: another view or recovery copy holds the new name; try
+       * another. `busy`: an editor is not ready yet (composing, saving); try
+       * again shortly.
+       */
+      readonly reason?: "destination" | "busy";
     }
   /** The server refused or failed; nothing was changed. */
   | { readonly kind: "failed"; readonly cause: unknown };
@@ -116,16 +120,16 @@ export async function renameOpenDocument(input: {
   const documentId = documentIdentity(lease);
   if (!(input.destinationFree?.() ?? true))
     return { kind: "legacy-required", reason: "destination" };
-  if (!participantsReady(documentId)) return { kind: "legacy-required" };
+  if (!participantsReady(documentId)) return { kind: "legacy-required", reason: "busy" };
   // The old name's recovery copy goes first, whichever way the file is renamed.
   if (!((await lease.settleRecoveryCopy?.()) ?? true))
     return { kind: "failed", cause: new Error(RECOVERY_COPY_UNSETTLED) };
-  if (!participantsReady(documentId)) return { kind: "legacy-required" };
+  if (!participantsReady(documentId)) return { kind: "legacy-required", reason: "busy" };
   const move = lease.beginMove(destination);
   if (move === null) return { kind: "legacy-required" };
   try {
     // An editor may have started composing between the check and the hold.
-    if (!participantsReady(documentId)) return { kind: "legacy-required" };
+    if (!participantsReady(documentId)) return { kind: "legacy-required", reason: "busy" };
     const destinationCopy = await move.preflight();
     if (destinationCopy === "occupied") return { kind: "legacy-required", reason: "destination" };
     if (destinationCopy !== "empty") return { kind: "legacy-required" };

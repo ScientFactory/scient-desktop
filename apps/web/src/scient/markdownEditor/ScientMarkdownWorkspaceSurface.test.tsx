@@ -845,27 +845,14 @@ describe("ScientMarkdownWorkspaceSurface", () => {
 
     await act(() => handle!.click());
 
-    const bold = host.querySelector<HTMLButtonElement>("[aria-label='Bold']");
-    expect(bold).not.toBeNull();
-    expect(bold?.getAttribute("aria-keyshortcuts")).toBe(
-      scientMarkdownShortcut("bold").ariaKeyShortcuts,
-    );
-    expect(bold?.textContent).toBe("");
-    expect(
-      host.querySelector("[aria-label='Bold']")?.getAttribute("data-preserve-icon-weight"),
-    ).toBe("true");
-    expect(
-      host.querySelector("[aria-label='Inline code']")?.getAttribute("data-preserve-icon-weight"),
-    ).toBe("true");
-    expect(
-      host
-        .querySelector("[aria-label='Add or edit link']")
-        ?.getAttribute("data-preserve-icon-weight"),
-    ).toBe("true");
+    expect(host.querySelector('button[aria-label="Text"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Bold"]')).toBeNull();
+    // Link is in Insert, not a bar button.
+    expect(host.querySelector("[aria-label='Add or edit link']")).toBeNull();
     expect(host.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
   });
 
-  it("shows distinct Paragraph and Quote icons in the primary editor controls", async () => {
+  it("uses the same Text trigger for paragraphs and quotes", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
     const renderExpandedSurface = async (source: string, ariaLabel: string) => {
@@ -894,12 +881,12 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     };
 
     const paragraph = await renderExpandedSurface("Plain text.\n", "Paragraph fixture");
-    const paragraphStyle = paragraph.querySelector("[aria-label='Style: Paragraph']");
-    expect(paragraphStyle?.querySelector(".lucide-text-initial")).not.toBeNull();
+    const paragraphStyle = paragraph.querySelector("[aria-label='Text']");
+    expect(paragraphStyle?.textContent).toBe("Text");
 
     const quote = await renderExpandedSurface("> Quoted text.\n", "Quote fixture");
-    const quoteStyle = quote.querySelector("[aria-label='Style: Quote']");
-    expect(quoteStyle?.querySelector(".lucide-text-quote")).not.toBeNull();
+    const quoteStyle = quote.querySelector("[aria-label='Text']");
+    expect(quoteStyle?.textContent).toBe("Text");
   });
 
   it("uses the shared compact popover treatment for link editing", async () => {
@@ -926,9 +913,19 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     await act(() =>
       host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")!.click(),
     );
-    await act(() =>
-      host.querySelector<HTMLButtonElement>("[aria-label='Add or edit link']")!.click(),
-    );
+    // Link is in Insert.
+    await act(() => host.querySelector<HTMLButtonElement>("button[aria-label='Insert']")!.click());
+    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (node) => node.textContent?.trim() === "References",
+    )!;
+    await act(() => references.click());
+    const linkItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ).find((node) => node.textContent?.trim().startsWith("Link"))!;
+    await act(() => linkItem.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
 
     const popup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
     const viewport = popup?.querySelector<HTMLElement>("[data-slot='popover-viewport']");
@@ -1287,8 +1284,10 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       );
     });
 
+    // A table's tools are in the footer; the bar does not change inside a table.
     const toolbar = host.querySelector("[aria-label='Table actions']");
-    expect(toolbar?.closest("[aria-label='Document actions']")).not.toBeNull();
+    expect(toolbar?.closest(".scient-document-footer")).not.toBeNull();
+    expect(toolbar?.closest("[aria-label='Document actions']") ?? null).toBeNull();
     expect(host.querySelector(".scient-markdown-table-toolbar")).toBeNull();
     const addRow = toolbar?.querySelector("[aria-label='Add row below']");
     const addColumn = toolbar?.querySelector("[aria-label='Add column after']");
@@ -1298,8 +1297,12 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(toolbar?.querySelector("[aria-label='Delete row']")).toBeNull();
     expect(toolbar?.querySelector("[aria-label='Delete column']")).toBeNull();
     expect(toolbar?.querySelector("[aria-label='More table actions']")).toBeNull();
-    expect(host.querySelectorAll("[aria-label='More actions']")).toHaveLength(1);
-    const moreActions = host.querySelector<HTMLButtonElement>("[aria-label='More actions']");
+    // Entering a table no longer opens the bar: it stays as the writer left it.
+    expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
+    expect(host.querySelectorAll("[aria-label='Document']")).toHaveLength(0);
+    const moreActions = host.querySelector<HTMLButtonElement>(
+      ".scient-document-footer [aria-label='More table actions']",
+    );
     expect(moreActions).not.toBeNull();
     await act(() => moreActions!.click());
     const menuItems = Array.from(
@@ -1360,22 +1363,33 @@ describe("ScientMarkdownWorkspaceSurface", () => {
         view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, position))),
       );
 
+    const footer = host.querySelector(".scient-document-footer");
+    expect(footer).not.toBeNull();
+    const chromeBefore = dock!.innerHTML;
     await move(cellPositions[0]!);
+    // The table's tools appear in the footer; the bar is exactly as it was.
     expect(
-      host.querySelector("[aria-label='Table actions']")?.closest(".scient-markdown-editor-dock"),
-    ).toBe(dock);
-    await act(() =>
-      host.querySelector<HTMLButtonElement>("[aria-label='Hide formatting tools']")!.click(),
+      host.querySelector("[aria-label='Table actions']")?.closest(".scient-document-footer"),
+    ).toBe(footer);
+    expect(dock!.querySelector("[aria-label='Table actions']")).toBeNull();
+    expect(dock!.innerHTML).toBe(chromeBefore);
+    expect(footer!.querySelector(".scient-document-footer-position")?.textContent).toBe(
+      "Table · row 1, column 1",
     );
     await move(cellPositions[1]!);
-    expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
-    expect(host.querySelector("[aria-label='Table actions']")).toBeNull();
+    expect(footer!.querySelector(".scient-document-footer-position")?.textContent).toBe(
+      "Table · row 1, column 2",
+    );
+    expect(host.querySelector("[aria-label='Table actions']")).not.toBeNull();
 
     await move(1);
+    expect(host.querySelector("[aria-label='Table actions']")).toBeNull();
+    expect(footer!.querySelector(".scient-document-footer-position")?.textContent).toBe("Text");
     await move(cellPositions[2]!);
     expect(host.querySelector("[aria-label='Table actions']")).not.toBeNull();
     await move(1);
     expect(host.querySelector("[aria-label='Table actions']")).toBeNull();
+    expect(host.querySelector(".scient-document-footer")).toBe(footer);
     expect(host.querySelectorAll(".scient-markdown-editor-dock")).toHaveLength(1);
     expect(host.querySelector(".scient-markdown-editor-dock")).toBe(dock);
     expect(host.querySelector(".scient-markdown-document-shell")).toBe(documentShell);

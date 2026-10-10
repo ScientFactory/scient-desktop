@@ -207,6 +207,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeBackgroundPolicy]: "server",
   [WS_METHODS.projectsListDirectory]: "projects",
   [WS_METHODS.projectsRenameFile]: "projects",
+  [WS_METHODS.projectsDeleteFile]: "projects",
   [WS_METHODS.analysisInspectRuntimes]: "analysis",
   [WS_METHODS.analysisConfigureRuntime]: "analysis",
   [WS_METHODS.analysisVerifyRuntime]: "analysis",

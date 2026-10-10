@@ -175,7 +175,7 @@ export class WorkspaceFileSystem extends Context.Service<
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
   } &
-    // SCIENT-FORK:START — save, create, rename and watch methods.
+    // SCIENT-FORK:START — save, create, rename, delete and watch methods.
     WorkspaceFileMutationMethods &
     WorkspaceFileWatchMethods
   // SCIENT-FORK:END
@@ -409,9 +409,10 @@ export const make = Effect.gen(function* () {
     readResolvedFile(input, "contained");
   const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = (input) =>
     readResolvedFile(input, "view");
-  // SCIENT-FORK:START — revision-checked saves, exclusive creates and renames.
+  // SCIENT-FORK:START — revision-checked saves, exclusive creates, renames and deletes.
   const {
     createBinaryFile,
+    deleteFile,
     inspectWriteTarget,
     renameFile,
     writeFile,
@@ -434,6 +435,7 @@ export const make = Effect.gen(function* () {
     replaceFileRetained,
     removeFileRetained,
     createBinaryFile,
+    deleteFile,
     inspectWriteTarget,
     readFile,
     renameFile,

@@ -40,6 +40,7 @@ import {
 } from "./shortcuts";
 import { showScientMarkdownTableContextMenu } from "./tableContextMenu";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
+import { ScientMarkdownFooter } from "./ui/ScientMarkdownFooter";
 import { useFinalUnmount } from "./useFinalUnmount";
 import {
   documentIdentity,
@@ -486,6 +487,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
             </Button>
           </div>
         ) : null}
+        <ScientMarkdownFooter controller={controller} />
         {props.citationSource ? (
           <MarkdownCitationActions
             controller={controller}

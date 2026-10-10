@@ -110,6 +110,7 @@ import {
   type ProjectFileErrorReason,
   ProjectListDirectoryError,
   ProjectRenameFileError,
+  ProjectDeleteFileError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import {
@@ -3087,6 +3088,22 @@ const layerWsRpc = (
                     cwd: input.cwd,
                     relativePath: input.relativePath,
                     destinationRelativePath: input.destinationRelativePath,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsDeleteFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsDeleteFile,
+            workspaceFileSystem.deleteFile(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectDeleteFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
                     ...projectFileFailureContext(cause),
                     cause,
                   }),

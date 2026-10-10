@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { ScientMarkdownEditorView } from "../prosemirror/view";
 import { scientMarkdownShortcut } from "../shortcuts";
 import { ScientMarkdownControls } from "./ScientMarkdownControls";
+import { ScientMarkdownFooter } from "./ScientMarkdownFooter";
 
 describe("formatting menu focus", () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -53,6 +54,22 @@ describe("formatting menu focus", () => {
     return { view, controller, controlsHost };
   }
 
+  // Link lives in Insert; Cmd+K still opens it from the editor.
+  async function openLinkFromInsert(controlsHost: HTMLElement) {
+    await act(() =>
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
+    );
+    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (node) => node.textContent?.trim() === "References",
+    )!;
+    await act(() => references.click());
+    const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (node) => node.textContent?.trim().startsWith("Link"),
+    )!;
+    expect(item).toBeDefined();
+    await act(() => item.click());
+  }
+
   it("opens the existing link editor with the right-clicked destination prefilled", async () => {
     const showLinkContextMenu = vi.fn(async () => "edit" as const);
     const { controlsHost } = await fixture(
@@ -81,7 +98,8 @@ describe("formatting menu focus", () => {
     });
     expect(input.value).toBe("notes.md");
     expect(showLinkContextMenu).toHaveBeenCalledOnce();
-    expect(controlsHost.querySelectorAll('button[aria-label="Add or edit link"]')).toHaveLength(1);
+    // There is no link button in the bar any more.
+    expect(controlsHost.querySelector('button[aria-label="Add or edit link"]')).toBeNull();
   });
 
   it.each(["caret", "selection"] as const)(
@@ -128,15 +146,14 @@ describe("formatting menu focus", () => {
     await act(() => {
       view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
     });
-    const triggers = await vi.waitFor(() => {
+    // The selection toolbar has its own link button; the bar opens it from Insert.
+    const selectionTrigger = await vi.waitFor(() => {
       const buttons = Array.from(
         document.body.querySelectorAll<HTMLButtonElement>('button[aria-label="Add or edit link"]'),
       );
-      expect(buttons).toHaveLength(2);
-      return buttons;
+      expect(buttons).toHaveLength(1);
+      return buttons[0]!;
     });
-    const dockTrigger = triggers.find((trigger) => controlsHost.contains(trigger))!;
-    const selectionTrigger = triggers.find((trigger) => !controlsHost.contains(trigger))!;
 
     await act(() => selectionTrigger.click());
     await vi.waitFor(() => {
@@ -146,7 +163,7 @@ describe("formatting menu focus", () => {
       );
     });
 
-    await act(() => dockTrigger.click());
+    await openLinkFromInsert(controlsHost);
     await vi.waitFor(() => {
       expect(document.body.querySelectorAll('[data-slot="popover-popup"]')).toHaveLength(1);
       expect(document.body.querySelectorAll('input[aria-label="Link destination"]')).toHaveLength(
@@ -160,11 +177,8 @@ describe("formatting menu focus", () => {
     const outsideInput = document.createElement("input");
     outsideInput.setAttribute("aria-label", "Outside input");
     document.body.append(outsideInput);
-    const trigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="Add or edit link"]',
-    )!;
 
-    await act(() => trigger.click());
+    await openLinkFromInsert(controlsHost);
     await vi.waitFor(() =>
       expect(document.body.querySelector('input[aria-label="Link destination"]')).not.toBeNull(),
     );
@@ -207,10 +221,7 @@ describe("formatting menu focus", () => {
     });
     await vi.waitFor(() => expect(view.hasFocus()).toBe(true));
 
-    const trigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="Add or edit link"]',
-    )!;
-    await act(() => trigger.click());
+    await openLinkFromInsert(controlsHost);
     const triggerInput = await vi.waitFor(() => {
       const input = document.body.querySelector<HTMLInputElement>(
         'input[aria-label="Link destination"]',
@@ -223,15 +234,15 @@ describe("formatting menu focus", () => {
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
       );
     });
-    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+    // Opened from Insert, it returns focus to the document.
+    await vi.waitFor(() => expect(view.hasFocus()).toBe(true));
   });
 
   it.each([
-    ["Style:", "Heading 2", "heading-2", "A paragraph\n"],
+    ["Text", "Heading 2", "heading-2", "A paragraph\n"],
     ["List:", "Numbered list", "ordered-list", "A paragraph\n"],
-    ["Text direction:", "Right-to-left", "direction-rtl", "A paragraph\n"],
-    ["Style:", "Paragraph", "paragraph", "A paragraph\n"],
-    ["Style:", "Paragraph", "paragraph", "> A quote\n"],
+    ["Text", "Paragraph", "paragraph", "A paragraph\n"],
+    ["Text", "Paragraph", "paragraph", "> A quote\n"],
   ])(
     "closes %s after %s and leaves the caret ready to type (%s, %s)",
     async (prefix, label, command, source) => {
@@ -244,6 +255,12 @@ describe("formatting menu focus", () => {
         trigger.focus();
         trigger.click();
       });
+      if (prefix === "Text")
+        await act(() =>
+          [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+            .find((item) => item.textContent === "Paragraph style")!
+            .click(),
+        );
       const item = Array.from(
         document.body.querySelectorAll<HTMLElement>("[role='menuitemradio']"),
       ).find((node) => node.textContent?.trim().startsWith(label));
@@ -263,8 +280,18 @@ describe("formatting menu focus", () => {
     const { view, controller, controlsHost } = await fixture(
       "| A | B |\n| --- | --- |\n| One | Two |\n",
     );
-    const trigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="More actions"]',
+    // A table's commands are in the footer's menu, not in the bar's Document.
+    const footerHost = document.createElement("div");
+    document.body.append(footerHost);
+    const footerRoot = createRoot(footerHost);
+    cleanups.push(async () => {
+      await act(() => footerRoot.unmount());
+      footerHost.remove();
+    });
+    await act(() => footerRoot.render(<ScientMarkdownFooter controller={controller} />));
+    expect(controlsHost.querySelector('[aria-label="Table actions"]')).toBeNull();
+    const trigger = footerHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="More table actions"]',
     )!;
     await act(() => trigger.click());
     const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
@@ -276,10 +303,24 @@ describe("formatting menu focus", () => {
     await vi.waitFor(() => expect(view.hasFocus()).toBe(true));
     expect(view.state.selection).toBeInstanceOf(CellSelection);
     expect((view.state.selection as CellSelection).isColSelection()).toBe(true);
-    const direction = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label^="Table direction:"]',
-    )!;
-    await act(() => direction.click());
+    // Every selected cell is counted, not only the one the selection ends in.
+    await vi.waitFor(() =>
+      expect(footerHost.querySelector(".scient-document-footer-count")?.textContent).toBe(
+        "4 of 4 words",
+      ),
+    );
+    // Direction lives in the Style menu, under Direction (Table direction in a table).
+    const openDirection = async () => {
+      await act(() =>
+        controlsHost.querySelector<HTMLButtonElement>("button[aria-label='Text']")!.click(),
+      );
+      const submenu = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+      ).find((node) => node.textContent?.trim() === "Table direction")!;
+      expect(submenu).toBeDefined();
+      await act(() => submenu.click());
+    };
+    await openDirection();
     const directionItems = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
     );
@@ -292,7 +333,8 @@ describe("formatting menu focus", () => {
     expect(view.state.selection).toBeInstanceOf(CellSelection);
     expect(controller.session.session.draftSource).toContain('<div dir="rtl">');
 
-    await act(() => direction.click());
+    await vi.waitFor(() => expect(document.body.querySelector("[role='menu']")).toBeNull());
+    await openDirection();
     const automatic = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
     ).find((node) => node.textContent?.trim() === "Auto — detect from table")!;
@@ -305,7 +347,7 @@ describe("formatting menu focus", () => {
   it("keeps normal trigger focus on Escape without running a command", async () => {
     const { controller, controlsHost } = await fixture();
     const execute = vi.spyOn(controller, "execute");
-    const trigger = controlsHost.querySelector<HTMLButtonElement>("button[aria-label^='Style:']")!;
+    const trigger = controlsHost.querySelector<HTMLButtonElement>("button[aria-label='Text']")!;
     await act(() => {
       trigger.focus();
       trigger.click();
@@ -320,10 +362,12 @@ describe("formatting menu focus", () => {
 
   it("inserts a paired footnote and leaves its one-line text editor ready", async () => {
     const { controller, controlsHost } = await fixture("A paragraph\n");
-    const trigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="Insert block or element"]',
-    )!;
+    const trigger = controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!;
     await act(() => trigger.click());
+    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (node) => node.textContent?.trim() === "References",
+    )!;
+    await act(() => references.click());
     const footnote = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
     ).find((item) => item.textContent?.trim() === "Footnote")!;
@@ -341,16 +385,68 @@ describe("formatting menu focus", () => {
     expect(editor.hidden).toBe(false);
   });
 
+  it("formats selected text from the shared hover card and restores editor focus", async () => {
+    const { view, controller, controlsHost } = await fixture("Hello world.\n");
+    await act(() =>
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6))),
+    );
+    const openFormatting = async () => {
+      await act(() =>
+        controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!.click(),
+      );
+      const trigger = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (item) => item.textContent === "Formatting",
+      )!;
+      await act(() => {
+        trigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+        trigger.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      });
+      return await vi.waitFor(() => {
+        const bold = [
+          ...document.body.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'),
+        ].find((item) => item.textContent?.startsWith("Bold"));
+        expect(bold).toBeDefined();
+        return bold!;
+      });
+    };
+    let bold = await openFormatting();
+    await act(() => bold.click());
+    await vi.waitFor(() => expect(controller.session.session.draftSource).toContain("**Hello**"));
+    expect(view.hasFocus()).toBe(true);
+    bold = await openFormatting();
+    expect(bold.getAttribute("aria-checked")).toBe("true");
+    const clear = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.startsWith("Clear formatting"),
+    )!;
+    await act(() => clear.click());
+    await vi.waitFor(() => expect(controller.session.session.draftSource).toBe("Hello world.\n"));
+    expect(view.hasFocus()).toBe(true);
+  });
+
   it("shows understated LTR shortcut hints without changing action names", async () => {
     const { controlsHost } = await fixture();
-    const bold = controlsHost.querySelector<HTMLButtonElement>("[aria-label='Bold']")!;
-    expect(bold.textContent).toBe("");
+    await act(() =>
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!.click(),
+    );
+    await act(() =>
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find((item) => item.textContent === "Formatting")!
+        .click(),
+    );
+    const bold = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(
+      (item) => item.textContent?.startsWith("Bold"),
+    )!;
     expect(bold.getAttribute("aria-keyshortcuts")).toBe(
       scientMarkdownShortcut("bold").ariaKeyShortcuts,
     );
-
     await act(() =>
-      controlsHost.querySelector<HTMLButtonElement>("button[aria-label^='Style:']")!.click(),
+      bold.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    // Escape closes the submenu; open the paragraph category in the same Text menu.
+    await act(() =>
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find((item) => item.textContent === "Paragraph style")!
+        .click(),
     );
     const heading = Array.from(
       document.body.querySelectorAll<HTMLElement>("[role='menuitemradio']"),
@@ -371,7 +467,7 @@ describe("formatting menu focus", () => {
     );
     const navigate = vi.spyOn(controller, "navigateToOutline");
     await act(() =>
-      controlsHost.querySelector<HTMLButtonElement>("[aria-label='More actions']")!.click(),
+      controlsHost.querySelector<HTMLButtonElement>("[aria-label='Document']")!.click(),
     );
     const outline = Array.from(
       document.body.querySelectorAll<HTMLElement>("[role='menuitem']"),
@@ -398,7 +494,7 @@ describe("formatting menu focus", () => {
     const { view, controller, controlsHost } = await fixture();
     const insertTable = vi.spyOn(controller, "insertTable");
     const insertTrigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="Insert block or element"]',
+      'button[aria-label="Insert"]',
     )!;
     await act(() => insertTrigger.click());
     const tableTrigger = Array.from(
@@ -493,9 +589,7 @@ describe("formatting menu focus", () => {
     const before = controller.session.session.draftSource;
     const insertTable = vi.spyOn(controller, "insertTable");
     await act(() =>
-      controlsHost
-        .querySelector<HTMLButtonElement>('button[aria-label="Insert block or element"]')!
-        .click(),
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
     );
     const tableTrigger = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -600,9 +694,7 @@ describe("formatting menu focus", () => {
     const { controller, controlsHost } = await fixture();
     const before = controller.session.session.draftSource;
     await act(() =>
-      controlsHost
-        .querySelector<HTMLButtonElement>('button[aria-label="Insert block or element"]')!
-        .click(),
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
     );
     const tableTrigger = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -684,9 +776,7 @@ describe("formatting menu focus", () => {
   it("locks the initial collision side and mirrors physical arrow movement when placed left", async () => {
     const { controlsHost } = await fixture();
     await act(() =>
-      controlsHost
-        .querySelector<HTMLButtonElement>('button[aria-label="Insert block or element"]')!
-        .click(),
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
     );
     const tableTrigger = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),

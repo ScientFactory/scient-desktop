@@ -11,7 +11,7 @@ import { scientArtifactSurface, type ScientRightPanelSurface } from "./surfaces"
 
 export interface LatexFilePresentationRequest {
   readonly id: number;
-  readonly mode: "split";
+  readonly mode: "split" | "visual";
 }
 
 export interface HtmlFilePresentationRequest {

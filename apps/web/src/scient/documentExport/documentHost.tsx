@@ -71,8 +71,9 @@ export async function executeScientDocumentHostRequest(
         .openScient(threadRef, scientGeneratedPdfSurface(request.input.source));
       return {};
     case "documentLatexPresent":
-      useRightPanelStore.getState().openFile(threadRef, request.input.rootSourcePath, undefined, {
+      useRightPanelStore.getState().openFile(threadRef, request.input.sourcePath, undefined, {
         latexPreviewMode: "split",
+        latexRootRelativePath: request.input.rootSourcePath,
       });
       return {};
   }

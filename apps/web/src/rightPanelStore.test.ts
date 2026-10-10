@@ -966,6 +966,29 @@ describe("rightPanelStore", () => {
     ).toMatchObject([{ id: `file:${treePath}`, relativePath: treePath, revealRequestId: 2 }]);
   });
 
+  it("keeps a renamed file's tab in place under its new path", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "a.md");
+    store.openFile(refA, "draft.tex");
+    store.openFile(refA, "z.md");
+    store.openFile(refA, "draft.tex");
+    store.renameFileSurface(refA, "draft.tex", "paper.tex");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "file:a.md",
+      "file:paper.tex",
+      "file:z.md",
+    ]);
+    expect(state.activeSurfaceId).toBe("file:paper.tex");
+    // A tab already open on the new path takes over.
+    useRightPanelStore.getState().renameFileSurface(refA, "a.md", "z.md");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual(["file:paper.tex", "file:z.md"]);
+  });
+
   it("opens an attachment as a file surface without the standalone explorer", () => {
     const attachment = {
       type: "file" as const,
@@ -1117,58 +1140,63 @@ describe("rightPanelStore", () => {
   });
 
   it("carries and consumes a one-shot LaTeX Split presentation request", () => {
-    useRightPanelStore
-      .getState()
-      .openFile(refA, "paper.tex", undefined, { latexPreviewMode: "split" });
+    useRightPanelStore.getState().openFile(refA, "sections/results.tex", undefined, {
+      latexPreviewMode: "split",
+      latexRootRelativePath: "main.tex",
+    });
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:paper.tex",
+      activeSurfaceId: "file:sections/results.tex",
       surfaces: [
         {
-          id: "file:paper.tex",
+          id: "file:sections/results.tex",
           kind: "file",
-          relativePath: "paper.tex",
+          relativePath: "sections/results.tex",
           revealLine: null,
           revealRequestId: 1,
           latexPresentationRequest: { id: 1, mode: "split" },
+          latexRootRelativePath: "main.tex",
         },
       ],
     });
 
-    useRightPanelStore
-      .getState()
-      .openFile(refA, "paper.tex", undefined, { latexPreviewMode: "split" });
+    useRightPanelStore.getState().openFile(refA, "sections/results.tex", undefined, {
+      latexPreviewMode: "split",
+      latexRootRelativePath: "main.tex",
+    });
 
-    useRightPanelStore.getState().consumeLatexPresentationRequest(refA, "paper.tex", 1);
+    useRightPanelStore.getState().consumeLatexPresentationRequest(refA, "sections/results.tex", 1);
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:paper.tex",
+      activeSurfaceId: "file:sections/results.tex",
       surfaces: [
         {
-          id: "file:paper.tex",
+          id: "file:sections/results.tex",
           kind: "file",
-          relativePath: "paper.tex",
+          relativePath: "sections/results.tex",
           revealLine: null,
           revealRequestId: 2,
           latexPresentationRequest: { id: 2, mode: "split" },
+          latexRootRelativePath: "main.tex",
         },
       ],
     });
 
-    useRightPanelStore.getState().consumeLatexPresentationRequest(refA, "paper.tex", 2);
+    useRightPanelStore.getState().consumeLatexPresentationRequest(refA, "sections/results.tex", 2);
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:paper.tex",
+      activeSurfaceId: "file:sections/results.tex",
       surfaces: [
         {
-          id: "file:paper.tex",
+          id: "file:sections/results.tex",
           kind: "file",
-          relativePath: "paper.tex",
+          relativePath: "sections/results.tex",
           revealLine: null,
           revealRequestId: 2,
+          latexRootRelativePath: "main.tex",
         },
       ],
     });

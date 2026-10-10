@@ -711,7 +711,7 @@
           "licenseId": "MIT",
           "copyrights": ["Copyright (c) 2015 konpa"],
           "preamble": [
-            "Python, MATLAB, Julia, R, and SPSS logos are bundled from Devicon for product identification. The respective trademarks remain the property of their owners."
+            "Python, MATLAB, Julia, R, SPSS, LaTeX, and Markdown logos are bundled from Devicon for product identification. The respective trademarks remain the property of their owners."
           ]
         }
       ]

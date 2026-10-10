@@ -11,6 +11,7 @@ vi.mock("./markdownPersistenceTransport", () => ({ createMarkdownPersistenceTran
 
 import {
   adoptRendererRegistry,
+  documentKeepsCheckpoint,
   MarkdownPersistenceRegistry,
   type MarkdownPersistenceTarget,
 } from "./markdownPersistenceRegistry";
@@ -886,6 +887,40 @@ describe("Markdown checkpoint admission", () => {
       vi.useRealTimers();
     }
   });
+});
+
+it.each(["paper.tex", "refs.bib"])("keeps no session checkpoint for %s", async (relativePath) => {
+  const store = { read: vi.fn(async () => undefined), replace: vi.fn(async () => true) };
+  const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: store,
+    keepsCheckpoint: documentKeepsCheckpoint,
+    createTransport: () => ({
+      read: async () => ({ source: "A", revision: "rA" }),
+      write: () => new Promise(() => {}),
+      classifyFailure: () => "terminal",
+      subscribe: () => () => {},
+      project: () => {},
+    }),
+  });
+  vi.useFakeTimers();
+  try {
+    const latex = await registry.open({ ...target, relativePath });
+    latex.change("B", 0);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(store.read).not.toHaveBeenCalled();
+    expect(store.replace).not.toHaveBeenCalled();
+    // Markdown in the same registry is still checkpointed.
+    const markdown = await registry.open(target);
+    markdown.change("B", 0);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(store.read).toHaveBeenCalledOnce();
+    expect(store.replace).toHaveBeenCalled();
+    latex.release();
+    markdown.release();
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
 });
 
 it("recovers an undo that followed an ambiguously completed publication", async () => {

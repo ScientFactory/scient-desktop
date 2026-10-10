@@ -8,6 +8,18 @@ import {
   useRightPanelStore,
 } from "~/rightPanelStore";
 import { createComputeContextId } from "~/scient/compute/computeContextStore";
+import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
+import { toastManager } from "~/components/ui/toast";
+import {
+  createNewDocumentSource,
+  type NewDocumentFormat,
+} from "~/scient/documents/documentTemplates";
+import { focusNewDocumentWhenOpen } from "~/scient/documents/focusNewDocument";
+import { placeNewDocument, untitledStem } from "~/scient/documents/newDocumentPlacement";
+import { newDocuments, pathHasLeftoverDrafts } from "~/scient/documents/newDocuments";
+import { useNewDocumentFiles } from "~/scient/documents/useNewDocumentFiles";
+import { userTemplates } from "~/scient/documents/userTemplates";
+import { readNewDocumentDefaults } from "~/scient/documents/documentPreferences";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import type { useActivePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
@@ -88,8 +100,55 @@ export function useScientRightPanelOpeners(input: {
     },
     [openFileSourceSurfaceNow, runAfterPendingFileSave],
   );
+  // A document started by hand: `untitled` is created and opens in its editor,
+  // where it takes its title's name once the title is written.
+  const documentFiles = useNewDocumentFiles();
+  const addDocumentsSurface = useCallback(
+    (format: NewDocumentFormat) => {
+      if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
+      const environmentId = activeThreadRef.environmentId;
+      const cwd = activeWorkspaceRoot;
+      void (async () => {
+        // A default the person chose from their own templates needs those read.
+        await userTemplates.ready();
+        const { template, language } = readNewDocumentDefaults();
+        const contents = createNewDocumentSource({ format, template, language });
+        const placed = await placeNewDocument({
+          format,
+          base: "",
+          stem: untitledStem(format, template),
+          template,
+          source: contents,
+          commands: documentFiles.commandsFor({ environmentId, cwd }),
+          // A name still holding an earlier document's unsaved work is passed over.
+          skip: (relativePath) => pathHasLeftoverDrafts({ environmentId, cwd, relativePath }),
+        });
+        if (!placed) {
+          toastManager.add({ type: "error", title: "The document could not be created." });
+          return;
+        }
+        const { relativePath } = placed;
+        setProjectFileQueryData(environmentId, cwd, relativePath, contents, placed.revision);
+        newDocuments.set(
+          { environmentId, cwd, relativePath },
+          {
+            format,
+            template,
+            language,
+            seenUntouched: false,
+            settled: format === "markdown",
+            companions: placed.companions,
+          },
+        );
+        openFileSourceSurface(relativePath, undefined, { latexPreviewMode: "visual" });
+        focusNewDocumentWhenOpen("title");
+      })();
+    },
+    [activeThreadRef, activeWorkspaceRoot, documentFiles, openFileSourceSurface],
+  );
   return {
     addAgentsSurface,
+    addDocumentsSurface,
     addSourcesSurface,
     addComputeSurface,
     openScientSourcePdf,

@@ -1,3 +1,4 @@
+import { customMathEdit } from "../../keyboard/customMath";
 import {
   commandEdit,
   mathCommand,
@@ -25,6 +26,8 @@ export interface MathInputSnapshot {
   readonly identity?: object;
   readonly location?: string;
   readonly latexPackages?: readonly string[];
+  /** Raw TeX math fields omit their enclosing inline/display delimiters. */
+  readonly display?: boolean;
 }
 export interface MathInputAdapter {
   read(): MathInputSnapshot | null;
@@ -182,22 +185,34 @@ export class MathInputController {
       if (current.region !== "prose") return false;
       const { source, selection } = current.snapshot;
       const selected = source.slice(selection.from, selection.to);
-      const caret = selected ? selection.to : selection.from + 1;
+      // Markdown cannot round-trip an empty equation, so a new one starts with
+      // an empty group and the caret inside it. LaTeX delimiters can stay empty.
+      const blank = current.snapshot.format === "markdown" ? "{}" : "";
+      const caret = selected || !blank ? selection.to : selection.from + 1;
       return this.commit(
         {
           ...selection,
-          insert: selected || "{}",
+          insert: selected || blank,
           selection: { from: caret, to: caret },
         },
         id === "math.display",
       );
     }
+    const custom = getKeyboardPreferences().preferences.customMath?.find(
+      (command) => command.id === id,
+    );
+    if (custom)
+      return this.commit(
+        customMathEdit(custom, current.snapshot.source, current.snapshot.selection),
+        false,
+      );
     if (id.startsWith("math.matrix.")) {
       if (current.region === "prose") return false;
       const edit = matrixEdit(
         current.snapshot.source,
         current.snapshot.selection,
         id.slice("math.matrix.".length) as MatrixAction,
+        current.snapshot.display ?? current.region.display,
       );
       return edit !== null && this.commit(edit, false);
     }
@@ -237,7 +252,13 @@ export class MathInputController {
     )
       return false;
     if (!this.allowsPackage("amsmath")) return false;
-    const edit = insertMatrix(current.snapshot.selection, environment, rows, columns);
+    const edit = insertMatrix(
+      current.snapshot.selection,
+      environment,
+      rows,
+      columns,
+      current.snapshot.display ?? (current.region === "prose" || current.region.display),
+    );
     return edit !== null && this.commit(edit, true);
   }
   private completion(): { command: string; from: number; to: number } | null {
@@ -290,6 +311,7 @@ export class MathInputController {
         current.snapshot.source,
         current.snapshot.selection,
         event.key === "Enter" ? "addRow" : event.shiftKey ? "previous" : "next",
+        current.snapshot.display ?? current.region.display,
       ) !== null
     );
   }
@@ -344,31 +366,8 @@ export class MathInputController {
         current.snapshot.source,
         current.snapshot.selection,
         event.key === "Enter" ? "addRow" : event.shiftKey ? "previous" : "next",
+        current.snapshot.display ?? current.region.display,
       );
-    if (
-      !edit &&
-      preferences.automaticOperators &&
-      !literal &&
-      event.key.length === 1 &&
-      current.snapshot.selection.from === current.snapshot.selection.to
-    ) {
-      const { source, selection } = current.snapshot;
-      const pair =
-        source.slice(Math.max(current.region.from, selection.from - 1), selection.from) + event.key;
-      const natural: Readonly<Record<string, string>> = {
-        "->": "to",
-        "<=": "leq",
-        ">=": "geq",
-        "!=": "neq",
-        "+-": "pm",
-      };
-      const symbol = natural[pair];
-      if (symbol && source[selection.from - 2] !== "\\")
-        edit = commandEdit(mathCommand(`math.symbol.${symbol}`)!, source, {
-          from: selection.from - 1,
-          to: selection.to,
-        });
-    }
     if (!edit) return false;
     // Hold-to-repeat must not add structural edits such as matrix rows.
     if (!event.repeat && !this.commit(edit, false)) return false;

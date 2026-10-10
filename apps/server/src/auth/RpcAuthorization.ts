@@ -173,6 +173,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.filesystemBrowse]: AuthFilesystemReadScope,
   [WS_METHODS.projectsListDirectory]: AuthFilesystemReadScope,
   [WS_METHODS.projectsRenameFile]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsDeleteFile]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsSubscribeFileChanges]: AuthFilesystemReadScope,
   [WS_METHODS.filesystemPrepareFileOpen]: AuthFilesystemReadScope,
   [WS_METHODS.filesystemResolveFileLink]: AuthFilesystemReadScope,

@@ -104,17 +104,9 @@ it("opens Math behavior above the shortcut list and saves changes from the popov
   expect(card.children).toHaveLength(3);
   expect(card.children[0]?.textContent).toContain("Math preset");
   expect(card.children[0]?.textContent).toContain("Command completion");
-  expect(card.children[1]?.textContent).toContain("Automatic operators");
   expect(card.children[1]?.textContent).toContain("Enter adds a matrix row");
   expect(card.children[2]?.textContent).toContain("Sequence timeout");
   expect(host.querySelector('[aria-label^="Edit math.symbol.alpha"]')).not.toBeNull();
-
-  const automaticOperators = card.querySelector<HTMLButtonElement>(
-    '[aria-label="Automatic math operators"]',
-  )!;
-  await act(() => automaticOperators.click());
-  expect(getKeyboardPreferences().preferences.automaticOperators).toBe(false);
-  expect(document.querySelector("#math-input-behavior")).not.toBeNull();
 
   const preset = card.querySelector<HTMLButtonElement>('[aria-label="Math shortcut preset"]')!;
   await act(() => preset.click());

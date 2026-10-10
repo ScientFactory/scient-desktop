@@ -27,6 +27,8 @@
         // Documented advisory inventory CLI and its independent Node regressions.
         "scient-divergence-inventory.mjs",
         "scient-divergence-inventory.node-test.mjs",
+        // Documented manual TeX-to-SVG math-symbol atlas generator.
+        "generate-math-symbol-glyphs.mjs",
       ],
     },
     "apps/server": {
@@ -106,6 +108,8 @@
         "scripts/warm-dep-cache.ts",
         // Explicit standalone connected extracted-intent qualification configuration.
         "extractedIntentSend.vitest.config.ts",
+        // Documented standalone Chromium selection qualification configuration.
+        "latexSelection.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
         "src/scient/documentPage/main.tsx",
         "src/scient/diagrams/mermaidRecovery.fixtures.ts",

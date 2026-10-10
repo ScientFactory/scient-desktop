@@ -59,7 +59,10 @@ const latexRequest = (requestId: string): ScientDocumentHostRequest => ({
   threadId,
   timeoutMs: 15_000,
   operation: "documentLatexPresent",
-  input: { rootSourcePath: `papers/${requestId}.tex` },
+  input: {
+    sourcePath: `papers/${requestId}.tex`,
+    rootSourcePath: `papers/${requestId}.tex`,
+  },
 });
 const renderRequest = (requestId: string): ScientDocumentHostRequest => ({
   requestId,

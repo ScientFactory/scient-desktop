@@ -1,3 +1,4 @@
+import { validateCustomMath, type CustomMathCommand } from "./customMath";
 import { surfaceCommands, scopesOverlap, type KeyboardScope } from "./catalog";
 import {
   isMacKeyboard,
@@ -9,11 +10,25 @@ import {
 
 export const KEYBOARD_PREFERENCES_KEY = "scient.authoringKeyboard.v1";
 const LEGACY_KEY = "scient.mathInputBindings.v1";
+/**
+ * Raised whenever default shortcuts are added. Stored preferences from an
+ * older preset keep every custom key; a new default that would collide with
+ * one of them is switched off instead of invalidating the whole file.
+ * 2: Inline code (mod+e) and Link (mod+k) in the LaTeX editor.
+ * 3: the Markdown editor's keys for Text, the first three headings and the
+ *    two lists, beside the key sequences.
+ * 4: Select the current LaTeX editing scope, then each parent (mod+a).
+ * 5: Open math Symbols with the Insert sequence (alt+i s).
+ */
+const WRITING_PRESET_VERSION = 5;
 export interface KeyboardPreferences {
   readonly version: 1;
+  readonly writingPresetVersion?: 1 | 2 | 3 | 4 | 5;
+  readonly customMath?: readonly CustomMathCommand[];
   readonly overrides: Readonly<Record<string, readonly string[]>>;
   readonly mathPreset: "lyx" | "minimal";
   readonly completion: "space-tab" | "tab" | "off";
+  /** Legacy serialized option, retained for importing existing shortcut settings. */
   readonly automaticOperators: boolean;
   readonly matrixEnter: boolean;
   readonly sequenceTimeoutMs: number;
@@ -25,10 +40,12 @@ export interface KeyboardPreferencesSnapshot {
 }
 export const DEFAULT_KEYBOARD_PREFERENCES: KeyboardPreferences = {
   version: 1,
+  writingPresetVersion: WRITING_PRESET_VERSION,
+  customMath: [],
   overrides: {},
   mathPreset: "lyx",
   completion: "space-tab",
-  automaticOperators: true,
+  automaticOperators: false,
   matrixEnter: true,
   sequenceTimeoutMs: 2500,
 };
@@ -44,11 +61,22 @@ export interface SurfaceBinding {
   readonly keys: string;
   readonly scope: KeyboardScope;
 }
+export function authoringCommands(preferences: KeyboardPreferences, mac: boolean) {
+  return [
+    ...surfaceCommands(mac),
+    ...(preferences.customMath ?? []).map((command) => ({
+      id: command.id,
+      label: command.label,
+      scope: "math" as const,
+      defaultKeys: [] as readonly string[],
+    })),
+  ];
+}
 export function effectiveSurfaceBindings(
   preferences: KeyboardPreferences,
   mac: boolean,
 ): readonly SurfaceBinding[] {
-  return surfaceCommands(mac).flatMap((command) => {
+  return authoringCommands(preferences, mac).flatMap((command) => {
     const defaults =
       preferences.mathPreset === "minimal" &&
       command.scope === "math" &&
@@ -71,6 +99,12 @@ export function validateKeyboardPreferences(
   const v = value as KeyboardPreferences;
   if (
     v.version !== 1 ||
+    (v.writingPresetVersion !== undefined &&
+      !(
+        Number.isInteger(v.writingPresetVersion) &&
+        v.writingPresetVersion >= 1 &&
+        v.writingPresetVersion <= WRITING_PRESET_VERSION
+      )) ||
     !v.overrides ||
     typeof v.overrides !== "object" ||
     Array.isArray(v.overrides) ||
@@ -83,7 +117,10 @@ export function validateKeyboardPreferences(
     v.sequenceTimeoutMs > 10000
   )
     throw new Error("Invalid keyboard preferences. Sequence timeout must be 500–10000 ms.");
-  const commands = new Set(surfaceCommands(mac).map((command) => command.id));
+  const customMath = validateCustomMath(v.customMath);
+  const commands = new Set(
+    authoringCommands({ ...v, customMath }, mac).map((command) => command.id),
+  );
   let count = 0;
   const overrides: Record<string, readonly string[]> = {};
   for (const [command, keys] of Object.entries(v.overrides)) {
@@ -93,7 +130,10 @@ export function validateKeyboardPreferences(
     overrides[command] = keys.map((key) => {
       if (typeof key !== "string") throw new Error("Shortcut keys must be text.");
       validateKeys(key);
-      if (reservedEditingKeys(key, mac))
+      if (
+        reservedEditingKeys(key, mac) &&
+        !(command === "latex.selectionScopeExpand" && keysOverlap(key, "mod+a", mac))
+      )
         throw new Error(
           "This shortcut is reserved for native editing, clipboard, save, or undo. Choose another shortcut.",
         );
@@ -103,6 +143,8 @@ export function validateKeyboardPreferences(
   }
   const preferences: KeyboardPreferences = {
     version: 1,
+    writingPresetVersion: WRITING_PRESET_VERSION,
+    customMath,
     overrides,
     mathPreset: v.mathPreset,
     completion: v.completion,
@@ -130,9 +172,72 @@ export function importKeyboardPreferences(
   text: string,
   mac = isMacKeyboard(),
 ): KeyboardPreferences {
-  if (text.length > 100000) throw new Error("Shortcut file is too large.");
-  const value: unknown = JSON.parse(text);
-  if (!Array.isArray(value)) return validateKeyboardPreferences(value, mac);
+  if (text.length > 1000000) throw new Error("Shortcut file is too large.");
+  const parsed: unknown = JSON.parse(text);
+  const value =
+    parsed &&
+    typeof parsed === "object" &&
+    !Array.isArray(parsed) &&
+    "overrides" in parsed &&
+    parsed.overrides &&
+    typeof parsed.overrides === "object" &&
+    !Array.isArray(parsed.overrides)
+      ? {
+          ...parsed,
+          overrides: Object.fromEntries(
+            Object.entries(parsed.overrides).filter(([command]) => !command.startsWith("source.")),
+          ),
+        }
+      : parsed;
+  if (!Array.isArray(value)) {
+    // New default groups must not invalidate previously accepted custom keys.
+    // Preserve old overrides and disable only newly conflicting inherited keys.
+    if (
+      value &&
+      typeof value === "object" &&
+      "version" in value &&
+      value.version === 1 &&
+      (!("writingPresetVersion" in value) ||
+        (typeof value.writingPresetVersion === "number" &&
+          value.writingPresetVersion < WRITING_PRESET_VERSION)) &&
+      "overrides" in value &&
+      value.overrides &&
+      typeof value.overrides === "object"
+    ) {
+      const old = value as KeyboardPreferences;
+      const overrides = { ...old.overrides };
+      const commands = surfaceCommands(mac);
+      // Custom keys can also belong to the writer's own math commands.
+      const owners = authoringCommands(
+        { ...old, customMath: Array.isArray(old.customMath) ? old.customMath : [] },
+        mac,
+      );
+      for (const command of commands) {
+        if (Object.hasOwn(overrides, command.id)) continue;
+        const defaults = effectiveSurfaceBindings({ ...old, overrides: {} }, mac)
+          .filter((entry) => entry.command === command.id)
+          .map((entry) => entry.keys);
+        const remaining = defaults.filter(
+          (key) =>
+            !owners.some(
+              (other) =>
+                typeof other.id === "string" &&
+                scopesOverlap(command.scope, other.scope) &&
+                Array.isArray(old.overrides[other.id]) &&
+                old.overrides[other.id]!.some(
+                  (custom) => typeof custom === "string" && keysOverlap(key, custom, mac),
+                ),
+            ),
+        );
+        if (remaining.length !== defaults.length) overrides[command.id] = remaining;
+      }
+      return validateKeyboardPreferences(
+        { ...old, overrides, writingPresetVersion: WRITING_PRESET_VERSION },
+        mac,
+      );
+    }
+    return validateKeyboardPreferences(value, mac);
+  }
   if (value.length > 500) throw new Error("Too many legacy math bindings.");
   const commands = surfaceCommands(mac);
   const overrides: Record<string, string[]> = {};

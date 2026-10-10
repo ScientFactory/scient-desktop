@@ -1,0 +1,75 @@
+/* Direction belongs to document content. Menus, source fields and math keep their own flow. */
+.scient-latex-direction-block {
+  display: flow-root;
+  unicode-bidi: isolate;
+}
+.scient-latex-direction-body > div > p {
+  margin: var(--scient-latex-par-gap, 0) 0 0;
+}
+.scient-latex-direction-block[lang="he"],
+.scient-latex-visual-paper [data-latex-direction-mark][lang="he"] {
+  font-family: var(--scient-latex-hebrew-font, "David", "Noto Serif Hebrew", serif);
+}
+.scient-latex-direction-block[lang="en"],
+.scient-latex-visual-paper [data-latex-direction-mark][lang="en"] {
+  font-family: var(--scient-latex-english-font, "KaTeX_Main", "Cambria", serif);
+}
+.scient-latex-visual-paper [data-latex-direction-mark] {
+  unicode-bidi: isolate;
+}
+.scient-latex-visual-paper
+  :is(
+    .scient-latex-mathfield,
+    .scient-latex-visual-inline-math,
+    .scient-latex-visual-display-math,
+    .katex,
+    pre,
+    code
+  ) {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.scient-latex-visual-paper
+  .scient-latex-visual-document
+  :is(h1, h2, h3, h4, h5)[data-latex-command] {
+  text-align: start;
+}
+.scient-latex-visual-paper
+  .scient-latex-visual-document
+  :is(h1, h2, h3, h4, h5)[data-latex-command]::before {
+  unicode-bidi: isolate;
+  margin-right: 0;
+  margin-inline-end: 1em;
+}
+.scient-latex-visual-paper .scient-latex-visual-document ul {
+  padding-left: 0;
+  padding-inline-start: var(--scient-latex-itemize-leftmargin, 2.5em);
+}
+.scient-latex-visual-paper .scient-latex-visual-document ol {
+  padding-left: 0;
+  padding-inline-start: var(--scient-latex-enumerate-leftmargin, 2.5em);
+}
+.scient-latex-visual-paper .scient-latex-visual-document :is(ul, ol) ul {
+  padding-inline-start: var(--scient-latex-itemize-nested-leftmargin, 2.2em);
+}
+.scient-latex-visual-paper .scient-latex-visual-document :is(ul, ol) ol {
+  padding-inline-start: var(--scient-latex-enumerate-nested-leftmargin, 2.2em);
+}
+.scient-latex-visual-paper .scient-latex-visual-document .scient-latex-toc-preview ol {
+  padding: 0;
+}
+.scient-latex-visual-document .scient-latex-toc-preview li > button {
+  text-align: start;
+}
+.scient-latex-visual-document .scient-latex-toc-page {
+  text-align: end;
+}
+.scient-latex-visual-paper :is(.scient-latex-toc-preview, .scient-latex-bibliography-preview) > h2 {
+  text-align: start;
+}
+.scient-latex-visual-paper
+  .scient-latex-rich-preview[data-kind="table"]
+  figcaption[data-numbered]
+  textarea {
+  text-align: start;
+}

@@ -12,7 +12,7 @@ than a copied list because available actions can change between versions.
 ## Shortcut sections
 
 The Shortcuts page uses the same source selector as Skills and Scientific
-Computing. Choose **General**, **Markdown**, **Math**, or **PDF** to show only that
+Computing. Choose **General**, **Write**, **Source**, **Tables**, **Markdown**, **Math**, or **PDF** to show only that
 part of the product. General contains application commands; the other sections
 contain document-authoring and reading commands. The selected section stays open.
 
@@ -48,18 +48,77 @@ Clipboard, select-all, save, and native undo keys cannot be reassigned to author
 actions. OS, browser, and native menu reservations cannot be overridden here.
 
 Open **Math input behavior and preset** for the supported LyX-style sequences,
-a minimal palette-only authoring preset, command completion, automatic operators,
+a minimal palette-only authoring preset, backslash command completion,
 matrix Enter behavior, and sequence timeout. The timeout also applies to Markdown
 and PDF shortcut sequences. These settings do not alter TeX layout.
 See [math authoring](./math-in-chat.md#authoring-math).
 
 Use the small **Import**, **Export**, and **Restore defaults** actions at the top of
-Markdown, Math, or PDF. These operate on one versioned profile containing all three
+any document section. These operate on one versioned profile containing the document
 sections and the math behavior settings; they do not change General bindings.
 Import validates the complete file before asking to replace the current profile.
 Legacy math-binding arrays are also accepted; existing legacy storage is retained.
 Conflicting or malformed data is reported rather than partially applied. Another
 window's newer preferences are not silently overwritten by an older edit form.
+
+## Shortcuts while writing LaTeX
+
+Use the keyboard button beside Write's document tools, or **Source options ?
+Keyboard shortcuts**. These open the same settings without leaving the document.
+Bindings belong to the local client profile and update mounted editors immediately.
+Your imported LyX files are not installed automatically: the built-in preset uses
+common LyX-style math sequences and Scient writing actions.
+
+On Windows/Linux, press **Alt+M**, release it, then the remaining keys:
+
+| Keys after Alt+M   | Action                                                |
+| ------------------ | ----------------------------------------------------- |
+| F / S / R          | Fraction / square root / nth root                     |
+| E / X              | Superscript / subscript                               |
+| G, A / G, B        | Alpha / beta (other Greek letters are listed in Math) |
+| U / I              | Sum / integral                                        |
+| L, U / L, I        | Sum / integral with editable limits                   |
+| T, M / T, P / T, D | Bracket matrix / parentheses matrix / determinant     |
+| T, C / T, A        | Cases / aligned calculation                           |
+| O, S / O, C        | Sine / cosine                                         |
+| Q, L / Q, G        | Less than or equal / greater than or equal            |
+| A, R / A, L        | Right / left arrow                                    |
+| W, I / W, D        | Add / remove matrix row                               |
+| C, I / C, D        | Add / remove matrix column                            |
+
+Mac also supports Ctrl+M as the sequence prefix. Ctrl/Cmd+M inserts inline math;
+Ctrl/Cmd+Shift+M inserts display math. In an existing visual equation, these change
+its type. Operating-system reservations still apply. Matrix copy/swap actions remain Markdown math actions.
+
+Write has configurable formatting, heading, list, insertion, and outline
+shortcuts. For example, Alt+P then 1/2/3 chooses a section level, and Alt+P
+then B/N chooses a bullet/numbered list. The Markdown editor's keys work too:
+Ctrl/Cmd+Alt+0 for Text, Ctrl/Cmd+Alt+1/2/3 for the section levels,
+Ctrl/Cmd+Shift+8 and 7 for a bullet or numbered list. Ctrl/Cmd+B and I format
+text; Ctrl/Cmd+E is inline code and Ctrl/Cmd+K is a link. Inside
+a visual equation, math commands operate on the mathematical selection. Table
+shortcuts act while a table cell has focus: Alt+T then R,A adds a row, and C,A
+adds a column. The matching D sequences remove a row or column while keeping
+at least one. Source uses Scient's ordinary file editor shortcuts.
+
+### Your own math actions
+
+In Math, choose **New math action**, give it a name and enter an expression.
+`${selection}` wraps the selected math and `${cursor}` marks an editable position;
+for example `\frac{${selection}}{${cursor}}`. Save, then record a shortcut on its
+row. Use the row menu to edit the expression or delete the action. Restoring the
+whole profile also removes custom math actions. Definitions and
+package setup belong in the document preamble; custom macros must already exist
+in the document. JSON import/export includes custom actions and their shortcuts.
+
+### Printable reference
+
+Choose **PDF reference** to preview the effective shortcuts, grouped by editor and
+including application bindings for the selected environment. Formula previews
+use bundled fonts and render locally. Unassigned actions are optional. Choose
+**Print / save as PDF**, then Save as PDF or Microsoft Print to PDF in the system
+print dialog. The reference uses the current profile, including custom bindings;
+there is no separate shortcut list to maintain.
 
 ## Composer controls
 

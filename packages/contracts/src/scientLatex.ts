@@ -131,6 +131,10 @@ export const ScientLatexBuildSnapshot = Schema.Struct({
   toolchain: Schema.NullOr(ScientLatexToolchainStatus),
   /** A rebuild was requested while this one was still running and will follow it. */
   pendingRerun: Schema.Boolean,
+  /** Source byte identities checked on both sides of this compile, never a navigation guess. */
+  visualSourceRevisions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  /** BibTeX presentation from this successful PDF revision, never an editable source file. */
+  compiledBibliography: Schema.optional(Schema.String.check(Schema.isMaxLength(1_000_000))),
   /**
    * Present only while this build is fetching packages the last compile said
    * were missing. The state stays `running` throughout, so a client polls as
@@ -140,11 +144,98 @@ export const ScientLatexBuildSnapshot = Schema.Struct({
 });
 export type ScientLatexBuildSnapshot = typeof ScientLatexBuildSnapshot.Type;
 
+export const ScientLatexRootEvidenceKind = Schema.Literals([
+  "context",
+  "magic-comment",
+  "self-document",
+  "static-dependency",
+  "project-document",
+]);
+export type ScientLatexRootEvidenceKind = typeof ScientLatexRootEvidenceKind.Type;
+
+export const ScientLatexRootCandidate = Schema.Struct({
+  rootRelativePath: PathString,
+  evidence: Schema.Array(ScientLatexRootEvidenceKind).check(Schema.isMaxLength(8)),
+  independentlyCompilable: Schema.Boolean,
+});
+export type ScientLatexRootCandidate = typeof ScientLatexRootCandidate.Type;
+
+export const ScientLatexResolutionIncompleteReason = Schema.Literals([
+  "scan-limit",
+  "file-too-large",
+  "dynamic-input",
+  "unsupported-command",
+  "unreadable-file",
+]);
+export type ScientLatexResolutionIncompleteReason =
+  typeof ScientLatexResolutionIncompleteReason.Type;
+
+const ScientLatexResolutionShared = {
+  sourceRelativePath: PathString,
+  candidates: Schema.Array(ScientLatexRootCandidate).check(Schema.isMaxLength(64)),
+  indexGeneration: Schema.optional(
+    Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)),
+  ),
+  complete: Schema.Boolean,
+  incompleteReasons: Schema.Array(ScientLatexResolutionIncompleteReason).check(
+    Schema.isMaxLength(8),
+  ),
+} as const;
+
+export const ScientLatexResolveRequest = Schema.Struct({
+  workspaceRoot: PathString,
+  sourceRelativePath: PathString,
+  /** A root explicitly chosen or carried by navigation from an existing document. */
+  contextRootRelativePath: Schema.optional(PathString),
+});
+export type ScientLatexResolveRequest = typeof ScientLatexResolveRequest.Type;
+
+export const ScientLatexResolveResult = Schema.Union([
+  Schema.TaggedStruct("resolved", {
+    ...ScientLatexResolutionShared,
+    rootRelativePath: PathString,
+    reason: ScientLatexRootEvidenceKind,
+  }),
+  Schema.TaggedStruct("ambiguous", ScientLatexResolutionShared),
+  Schema.TaggedStruct("unresolved", ScientLatexResolutionShared),
+]);
+export type ScientLatexResolveResult = typeof ScientLatexResolveResult.Type;
+
 export const ScientLatexBuildRequest = Schema.Struct({
   workspaceRoot: PathString,
   relativePath: PathString,
 });
 export type ScientLatexBuildRequest = typeof ScientLatexBuildRequest.Type;
+
+export const ScientLatexArtworkRequest = Schema.Struct({
+  workspaceRoot: PathString,
+  relativePath: PathString,
+  preamble: Schema.String.check(Schema.isMaxLength(200_000)),
+  source: Schema.String.check(Schema.isMaxLength(100_000)),
+  widthInches: Schema.Number.check(Schema.isBetween({ minimum: 0.1, maximum: 30 })),
+  algorithmNumber: Schema.optional(
+    Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100_000 })),
+  ),
+  rasterPixelRatio: Schema.optional(
+    Schema.Number.check(Schema.isBetween({ minimum: 2, maximum: 3 })),
+  ),
+});
+export type ScientLatexArtworkRequest = typeof ScientLatexArtworkRequest.Type;
+
+export const ScientLatexArtworkResult = Schema.Union([
+  Schema.TaggedStruct("ready", {
+    pdfBase64: Schema.String.check(Schema.isMaxLength(8_000_000)),
+    raster: Schema.optional(
+      Schema.Struct({
+        pngBase64: Schema.String.check(Schema.isMaxLength(8_000_000)),
+        widthPoints: Schema.Number.check(Schema.isGreaterThan(0)),
+        heightPoints: Schema.Number.check(Schema.isGreaterThan(0)),
+      }),
+    ),
+  }),
+  Schema.TaggedStruct("unavailable", { message: Schema.String }),
+]);
+export type ScientLatexArtworkResult = typeof ScientLatexArtworkResult.Type;
 
 export const ScientLatexStatusRequest = Schema.Struct({
   workspaceRoot: PathString,
@@ -223,60 +314,6 @@ export const ScientLatexInverseSyncResult = Schema.Union([
   ScientLatexSyncUnavailable,
 ]);
 export type ScientLatexInverseSyncResult = typeof ScientLatexInverseSyncResult.Type;
-
-export const ScientLatexRootEvidenceKind = Schema.Literals([
-  "context",
-  "magic-comment",
-  "self-document",
-  "static-dependency",
-  "project-document",
-]);
-export type ScientLatexRootEvidenceKind = typeof ScientLatexRootEvidenceKind.Type;
-
-export const ScientLatexRootCandidate = Schema.Struct({
-  rootRelativePath: PathString,
-  evidence: Schema.Array(ScientLatexRootEvidenceKind).check(Schema.isMaxLength(8)),
-  independentlyCompilable: Schema.Boolean,
-});
-export type ScientLatexRootCandidate = typeof ScientLatexRootCandidate.Type;
-
-export const ScientLatexResolutionIncompleteReason = Schema.Literals([
-  "scan-limit",
-  "file-too-large",
-  "dynamic-input",
-  "unsupported-command",
-  "unreadable-file",
-]);
-export type ScientLatexResolutionIncompleteReason =
-  typeof ScientLatexResolutionIncompleteReason.Type;
-
-const ScientLatexResolutionShared = {
-  sourceRelativePath: PathString,
-  candidates: Schema.Array(ScientLatexRootCandidate).check(Schema.isMaxLength(64)),
-  complete: Schema.Boolean,
-  incompleteReasons: Schema.Array(ScientLatexResolutionIncompleteReason).check(
-    Schema.isMaxLength(8),
-  ),
-} as const;
-
-export const ScientLatexResolveRequest = Schema.Struct({
-  workspaceRoot: PathString,
-  sourceRelativePath: PathString,
-  /** A root explicitly chosen earlier or carried by navigation from a PDF. */
-  contextRootRelativePath: Schema.optional(PathString),
-});
-export type ScientLatexResolveRequest = typeof ScientLatexResolveRequest.Type;
-
-export const ScientLatexResolveResult = Schema.Union([
-  Schema.TaggedStruct("resolved", {
-    ...ScientLatexResolutionShared,
-    rootRelativePath: PathString,
-    reason: ScientLatexRootEvidenceKind,
-  }),
-  Schema.TaggedStruct("ambiguous", ScientLatexResolutionShared),
-  Schema.TaggedStruct("unresolved", ScientLatexResolutionShared),
-]);
-export type ScientLatexResolveResult = typeof ScientLatexResolveResult.Type;
 
 export const ScientLatexToolchainRequest = Schema.Struct({
   refresh: Schema.Boolean,

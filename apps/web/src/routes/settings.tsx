@@ -20,6 +20,12 @@ import {
 } from "../components/settings/SettingsScopeContext";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
+import {
+  settingsPageChoosesOneEnvironment,
+  settingsPageIgnoresProjects,
+  settingsPageRendersOffline,
+  settingsPageScopeSearch,
+} from "../scient/settings/settingsPageScopes";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
@@ -103,7 +109,11 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         <p className="text-sm text-muted-foreground">{scope.message}</p>
       </SettingsPageContainer>
     );
-  if (scope.kind === "environment" && connectedEnvironments.length === 0) {
+  if (
+    scope.kind === "environment" &&
+    connectedEnvironments.length === 0 &&
+    !settingsPageRendersOffline(pathname)
+  ) {
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
@@ -160,17 +170,19 @@ function SettingsRouteLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
   return (
     <SettingsScopeProvider
-      search={rawSearch}
-      singleEnvironment={pathname === "/settings/providers"}
+      search={settingsPageScopeSearch(pathname, rawSearch)}
+      singleEnvironment={settingsPageChoosesOneEnvironment(pathname)}
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target
-        // even when the choice is "all", which is the absence of a key.
+        // even when the choice is "all", which is the absence of a key. A
+        // server-only page keeps the project the other pages are set to.
+        const keepProject = settingsPageIgnoresProjects(pathname);
         void navigate({
           to: pathname,
           search: () => ({
-            project: next.project,
+            project: keepProject ? rawSearch.project : next.project,
             machine: next.machine,
-            checkout: next.checkout,
+            checkout: keepProject ? undefined : next.checkout,
           }),
           hash: "",
           resetScroll: false,

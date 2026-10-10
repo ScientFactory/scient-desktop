@@ -139,9 +139,11 @@ describe("renameOpenDocument", () => {
   it("waits for an editor that is composing text", async () => {
     const h = fixture();
     const remove = registerRenameParticipant("doc-1", { readyToMove: () => false });
-    expect(await h.run()).toEqual({ kind: "legacy-required" });
-    expect(h.lease.beginMove).not.toHaveBeenCalled();
+    const outcome = await h.run();
     remove();
+    // Not ready yet: worth trying again shortly.
+    expect(outcome).toEqual({ kind: "legacy-required", reason: "busy" });
+    expect(h.lease.beginMove).not.toHaveBeenCalled();
     expect((await h.run()).kind).toBe("moved");
   });
 

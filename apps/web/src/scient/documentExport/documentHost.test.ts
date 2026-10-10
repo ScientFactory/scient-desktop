@@ -127,17 +127,20 @@ describe("controlled document host", () => {
       expect.objectContaining({ module: "generated-pdf", source }),
     );
   });
-  it("presents the resolved LaTeX root in Split without persisting a preview preference", async () => {
+  it("presents the LaTeX source in Split with its resolved root without persisting a preview preference", async () => {
     await executeScientDocumentHostRequest(
       environmentId,
       null,
-      request("documentLatexPresent", { rootSourcePath: "papers/main.tex" }),
+      request("documentLatexPresent", {
+        sourcePath: "papers/chapter.tex",
+        rootSourcePath: "papers/main.tex",
+      }),
     );
     expect(mocks.openFile).toHaveBeenCalledExactlyOnceWith(
       { environmentId, threadId },
-      "papers/main.tex",
+      "papers/chapter.tex",
       undefined,
-      { latexPreviewMode: "split" },
+      { latexPreviewMode: "split", latexRootRelativePath: "papers/main.tex" },
     );
   });
 });

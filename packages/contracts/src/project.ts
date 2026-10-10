@@ -734,7 +734,13 @@ export const ProjectRenameFileInput = Schema.Struct({
   destinationRelativePath: FilePathString.check(
     Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH),
   ),
-  expectedRevision: TrimmedNonEmptyString,
+  /**
+   * The revision the client last read. Omitted only for a file it cannot read
+   * whole (binary or truncated), which is then renamed without a content check.
+   */
+  expectedRevision: Schema.optional(TrimmedNonEmptyString),
+  /** Also remove the folders the move leaves empty, never the workspace root itself. */
+  removeEmptyFolders: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectRenameFileInput = typeof ProjectRenameFileInput.Type;
 
@@ -768,6 +774,47 @@ export class ProjectRenameFileError extends Schema.TaggedError<ProjectRenameFile
       message:
         decodedProjectErrorMessage(props) ??
         `Failed to rename workspace file '${props.relativePath}' to '${props.destinationRelativePath}' in '${props.cwd}'.`,
+    } as any);
+  }
+}
+
+export const ProjectDeleteFileInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: FilePathString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  /** The revision the client last read: a file changed since then is never deleted. */
+  expectedRevision: TrimmedNonEmptyString,
+  /** Also remove the folders the file leaves empty, never the workspace root itself. */
+  removeEmptyFolders: Schema.optional(Schema.Literal(true)),
+});
+export type ProjectDeleteFileInput = typeof ProjectDeleteFileInput.Type;
+
+export const ProjectDeleteFileResult = Schema.Struct({
+  relativePath: FilePathString,
+});
+export type ProjectDeleteFileResult = typeof ProjectDeleteFileResult.Type;
+
+export class ProjectDeleteFileError extends Schema.TaggedError<ProjectDeleteFileError>()(
+  "ProjectDeleteFileError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(FilePathString),
+    failure: Schema.optional(ProjectFileFailure),
+    resolvedPath: Schema.optional(FilePathString),
+    resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+    operation: Schema.optional(ProjectFileOperation),
+    operationPath: Schema.optional(FilePathString),
+    currentRevision: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: ProjectFileFailureContext) {
+    super({
+      ...props,
+      message:
+        decodedProjectErrorMessage(props) ??
+        `Failed to delete workspace file '${props.relativePath}' in '${props.cwd}'.`,
     } as any);
   }
 }

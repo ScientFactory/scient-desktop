@@ -38,6 +38,7 @@ export function clearWorkspaceFileSessionsForTests(): void {
 }
 
 interface FileSaveOptions {
+  enabled?: boolean;
   debounceMs?: number;
   environmentId: EnvironmentId;
   cwd: string;
@@ -51,6 +52,7 @@ interface FileSaveOptions {
 }
 
 export function useFileSaveCoordinator({
+  enabled = true,
   debounceMs = FILE_SAVE_DEBOUNCE_MS,
   environmentId,
   cwd,
@@ -61,7 +63,7 @@ export function useFileSaveCoordinator({
   onSaveConfirmed,
   onSaveResolutionApplied,
   saveResolution,
-}: FileSaveOptions): Pick<FileSaveCoordinator, "change" | "setSuspended"> {
+}: FileSaveOptions): Pick<FileSaveCoordinator, "change" | "setSuspended" | "flush"> {
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const latestRevision = useRef(revision);
@@ -86,6 +88,7 @@ export function useFileSaveCoordinator({
     const leaseRef = createRef<WorkspaceFileSessionLease>();
     return {
       change: (contents: string) => leaseRef.current?.change(contents),
+      flush: () => leaseRef.current?.flush() ?? Promise.resolve(true),
       setSuspended: (suspended: boolean) => leaseRef.current?.setSuspended(suspended),
       syncRevision: (value: string) => leaseRef.current?.syncConfirmedFileRevision(value),
       resolve: (resolution: FileSaveResolution) => {
@@ -143,7 +146,7 @@ export function useFileSaveCoordinator({
 
   // StrictMode replays effect setup. Retired leases stay inert, while deferred
   // final cleanup lets the replay rejoin the same live persistence session.
-  useEffect(session.setup, [session]);
+  useEffect(() => (enabled ? session.setup() : undefined), [session, enabled]);
   useEffect(() => session.syncRevision(revision), [session, revision]);
   useEffect(() => {
     if (saveResolution?.relativePath === relativePath) session.resolve(saveResolution);
@@ -161,5 +164,5 @@ export function useFileSaveCoordinator({
       cancelled = true;
     };
   }, [canWriteFiles, cwd, environmentId, relativePath, session]);
-  return { change: session.change, setSuspended: session.setSuspended };
+  return { change: session.change, setSuspended: session.setSuspended, flush: session.flush };
 }

@@ -25,7 +25,18 @@
     "packages/contracts/src/latexPdfBuild.ts",
     "packages/contracts/src/scient/environmentHttpGroups.ts",
     "apps/server/src/scient/ScientServerLayers.ts",
-    "apps/web/src/scient/fileSurfaces/scientLazyFileSurfaces.tsx"
+    "apps/web/src/scient/fileSurfaces/scientLazyFileSurfaces.tsx",
+    "apps/web/latexSelection.vitest.config.ts",
+    "apps/web/scripts/render-template-previews.ts",
+    "apps/web/src/scient/documents/DocumentsSettings.tsx",
+    "apps/web/src/scient/documents/latexInstallationModel.ts",
+    "apps/web/src/scient/documents/useLatexInstallation.ts",
+    "apps/web/src/scient/fileSurfaces/scientFileEditorBindings.tsx",
+    "docs/reports/thesis-responsiveness-2026-10-08.html",
+    "docs/reports/thesis-responsiveness-implementation-2026-10-08.html",
+    "docs/reports/thesis-responsiveness-lyx-progress-2026-10-09.html",
+    "docs/reports/thesis-responsiveness-smooth-2026-10-08.html",
+    "scripts/generate-math-symbol-glyphs.mjs"
   ],
   "latexDiffSignals": [
     "ScientLatex",
@@ -105,8 +116,13 @@
     },
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
-      "anchor": "export function EditableFileSurface",
-      "purpose": "Mount the additive LaTeX build surface in the inherited file viewer, and export the panel's editable file surface so the LaTeX split view reuses it instead of forking the editor and its save coordination."
+      "anchor": "export function EditableFileEditor",
+      "purpose": "Expose the existing controlled editor so LaTeX Source and Visual share one existing save coordinator without forking the editor."
+    },
+    {
+      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
+      "anchor": "debounceMs = FILE_SAVE_DEBOUNCE_MS",
+      "purpose": "Permit a LaTeX-specific save debounce while preserving the default for other file editors."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",
