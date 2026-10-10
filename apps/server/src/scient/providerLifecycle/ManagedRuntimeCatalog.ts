@@ -563,9 +563,8 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
         );
         if (cached === null) return;
         catalog = mergeManagedRuntimeCatalogs(catalog, cached.catalog);
-        etag = cached.etag?.trim() || null;
-        // Revalidate once per process. This prevents a recent but older cache
-        // from delaying a newly bundled catalog or another provider's update.
+        // Fetch the complete feed once per process. An older app may have
+        // filtered out entries while retaining the full response's validator.
         fetchedAtMs = null;
       }),
     );
@@ -573,7 +572,6 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
     const persistCache = (now: number) =>
       encodeCatalogCacheJson({
         fetchedAtMs: now,
-        ...(etag === null ? {} : { etag }),
         catalog,
       }).pipe(
         Effect.flatMap((contents) =>
@@ -605,7 +603,7 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
       // client response also aborts its request, releasing the refresh lock.
       const fetched = yield* Effect.gen(function* () {
         const response = yield* httpClient.execute(request);
-        if (response.status === 304) return { response, data: null };
+        if (response.status === 304 && etag !== null) return { response, data: null };
         yield* HttpClientResponse.filterStatusOk(response);
         const data = yield* response.text.pipe(
           Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(MAX_CATALOG_BYTES)),

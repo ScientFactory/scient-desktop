@@ -18,11 +18,14 @@ import {
   type ManagedRuntimeTarget,
 } from "@scientfactory/provider-runtime";
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -871,30 +874,110 @@ describe("ManagedRuntimeCatalog service", () => {
     ),
   );
 
-  it.live("uses an ETag to revalidate the last good catalog without redownloading it", () =>
+  it.live("discovers Scient from an unchanged feed after loading an older filtered cache", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const cachePath = path.join(config.stateDir, "managed-runtime-catalog-cache.json");
+      const validator = '"unchanged-full-feed"';
+      yield* fs.writeFileString(
+        cachePath,
+        JSON.stringify({
+          fetchedAtMs: yield* Clock.currentTimeMillis,
+          etag: validator,
+          catalog: BUNDLED_MANAGED_RUNTIME_CATALOG,
+        }),
+      );
       const requests: Array<string | undefined> = [];
-      const first = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
         Effect.provide(
           httpClientLayer((request) => {
             requests.push(request.headers["if-none-match"]);
-            return Response.json(remoteCatalog(), { headers: { etag: '"catalog-v1"' } });
+            return request.headers["if-none-match"] === validator
+              ? new Response(null, { status: 304 })
+              : Response.json(scientCatalog("0.1.0"), { headers: { etag: validator } });
           }),
         ),
       );
-      yield* first.refresh;
+      assert.isUndefined((yield* service.current).providers.scient);
+      const changes = yield* service.subscribeChanges;
+      const recovered = yield* service.refresh;
+      assert.strictEqual(recovered.providers.scient?.version, "0.1.0");
+      assert.deepStrictEqual(requests, [undefined]);
+      const change = Option.getOrThrow(yield* changes.pipe(Stream.runHead));
+      assert.deepStrictEqual(change.changedProviders, ["scient"]);
+      assert.strictEqual(
+        resolveManagedRuntimeCatalogCandidate({
+          catalog: recovered,
+          bundledArtifact: undefined,
+          artifactPolicy: resolveScientAgentArtifactPolicy({ platform: "darwin", arch: "arm64" }),
+          contractRevision: MANAGED_RUNTIME_POLICY.scient.revision,
+        })?.version,
+        "0.1.0",
+      );
+      assert.isUndefined(JSON.parse(yield* fs.readFileString(cachePath)).etag);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "managed-runtime-catalog-legacy-discovery-readiness",
+          response: () => Response.json(scientCatalog("0.1.0")),
+        }),
+      ),
+    ),
+  );
 
-      const rebooted = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+  it.effect("retries an unexpected unconditional 304 without starting the success TTL", () =>
+    Effect.gen(function* () {
+      let fetchCount = 0;
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
         Effect.provide(
-          httpClientLayer((request) => {
-            requests.push(request.headers["if-none-match"]);
-            return new Response(null, { status: 304, headers: { etag: '"catalog-v1"' } });
+          httpClientLayer(() => {
+            fetchCount += 1;
+            return fetchCount === 1
+              ? new Response(null, { status: 304 })
+              : Response.json(scientCatalog("0.1.0"));
           }),
         ),
+      );
+      assert.isUndefined((yield* service.refresh).providers.scient);
+      yield* TestClock.adjust(5 * 60_000);
+      assert.strictEqual((yield* service.refresh).providers.scient?.version, "0.1.0");
+      assert.strictEqual(fetchCount, 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "managed-runtime-catalog-unconditional-304-readiness",
+          response: () => Response.json(scientCatalog("0.1.0")),
+        }),
+      ),
+    ),
+  );
+
+  it.live("uses ETags within one process and fetches a complete catalog after restart", () =>
+    Effect.gen(function* () {
+      const requests: Array<string | undefined> = [];
+      const client = httpClientLayer((request) => {
+        requests.push(request.headers["if-none-match"]);
+        return request.headers["if-none-match"] === '"catalog-v1"'
+          ? new Response(null, { status: 304 })
+          : Response.json(remoteCatalog(), { headers: { etag: '"catalog-v1"' } });
+      });
+      const first = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+        Effect.provide(client),
+      );
+      yield* first.refresh;
+      const sameProcess = yield* first.refreshNow;
+      assert.strictEqual(sameProcess.providers.codex?.version, newerCodexVersion);
+
+      const rebooted = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+        Effect.provide(client),
       );
       const refreshed = yield* rebooted.refresh;
       assert.strictEqual(refreshed.providers.codex?.version, newerCodexVersion);
-      assert.deepStrictEqual(requests, [undefined, '"catalog-v1"']);
+      assert.deepStrictEqual(requests, [undefined, '"catalog-v1"', undefined]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
