@@ -138,6 +138,53 @@ it.effect(
   },
 );
 
+it.effect("rescans event-free history when thread count and update time have not changed", () => {
+  const f = fixture();
+  for (const db of [f.source, f.destination]) {
+    db.exec(`ALTER TABLE projection_threads ADD COLUMN updated_at TEXT;
+      CREATE TABLE projection_thread_proposed_plans(plan_id TEXT PRIMARY KEY, thread_id TEXT, plan_markdown TEXT);`);
+  }
+  f.source.exec(`INSERT INTO projection_projects VALUES ('project', 'Project');
+    INSERT INTO projection_threads VALUES ('thread', 'project', 'Title', NULL, '2026-01-01');
+    INSERT INTO projection_thread_messages VALUES ('message', 'thread', 'Original text');
+    INSERT INTO projection_thread_proposed_plans VALUES ('plan', 'thread', '# Original plan');`);
+  return Effect.gen(function* () {
+    yield* f.initialize;
+    assert.equal(yield* refreshLegacyV1Snapshot(f.destinationPath), 1);
+    const metadata = f.source
+      .prepare("SELECT count(*) AS count, max(updated_at) AS updated FROM projection_threads")
+      .get();
+    f.source.exec(`UPDATE projection_thread_messages SET text = 'Edited text';
+      UPDATE projection_thread_proposed_plans SET plan_markdown = '# Edited plan';`);
+    assert.deepEqual(
+      f.source
+        .prepare("SELECT count(*) AS count, max(updated_at) AS updated FROM projection_threads")
+        .get(),
+      metadata,
+    );
+    assert.equal(yield* refreshLegacyV1Snapshot(f.destinationPath), 1);
+    assert.equal(
+      f.destination.prepare("SELECT text FROM projection_thread_messages").get()?.text,
+      "Edited text",
+    );
+    assert.equal(
+      f.destination.prepare("SELECT plan_markdown FROM projection_thread_proposed_plans").get()
+        ?.plan_markdown,
+      "# Edited plan",
+    );
+    assert.equal(yield* refreshLegacyV1Snapshot(f.destinationPath), 0);
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.ensuring(
+      Effect.sync(() => {
+        f.source.close();
+        f.destination.close();
+        NodeFS.rmSync(f.directory, { recursive: true, force: true });
+      }),
+    ),
+  );
+});
+
 it.effect("rolls back all recovery inputs on a conflicting historical message identity", () => {
   const f = fixture();
   f.source.exec(`
