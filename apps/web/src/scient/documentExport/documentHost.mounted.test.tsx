@@ -68,8 +68,9 @@ const renderRequest = (requestId: string): ScientDocumentHostRequest => ({
   operation: "documentPdfRender",
   input: { assetRelativeUrl: "/assets/study.html" },
 });
+// A stream atom marks every emission as waiting while its stream stays open.
 const emit = (event: ScientDocumentHostStreamEvent) =>
-  registry.set(mocks.requestsAtom!, AsyncResult.success(event));
+  registry.set(mocks.requestsAtom!, AsyncResult.success(event, { waiting: true }));
 const mount = async () => {
   await act(async () => {
     renderer = create(
