@@ -14,6 +14,9 @@ tombstones, provider sessions, execution queues, and checkpoint authority are pr
 thread-event ancestry check rejects an unrelated original database when the copied event boundary
 is available. A committed source event watermark avoids rescanning unchanged history on every
 launch.
+Without an event boundary, startup compares the historical rows on each launch: thread counts
+and update timestamps alone cannot establish that message or plan content is unchanged. Recovery
+logs include the snapshot-refresh duration, and the refresh has its own tracing span.
 
 Reconciliation rechecks current V2 content inside the EventSink transaction. Untouched imported
 content receives newer V1 text or historical outcomes. If V2 content has changed, its identity and

@@ -11,6 +11,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 
 import * as ServerConfig from "../config.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -39,6 +40,11 @@ it.effect.each([false, true])(
         yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
           VALUES ('question', ${THREAD}, 'user', 'Original question', 0, '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z'),
             ('answer', ${THREAD}, 'assistant', 'Snapshot answer', 0, '2026-01-06T00:00:00.000Z', '2026-01-06T00:00:00.000Z')`;
+        for (let index = 0; index < 60; index++) {
+          const id = `bulk-${index}`;
+          yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
+            VALUES (${id}, ${THREAD}, 'assistant', ${`Original ${id}`}, 0, '2026-01-07T00:00:00.000Z', '2026-01-07T00:00:00.000Z')`;
+        }
         yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, sequence, created_at)
           VALUES ('tool-start', ${THREAD}, 'tool', 'tool.started', 'Read data', '{"toolCallId":"call","toolName":"read_file","input":{"path":"data.csv"}}', 1, '2026-01-03T00:00:00.000Z')`;
         yield* sql`INSERT INTO projection_thread_proposed_plans (plan_id, thread_id, plan_markdown, created_at, updated_at)
@@ -111,6 +117,37 @@ it.effect.each([false, true])(
       } finally {
         source.close();
       }
+      // Stage one source revision without hydrating it, then stage another.
+      // Untouched V2 messages must still match the earliest pending baseline.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        assert.isAbove(
+          (yield* sql<{
+            n: number;
+          }>`SELECT count(*) AS n FROM scient_legacy_reconciliation_changes WHERE resolved = 0`)[0]!
+            .n,
+          0,
+        );
+      }).pipe(Effect.provide(database));
+      const revisedSource = new NodeSqlite.DatabaseSync(sourcePath);
+      try {
+        revisedSource.exec(
+          "UPDATE projection_thread_messages SET text = 'Intermediate ' || message_id WHERE message_id LIKE 'bulk-%'",
+        );
+      } finally {
+        revisedSource.close();
+      }
+      yield* Effect.gen(function* () {
+        yield* SqlClient.SqlClient;
+      }).pipe(Effect.provide(database));
+      const latestSource = new NodeSqlite.DatabaseSync(sourcePath);
+      try {
+        latestSource.exec(
+          "UPDATE projection_thread_messages SET text = 'Latest ' || message_id WHERE message_id LIKE 'bulk-%'",
+        );
+      } finally {
+        latestSource.close();
+      }
       const originalBytes = NodeFS.readFileSync(sourcePath);
 
       yield* Effect.gen(function* () {
@@ -168,7 +205,20 @@ it.effect.each([false, true])(
       yield* Effect.gen(function* () {
         const importer = yield* Importer.LegacyV1ThreadImporter;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
-        yield* importer.ensureTranscript(THREAD);
+        const baselineReads: string[] = [];
+        yield* importer.ensureTranscript(THREAD).pipe(
+          Effect.provideService(Statement.CurrentTransformer, (statement) => {
+            const [query] = statement.compile();
+            if (
+              query.includes("before_json") &&
+              query.includes("scient_legacy_reconciliation_changes") &&
+              query.includes("projection_thread_messages")
+            )
+              baselineReads.push(query);
+            return Effect.succeed(statement);
+          }),
+        );
+        assert.equal(baselineReads.length, 2);
         assert.equal(yield* importer.pendingThreadCount, 0);
         const restored = yield* projections.getThreadProjection(THREAD);
         assert.equal(restored.thread.title, "V2 title");
@@ -176,6 +226,13 @@ it.effect.each([false, true])(
         assert.equal(restored.thread.activeProviderThreadId, "native-v2-owner");
         assert.equal(restored.thread.providerInstanceId, "codex");
         assert.equal(restored.thread.modelSelection.instanceId, "codex");
+        for (let index = 0; index < 60; index++) {
+          const id = `bulk-${index}`;
+          assert.equal(
+            restored.messages.find((message) => message.id === id)?.text,
+            `Latest ${id}`,
+          );
+        }
         assert.equal(
           restored.messages.find((message) => message.id === "question")?.text,
           "V2 edit during restoration",

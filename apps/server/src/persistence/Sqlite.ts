@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -101,11 +102,13 @@ export const layerConfig = Layer.unwrap(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* refreshLegacyV1Snapshot(dbPath).pipe(
-            Effect.tap((recoveredThreadCount) =>
+            Effect.timed,
+            Effect.tap(([duration, recoveredThreadCount]) =>
               recoveredThreadCount === 0
                 ? Effect.void
                 : Effect.logInfo("Recovered V1 conversations missing from the V2 snapshot", {
                     recoveredThreadCount,
+                    durationMs: Duration.toMillis(duration),
                   }),
             ),
             Effect.catch((cause) =>

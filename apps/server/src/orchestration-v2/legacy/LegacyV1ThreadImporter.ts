@@ -1058,15 +1058,22 @@ const make = Effect.gen(function* () {
           );
           const expected = new Map<string, OrchestrationV2DomainEvent>();
           if (revision > 0) {
+            const beforeRows = yield* sql<{
+              row_key: string;
+              before_json: string;
+            }>`SELECT row_key, before_json FROM (
+              SELECT row_key, before_json,
+                row_number() OVER (PARTITION BY row_key ORDER BY revision) AS baseline_order
+              FROM scient_legacy_reconciliation_changes
+              WHERE thread_id = ${threadId} AND table_name = 'projection_thread_messages'
+                AND row_key IN ${sql.in(batch.map((message) => encodeMessageKey([message.message_id])))}
+                AND resolved = 0 AND before_json IS NOT NULL
+            ) WHERE baseline_order = 1`;
+            const beforeByKey = new Map(beforeRows.map((row) => [row.row_key, row.before_json]));
             for (const message of batch) {
-              const [before] = yield* sql<{
-                before_json: string;
-              }>`SELECT before_json FROM scient_legacy_reconciliation_changes
-                WHERE thread_id = ${threadId} AND table_name = 'projection_thread_messages'
-                  AND row_key = ${encodeMessageKey([message.message_id])} AND resolved = 0 AND before_json IS NOT NULL
-                ORDER BY revision LIMIT 1`;
+              const before = beforeByKey.get(encodeMessageKey([message.message_id]));
               if (before === undefined) continue;
-              const baseline = yield* decodeMessageBefore(before.before_json);
+              const baseline = yield* decodeMessageBefore(before);
               for (const event of messageEvents({ ...baseline, ordinal: message.ordinal }))
                 expected.set(event.id, event);
             }
