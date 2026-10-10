@@ -3178,7 +3178,8 @@ describe("PiAdapterV2", () => {
                   (item) =>
                     (item.type === "approval_request" || item.type === "user_input_request") &&
                     item.requestId === request.id &&
-                    item.status === "running",
+                    item.nodeId === request.nodeId &&
+                    item.status === "waiting",
                 ),
               );
               yield* runtime.respondToRuntimeRequest({

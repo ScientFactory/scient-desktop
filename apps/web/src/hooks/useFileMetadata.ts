@@ -17,7 +17,8 @@ export function useFileMetadata(
   // SCIENT-FORK:START — a chip names a literal file, not a positioned Markdown link.
   const targetPath = cwd ? resolveWorkspaceFilePath(path, cwd) : path;
   // SCIENT-FORK:END
-  const absolute = isAbsolutePath(targetPath) || targetPath.startsWith("~/");
+  const absolute =
+    isAbsolutePath(targetPath) || targetPath.startsWith("~/") || targetPath.startsWith("~\\");
   return useEnvironmentQuery(
     environmentId && canRead && absolute && targetPath.length <= 512
       ? projectEnvironment.fileMetadata({

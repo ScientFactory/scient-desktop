@@ -49,7 +49,9 @@ export const definition = defineSourceControlClient({
   publishDescription: "git.cafe",
   publishHost: () => "git.cafe",
   newRepositoryOwner: (account) => (account ? { owner: account } : null),
-  defaultCloneTransport: "ssh",
+  // SCIENT-FORK:START — preserve the selected-repository HTTPS default.
+  defaultCloneTransport: "https",
+  // SCIENT-FORK:END
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${host}/${repository}/pulls/${number}`,
   changeRequestActions: new Set([
