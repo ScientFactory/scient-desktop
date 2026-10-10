@@ -195,9 +195,19 @@ async function downloadPath() {
     const files = await updater.downloadUpdate();
     assert.deepEqual(await fs.readFile(files[0]), payload);
     assert.equal(downloaded, nextBeta.slice(1));
+    const downloadsBeforeCacheHit = requests.filter((request) => request.endsWith(".exe")).length;
+    const cachedFiles = await updater.downloadUpdate();
+    assert.deepEqual(await fs.readFile(cachedFiles[0]), payload);
+    assert.equal(
+      requests.filter((request) => request.endsWith(".exe")).length,
+      downloadsBeforeCacheHit,
+      "a verified cached Beta must not download again",
+    );
     const betaUpdater = newUpdater(beta.slice(1));
     select(betaUpdater, "beta");
     assert.equal((await betaUpdater.checkForUpdates()).updateInfo.version, nextBeta.slice(1));
+    const newerBetaFiles = await betaUpdater.downloadUpdate();
+    assert.deepEqual(await fs.readFile(newerBetaFiles[0]), payload);
     let noUpdate = false;
     betaUpdater.on("update-not-available", () => {
       noUpdate = true;
@@ -208,15 +218,30 @@ async function downloadPath() {
     stablePublished = promoted;
     assert.equal((await betaUpdater.checkForUpdates()).updateInfo.version, promoted.slice(1));
     assert.equal(betaUpdater.allowDowngrade, false);
+    const stableFiles = await betaUpdater.downloadUpdate();
+    assert.deepEqual(await fs.readFile(stableFiles[0]), payload);
+    assert.ok(
+      requests.some((request) =>
+        request.startsWith(`/ScientFactory/scient-desktop/releases/download/${promoted}/`),
+      ),
+      "return to Stable must download from its canonical repository",
+    );
     const corruptUpdater = newUpdater("0.6.21");
     select(corruptUpdater, "beta");
     await corruptUpdater.checkForUpdates();
     corrupt = true;
     await assert.rejects(corruptUpdater.downloadUpdate(), /checksum mismatch/);
+    corrupt = false;
+    const retryFiles = await corruptUpdater.downloadUpdate();
+    assert.deepEqual(await fs.readFile(retryFiles[0]), payload);
     return {
       name: "Loopback discovery, download, cache, checksum rejection and feed changes",
       downloadVerified: true,
+      cacheVerified: true,
+      betaToBetaDownloadVerified: true,
+      betaToStableDownloadVerified: true,
       corruptDownloadRejected: true,
+      downloadRetryVerified: true,
       nativeInstall: false,
       requests,
     };

@@ -12,11 +12,22 @@ describe("locked electron-updater integration", () => {
     );
     const result = JSON.parse(output) as {
       nativeInstall: boolean;
-      cases: Array<{ downloadVerified?: boolean; corruptDownloadRejected?: boolean }>;
+      cases: Array<{
+        downloadVerified?: boolean;
+        cacheVerified?: boolean;
+        betaToBetaDownloadVerified?: boolean;
+        betaToStableDownloadVerified?: boolean;
+        corruptDownloadRejected?: boolean;
+        downloadRetryVerified?: boolean;
+      }>;
     };
     expect(result.nativeInstall).toBe(false);
     expect(result.cases).toHaveLength(17);
     expect(result.cases.at(-1)?.downloadVerified).toBe(true);
+    expect(result.cases.at(-1)?.cacheVerified).toBe(true);
+    expect(result.cases.at(-1)?.betaToBetaDownloadVerified).toBe(true);
+    expect(result.cases.at(-1)?.betaToStableDownloadVerified).toBe(true);
     expect(result.cases.at(-1)?.corruptDownloadRejected).toBe(true);
+    expect(result.cases.at(-1)?.downloadRetryVerified).toBe(true);
   });
 });
