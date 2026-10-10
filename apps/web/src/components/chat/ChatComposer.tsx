@@ -7770,7 +7770,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : // SCIENT-FORK:START — busy-state placeholder while the agent works.
                                     (composerWorkingPlaceholder ??
-                                    "Ask anything, @tag files/folders, $use skills, or / for commands")
+                                    "Ask anything, @tag files, folders or conversations, $use skills, or / for commands")
                       // SCIENT-FORK:END
                     }
                     disabled={
