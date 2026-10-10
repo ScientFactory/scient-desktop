@@ -1,4 +1,5 @@
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
+import { mathColorSource } from "./mathColorSyntax";
 import { LatexStructuredSelection } from "./latexStructuredSelection";
 import { latexSelectionCommand, runLatexSelectionCommand } from "./latexSelectionSession";
 import { installLatexTextSelectionSession } from "./latexTextSelectionSession";
@@ -427,6 +428,7 @@ const LatexMathEditingContext = createContext<{
   formatChanged: (id: string, state: string) => void;
   deactivate: (id: string) => void;
 } | null>(null);
+const mathSaveRefusal = "Not saved yet. Your input is kept here.";
 
 function mathFieldSource(tex: string, environment: string | null): string {
   const inner = environment?.startsWith("align")
@@ -612,6 +614,10 @@ function LatexMathView({
   const setShortcutHint = useLatexActionNotice();
   const [draft, setDraft] = useState(attributes.tex);
   const [sourceError, setSourceError] = useState<string | null>(null);
+  const documentSaveError = useContext(LatexDraftContext).saveError;
+  const displayedSourceError =
+    sourceError === mathSaveRefusal ? (documentSaveError ?? sourceError) : sourceError;
+  const sourceDraftEdited = useRef(false);
   const commandContext = useContext(LatexCommandContext);
   const completionContext = useRef(commandContext);
   useLayoutEffect(() => {
@@ -662,6 +668,7 @@ function LatexMathView({
     setSourceOpen(false);
     setDraft(attributes.tex);
     setSourceError(null);
+    sourceDraftEdited.current = false;
     setEditing(true);
     if (controls.current) activeMath.activate(controls.current);
     if (focus) requestAnimationFrame(() => mathField.current?.focus());
@@ -919,7 +926,12 @@ function LatexMathView({
 
   const publishSource = (value: string) => {
     if (!editor.isEditable) return;
-    const tex = display ? value.trim() : value;
+    sourceDraftEdited.current = true;
+    const tex = mathColorSource(
+      display ? value.trim() : value,
+      commandContext.macros,
+      commandContext.source,
+    );
     const parsed = parseLatexVisualMathSource(
       latexVisualMathSource({ ...attributes, tex }, display),
       display,
@@ -953,11 +965,7 @@ function LatexMathView({
     updateAttributes({ tex });
     const position = getPos();
     const accepted = position === undefined ? null : editor.state.doc.nodeAt(position);
-    setSourceError(
-      accepted?.attrs.tex === tex
-        ? null
-        : "Not saved yet. Keep only the formula here; change its type using the selector.",
-    );
+    setSourceError(accepted?.attrs.tex === tex ? null : mathSaveRefusal);
   };
 
   const applyCompletion = (completion: MathSourceCompletion) => {
@@ -1250,7 +1258,17 @@ function LatexMathView({
                   setSourceOpen(false);
                   if (!sourceError) mathField.current?.focus();
                 } else {
-                  if (!sourceError) setDraft(attributes.tex);
+                  if (!sourceError || !sourceDraftEdited.current) {
+                    mathField.current?.flush();
+                    // The field can retain input refused by the document guard.
+                    // Show that live formula rather than the last accepted node.
+                    setDraft(
+                      mathEnvironmentBody(
+                        mathField.current?.getSource() ?? attributes.tex,
+                        attributes.environment,
+                      ),
+                    );
+                  }
                   setSourceOpen(true);
                   requestAnimationFrame(() => sourceEditor.current?.focus());
                 }
@@ -1398,7 +1416,7 @@ function LatexMathView({
                 />
                 {sourceError ? (
                   <div className="scient-latex-math-source-error" role="alert">
-                    {sourceError}
+                    {displayedSourceError}
                   </div>
                 ) : null}
               </div>
@@ -1406,7 +1424,7 @@ function LatexMathView({
 
             {sourceError && !sourceOpen ? (
               <div className="scient-latex-math-bar-error" role="status">
-                {sourceError}
+                {displayedSourceError}
               </div>
             ) : null}
           </div>,
@@ -1543,10 +1561,12 @@ function LatexMathView({
               node.attrs.tex ??
               "",
           );
-          setSourceError(null);
-          setDraft(accepted);
+          const saved = accepted.trim() === body.trim();
+          sourceDraftEdited.current = false;
+          setSourceError(saved ? null : mathSaveRefusal);
+          setDraft(saved ? accepted : body);
           return {
-            accepted: accepted.trim() === body.trim(),
+            accepted: saved,
             value: mathFieldSource(accepted, attributes.environment),
           };
         }}
@@ -5833,6 +5853,11 @@ function LatexVisualEditorReady(
                 if (!transaction.docChanged || applying.current) return true;
                 if (editBlocked.current) {
                   refusedChanges.current++;
+                  setNotice(
+                    (previous) =>
+                      previous ??
+                      "Editing is paused. Resolve the document's save or recovery status, then retry.",
+                  );
                   return false;
                 }
                 if (
@@ -5848,6 +5873,11 @@ function LatexVisualEditorReady(
                 // Settle pending typing before validating a structural command.
                 if (!flushTypingRef.current() || !flushSourceEditRef.current()) {
                   refusedChanges.current++;
+                  setNotice(
+                    (previous) =>
+                      previous ??
+                      "Finish the pending text edit before saving this formula. Your input is kept here.",
+                  );
                   return false;
                 }
                 const titleStep = transaction.steps.find((step) => step instanceof LatexTitleStep);
@@ -6308,6 +6338,7 @@ function LatexVisualEditorReady(
   const fieldContext = useMemo(
     () => ({
       reportDraft,
+      saveError: props.sourceError ?? notice,
       commit: (change: () => void | boolean) => {
         if (editBlocked.current) return false;
         const before = refusedChanges.current;
@@ -6318,7 +6349,7 @@ function LatexVisualEditorReady(
         else editor?.commands.undo();
       },
     }),
-    [editor, reportDraft],
+    [editor, reportDraft, props.sourceError, notice],
   );
   const renameLabelRef = useRef<(before: string, after: string, fieldId?: string) => boolean>(
     () => false,

@@ -1118,7 +1118,14 @@ tr[data-latex-longtable-band] {
   content-visibility: visible;
 }
 .scient-latex-visual-document :is(h4, h5) + p,
-.scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p {
+.scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p,
+.scient-latex-visual-document
+  p:has(.scient-latex-mathfield math-field:is(:focus-within, [data-scient-selection-held])),
+.scient-latex-visual-document
+  .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]) {
+  /* Active math guides extend past the line's ink box. Paint containment must
+     not clip their corners, including while a menu owns the selection. */
+  content-visibility: visible;
   contain: none;
 }
 @media print {
@@ -1232,13 +1239,15 @@ tr[data-latex-longtable-band] {
   max-width: none;
 }
 .scient-latex-visual-display-math > .scient-latex-mathfield {
+  /* The guide reaches up to 7 local pixels beyond the ink at every zoom. */
+  --scient-math-guide-gutter: max(8px, 0.2em);
   display: block;
-  max-width: calc(100% + 0.4em);
+  max-width: calc(100% + 2 * var(--scient-math-guide-gutter));
   direction: ltr;
   overflow: visible;
   /* This space is identical in reading/editing modes, including annotations. */
-  padding: 0.2em;
-  margin: -0.2em;
+  padding: var(--scient-math-guide-gutter);
+  margin: calc(-1 * var(--scient-math-guide-gutter));
 }
 .scient-latex-visual-display-math > .scient-latex-mathfield[data-math-wide] {
   /* TeX starts overfull display boxes at the text boundary. */

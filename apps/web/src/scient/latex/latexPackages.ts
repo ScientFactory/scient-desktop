@@ -1,4 +1,6 @@
 /** Package declarations and tool requirements share this source-level inventory. */
+import { latexSourceArgument } from "./latexSourceSyntax";
+
 const commandPackages: Readonly<Record<string, readonly string[]>> = {
   color: ["xcolor"],
   textcolor: ["xcolor"],
@@ -78,16 +80,44 @@ export function latexCommands(source: string) {
 }
 
 /** Existing commands do not turn an unrelated prose edit into a package edit. */
-export function newLatexCommandPackages(previous: string, next: string): Set<string> {
+export function newLatexCommandPackages(
+  previous: string,
+  next: string,
+  documentSource?: string,
+): Set<string> {
   const remaining = new Map<string, number>();
   for (const match of latexCommands(previous))
     remaining.set(match[1]!, (remaining.get(match[1]!) ?? 0) + 1);
   const packages = new Set<string>();
+  const hasColor = documentSource && latexPackageInventory(documentSource).loaded.has("color");
   for (const match of latexCommands(next)) {
     const command = match[1]!;
     const count = remaining.get(command) ?? 0;
     if (count > 0) remaining.set(command, count - 1);
-    else commandPackages[command]?.forEach((name) => packages.add(name));
+    else {
+      if (hasColor && ["color", "textcolor", "colorbox"].includes(command)) {
+        const at = match.index + match[0].length;
+        const model = latexSourceArgument(next, at, "[", "]");
+        const value = latexSourceArgument(next, model?.end ?? at);
+        if (model && value) {
+          const spec = model.value.trim();
+          const count = spec === "gray" ? 1 : spec === "rgb" ? 3 : spec === "cmyk" ? 4 : 0;
+          const parts = value.value.split(",").map((part) => part.trim());
+          if (
+            count &&
+            parts.length === count &&
+            parts.every((part) => /^(?:\d+(?:\.\d*)?|\.\d+)$/u.test(part) && Number(part) <= 1)
+          )
+            continue;
+        } else if (
+          !model &&
+          value &&
+          /^(?:black|white|red|green|blue|cyan|magenta|yellow)$/u.test(value.value.trim())
+        )
+          continue;
+      }
+      commandPackages[command]?.forEach((name) => packages.add(name));
+    }
   }
   return packages;
 }

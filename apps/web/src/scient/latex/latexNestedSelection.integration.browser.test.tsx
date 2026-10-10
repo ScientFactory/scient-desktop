@@ -131,6 +131,109 @@ it("real Math menu retains bold selection, Escape restores focus, next Ctrl+A se
   expect(source).toBe(original);
 });
 
+it.each([String.raw`\[\mathbf{h}_{i}=z\]`, String.raw`\(\mathbf{h}_{i}=z\)`])(
+  "switching Insert to Math preserves the last caret and range in %s",
+  async (body) => {
+    const math = await mount(body);
+    const original = source;
+    const h = offset(math, "h");
+    for (const range of [
+      [h, h],
+      [h - 1, h],
+    ] as const) {
+      math.selection = { ranges: [[...range]] };
+      await frame();
+      await page.getByRole("button", { name: "Insert", exact: true }).click();
+      await frame();
+      expect(math.selection.ranges).toEqual([[...range]]);
+      if (range[0] === range[1]) {
+        expect(host!.querySelector(".scient-latex-retained-selection")).toBeNull();
+        expect(host!.querySelector(".scient-latex-range-selection")).toBeNull();
+      }
+      await page.getByRole("button", { name: "Math", exact: true }).click();
+      await frame();
+      expect(math.selection.ranges).toEqual([[...range]]);
+      await page.getByRole("menuitem", { name: "Brackets", exact: true }).click();
+      await page.getByRole("switch", { name: "Match brackets", exact: true }).click();
+      await frame();
+      expect(math.selection.ranges).toEqual([[...range]]);
+      await userEvent.keyboard("{Escape}");
+      await userEvent.keyboard("{Escape}");
+      await expect.poll(() => math.matches(":focus-within")).toBe(true);
+      expect(math.selection.ranges).toEqual([[...range]]);
+    }
+    expect(source).toBe(original);
+  },
+);
+
+it.each([String.raw`\[\mathbf{h}_{i}=\]`, String.raw`\(\mathbf{h}_{i}=\)`])(
+  "bracket menu choices retain the caret, and Insert leaves it inside empty brackets in %s",
+  async (body) => {
+    const math = await mount(body);
+    math.position = math.lastOffset;
+    const before = math.position;
+    await frame();
+    await page.getByRole("button", { name: "Math", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Brackets", exact: true }).click();
+    await userEvent.click(document.querySelector<HTMLElement>('[aria-label="Left bracket"]')!);
+    await page.getByRole("option", { name: "⟨", exact: true }).click();
+    await frame();
+    expect(math.selection.ranges).toEqual([[before, before]]);
+    expect(host!.querySelector(".scient-latex-retained-selection")).toBeNull();
+    await page.getByRole("menuitem", { name: "Insert", exact: true }).click();
+    await expect.poll(() => math.matches(":focus-within")).toBe(true);
+    await frame();
+    expect(math.selectionIsCollapsed).toBe(true);
+    expect(host!.querySelector(".scient-latex-range-selection")).toBeNull();
+    expect(host!.querySelector(".scient-latex-retained-selection")).toBeNull();
+    await userEvent.keyboard("x");
+    await frame();
+    expect(math.getValue("latex-without-placeholders")).toMatch(
+      /\\left\\langle\s*x\s*\\right\\rangle/u,
+    );
+  },
+);
+
+it.each([String.raw`\[\mathbf{h}_{i}\]`, String.raw`\(\mathbf{h}_{i}\)`])(
+  "the complete Visual editor leaves every guide corner unclipped in %s",
+  async (body) => {
+    const math = await mount(body);
+    const original = source;
+    await document.fonts.ready;
+    for (const position of [offset(math, "h"), offset(math, "i"), 0, math.lastOffset]) {
+      math.position = position;
+      await frame();
+      await frame();
+      const guide = host!.querySelector<HTMLElement>(
+        ".scient-latex-scope-outline:not([data-guide])",
+      );
+      expect(guide).toBeTruthy();
+      const bounds = guide!.getBoundingClientRect();
+      for (let ancestor = guide!.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        const box = ancestor.getBoundingClientRect();
+        if (
+          ["auto", "hidden", "clip", "scroll"].includes(style.overflowY) ||
+          /\b(paint|content|strict)\b/u.test(style.contain) ||
+          style.contentVisibility === "auto"
+        ) {
+          const label = `${ancestor.tagName}.${ancestor.className} (${style.contain})`;
+          expect(bounds.top, label).toBeGreaterThanOrEqual(box.top - 1);
+          expect(bounds.bottom, label).toBeLessThanOrEqual(box.bottom + 1);
+        }
+      }
+    }
+    await page.getByRole("button", { name: "Math", exact: true }).click();
+    await frame();
+    expect(host!.querySelector(".scient-latex-scope-outline:not([data-guide])")).toBeTruthy();
+    const block = math.closest<HTMLElement>("p,.scient-latex-visual-display-math")!;
+    expect(getComputedStyle(block).contain).toBe("none");
+    expect(getComputedStyle(block).contentVisibility).toBe("visible");
+    await userEvent.keyboard("{Escape}");
+    expect(source).toBe(original);
+  },
+);
+
 it("real Visual editor expands bracket/exponent boundaries and paints the complete underbrace", async () => {
   const math = await mount(
     String.raw`\[\begin{pmatrix}\left(x\right)^2&\underbrace{1+\cdots+1}_{n\ \textbf{times}}\end{pmatrix}=\]`,

@@ -1,5 +1,5 @@
 import type { MathfieldElement } from "mathlive";
-import { enterMathFormattingArgument } from "./mathTextFormatting";
+import { enterMathArgument } from "./mathTextFormatting";
 import { registerLatexSelection } from "./latexSelectionSession";
 import {
   mathEditingGuideRects,
@@ -97,7 +97,7 @@ export function installMathSelectionSession(
     command: (command) => {
       if (math.readOnly) return false;
       if (command === "enterScope") {
-        if (!enterMathFormattingArgument(math, true)) return false;
+        if (!enterMathArgument(math, true)) return false;
         history.length = 0;
         scopeIndex = 0;
         lastSelection = JSON.stringify(math.selection.ranges);

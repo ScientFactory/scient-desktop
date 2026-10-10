@@ -24,6 +24,7 @@ import {
   planVisualProjectEdit,
   type VisualProjectFile,
 } from "./latexProjectVisual";
+import { latexPackageInventory } from "./latexPackages";
 import { checkpointVisualDraft, confirmVisualDraft } from "./visualDrafts";
 
 interface FileState {
@@ -370,8 +371,19 @@ export function LatexProjectVisualEditor(props: Props) {
         return false;
       }
       if (plan.changes.size > 1) {
+        const loaded = latexPackageInventory(expected).loaded;
+        const packages = [
+          ...new Set(
+            latexPackageInventory(next)
+              .declarations.filter(({ name }) => !loaded.has(name))
+              .map(({ name }) => name),
+          ),
+        ];
         setEditError(
-          "This edit also changes another file. Add the required declaration in Source, then retry the edit.",
+          "This edit also changes another file. Add the required declarations in Source, then retry the edit." +
+            (packages.length
+              ? ` Add ${packages.map((name) => `\\usepackage{${name}}`).join(", ")} in the document preamble.`
+              : ""),
         );
         return false;
       }

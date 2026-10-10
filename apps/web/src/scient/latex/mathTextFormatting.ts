@@ -1,5 +1,6 @@
 import type { MathfieldElement, Style } from "mathlive";
 import { latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
+import { mathColorInput, mathColorSource } from "./mathColorSyntax";
 
 export type MathTextFormat = "bold" | "italic" | "monospace";
 
@@ -208,30 +209,49 @@ export function installMathFormattingScopes(math: MathfieldElement) {
 }
 
 /** Show an insertion caret inside the new argument rather than selecting its slot. */
-export function enterMathFormattingArgument(math: MathfieldElement, adjacent = false): boolean {
+export function enterMathArgument(math: MathfieldElement, adjacent = false): boolean {
   const model = (math as unknown as { _mathfield?: FormattingController })._mathfield?.model;
   if (!model || math.readOnly) return false;
   const range = math.selection.ranges[0];
   const atom = model.at(math.position);
+  const selectedAtom =
+    range && math.selection.ranges.length === 1 && Math.abs(range[1] - range[0]) === 1
+      ? model.at(Math.max(range[0], range[1]))
+      : undefined;
+  const brackets =
+    selectedAtom?.type === "leftright"
+      ? selectedAtom
+      : math.selectionIsCollapsed && atom?.type === "leftright"
+        ? atom
+        : undefined;
+  if (brackets?.body?.length) {
+    math.position = model.offsetOf(brackets.body.at(-1)!);
+    return true;
+  }
   const next = atom?.rightSibling;
-  const owner = mathFormattingScopeCommand(atom)
-    ? atom
-    : adjacent && next && mathFormattingScopeCommand(next)
-      ? next
-      : atom?.parent;
+  const owner =
+    selectedAtom?.type === "placeholder"
+      ? selectedAtom.parent
+      : mathFormattingScopeCommand(atom)
+        ? atom
+        : adjacent && next && mathFormattingScopeCommand(next)
+          ? next
+          : atom?.parent;
   const command = owner && mathFormattingScopeCommand(owner);
+  // The placeholder's own stop paints the caret at the empty guide's center.
+  // Its preceding sentinel paints at the edge and leaves the slot marked vacant.
+  if (selectedAtom?.type === "placeholder") {
+    math.position = model.offsetOf(selectedAtom);
+    if (command) math.executeCommand(["switchMode", MATH_FORMATTING_ARGUMENTS[command]!]);
+    return true;
+  }
   if (!command) return false;
   if (math.selectionIsCollapsed && owner === atom && atom.body?.length)
     math.position = model.offsetOf(atom.body.at(-1)!);
   else if (math.selectionIsCollapsed && owner === next && next?.body?.length)
-    math.position = model.offsetOf(next.body[0]!);
-  else if (
-    range &&
-    math.selection.ranges.length === 1 &&
-    range[1] - range[0] === 1 &&
-    atom.type === "placeholder"
-  )
-    math.position = range[0];
+    math.position = model.offsetOf(
+      next.body.length === 2 && next.body[1]?.type === "placeholder" ? next.body[1] : next.body[0]!,
+    );
   else return false;
   math.executeCommand(["switchMode", MATH_FORMATTING_ARGUMENTS[command]!]);
   return true;
@@ -299,9 +319,14 @@ export function toggleMathTextFormat(math: MathfieldElement, format: MathTextFor
   });
 }
 
-/** MathLive's combined font command needs a portable LaTeX spelling. */
-export function mathTextFormattingSource(source: string, customMathbfit = false): string {
-  if (customMathbfit || !source.includes("\\mathbfit")) return source;
+/** Native font commands and CSS color arguments need portable LaTeX spellings. */
+export function mathTextFormattingSource(
+  source: string,
+  customCommands?: Readonly<Record<string, unknown>>,
+  documentSource?: string,
+): string {
+  source = mathColorSource(source, customCommands, documentSource);
+  if (customCommands?.mathbfit || !source.includes("\\mathbfit")) return source;
   for (const command of latexSourceCommands(source).toReversed()) {
     if (command.name !== "mathbfit") continue;
     const body = latexSourceArgument(source, command.to);
@@ -319,6 +344,7 @@ export function mathTextFormattingInput(
   source: string,
   customCommands?: Readonly<Record<string, unknown>>,
 ): string {
+  source = mathColorInput(source, customCommands);
   source = emptyFormattingInput(source, customCommands);
   if (customCommands?.mathbfit || customCommands?.mathit)
     return formattingScopesInput(source, customCommands);

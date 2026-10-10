@@ -11,6 +11,7 @@ vi.mock("./LatexMathField", () => ({
   LatexMathField: ({ value, ref }: { value: string; ref: Ref<LatexMathFieldHandle> }) => {
     useImperativeHandle(ref, () => ({
       flush: () => true,
+      getSource: () => value,
       focus: () => {},
       isEmpty: () => value.length === 0,
       clearSelection: () => {},

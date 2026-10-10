@@ -5,8 +5,7 @@ import {
   mathEmptySlotRect,
   mathEmptySlotOffset,
   mathGuideScopeId,
-  mathEditingScopes,
-  mathScopeRects,
+  mathEditingSlotRects,
   mathSelectionAtOffset,
 } from "./mathLiveSelection";
 
@@ -23,15 +22,25 @@ const emptySlotCharacter = "\u2007";
 function emptyGuideSlots(math: MathfieldElement): HTMLElement[] {
   const root = math.shadowRoot;
   if (!root || math.readOnly) return [];
+  const offsets = new Set<number>();
   return [
     ...root.querySelectorAll<HTMLElement>(
       "[data-scient-math-cell][data-empty][data-guide-active],.ML__placeholder[data-guide-active],[data-scient-math-slot][data-guide-active]",
     ),
-  ].filter(
-    (slot) =>
-      slot.hasAttribute("data-scient-math-cell") ||
-      !slot.closest("[data-scient-math-cell][data-empty]"),
-  );
+  ].filter((slot) => {
+    if (
+      !slot.hasAttribute("data-scient-math-cell") &&
+      slot.closest("[data-scient-math-cell][data-empty]")
+    )
+      return false;
+    // A placeholder may have both a native wrapper and a decorated glyph.
+    // They represent one insertion stop and must contribute only one guide.
+    const offset = mathEmptySlotOffset(math, slot);
+    if (offset === null) return true;
+    if (offsets.has(offset)) return false;
+    offsets.add(offset);
+    return true;
+  });
 }
 
 /** Vacant guides survive cell selection; occupied scope guides do not. */
@@ -66,11 +75,7 @@ export function mathEditingGuideRects(math: MathfieldElement): DOMRect[] {
       return rects;
     }
   }
-  const scope = mathEditingScopes(math)[0];
-  // The first offset is a caret anchor, not slot content. Its zero-height
-  // sentinel can resolve to the enclosing accent, delimiter, or previous atom.
-  if (scope) rects.push(...mathScopeRects(math, scope.range));
-  return rects;
+  return mathEditingSlotRects(math);
 }
 
 export function installMathEditingGuides(math: MathfieldElement): () => void {
@@ -203,10 +208,9 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
       if (caret || !math.hasAttribute("data-scient-selection-held"))
         slot.toggleAttribute(
           "data-guide-current",
-          Boolean(caret) &&
-            (mathEmptySlotOffset(math, slot) === math.position ||
-              slot.contains(caret) ||
-              Boolean(slot.closest(".ML__placeholder-selected"))),
+          (math.selectionIsCollapsed && mathEmptySlotOffset(math, slot) === math.position) ||
+            Boolean(caret && slot.contains(caret)) ||
+            Boolean(slot.closest(".ML__placeholder-selected")),
         );
     }
     for (const cell of root.querySelectorAll<HTMLElement>(cellSelector)) {
@@ -236,11 +240,15 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
   math.addEventListener("selection-change", schedule);
   const observer = new MutationObserver(schedule);
   observer.observe(root, { childList: true, characterData: true, subtree: true });
+  // Font loading can change the ink bounds without changing MathLive's DOM.
+  const resize = new ResizeObserver(schedule);
+  resize.observe(math);
   schedule();
   return () => {
     math.removeEventListener("focusin", schedule);
     math.removeEventListener("selection-change", schedule);
     observer.disconnect();
+    resize.disconnect();
     cancelAnimationFrame(frame);
     for (const caret of root.querySelectorAll("[data-scient-accent-body]"))
       caret.removeAttribute("data-scient-accent-body");

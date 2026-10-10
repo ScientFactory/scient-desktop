@@ -3293,6 +3293,10 @@ const scientificMathCommands = new Set([
   "textbf",
   "textit",
   "textnormal",
+  "color",
+  "textcolor",
+  "colorbox",
+  "fcolorbox",
   "operatorname",
   "limits",
   "nolimits",
@@ -6693,7 +6697,11 @@ export function applyLatexVisualDocumentChange(
   const requiredPackages = new Set([
     ...[...requiredObjectPackages(newChanged)].filter((name) => !previousPackages.has(name)),
     ...newMathSymbolPackages(activeLatexSource(previousSource), activeLatexSource(replacement)),
-    ...newLatexCommandPackages(activeLatexSource(previousSource), activeLatexSource(replacement)),
+    ...newLatexCommandPackages(
+      activeLatexSource(previousSource),
+      activeLatexSource(replacement),
+      root ?? undefined,
+    ),
   ]);
   if (addedEnvironments.size || requiredPackages.size) {
     if (!root || findDelimiter(root, "\\begin{document}", 0) < 0) {

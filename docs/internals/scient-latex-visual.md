@@ -101,6 +101,17 @@ includes bold, italic/emphasis, typewriter text, small capitals and underlining;
 roman/sans families and scoped standard size/font declarations are also editable.
 `mathTextFormatting.ts` adapts Text-menu font actions to MathLive's math and text
 slots, retaining the math selection and exporting portable LaTeX font commands.
+`mathColorSyntax.ts` converts MathLive's three/six-digit CSS hex color arguments
+to xcolor's explicit `HTML` model (`\textcolor[HTML]{808080}{h}`), and converts
+that syntax back to native color arguments on input and in reading previews.
+When the preamble declares `color` without `xcolor`, single-color commands use
+the standard `rgb` model instead, retaining the picker color without requiring
+another package or a second-file edit. Input also accepts literal `rgb`, `RGB`
+and `gray` models.
+The conversion covers color declarations, text colors and color boxes, skips
+comments/literal source and document overrides, and leaves unsupported model
+expressions unchanged. Saving, clipboard export and Edit LaTeX use the portable
+syntax; raw-source math edits also normalize CSS hex arguments before admission.
 Math right-click menus are suppressed; Text, Math and the footer own the actions.
 Style-state notifications update the toolbar only when formatting changes.
 
@@ -532,6 +543,9 @@ Resize observation and coalesced post-paint work handle edits, zoom and column-w
 changes without continuous polling. Vertical overflow is explicitly hidden only
 in the active viewport. Formula struts retain the height of braces, limits and
 matrices; no fixed height is imposed. Page thumbnails omit active viewport state.
+Display fields reserve at least eight local pixels around their ink, with matching
+negative margins preserving its paper position. This accommodates the guide's
+seven-pixel maximum inset while the active horizontal viewport clips overflow.
 PDF keeps `DocumentSearchBar`, which only finds. Visual shows the shared
 `writing/ScientFindBar.tsx` under the writing row, through
 `useLatexVisualSearch.ts`. It uses the shared document-text plugin for supported
@@ -562,6 +576,13 @@ Title help and source actions finish their dialog close before transferring focu
 
 Shared writing menus execute queued commands after the closed state commits;
 their exit animation must not delay edits in a suspended or background renderer.
+The shared Insert popup carries its trigger's writing-menu ownership, including
+portaled submenus. Switching from Insert to another menu leaves focus with that
+menu; Escape or toggling Insert closed restores the retained editing position.
+Menu controls and their owned popups retain the chosen caret or selection.
+Other focus changes release the menu snapshot. A pointer into the document
+releases that snapshot before focus returns, so restoration cannot overwrite
+the new point.
 
 ### Empty editing positions
 
@@ -593,6 +614,13 @@ existing VBox strut and local font size. Active and empty slots use the same
 overlay renderer, without extra outline padding or duplicate current-slot marks.
 Occupied guides exclude the starting caret anchor so an accent's body marker
 fits its contents instead of including the enclosing accent or neighboring atom.
+Active display math and paragraphs containing a focused or menu-retained inline
+math field release paint containment and automatic content visibility so every
+guide corner can extend beyond the line's ink box. Inline and display math share
+the guide renderer and argument insertion behavior.
+The inactive document retains its rendering containment. Nested command insertion
+collapses the selected native placeholder to its own caret stop, keeping the caret
+centered inside the empty argument's marker.
 No inline guide nodes are inserted. Minimum cell
 targets apply through the structural selector from the first render, independent
 of observer attributes, focus and emptiness, so decorating a replacement render
@@ -1149,7 +1177,9 @@ is being resolved, avoiding a loading reset on each save.
 and command requirements. The source guard inspects each changed block's emitted
 LaTeX as well as structured tool metadata and the math symbol catalog. This covers
 native MathLive context-menu styles and custom insertions without depending on
-which button initiated an edit. Color/highlight requests `xcolor`; menu-only color
+which button initiated an edit. Color/highlight requests `xcolor`; an already
+loaded `color` package satisfies single-color commands using its predefined
+colors or literal `rgb`/`gray`/`cmyk` models. Menu-only color
 names receive non-overwriting `providecolor` definitions. Declarations retain user
 options and are added before relevant late-loading packages. This is a bounded
 source inventory, not execution of arbitrary preamble macros or external styles.
@@ -1181,7 +1211,9 @@ commands wait for completion. Blur, field navigation and document preparation
 flush pending edits; preparation flushes all rich table cells, including those
 that no longer have focus. Recovery journaling also runs after paint or on exit.
 Unexpected conversion/publication failures keep the input as a recoverable draft
-instead of rolling back what the user just typed. Failed document synchronization
+instead of rolling back what the user just typed. Edit LaTeX reads the live formula,
+including unacknowledged input, and marks refused publication as unsaved rather
+than showing the previous accepted equation. Failed document synchronization
 pauses further editing until the draft or conflict is resolved. Source recovery
 checkpoints remain coalesced; working-source admission is separate from disk save.
 Visual pauses further edits when a file session reports a save error or conflict.
@@ -1200,7 +1232,12 @@ Outside source refreshes map the selection through content changes, including
 insertions before the current paragraph and backwards ranges; removed selections
 fall back to a nearby caret. Source IDs alone do not move a selection.
 Package edits that would change more than one physical file are refused before
-publication; add the required declaration in Source first.
+publication; add the required declaration in Source first. The refusal supplies
+new package declarations, including `\usepackage{xcolor}` for native math color input, while
+the math field and Edit LaTeX retain the complete unsaved formula.
+Math-field save refusals display the document's admission error, including
+missing declarations, paused file/recovery state and unfinished prose edits,
+instead of hiding it behind the generic retained-input message.
 Pre-existing raw editor snapshots remain recoverable. A typing
 snapshot reopens after reload only over the exact source it was typed on. Over a
 newer file, or when the editor cannot load it, it is offered through the same
@@ -1408,6 +1445,9 @@ local replacement validation. The scientific math whitelist also validates
 supported document macro bodies, so rendering and source editing agree about
 `\R`, required-argument commands and declared operators. Macros remain calls
 in source; the adapter does not expand them into edited document text.
+Native math color commands (`\color`, `\textcolor`, `\colorbox`, and `\fcolorbox`)
+remain supported inside statement bodies; their source uses the same `xcolor`
+dependency admission as math in the main document.
 
 `latexEnvironmentDeclarations.ts` recognizes top-level literal `\newtheorem`
 declarations, including starred statements, shared counters and section/chapter
@@ -1947,12 +1987,24 @@ and scripts, and restores the adapter on atoms recreated by undo. No internal
 wrapper metadata enters source or clipboard content. Its insertion-style hook
 keeps the active argument's alphabet rather than MathLive's ordinary-math reset;
 outside those scopes the native style behavior is retained. Empty-slot insertion
-collapses the placeholder selection to a caret inside the argument. Scope
+collapses the placeholder selection to its own insertion stop inside the argument,
+where the caret and empty guide share a center. Guide ownership follows that model
+stop; native placeholder wrappers and decorated glyphs contribute one guide per
+stop, so the current slot is not also painted as vacant. Scope
 navigation recognizes these owners, including adjacent entry and empty removal.
 `mathTextFormattingInput` restores placeholders in empty formatting arguments
 on load; the existing `latex-without-placeholders` save/clipboard projection
 retains the formatting braces without exporting the editing slots. Document
 macros overriding these commands bypass this adaptation.
+
+Automatic bracket insertion without selected content uses a native empty body
+instead of a placeholder that enlarges the delimiters. The caret enters that
+body's first insertion stop; bracket and guide dimensions match the state after
+typing and deleting the contents. Insertion around selected content retains the
+native selection wrapper.
+Native insertion's temporary argument selection bypasses gesture normalization
+until the caret is placed, so an empty bracket body cannot expand into a
+selection of its enclosing expression.
 
 Scope corner marks and muted retained highlights are clipped, noninteractive DOM
 overlays outside the source model. Empty matrix cells share compact marker bounds
@@ -1961,7 +2013,16 @@ targets. The footer shows only the environment type, word count
 and contextual controls; nested scope paths are not rendered. These
 changes do not add source tokens or undo entries. Only the innermost slot is
 marked; content selections suppress occupied-slot marks, while selected empty math
-slots retain theirs. Text/prose, math and rectangular table/math cell selections
+slots retain theirs.
+The active math guide measures the caret's actual argument or cell branch,
+including authored font arguments, independently of the font runs and scripted
+expressions offered by selection expansion. Vacant guides are restricted to that
+innermost owner. Empty-branch fallback uses the painted caret stroke rather than
+its zero-size layout span.
+Occupied and vacant guides resolve the same authored slot, skipping anonymous
+style groups while retaining their script arguments. Guide margins scale with
+document zoom; font-driven field resizing schedules new bounds without polling.
+Text/prose, math and rectangular table/math cell selections
 share the primary-color mix at 22%; the cell-selection variable aliases the same
 fill. Selection painting follows the active participant attribute, so inactive
 parent document ranges cannot paint behind a nested editor's current selection.
