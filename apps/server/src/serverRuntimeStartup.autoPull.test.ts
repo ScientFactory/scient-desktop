@@ -115,6 +115,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         }),
         Layer.mock(Keybindings.Keybindings)({ start: Effect.void }),
         Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+          reconciliationFailure: Effect.succeed(false),
           pendingThreadCount: Effect.succeed(0),
           reconcileShells: Effect.succeed(importSummary),
           importPendingTranscripts: Effect.succeed(importSummary),

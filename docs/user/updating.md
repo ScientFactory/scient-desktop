@@ -6,7 +6,7 @@ app, while an SSH or manually managed environment may run its own Scient server.
 
 ## Update the desktop app
 
-Packaged Scient releases check for stable releases after startup and
+Packaged Scient releases check their selected update track after startup and
 periodically while the app is open. Updates are deliberate:
 
 1. Select the update control near the bottom of the sidebar, or use
@@ -31,9 +31,16 @@ Scient never installs an update on its own. Restarting interrupts running agent
 turns and terminal commands, so let them finish before choosing **Restart**.
 Threads, settings, and project files remain in their existing locations.
 
-Scient publishes one desktop update track: stable. If you previously selected
-Nightly, Scient automatically returns to stable updates when you run a version
-with this policy. No settings change is needed.
+Choose **Stable** or **Beta** in **Settings → General → Update track**. Existing
+Stable installations stay on Stable until you choose Beta. Beta offers previews
+from a separate release feed. Before the first Beta is published, choosing Beta
+simply reports no available update. Your choice is saved across restarts.
+
+You can return to Stable at any time. If the installed Beta is ahead of Stable,
+Scient waits for a stable version at least as new as that Beta; it never
+installs an older version automatically. Stable and Beta use the same app and
+saved data. Legacy Nightly preferences return to Stable and do not enroll you
+in Beta.
 
 Automatic update checks require an official packaged build and a configured
 release feed. On Linux they additionally require running the AppImage. If the

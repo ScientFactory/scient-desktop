@@ -98,15 +98,18 @@ export const importLegacyTranscriptsWithStatus = Effect.fn("importLegacyTranscri
     );
     yield* importer.pendingThreadCount.pipe(
       Effect.flatMap((pendingThreadCount) =>
-        lifecycleEvents.publish({
-          version: 1,
-          type: "legacyThreadMigration",
-          payload: {
-            status: pendingThreadCount === 0 ? "complete" : "running",
-            totalThreadCount,
-            pendingThreadCount,
-            ...(pendingThreadCount > 0 ? { failed: true } : {}),
-          },
+        Effect.gen(function* () {
+          const sourceFailed = yield* importer.reconciliationFailure;
+          yield* lifecycleEvents.publish({
+            version: 1,
+            type: "legacyThreadMigration",
+            payload: {
+              status: pendingThreadCount === 0 && !sourceFailed ? "complete" : "running",
+              totalThreadCount,
+              ...(sourceFailed ? {} : { pendingThreadCount }),
+              ...(pendingThreadCount > 0 || sourceFailed ? { failed: true } : {}),
+            },
+          });
         }),
       ),
       Effect.catchCause((cause) =>
@@ -531,13 +534,15 @@ const make = (options?: StartupOptions) =>
       const welcomeBase = yield* resolveWelcomeBase;
       const environment = yield* serverEnvironment.getDescriptor;
       const legacyMigrationThreadCount = yield* legacyV1ThreadImporter.pendingThreadCount;
-      if (legacyMigrationThreadCount > 0) {
+      const legacySourceFailed = yield* legacyV1ThreadImporter.reconciliationFailure;
+      if (legacyMigrationThreadCount > 0 || legacySourceFailed) {
         yield* lifecycleEvents.publish({
           version: 1,
           type: "legacyThreadMigration",
           payload: {
             status: "running",
             totalThreadCount: legacyMigrationThreadCount,
+            ...(legacySourceFailed ? { failed: true } : {}),
           },
         });
       }
@@ -610,7 +615,7 @@ const make = (options?: StartupOptions) =>
         ),
       );
       yield* (
-        legacyMigrationThreadCount > 0
+        legacyMigrationThreadCount > 0 || legacySourceFailed
           ? importLegacyTranscriptsWithStatus(legacyMigrationThreadCount)
           : importPendingTranscripts
       ).pipe(forkParked);

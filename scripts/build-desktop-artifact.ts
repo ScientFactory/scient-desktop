@@ -26,7 +26,10 @@ import {
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
-import { isExactScientReleaseVersion } from "@t3tools/shared/scientRelease";
+import {
+  isExactScientReleaseVersion,
+  scientDesktopUpdateFeed,
+} from "@t3tools/shared/scientRelease";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import rootPackageJson from "../package.json" with { type: "json" };
@@ -564,7 +567,7 @@ export class DesktopIconSourceMissingError extends Schema.TaggedError<DesktopIco
 export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedError<DesktopDmgBackgroundSourceMissingError>()(
   "DesktopDmgBackgroundSourceMissingError",
   {
-    channel: Schema.Literals(["latest", "nightly"]),
+    channel: Schema.Literals(["latest", "beta", "nightly"]),
     sourcePath: Schema.String,
   },
 ) {
@@ -2689,12 +2692,13 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
 
 export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(function* (
   stageResourcesDir: string,
-  channel: "latest" | "nightly",
+  channel: "latest" | "beta" | "nightly",
   verbose: boolean,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const sourcePath = path.join(stageResourcesDir, "dmg", `dmg-background-${channel}.svg`);
+  const artworkChannel = channel === "beta" ? "latest" : channel;
+  const sourcePath = path.join(stageResourcesDir, "dmg", `dmg-background-${artworkChannel}.svg`);
   if (!(yield* fs.exists(sourcePath))) {
     return yield* new DesktopDmgBackgroundSourceMissingError({ channel, sourcePath });
   }
@@ -2706,7 +2710,7 @@ export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(
     const targetPath = path.join(
       stageResourcesDir,
       "dmg",
-      `dmg-background-${channel}${output.suffix}.png`,
+      `dmg-background-${artworkChannel}${output.suffix}.png`,
     );
     yield* runCommand(
       ChildProcess.make(
@@ -2875,8 +2879,15 @@ export function resolveServerRuntimeDependencies(
 }
 
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
-  updateChannel: "latest" | "nightly",
+  updateChannel: "latest" | "beta" | "nightly",
 ) {
+  if (updateChannel === "beta") {
+    return {
+      ...scientDesktopUpdateFeed("beta"),
+      releaseType: "prerelease",
+      channel: "beta" as const,
+    };
+  }
   const env = yield* Config.all({
     updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
     githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.option),
@@ -2900,7 +2911,8 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   };
 });
 
-export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
+export function resolveDesktopUpdateChannel(version: string): "latest" | "beta" | "nightly" {
+  if (/-beta\.\d{8}\.\d+$/u.test(version)) return "beta";
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
@@ -2909,7 +2921,9 @@ function isDesktopPreviewVersion(version: string): boolean {
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
-  return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
+  return resolveWebAssetBrandForChannel(
+    resolveDesktopUpdateChannel(version) === "nightly" ? "nightly" : "latest",
+  );
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
@@ -3099,7 +3113,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // DMG window backgrounds by volume name, so reusing a generic name can
       // make a newly built background look unchanged during testing.
       title: `${resolveDesktopProductName(version)} ${version} Installer`,
-      background: `dmg/dmg-background-${updateChannel}.png`,
+      background: `dmg/dmg-background-${updateChannel === "nightly" ? "nightly" : "latest"}.png`,
       window: {
         width: 640,
         // The DMG backend derives bounds from the image, including Finder's
@@ -4213,7 +4227,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
   const previewChannel: ConversationPreviewChannel = isDesktopPreviewVersion(appVersion)
     ? "preview"
-    : resolveDesktopUpdateChannel(appVersion);
+    : resolveDesktopUpdateChannel(appVersion) === "nightly"
+      ? "nightly"
+      : "latest";
   const nativePreviewStage =
     nativePreviewSetting === "1"
       ? yield* Effect.tryPromise({

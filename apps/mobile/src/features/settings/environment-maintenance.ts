@@ -49,6 +49,7 @@ const Releases = Schema.Array(
   Schema.Struct({
     tag_name: Schema.String,
     draft: Schema.optionalKey(Schema.Boolean),
+    prerelease: Schema.optionalKey(Schema.Boolean),
   }),
 );
 const decodeReleases = Schema.decodeUnknownSync(Releases);
@@ -57,7 +58,7 @@ const decodeReleases = Schema.decodeUnknownSync(Releases);
 export async function findEnvironmentUpdate(currentVersion: string, signal: AbortSignal) {
   const channel = cliReleaseChannelOf(currentVersion);
   for (let page = 1; ; page++) {
-    const response = await fetch(cliReleaseIndexPageUrl(page), { signal });
+    const response = await fetch(cliReleaseIndexPageUrl(page, channel), { signal });
     if (!response.ok) throw new Error(`Could not check releases (${response.status}). Try again.`);
     const releases = decodeReleases(await response.json());
     const version = newestCliReleaseVersion(releases, channel);

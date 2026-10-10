@@ -5,11 +5,18 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 
-import { isExactScientReleaseVersion } from "@t3tools/shared/scientRelease";
+import {
+  assertScientReleaseChannelVersion,
+  assertScientBetaTargetAheadOfStable,
+} from "@t3tools/shared/scientRelease";
 
 interface Options {
   readonly version: string;
+  readonly channel?: string;
+  readonly latestStableVersion?: string;
+  readonly latestBetaVersion?: string;
   readonly sourceSha: string;
   readonly releaseSha: string;
   readonly root: string;
@@ -56,6 +63,13 @@ function parseOptions(args: ReadonlyArray<string>): Options {
     : undefined;
   return {
     version: requiredValue(args, "--version").replace(/^v/u, ""),
+    channel: args.includes("--channel") ? requiredValue(args, "--channel") : "stable",
+    ...(args.includes("--latest-stable-version")
+      ? { latestStableVersion: requiredValue(args, "--latest-stable-version").replace(/^v/u, "") }
+      : {}),
+    ...(args.includes("--latest-beta-version")
+      ? { latestBetaVersion: requiredValue(args, "--latest-beta-version").replace(/^v/u, "") }
+      : {}),
     sourceSha: requiredValue(args, "--source-sha").toLowerCase(),
     releaseSha: requiredValue(args, "--release-sha").toLowerCase(),
     root: NodePath.resolve(args.includes("--root") ? requiredValue(args, "--root") : process.cwd()),
@@ -116,13 +130,14 @@ async function verifyReleaseNote(options: Options): Promise<{
   ]);
   const catalog = SCIENT_RELEASE_NOTES as ReadonlyArray<ScientReleaseNoteLike>;
   const issues = validateScientReleaseNotesCatalog(catalog) as ReadonlyArray<string>;
+  const noteVersion = options.channel === "beta" ? options.version.split("-")[0]! : options.version;
   const source = resolveReleaseNoteSource({
     catalog,
     issues,
-    version: options.version,
+    version: noteVersion,
     allowNoteFree: options.allowNoteFree,
   });
-  const note = catalog.find((entry) => entry.version === options.version);
+  const note = catalog.find((entry) => entry.version === noteVersion);
   return source === "catalog" && note
     ? { source, markdown: renderScientReleaseNotesMarkdown(note) }
     : {
@@ -150,17 +165,29 @@ export function resolveReleaseNoteSource(input: {
 }
 
 export async function runScientReleasePreflight(options: Options): Promise<void> {
-  if (!isExactScientReleaseVersion(options.version) || options.version.includes("-")) {
-    throw new Error(
-      `Stable releases require an exact x.y.z version, received '${options.version}'.`,
-    );
+  assertScientReleaseChannelVersion(options.version, options.channel);
+  if (options.channel === "beta") {
+    if (!options.latestStableVersion)
+      throw new Error(
+        "Beta preflight requires --latest-stable-version from the canonical release index.",
+      );
+    assertScientBetaTargetAheadOfStable(options.version, options.latestStableVersion);
+    if (options.latestBetaVersion) {
+      assertScientReleaseChannelVersion(options.latestBetaVersion, "beta");
+      if (compareSemverVersions(options.version, options.latestBetaVersion) <= 0) {
+        throw new Error(
+          `Beta ${options.version} must be newer than published Beta ${options.latestBetaVersion}.`,
+        );
+      }
+    }
   }
   assertExactSha(options.sourceSha, "--source-sha");
   assertExactSha(options.releaseSha, "--release-sha");
 
+  const sourceBranch = options.channel === "beta" ? "main" : "release/stable";
   if (options.sourceSha !== options.releaseSha) {
     throw new Error(
-      `release/stable must point at the exact selected main commit ${options.sourceSha}; received ${options.releaseSha}.`,
+      `${sourceBranch} must point at the exact selected main commit ${options.sourceSha}; received ${options.releaseSha}.`,
     );
   }
 
@@ -168,7 +195,7 @@ export async function runScientReleasePreflight(options: Options): Promise<void>
   const releaseTree = git(options.root, ["rev-parse", `${options.releaseSha}^{tree}`]);
   if (sourceTree !== releaseTree) {
     throw new Error(
-      `release/stable tree ${releaseTree} does not match selected main tree ${sourceTree}.`,
+      `${sourceBranch} tree ${releaseTree} does not match selected main tree ${sourceTree}.`,
     );
   }
 

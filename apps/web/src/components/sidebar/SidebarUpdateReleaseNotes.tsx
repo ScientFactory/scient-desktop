@@ -52,7 +52,10 @@ export function SidebarUpdateReleaseNotes({
   readonly state: DesktopUpdateState;
   readonly tooltip: string;
 }) {
-  if (state.channel !== "nightly" || state.releaseNotes.length === 0) {
+  if (
+    (state.channel !== "beta" && state.channel !== "nightly") ||
+    state.releaseNotes.length === 0
+  ) {
     return <>{tooltip}</>;
   }
 
@@ -109,7 +112,10 @@ export function SidebarUpdateReleaseNotes({
         {state.omittedReleaseCount > 0 ? (
           <div>
             <Separator className="my-3" />
-            <ReleaseLink releaseUrl={getDesktopUpdateReleaseHistoryUrl()} shell={shell}>
+            <ReleaseLink
+              releaseUrl={getDesktopUpdateReleaseHistoryUrl(state.channel)}
+              shell={shell}
+            >
               {`${state.omittedReleaseCount} older ${state.omittedReleaseCount === 1 ? "release" : "releases"} on GitHub`}
             </ReleaseLink>
           </div>

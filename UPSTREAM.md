@@ -298,8 +298,10 @@ composer default, multi-model thread creation in separate worktrees, automatic s
 directory-safe file navigation, broader command-palette discovery, improved pull-request and chat
 presentation, checkpoint and settlement reliability, Android Material surfaces, mobile worktree
 handoff, dictation wake-lock behavior, mobile model favorites, and the preview-picker navigation
-fix. Scient's approved stable-only update policy also removes the unsupported track selector and
-normalizes stale Nightly preferences without replacing download or install mechanics.
+fix. Scient's owned update policy exposes Stable and Beta. Beta uses the isolated
+`ScientFactory/scient-desktop-beta` artifact repository; Stable keeps its existing feed.
+Legacy Nightly preferences return to Stable, and channel changes never enable downgrades.
+Source, app identity and state roots remain canonical; Beta publication has separate gates.
 Scient's provider lifecycle, scientific surfaces,
 identity, signed npm-pinned server runtime, durable server-authoritative queue, project-first
 policy, state roots, and cloud/mobile publication holds remain.
@@ -667,6 +669,13 @@ Synara behavior must enter through a separately justified Scient-native lane,
 never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
+
+Scient's legacy-source reconciliation repairs stale V2 snapshots without replacing the live V2
+database. Preserve its read-only original source, before-images, source identity boundary, separate
+Scient migration ledger, and conflict versions. The `EventSink` transaction hook prepares recovery
+events against current projections before appending them, so edits and interrupted retries remain
+safe. Historical imports never acquire provider-session, queue, or checkpoint execution authority.
+See [legacy migration and recovery](docs/internals/legacy-orchestration-migration.md).
 
 The agent-capability foundation keeps workspace authority under
 `scient/projectScope`, not in T3's host project schema. Scient's existing

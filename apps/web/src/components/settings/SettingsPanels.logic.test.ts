@@ -30,7 +30,7 @@ describe("about version label", () => {
 });
 
 describe("desktop update channel selector", () => {
-  it("stays hidden for Scient's stable-only updater policy", () => {
+  it("stays hidden for a stable-only compatibility policy", () => {
     expect(
       shouldShowDesktopUpdateChannelSelector({
         hasDesktopBridge: true,

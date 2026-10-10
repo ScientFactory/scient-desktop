@@ -1135,6 +1135,8 @@ const buildAppUnderTest = (options?: {
           Layer.mergeAll(
             Layer.mock(TerminalManager.TerminalManager)({
               hasRunningSessionsForThread: () => Effect.succeed(false),
+              subscribeMetadata: (listener) =>
+                listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => undefined)),
               ...options?.layers?.terminalManager,
             }),
             WorktreeSetupTracker.layer,

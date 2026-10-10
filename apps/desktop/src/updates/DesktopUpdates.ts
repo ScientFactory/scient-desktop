@@ -33,7 +33,8 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
-import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
+import { isEmptyBetaFeedError, resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
+import { scientDesktopUpdateFeed } from "@t3tools/shared/scientRelease";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import {
   createInitialDesktopUpdateState,
@@ -379,15 +380,18 @@ export const make = Effect.gen(function* () {
     channel: DesktopUpdateChannel,
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
-    const allowsPrerelease = channel === "nightly";
+    const allowsPrerelease = channel === "beta";
+    if (!config.mockUpdates) {
+      yield* electronUpdater.setFeedURL(scientDesktopUpdateFeed(channel));
+    }
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
-    yield* electronUpdater.setAllowDowngrade(allowsPrerelease);
+    yield* electronUpdater.setAllowDowngrade(false);
     yield* electronUpdater.setFullChangelog(allowsPrerelease);
     yield* logUpdaterInfo("using update channel", {
       channel,
       allowPrerelease: allowsPrerelease,
-      allowDowngrade: allowsPrerelease,
+      allowDowngrade: false,
       fullChangelog: allowsPrerelease,
     });
   });
@@ -424,6 +428,14 @@ export const make = Effect.gen(function* () {
           ElectronUpdaterCheckForUpdatesError: Effect.fn(
             "desktop.updates.handleCheckForUpdatesFailure",
           )(function* (error) {
+            if (state.channel === "beta" && isEmptyBetaFeedError(error.cause)) {
+              const checkedAt = yield* currentIsoTimestamp;
+              yield* updateState((current) =>
+                reduceDesktopUpdateStateOnNoUpdate(current, checkedAt),
+              );
+              yield* logUpdaterInfo("no beta releases published yet");
+              return true;
+            }
             const failedAt = yield* currentIsoTimestamp;
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnCheckFailure(current, error.message, failedAt),
@@ -788,6 +800,10 @@ export const make = Effect.gen(function* () {
     cause: unknown,
   ) {
     const activeAction = yield* activeUpdateAction;
+    const state = yield* Ref.get(updateStateRef);
+    if (state.channel === "beta" && isEmptyBetaFeedError(cause)) {
+      return;
+    }
     const error = new DesktopUpdaterReportedError({
       operation: Option.match(activeAction, {
         onNone: () => "background" as const,
@@ -997,11 +1013,7 @@ export const make = Effect.gen(function* () {
         }
 
         yield* applyAutoUpdaterChannel(effectiveChannel);
-        const allowDowngrade = yield* electronUpdater.allowDowngrade;
-        yield* electronUpdater.setAllowDowngrade(true);
-        yield* checkForUpdates("channel-change", "held").pipe(
-          Effect.ensuring(electronUpdater.setAllowDowngrade(allowDowngrade).pipe(Effect.ignore)),
-        );
+        yield* checkForUpdates("channel-change", "held");
         return yield* Ref.get(updateStateRef);
       }).pipe(Effect.ensuring(finishUpdateAction("channel")));
     }),

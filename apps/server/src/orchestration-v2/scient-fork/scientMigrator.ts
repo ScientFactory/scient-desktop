@@ -64,6 +64,7 @@ import Migration020 from "./migrations/020_LegacyHistoryRepairGeneration.ts";
 import Migration021 from "./migrations/021_ForkCheckpointOwnership.ts";
 import Migration022 from "./migrations/022_ForkHistory.ts";
 import Migration023 from "./migrations/023_ForkHistoryLookups.ts";
+import Migration024 from "./migrations/024_LegacySourceReconciliation.ts";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -127,6 +128,7 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 21, name: "fork-checkpoint-ownership", effect: Migration021 },
   { id: 22, name: "fork-history", effect: Migration022 },
   { id: 23, name: "fork-history-lookups", effect: Migration023 },
+  { id: 24, name: "legacy-source-reconciliation", effect: Migration024 },
 ] as const;
 
 const loader = Migrator.fromRecord(

@@ -45,7 +45,11 @@ export function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
   state: DesktopUpdateState | null,
 ): boolean {
-  return showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0;
+  return (
+    showUpdateDetails &&
+    (state?.channel === "beta" || state?.channel === "nightly") &&
+    state.releaseNotes.length > 0
+  );
 }
 
 export function shouldShowSidebarUpdateRestartIcon(state: DesktopUpdateState | null): boolean {
@@ -454,7 +458,7 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Nightly update release notes"
+            aria-label={`${state.channel === "beta" ? "Beta" : "Nightly"} update release notes`}
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

@@ -549,17 +549,17 @@ This extends the same branch, worktree and Scient PR #498. The preceding
 117-commit range. The original owned base remains
 `0cf6e0bd85c3d6be221b70164d2601e0b8e83e15`.
 
-| Input                             | Exact revision                                  |
-| --------------------------------- | ----------------------------------------------- |
-| Previous qualified candidate      | `96b6560e09efa74224193dae545523e9344b1e81`      |
-| Previous official boundary        | `ec80933ac8cd02fec5c97b342462ccc9567cdb1e`      |
-| Frozen official target            | `bd2346eda2e2c380d1844869c7fd16c279d2190f`      |
-| Literal official extension merge  | `de4f75bb7267e9bb0cbfcc5cc8ce8b2c8675222c`      |
-| Frozen owned main                 | `bb0dcff656c7dba467fa32d662a8f221025a76ff`      |
-| Owned-main composition merge      | `f0a053954fc1524286a1044a4cdb34892b4db9ee`      |
-| Final source qualification commit | `e55ed9fca43bbcd68a1e750a76dc18b76a5c2e07`      |
-| Final source tree                 | `5563028771fa67c1dab40bd427f3e679fd17caa4`      |
-| Target description                | `v0.0.46-nightly.20261009.2861-123-gbd2346eda2` |
+| Input                               | Exact revision                                  |
+| ----------------------------------- | ----------------------------------------------- |
+| Previous qualified candidate        | `96b6560e09efa74224193dae545523e9344b1e81`      |
+| Previous official boundary          | `ec80933ac8cd02fec5c97b342462ccc9567cdb1e`      |
+| Frozen official target              | `bd2346eda2e2c380d1844869c7fd16c279d2190f`      |
+| Literal official extension merge    | `de4f75bb7267e9bb0cbfcc5cc8ce8b2c8675222c`      |
+| Frozen owned main                   | `bb0dcff656c7dba467fa32d662a8f221025a76ff`      |
+| Owned-main composition merge        | `f0a053954fc1524286a1044a4cdb34892b4db9ee`      |
+| Pre-late-main checked source commit | `e55ed9fca43bbcd68a1e750a76dc18b76a5c2e07`      |
+| Pre-late-main checked source tree   | `5563028771fa67c1dab40bd427f3e679fd17caa4`      |
+| Target description                  | `v0.0.46-nightly.20261009.2861-123-gbd2346eda2` |
 
 The official merge has exact parents `96b6560e09efa74224193dae545523e9344b1e81`
 and `bd2346eda2e2c380d1844869c7fd16c279d2190f`. The owned-main merge has exact
@@ -783,3 +783,44 @@ merge queue or auto-merge are activated by this receipt.
 - `42f71dfe07` — fix(web): PR search keeps the caret where you type (#17675)
 - `6d5ea190a4` — fix(server): thread PR badges catch up when another environment reads the PR (#17729)
 - `bd2346eda2` — fix(server): refuse editor paths with line breaks or quotes when the editor is a Windows command shim (#17749)
+
+### Late owned-main catch-up
+
+Owned main advanced during qualification to
+`397befbdaab86d5798c840168a398d653e96f081`, containing landed Scient PRs
+#505, #507 and #508. This is a second frozen owned-main boundary, not a change
+to official target `bd2346eda2`. It adds stale-V1 snapshot reconciliation,
+continued-V2 state preservation, recovered-history version reuse, batched
+baseline reads and isolated Stable/Beta release channels.
+
+The importer conflict composes the canonical Effect service imports with
+the landed reconciliation owner. `reconciliationFailure` is required;
+startup and its production fixture no longer use optional carrier fallbacks.
+Review found an actual attachment-ownership composition defect: the older
+retry repair could overwrite V2 attachment edits after guarded source
+reconciliation. Retry repair now applies only to revision zero; recovered
+source revisions retain the transaction's ownership decision. The existing
+compacted/noncompacted recovery scenario now includes V2 message and user-item
+attachment edits during interrupted recovery.
+
+The selected V1 source is strictly the sibling `state.sqlite` of configured
+`statev2.sqlite`; there is no fallback to another profile. A synthetic
+development-profile regression covers ignoring an unrelated userdata source.
+The native candidate's selected sibling V1 source is absent. No live legacy
+profile was inspected or copied.
+
+Stable/Beta code preserves main's explicit preference and isolated feed
+contracts, empty-Beta handling, checksum/error boundaries and distinct
+transition payloads. Nightly internals remain where the landed contract
+requires them; legacy Nightly preferences migrate to Stable without Beta
+enrollment. A non-Beta build still defaults to Stable. No channel choice,
+download installation or publication is activated here. Affected new
+workflow-string assertions were removed, retaining the actual Bash/JQ
+publication rehearsal and consumer-visible channel/integrity tests.
+
+The superseded full matrix was cancelled before completion, not counted as a
+pass. Its retained output exposed the server fixture's missing canonical
+terminal metadata subscriber, causing 241 startup failures. The fixture now
+delivers its initial empty-terminal snapshot before returning an unsubscribe
+function. Production cleanup subscription behavior is unchanged; the
+fixture no longer bypasses or throws on that startup contract.

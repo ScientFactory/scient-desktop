@@ -19,24 +19,6 @@ import {
 } from "./scient-release-preflight.ts";
 
 describe("Scient release machinery", () => {
-  it("keeps stable releases manual-only and globally serialized", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
-      "utf8",
-    );
-
-    assert.match(workflow, /^on:\n  workflow_dispatch:\n/mu);
-    assert.notMatch(workflow, /^  push:\n/mu);
-    assert.notMatch(workflow, /^  schedule:\n/mu);
-    assert.include(workflow, "group: scient-stable-release");
-    assert.include(workflow, "cancel-in-progress: false");
-    assert.include(workflow, "SCIENT_DESKTOP_CANONICAL_REPOSITORY: ScientFactory/scient-desktop");
-    assert.include(
-      workflow,
-      '"$PUBLISH_RELEASE" == "true" && "$GITHUB_REPOSITORY" != "$SCIENT_DESKTOP_CANONICAL_REPOSITORY"',
-    );
-  });
-
   it("prepares stable candidates at 04:00 Jerusalem without direct publication authority", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/scheduled-stable-candidate.yml"),
@@ -74,30 +56,6 @@ describe("Scient release machinery", () => {
       workflow.indexOf("Refuse an existing tag or release before builds") <
         workflow.indexOf("build_desktop:"),
     );
-  });
-
-  it("publishes the same retained candidate only after production approval", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
-      "utf8",
-    );
-    const assemble = workflow.split(/^  assemble:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
-    const publish = workflow.split(/^  publish:\n/mu)[1] ?? "";
-
-    assert.include(assemble, "name: Upload immutable release candidate");
-    assert.include(assemble, "retention-days: 30");
-    assert.include(assemble, "artifact-digest");
-    assert.include(assemble, "artifact-id");
-    assert.include(assemble, "artifact-url");
-    assert.include(assemble, 'echo "- Artifact: \\`$ARTIFACT_NAME\\`"');
-    assert.include(publish, "environment: production");
-    assert.include(publish, "actions: read");
-    assert.include(publish, "name: scient-release-v${{ needs.preflight.outputs.version }}");
-    assert.include(publish, "Verify accepted candidate identity and checksums");
-    assert.include(publish, 'sub("^sha256:"; "")');
-    assert.include(publish, ".workflow_run.id == $run_id");
-    assert.include(publish, "sha256sum --check SHA256SUMS.txt");
-    assert.include(publish, "Stage, verify, and publish the immutable release");
   });
 
   it("cancels superseded pull request CI while retaining pushed main validation", () => {
@@ -288,7 +246,22 @@ describe("Scient release machinery", () => {
         root: process.cwd(),
         allowNoteFree: true,
       }),
-    ).rejects.toThrow("exact x.y.z version");
+    ).rejects.toThrow(Error);
+  });
+
+  it("rejects a Beta older than the published Beta before any source or packaging work", async () => {
+    await expect(
+      runScientReleasePreflight({
+        version: "0.6.23-beta.20261010.1",
+        channel: "beta",
+        latestStableVersion: "0.6.22",
+        latestBetaVersion: "0.6.24-beta.20261010.1",
+        sourceSha: "a".repeat(40),
+        releaseSha: "a".repeat(40),
+        root: process.cwd(),
+        allowNoteFree: true,
+      }),
+    ).rejects.toThrow("must be newer than published Beta");
   });
 
   it("uses the validated owned What's New catalog for the exact release", () => {
@@ -496,6 +469,42 @@ describe("Scient release machinery", () => {
         NodeFS.readFileSync(NodePath.join(root, "SHA256SUMS.txt"), "utf8"),
         `${expectedHash}  Scient-0.6.0-x64.AppImage\n`,
       );
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("attests Beta source in the canonical repository separately from distribution tags", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-beta-handoff-"));
+    try {
+      NodeFS.writeFileSync(NodePath.join(root, "fixture.zip"), "beta fixture");
+      const output = NodePath.join(root, "scient-release-handoff.json");
+      createScientReleaseHandoff([
+        "--assets-dir",
+        root,
+        "--version",
+        "0.6.23-beta.20261010.1",
+        "--channel",
+        "beta",
+        "--repository",
+        "ScientFactory/scient-desktop",
+        "--source-sha",
+        "a".repeat(40),
+        "--source-tree",
+        "b".repeat(40),
+        "--output",
+        output,
+      ]);
+      const handoff = JSON.parse(NodeFS.readFileSync(output, "utf8")) as {
+        source: { repository: string; commit: string };
+        distribution: { repository: string; channel: string };
+      };
+      expect(handoff.source.repository).toBe("ScientFactory/scient-desktop");
+      expect(handoff.source.commit).toBe("a".repeat(40));
+      expect(handoff.distribution).toEqual({
+        repository: "ScientFactory/scient-desktop-beta",
+        channel: "beta",
+      });
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }

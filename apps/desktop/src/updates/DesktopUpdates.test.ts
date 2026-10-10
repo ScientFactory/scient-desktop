@@ -60,6 +60,61 @@ describe("DesktopUpdates", () => {
     );
   });
 
+  it.effect(
+    "switches official feeds only on explicit enrollment and never enables downgrades",
+    () => {
+      const harness = makeHarness({
+        env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+        appUpdateYml: "provider: github\nowner: ScientFactory\nrepo: scient-desktop\n",
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          assert.deepEqual(harness.feedUrls(), [
+            { provider: "github", owner: "ScientFactory", repo: "scient-desktop" },
+          ]);
+          assert.isFalse(harness.allowDowngrade());
+          yield* updates.setChannel("beta");
+          assert.deepEqual(harness.feedUrls().at(-1), {
+            provider: "github",
+            owner: "ScientFactory",
+            repo: "scient-desktop-beta",
+          });
+          assert.isFalse(harness.allowDowngrade());
+          yield* updates.setChannel("latest");
+          assert.deepEqual(harness.feedUrls().at(-1), {
+            provider: "github",
+            owner: "ScientFactory",
+            repo: "scient-desktop",
+          });
+          assert.isFalse(harness.allowDowngrade());
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
+
+  it.effect("treats an unpublished Beta feed as no update without hiding real failures", () => {
+    const harness = makeHarness({
+      checkForUpdates: Effect.fail(
+        new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({
+          channel: "beta",
+          cause: new Error("No published versions on GitHub"),
+        }),
+      ),
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const beta = yield* updates.setChannel("beta");
+        assert.equal(beta.status, "up-to-date");
+        const stable = yield* updates.setChannel("latest");
+        assert.equal(stable.status, "error");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("configures the updater and runs startup checks on the test clock", () => {
     const harness = makeHarness();
 
@@ -104,6 +159,38 @@ describe("DesktopUpdates", () => {
       const unmarked = yield* linuxState(undefined);
       assert.equal(unmarked.status, "disabled");
     }),
+  );
+
+  it.effect(
+    "carries a Beta through download, restart preparation and the existing install boundary",
+    () => {
+      const harness = makeHarness();
+      const version = "1.2.4-beta.20261010.1";
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.setChannel("beta");
+          harness.emit("update-available", { version });
+          yield* flushCallbacks;
+          assert.equal((yield* updates.getState).availableVersion, version);
+          assert.isTrue((yield* updates.download).accepted);
+          harness.emit("update-downloaded", { version });
+          yield* flushCallbacks;
+          assert.equal((yield* updates.getState).downloadedVersion, version);
+          const result = yield* updates.installPrepared(version);
+          assert.isTrue(result.accepted);
+          assert.isFalse(result.failed);
+          // Native installation completes after this process exits.
+          assert.isFalse(result.completed);
+          assert.equal(harness.quitAndInstalls(), 1);
+          const desktopState = yield* DesktopState.DesktopState;
+          assert.isTrue(yield* Ref.get(desktopState.quitting));
+          assert.equal(harness.updateRestartMarkers.size, 1);
+          assert.equal(result.state.channel, "beta");
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
   );
 
   it.effect("subscribe delivers the latest state plus subsequent changes", () => {
@@ -200,7 +287,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("enables nightly full changelog release notes and broadcasts summaries", () => {
+  it.effect("enables beta full changelog release notes and broadcasts summaries", () => {
     const harness = makeHarness({ beforeSetUpdateChannel: Effect.void });
 
     return Effect.scoped(
@@ -208,25 +295,25 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
 
-        yield* updates.setChannel("nightly");
+        yield* updates.setChannel("beta");
         assert.equal(harness.fullChangelog(), true);
 
         harness.emit("update-available", {
-          version: "1.2.4-nightly.20260709.766",
+          version: "1.2.4-beta.20260709.766",
           releaseNotes: [
             {
-              version: "1.2.4-nightly.20260709.766",
+              version: "1.2.4-beta.20260709.766",
               note: `<h2>What's Changed</h2><ul><li>feat(client): persist offline environment data by <a>@juliusmarminge</a> in <a>#3795</a></li></ul><h2>Full Changelog</h2>`,
             },
             {
-              version: "1.2.4-nightly.20260709.765",
+              version: "1.2.4-beta.20260709.765",
               note: "- [codex] Upgrade Clerk stack by @juliusmarminge in #3821",
             },
-            { version: "1.2.4-nightly.20260709.764", note: "- Change 764" },
-            { version: "1.2.4-nightly.20260709.763", note: "- Change 763" },
-            { version: "1.2.4-nightly.20260709.762", note: "- Change 762" },
-            { version: "1.2.4-nightly.20260709.761", note: "- Change 761" },
-            { version: "1.2.4-nightly.20260709.760", note: "- Change 760" },
+            { version: "1.2.4-beta.20260709.764", note: "- Change 764" },
+            { version: "1.2.4-beta.20260709.763", note: "- Change 763" },
+            { version: "1.2.4-beta.20260709.762", note: "- Change 762" },
+            { version: "1.2.4-beta.20260709.761", note: "- Change 761" },
+            { version: "1.2.4-beta.20260709.760", note: "- Change 760" },
           ],
         });
         yield* flushCallbacks;
@@ -235,19 +322,19 @@ describe("DesktopUpdates", () => {
         assert.equal(state.status, "available");
         assert.deepEqual(state.releaseNotes, [
           {
-            version: "1.2.4-nightly.20260709.766",
+            version: "1.2.4-beta.20260709.766",
             items: ["feat(client): persist offline environment data by @juliusmarminge in #3795"],
             totalItems: 1,
           },
           {
-            version: "1.2.4-nightly.20260709.765",
+            version: "1.2.4-beta.20260709.765",
             items: ["[codex] Upgrade Clerk stack by @juliusmarminge in #3821"],
             totalItems: 1,
           },
-          { version: "1.2.4-nightly.20260709.764", items: ["Change 764"], totalItems: 1 },
-          { version: "1.2.4-nightly.20260709.763", items: ["Change 763"], totalItems: 1 },
-          { version: "1.2.4-nightly.20260709.762", items: ["Change 762"], totalItems: 1 },
-          { version: "1.2.4-nightly.20260709.761", items: ["Change 761"], totalItems: 1 },
+          { version: "1.2.4-beta.20260709.764", items: ["Change 764"], totalItems: 1 },
+          { version: "1.2.4-beta.20260709.763", items: ["Change 763"], totalItems: 1 },
+          { version: "1.2.4-beta.20260709.762", items: ["Change 762"], totalItems: 1 },
+          { version: "1.2.4-beta.20260709.761", items: ["Change 761"], totalItems: 1 },
         ]);
         assert.equal(state.omittedReleaseCount, 1);
         assert.deepEqual(harness.sentStates.at(-1)?.releaseNotes, state.releaseNotes);
@@ -350,7 +437,7 @@ describe("DesktopUpdates", () => {
         yield* flushCallbacks;
 
         yield* updates.check("poll");
-        harness.emit("update-available", { version: "1.2.5-nightly.20260710.1" });
+        harness.emit("update-available", { version: "1.2.5-beta.20260710.1" });
         yield* flushCallbacks;
 
         const state = yield* updates.getState;
@@ -557,8 +644,8 @@ describe("DesktopUpdates", () => {
         assert.equal(failedState.errorContext, "download");
         assert.equal(failedState.message, "Desktop update download action failed unexpectedly.");
 
-        const changedState = yield* updates.setChannel("nightly");
-        assert.equal(changedState.channel, "nightly");
+        const changedState = yield* updates.setChannel("beta");
+        assert.equal(changedState.channel, "beta");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -627,8 +714,8 @@ describe("DesktopUpdates", () => {
         assert.equal(failedState.errorContext, "install");
         assert.equal(failedState.message, "Desktop update install action failed unexpectedly.");
 
-        const changedState = yield* updates.setChannel("nightly");
-        assert.equal(changedState.channel, "nightly");
+        const changedState = yield* updates.setChannel("beta");
+        assert.equal(changedState.channel, "beta");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -807,12 +894,12 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
 
-        const state = yield* updates.setChannel("nightly");
+        const state = yield* updates.setChannel("beta");
         const persistedSettings = yield* settings.get;
 
-        assert.equal(state.channel, "latest");
-        assert.equal(persistedSettings.updateChannel, "latest");
-        assert.equal(persistedSettings.updateChannelConfiguredByUser, false);
+        assert.equal(state.channel, "beta");
+        assert.equal(persistedSettings.updateChannel, "beta");
+        assert.equal(persistedSettings.updateChannelConfiguredByUser, true);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -854,13 +941,13 @@ describe("DesktopUpdates", () => {
           const checkFiber = yield* updates.check("manual").pipe(Effect.forkScoped);
           yield* Deferred.await(checkStarted);
 
-          const exit = yield* Effect.exit(updates.setChannel("nightly"));
+          const exit = yield* Effect.exit(updates.setChannel("beta"));
           assert.equal(exit._tag, "Failure");
           if (exit._tag === "Failure") {
             const error = Cause.squash(exit.cause);
             assert.instanceOf(error, DesktopUpdates.DesktopUpdateActionInProgressError);
             assert.equal(error.action, "check");
-            assert.equal(error.requestedChannel, "nightly");
+            assert.equal(error.requestedChannel, "beta");
           }
 
           yield* Deferred.succeed(releaseCheck, undefined);
@@ -885,7 +972,7 @@ describe("DesktopUpdates", () => {
           const updates = yield* DesktopUpdates.DesktopUpdates;
           yield* updates.configure;
 
-          const channelFiber = yield* updates.setChannel("nightly").pipe(Effect.forkScoped);
+          const channelFiber = yield* updates.setChannel("beta").pipe(Effect.forkScoped);
           yield* Deferred.await(channelChangeStarted);
 
           const checkResult = yield* updates.check("manual");
@@ -895,7 +982,7 @@ describe("DesktopUpdates", () => {
           yield* Deferred.succeed(releaseChannelChange, undefined);
           const state = yield* Fiber.join(channelFiber);
 
-          assert.equal(state.channel, "nightly");
+          assert.equal(state.channel, "beta");
           assert.equal(harness.checkCount(), 1);
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
@@ -916,13 +1003,13 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
 
-        const error = yield* updates.setChannel("nightly").pipe(Effect.flip);
+        const error = yield* updates.setChannel("beta").pipe(Effect.flip);
 
         assert.instanceOf(error, DesktopUpdates.DesktopUpdateChannelPersistenceError);
-        assert.equal(error.channel, "nightly");
+        assert.equal(error.channel, "beta");
         assert.strictEqual(error.cause, settingsFailure);
         assert.strictEqual(error.cause.cause, diskFailure);
-        assert.equal(error.message, "Failed to persist the nightly desktop update channel.");
+        assert.equal(error.message, "Failed to persist the beta desktop update channel.");
         assert.notInclude(error.message, diskFailure.message);
 
         const checkResult = yield* updates.check("manual");

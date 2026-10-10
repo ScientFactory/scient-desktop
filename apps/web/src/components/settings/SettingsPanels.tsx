@@ -435,8 +435,8 @@ function AboutVersionSection() {
       />
       {showDesktopUpdateChannelSelector ? (
         <SettingsRow
-          title="Update track"
-          description="Use stable releases or nightly builds. Switch back anytime."
+          {...searchableSetting("desktop-update-track")}
+          description="Beta previews upcoming releases. Returning to Stable waits for a stable version at least as new as your installed Beta."
           control={
             <Select
               value={selectedUpdateChannel}
@@ -450,16 +450,14 @@ function AboutVersionSection() {
                 aria-label="Update track"
                 disabled={isChangingUpdateChannel}
               >
-                <SelectValue>
-                  {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
-                </SelectValue>
+                <SelectValue>{selectedUpdateChannel === "beta" ? "Beta" : "Stable"}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="latest">
                   Stable
                 </SelectItem>
-                <SelectItem hideIndicator value="nightly">
-                  Nightly
+                <SelectItem hideIndicator value="beta">
+                  Beta
                 </SelectItem>
               </SelectPopup>
             </Select>
@@ -943,7 +941,7 @@ export function AppearanceSettingsPanel() {
         {showEnvironmentIdentification ? (
           <SettingsRow
             {...searchableSetting("environment-identification")}
-            description="Choose how Dev and Nightly environments are identified."
+            description="Choose how Dev, Beta and Nightly environments are identified."
             resetAction={
               settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
                 <SettingResetButton

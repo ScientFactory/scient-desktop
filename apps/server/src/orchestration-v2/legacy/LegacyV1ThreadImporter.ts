@@ -52,6 +52,8 @@ import {
   type LegacyScientAttachmentRepairRow,
 } from "./LegacyScientAttachmentRepair.ts";
 // SCIENT-FORK:END
+import { writeLegacySourceEvents } from "./LegacySourceReconciliation.ts";
+import * as NodeUtil from "node:util";
 
 const IMPORT_EVENT_PREFIX = "migration:v1";
 const decodeMessageContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
@@ -134,6 +136,7 @@ export class LegacyV1ThreadImportError extends Schema.TaggedError<LegacyV1Thread
 }
 
 export interface LegacyV1ThreadImporterShape {
+  readonly reconciliationFailure: Effect.Effect<boolean, LegacyV1ThreadImportError>;
   readonly pendingThreadCount: Effect.Effect<number, LegacyV1ThreadImportError>;
   readonly reconcileShells: Effect.Effect<LegacyV1ImportSummary, LegacyV1ThreadImportError>;
   readonly ensureTranscript: (
@@ -154,6 +157,57 @@ const decodePullRequests = Schema.decodeUnknownOption(Schema.Array(ThreadPullReq
 const decodeLinkedPullRequest = Schema.decodeUnknownOption(ThreadLinkedPullRequest);
 const decodeStoredThread = Schema.decodeUnknownOption(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
+);
+const encodeStoredThread = Schema.encodeSync(Schema.fromJsonString(OrchestrationV2AppThreadJson));
+const encodeMessageKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const decodeRecord = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+const decodeThreadBefore = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      thread_id: Schema.String,
+      project_id: Schema.String,
+      title: Schema.String,
+      section_id: Schema.NullOr(Schema.String),
+      model_selection_json: Schema.NullOr(Schema.String),
+      runtime_mode: Schema.String,
+      interaction_mode: Schema.String,
+      branch: Schema.NullOr(Schema.String),
+      worktree_path: Schema.NullOr(Schema.String),
+      created_at: Schema.String,
+      updated_at: Schema.String,
+      archived_at: Schema.NullOr(Schema.String),
+      settled_override: Schema.NullOr(Schema.String),
+      settled_at: Schema.NullOr(Schema.String),
+      unsettled_at: Schema.NullOr(Schema.String),
+      snoozed_until: Schema.NullOr(Schema.String),
+      snoozed_at: Schema.NullOr(Schema.String),
+      pinned_at: Schema.NullOr(Schema.String),
+      auto_settle_disabled_at: Schema.NullOr(Schema.String),
+      pin_order_key: Schema.NullOr(Schema.String),
+      linked_pull_request_json: Schema.NullOr(Schema.String),
+      branch_pull_request_json: Schema.NullOr(Schema.String),
+      active_order_key: Schema.NullOr(Schema.String),
+      deleted_at: Schema.NullOr(Schema.String),
+    }),
+  ),
+);
+const decodeMessageBefore = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      message_id: Schema.String,
+      thread_id: Schema.String,
+      turn_id: Schema.NullOr(Schema.String),
+      role: Schema.Literals(["user", "assistant"]),
+      text: Schema.String,
+      is_streaming: Schema.Number,
+      created_at: Schema.String,
+      updated_at: Schema.String,
+      attachments_json: Schema.NullOr(Schema.String),
+      context_json: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    }),
+  ),
 );
 
 function parseJson(json: string): unknown {
@@ -709,9 +763,10 @@ const make = Effect.gen(function* () {
         },
       ];
       yield* eventSink.write({
-        events,
+        events: [],
         transactionHooks: {
-          prepare: Effect.gen(function* () {
+          prepare: Effect.void,
+          prepareEvents: Effect.gen(function* () {
             yield* prepareLegacyHistory(sql, thread.id);
             yield* Effect.forEach(
               previews,
@@ -731,7 +786,7 @@ const make = Effect.gen(function* () {
               `,
               { discard: true },
             );
-          }),
+          }).pipe(Effect.as(events)),
           finalize: sql`
             INSERT INTO orchestration_v2_legacy_imports (
               thread_id,
@@ -763,6 +818,142 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new LegacyV1ThreadImportError({ operation: "import", cause })),
   );
 
+  const reconcileSourceMetadata = (threadId: ThreadId, revision: number) => {
+    const events: OrchestrationV2DomainEvent[] = [];
+    return eventSink
+      .write({
+        events,
+        transactionHooks: {
+          prepare: Effect.gen(function* () {
+            const [change] = yield* sql<{
+              before_json: string;
+            }>`SELECT before_json FROM scient_legacy_reconciliation_changes
+          WHERE thread_id = ${threadId} AND table_name = 'projection_threads' AND resolved = 0 AND before_json IS NOT NULL
+          ORDER BY revision LIMIT 1`;
+            if (change === undefined) return;
+            const [source] = yield* sql<LegacyThreadRow>`SELECT thread.*,
+          (SELECT json_group_array(json_object('host', pr.host, 'repository', pr.repository, 'number', pr.number,
+            'url', pr.url, 'source', pr.source, 'linkedAt', pr.linked_at, 'snapshot', json(pr.snapshot_json), 'stack', json(pr.stack_json)))
+            FROM projection_thread_pull_requests AS pr WHERE pr.thread_id = thread.thread_id) AS pull_requests_json
+          FROM projection_threads AS thread WHERE thread.thread_id = ${threadId}`;
+            const [projection] = yield* sql<{
+              payload_json: string;
+            }>`SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
+            if (source === undefined || projection === undefined) return;
+            const decoded = decodeStoredThread(projection.payload_json);
+            if (Option.isNone(decoded) || decoded.value.deletedAt !== null) return;
+            const origins = new Map(
+              (yield* listForkLineageRows(undefined)).map(
+                (origin) => [origin.threadId, origin] as const,
+              ),
+            );
+            const copiedBaseline = yield* importedThread(
+              {
+                ...(yield* decodeThreadBefore(change.before_json)),
+                pull_requests_json:
+                  typeof decodeRecord(change.before_json).pull_requests_json === "string"
+                    ? String(decodeRecord(change.before_json).pull_requests_json)
+                    : "[]",
+              },
+              origins,
+            );
+            const [previousSource] = yield* sql<{ source_json: string }>`SELECT source_json
+              FROM scient_legacy_reconciliation_entities WHERE thread_id = ${threadId}
+                AND entity_type = 'thread' AND entity_id = ${threadId}`;
+            const previous =
+              previousSource === undefined
+                ? Option.none()
+                : decodeStoredThread(previousSource.source_json);
+            const baseline = Option.getOrElse(previous, () => copiedBaseline);
+            const latest = yield* importedThread(source, origins);
+            const current = decoded.value;
+            const continuedInV2 =
+              current.activeProviderThreadId !== null ||
+              (yield* sql`SELECT 1 FROM orchestration_v2_projection_runs WHERE thread_id = ${threadId} LIMIT 1`)
+                .length > 0;
+            const baselineJson = decodeRecord(encodeStoredThread(baseline));
+            const currentJson = decodeRecord(encodeStoredThread(current));
+            const latestJson = decodeRecord(encodeStoredThread(latest));
+            const repaired = { ...current };
+            const keys = [
+              "projectId",
+              "title",
+              "modelSelection",
+              "runtimeMode",
+              "interactionMode",
+              "branch",
+              "worktreePath",
+              "linkedPullRequest",
+              "pullRequests",
+              "branchPullRequest",
+              "activeOrderKey",
+              "archivedAt",
+              "settledOverride",
+              "settledAt",
+              "unsettledAt",
+              "snoozedUntil",
+              "snoozedAt",
+              "pinnedAt",
+              "autoSettleDisabledAt",
+              "pinOrderKey",
+              "sectionId",
+            ] as const;
+            for (const key of keys) {
+              // Once continued in V2, its metadata is authoritative too.
+              // A V1 archive/snooze must not hide newly continued V2 work.
+              if (continuedInV2) break;
+              if (
+                !NodeUtil.isDeepStrictEqual(latestJson[key], baselineJson[key]) &&
+                NodeUtil.isDeepStrictEqual(currentJson[key], baselineJson[key])
+              ) {
+                Object.assign(repaired, { [key]: latest[key] });
+              }
+            }
+            if (repaired.modelSelection !== current.modelSelection)
+              repaired.providerInstanceId = repaired.modelSelection.instanceId;
+            // A stale V1 deletion cannot discard work already continued in V2.
+            if (
+              latest.deletedAt !== null &&
+              !continuedInV2 &&
+              DateTime.toEpochMillis(current.updatedAt) <=
+                DateTime.toEpochMillis(baseline.updatedAt)
+            )
+              repaired.deletedAt = latest.deletedAt;
+            if (
+              DateTime.toEpochMillis(latest.updatedAt) > DateTime.toEpochMillis(current.updatedAt)
+            )
+              repaired.updatedAt = latest.updatedAt;
+            yield* sql`INSERT INTO scient_legacy_reconciliation_entities(thread_id, entity_type, entity_id, source_json)
+              VALUES (${threadId}, 'thread', ${threadId}, ${encodeStoredThread(latest)})
+              ON CONFLICT(thread_id, entity_type, entity_id) DO UPDATE SET source_json = excluded.source_json`;
+            if (encodeStoredThread(repaired) === encodeStoredThread(current)) return;
+            const id = EventId.make(`migration:v1:reconciliation:metadata:${revision}:${threadId}`);
+            if ((yield* sql`SELECT 1 FROM orchestration_events WHERE event_id = ${id}`).length > 0)
+              return;
+            events.push({
+              id,
+              type: "thread.metadata-updated",
+              threadId,
+              providerInstanceId: repaired.providerInstanceId,
+              occurredAt: repaired.updatedAt,
+              payload: repaired,
+            });
+          }),
+          finalize: Effect.void,
+        },
+      })
+      .pipe(Effect.asVoid);
+  };
+
+  const reconciliationFailure = sql<{
+    last_error: string | null;
+  }>`SELECT last_error FROM scient_legacy_reconciliation_state WHERE id = 1`.pipe(
+    Effect.map((rows) => rows[0]?.last_error !== null && rows[0]?.last_error !== undefined),
+    Effect.mapError(
+      (cause) => new LegacyV1ThreadImportError({ operation: "inspect original source", cause }),
+    ),
+  );
+
   const pendingThreadCount = sql<{ readonly count: number }>`
     SELECT COUNT(*) AS count
     FROM (
@@ -781,6 +972,8 @@ const make = Effect.gen(function* () {
       FROM orchestration_v2_legacy_imports AS legacy_import
       WHERE legacy_import.transcript_imported_at IS NULL
         OR legacy_import.history_repair_version < ${LEGACY_HISTORY_REPAIR_VERSION}
+      UNION
+      SELECT thread_id FROM scient_legacy_reconciliation_changes WHERE resolved = 0
     )
   `.pipe(
     Effect.map((rows) => rows[0]?.count ?? 0),
@@ -790,7 +983,7 @@ const make = Effect.gen(function* () {
   );
 
   // Confirm only after both transcript and historical-artifact hydration.
-  // The V1 snapshot is immutable and completion is never reset, so thread
+  // Reconciliation resets completion before this process starts, so thread
   // reads and command dispatches can avoid the lock and lookup after the
   // first successful confirmation in this process.
   const confirmedTranscriptThreadIds = new Set<ThreadId>();
@@ -816,8 +1009,13 @@ const make = Effect.gen(function* () {
           confirmedTranscriptThreadIds.add(threadId);
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
+        const [sourceRevision] = yield* sql<{
+          revision: number | null;
+        }>`SELECT max(revision) AS revision
+          FROM scient_legacy_reconciliation_changes WHERE thread_id = ${threadId} AND resolved = 0`;
+        const revision = sourceRevision?.revision ?? 0;
         const history = yield* sql.withTransaction(prepareLegacyHistory(sql, threadId, true));
-        yield* importLegacyHistory(sql, eventSink, threadId, history);
+        yield* importLegacyHistory(sql, eventSink, threadId, history, revision);
         if (imported.transcript_imported_at !== null) {
           yield* repairLegacyCitations(threadId);
           // Every guarded batch has committed before acknowledging this
@@ -838,9 +1036,13 @@ const make = Effect.gen(function* () {
             AND event_id LIKE ${`${IMPORT_EVENT_PREFIX}:message:%`}
         `;
         const existing = new Set(existingRows.map((row) => row.event_id));
-        const missing = messages.filter(
-          (message) => !existing.has(`${IMPORT_EVENT_PREFIX}:message:${message.message_id}`),
-        );
+        const missing =
+          revision > 0
+            ? messages
+            : messages.filter(
+                (message) => !existing.has(`${IMPORT_EVENT_PREFIX}:message:${message.message_id}`),
+              );
+        let importedMessageCount = 0;
         for (const batch of chunks(missing, TRANSCRIPT_EVENT_BATCH_SIZE / 2)) {
           yield* Effect.forEach(
             batch,
@@ -860,15 +1062,48 @@ const make = Effect.gen(function* () {
               `,
             { discard: true },
           );
-          yield* eventSink.write({ events: batch.flatMap(messageEvents) });
+          const expected = new Map<string, OrchestrationV2DomainEvent>();
+          if (revision > 0) {
+            const beforeRows = yield* sql<{
+              row_key: string;
+              before_json: string;
+            }>`SELECT row_key, before_json FROM (
+              SELECT row_key, before_json,
+                row_number() OVER (PARTITION BY row_key ORDER BY revision) AS baseline_order
+              FROM scient_legacy_reconciliation_changes
+              WHERE thread_id = ${threadId} AND table_name = 'projection_thread_messages'
+                AND row_key IN ${sql.in(batch.map((message) => encodeMessageKey([message.message_id])))}
+                AND resolved = 0 AND before_json IS NOT NULL
+            ) WHERE baseline_order = 1`;
+            const beforeByKey = new Map(beforeRows.map((row) => [row.row_key, row.before_json]));
+            for (const message of batch) {
+              const before = beforeByKey.get(encodeMessageKey([message.message_id]));
+              if (before === undefined) continue;
+              const baseline = yield* decodeMessageBefore(before);
+              for (const event of messageEvents({ ...baseline, ordinal: message.ordinal }))
+                expected.set(event.id, event);
+            }
+          }
+          importedMessageCount += yield* writeLegacySourceEvents(
+            sql,
+            eventSink,
+            batch.flatMap(messageEvents),
+            revision,
+            expected,
+          );
           yield* Effect.yieldNow;
         }
         // SCIENT-FORK:START legacy attachment repair
-        // Only rows whose base event predated this attempt can have stale
-        // partial attachments. Fresh rows already reflect the current source.
+        // Only revision-zero retries need the earlier missing-attachment repair.
+        // Source reconciliation already decides attachments against the V2
+        // baseline inside EventSink; repairing afterward would overwrite edits.
         for (const batch of chunks(messages, TRANSCRIPT_EVENT_BATCH_SIZE / 2)) {
           const repairRows: LegacyScientAttachmentRepairRow[] = batch.flatMap((message) => {
-            if (!existing.has(`${IMPORT_EVENT_PREFIX}:message:${message.message_id}`)) return [];
+            if (
+              revision > 0 ||
+              !existing.has(`${IMPORT_EVENT_PREFIX}:message:${message.message_id}`)
+            )
+              return [];
             const { attachments, invalid } = attachmentsFor(message);
             return invalid
               ? []
@@ -913,8 +1148,11 @@ const make = Effect.gen(function* () {
           });
         }
         yield* repairLegacyCitations(threadId);
+        if (revision > 0) yield* reconcileSourceMetadata(threadId, revision);
         const now = DateTime.formatIso(yield* DateTime.now);
-        yield* sql`
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
           UPDATE orchestration_v2_legacy_imports
           SET
             transcript_imported_at = ${now},
@@ -923,10 +1161,13 @@ const make = Effect.gen(function* () {
             last_error = NULL
           WHERE thread_id = ${threadId}
         `;
+            yield* sql`UPDATE scient_legacy_reconciliation_changes SET resolved = 1 WHERE thread_id = ${threadId} AND revision <= ${revision}`;
+          }),
+        );
         confirmedTranscriptThreadIds.add(threadId);
         return {
           importedThreadCount: 1,
-          importedMessageCount: missing.length,
+          importedMessageCount,
         };
       }),
     );
@@ -991,6 +1232,7 @@ const make = Effect.gen(function* () {
   );
 
   return LegacyV1ThreadImporter.of({
+    reconciliationFailure,
     pendingThreadCount,
     reconcileShells,
     ensureTranscript,

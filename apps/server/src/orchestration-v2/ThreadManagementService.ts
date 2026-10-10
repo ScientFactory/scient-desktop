@@ -934,6 +934,7 @@ const make = Effect.gen(function* () {
 const layerLegacyV1ThreadImporterNoop = Layer.succeed(
   LegacyV1ThreadImporter.LegacyV1ThreadImporter,
   LegacyV1ThreadImporter.LegacyV1ThreadImporter.of({
+    reconciliationFailure: Effect.succeed(false),
     pendingThreadCount: Effect.succeed(0),
     reconcileShells: Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
     ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
