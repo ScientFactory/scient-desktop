@@ -15,7 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useEnvironmentQuery } from "./query";
+import { useEnvironmentQuery, useEnvironmentSubscription } from "./query";
 import { terminalEnvironment } from "./terminal";
 import { useEnvironmentScope } from "./session";
 
@@ -82,7 +82,7 @@ export function useKnownTerminalSessions(input: {
   readonly threadId: ThreadId | null;
 }) {
   const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
-  const metadata = useEnvironmentQuery(
+  const metadata = useEnvironmentSubscription(
     input.environmentId === null || !canRead
       ? null
       : terminalEnvironment.metadata({
