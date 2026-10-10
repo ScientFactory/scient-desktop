@@ -36,7 +36,7 @@ approval, so a candidate that became obsolete while awaiting review is refused.
 Start with a reviewed `main` commit with successful exact-commit CI. Dispatch
 `release.yml` from `main`, select `channel=beta`, and supply that exact commit.
 Use a target stable version greater than current Stable, followed by
-`-beta.YYYYMMDD.N`, for example `0.6.23-beta.20261010.1`. Increment N for another
+`-beta.YYYYMMDD.N`, for example `0.6.24-beta.20261010.1`. Increment N for another
 candidate; each Beta must also be newer than the last published Beta. Never
 replace an existing tag or uploaded artifact.
 
@@ -103,7 +103,7 @@ installed versions. Do not mark a path passed based on mocked events.
 ```json
 {
   "sourceSha": "<exact source SHA>",
-  "version": "0.6.23-beta.20261010.1",
+  "version": "0.6.24-beta.20261010.1",
   "artifactDigest": "sha256:<GitHub candidate digest>",
   "paths": [
     { "name": "stable-to-beta", "passed": true, "receipt": "https://<evidence>" },

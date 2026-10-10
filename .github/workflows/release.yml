@@ -10,7 +10,7 @@ on:
         type: choice
         options: [stable, beta]
       version:
-        description: "Exact version: 0.6.23 or 0.6.23-beta.20261010.1"
+        description: "Exact version: 0.6.23 or 0.6.24-beta.20261010.1"
         required: true
         type: string
       source_sha:
