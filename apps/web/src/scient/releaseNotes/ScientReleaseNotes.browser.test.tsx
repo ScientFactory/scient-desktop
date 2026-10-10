@@ -48,9 +48,10 @@ it.each(["light", "dark"])(
     root = createRoot(host);
     root.render(<ScientReleaseNotes />);
 
-    await page.getByRole("button", { name: "Read what is new in Scient version 0.6.22" }).click();
+    await page.getByRole("button", { name: "Read what is new in Scient version 0.6.23" }).click();
     const dialog = page.getByRole("dialog");
     await expect.element(dialog).toBeVisible();
+    await expect.poll(() => document.activeElement?.textContent).toBe("What’s new in Scient");
     await expect
       .poll(() => {
         const popup = document.querySelector<HTMLElement>('[data-slot="dialog-popup"]');
@@ -87,6 +88,17 @@ it.each(["light", "dark"])(
 
     await dialog.getByRole("button", { name: "Release history", exact: true }).click();
     await dialog
+      .getByRole("button", { name: "Read release notes for Scient 0.6.22", exact: true })
+      .click();
+    await expect.poll(() => document.querySelectorAll('[role="dialog"] ol li').length).toBe(9);
+    await expect.element(dialog.getByText("Version 0.6.22 · October 2026")).toBeVisible();
+    if (import.meta.env.VITE_SCIENT_RELEASE_SCREENSHOTS) {
+      await page.screenshot({
+        path: `${import.meta.env.VITE_SCIENT_RELEASE_SCREENSHOTS}/previous-extended-${theme}.png`,
+      });
+    }
+    await dialog.getByRole("button", { name: "Release history", exact: true }).click();
+    await dialog
       .getByRole("button", { name: "Read release notes for Scient 0.6.21", exact: true })
       .click();
     await expect.element(dialog.getByText("Chat without a project", { exact: true })).toBeVisible();
@@ -99,3 +111,20 @@ it.each(["light", "dark"])(
     await expect.element(dialog).not.toBeInTheDocument();
   },
 );
+
+it("hides the release card in a collapsed sidebar and restores it when expanded", async () => {
+  host = document.createElement("div");
+  host.className = "group";
+  host.dataset.collapsible = "icon";
+  document.body.append(host);
+  root = createRoot(host);
+  root.render(<ScientReleaseNotes />);
+
+  const card = page.getByRole("button", {
+    name: "Read what is new in Scient version 0.6.23",
+    includeHidden: true,
+  });
+  await expect.element(card).not.toBeVisible();
+  delete host.dataset.collapsible;
+  await expect.element(card).toBeVisible();
+});

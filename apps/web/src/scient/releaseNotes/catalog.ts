@@ -9,6 +9,70 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.23",
+    publishedAt: "2026-10-10",
+    format: "paragraphs",
+    headline: "Meet Scient Agent. Keep the conversation going.",
+    highlights: [
+      {
+        id: "scient-agent-0622",
+        title: "Meet Scient Agent",
+        description:
+          "Scient’s own agent can work with your files, run code, use Skills and connected tools, and delegate tasks. Install it from Settings → Providers, then connect supported model accounts, custom models, or local models. Scient Agent currently runs with Full access.\n\nIt can launch and manage multiple subagents in the background, analyze data, create documents, and run checks on its work.",
+      },
+      {
+        id: "same-conversation-switching-0622",
+        title: "Switch agents in the same conversation",
+        description:
+          "Start with Codex, continue with Claude, then move to Gemini—all in the same conversation. Choose another agent or model from the model picker. Scient hands relevant saved context to the new agent, with earlier history available to retrieve when needed. You can still fork into a separate conversation.",
+      },
+      {
+        id: "scheduled-tasks-0622",
+        title: "Schedule recurring tasks",
+        description:
+          "Ask an agent to run a recurring check or prepare a regular report. In Settings → Scheduled Tasks, choose its project, model, and schedule. Pause tasks or run them immediately whenever needed. The computer running the task must stay on with Scient’s server running.",
+      },
+      {
+        id: "agent-registry-0622",
+        title: "Discover and connect more AI agents",
+        description:
+          "Add agents such as Devin, Pi, and Google Antigravity through the ACP Registry in Settings → Providers → Add provider. Scient guides you through installation and sign-in. Agents that support it can also bring their existing conversations into a Scient project.",
+      },
+      {
+        id: "conversation-context-0622",
+        title: "Use another conversation as context",
+        description:
+          "Type @ to find a conversation, or drag conversations from the sidebar into your prompt. Your agent can read their saved history when needed, and the references let you open the original conversations. References work within the same connected environment.",
+      },
+      {
+        id: "delegated-agents-0622",
+        title: "Follow work delegated to other agents",
+        description:
+          "The Agents view shows supported agents’ delegated tasks and progress. Open a child conversation to inspect its work; send instructions through the parent. Tool activity is easier to scan, with lighter styling and clearer file names.",
+      },
+      {
+        id: "usage-limit-resume-0622",
+        title: "Resume automatically after a usage limit",
+        description:
+          "Choose Resume at reset to continue work automatically when your AI provider says its allowance resets. Prefer to return later? Snooze until reset hides the conversation and brings it back without starting work. You can enable automatic resuming in Settings, or resume manually. Automatic continuation requires the connected environment to be running.",
+      },
+      {
+        id: "queue-resume-0622",
+        title: "Decide when waiting messages resume",
+        description:
+          "After Stop, an interruption, a failed start, or a restart, queued messages wait for your explicit Resume. Sending the first waiting message runs only that message; the rest remain held. Finishing another answer no longer restarts the queue. Pending messages stay above the composer.",
+      },
+      {
+        id: "attention-sections-0622",
+        title: "Find conversations that need you",
+        description:
+          "Sections keep working conversations, unread answers, and requests for attention near the top while respecting manual moves. In Status view, the optional Working section (beta) hides busy threads until they finish or need your input.",
+      },
+    ],
+    alsoIncluded:
+      "A new Möbius app symbol, cleaner model pickers, High reasoning defaults where supported, source links in conversation exports, provider update shortcuts, customizable branch names, and fixes across sign-in, composer undo, and agent tool activity. Your saved model and reasoning choices are preserved.",
+  },
+  {
     version: "0.6.22",
     publishedAt: "2026-10-08",
     format: "paragraphs",
