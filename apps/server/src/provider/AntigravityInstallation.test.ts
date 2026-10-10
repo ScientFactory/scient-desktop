@@ -24,12 +24,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import {
-  AntigravityInstallationError,
-  makeAntigravityInstallation,
-  type AntigravityExecutable,
-  type AntigravityInstallationOptions,
-} from "./AntigravityInstallation.ts";
+import { AntigravityInstallationError } from "./AntigravityInstallation.ts";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
@@ -536,10 +531,29 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       const methods: string[] = [];
       const profiles = new Set<string>();
       let closedRuntimes = 0;
+      const taskkillCommands: ReadonlyArray<string>[] = [];
+      let stopNative: Effect.Effect<void> = Effect.void;
       const spawner = ChildProcessSpawner.make(
         Effect.fn("test.spawnAntigravityValidator")(function* (command) {
           if (command._tag !== "StandardCommand") {
             return yield* Effect.die("Expected one validation process.");
+          }
+          if (command.command === "taskkill") {
+            taskkillCommands.push(command.args);
+            yield* stopNative;
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(2_000_000_001),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
           }
           const profile = command.options.env?.GEMINI_HOME;
           if (!profile) return yield* Effect.die("Expected a disposable validation profile.");
@@ -552,6 +566,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(
             Effect.asVoid,
           );
+          if (!helper) {
+            expect(command.options.detached).toBe(true);
+            stopNative = terminate;
+          }
           yield* Effect.addFinalizer(() =>
             terminate.pipe(
               Effect.andThen(Queue.shutdown(output)),
@@ -563,7 +581,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
             ),
           );
           return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(helper ? 1 : 2),
+            pid: ChildProcessSpawner.ProcessId(helper ? 2_000_000_001 : 2_000_000_000),
             exitCode: helper
               ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
               : Deferred.await(exited),
@@ -626,6 +644,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       yield* Deferred.await(stagingReleased);
       expect(methods).toEqual(["initialize"]);
       expect(closedRuntimes).toBe(1);
+      expect(taskkillCommands).toEqual(
+        hostPlatform === "win32" ? [["/PID", "2000000000", "/T", "/F"]] : [],
+      );
       expect(profiles.size).toBe(1);
       for (const profile of profiles) {
         expect(yield* fs.exists(profile)).toBe(false);

@@ -40,8 +40,33 @@ function render(
 }
 
 describe("queued message recovery control", () => {
-  it("labels exactly one first-row action Send after a failed or stopped turn", () => {
-    expect(render({ awaitingCompletion: true }).match(/>Send<\/button>/g)).toHaveLength(1);
+  it("offers Send on every queued row after a failed or stopped turn", () => {
+    expect(render({ awaitingCompletion: true }).match(/>Send<\/button>/g)).toHaveLength(2);
+  });
+
+  it("offers Send only on the rows the server accepts", () => {
+    const html = renderToStaticMarkup(
+      <ThreadQueueStrip
+        items={items}
+        error={null}
+        threadBusy={false}
+        supportsExplicitSend
+        awaitingCompletion
+        canSendItem={(item) => item.queueItemId === "qitem_B"}
+        paused={false}
+        dispatchingItemId={null}
+        onSend={() => undefined}
+        onSteer={() => undefined}
+        onEdit={() => undefined}
+        onDelete={() => undefined}
+        onReorder={() => undefined}
+        retryable={false}
+      />,
+    );
+    expect(html.match(/>Send<\/button>/g)).toHaveLength(1);
+    const [first, second] = html.split('data-testid="thread-queue-row-qitem_B"');
+    expect(first).not.toContain(">Send</button>");
+    expect(second).toContain(">Send</button>");
   });
 
   it("does not offer Send while running, paused for delivery, or normally queued", () => {
@@ -81,7 +106,7 @@ describe("native queue MAIN presentation", () => {
     expect(html).toContain("rounded-t-xl");
     expect(html).not.toContain("Collapse queued");
   });
-  it("shows a single edit cancellation and held resume without per-row execution controls", () => {
+  it("shows a single edit cancellation and no held header or Resume queue", () => {
     const html = renderToStaticMarkup(
       <ThreadQueueStrip
         items={items}
@@ -91,8 +116,6 @@ describe("native queue MAIN presentation", () => {
         awaitingCompletion={false}
         paused
         dispatchingItemId={null}
-        held
-        onResume={() => undefined}
         editingItemId={items[0]?.queueItemId ?? null}
         onCancelEdit={() => undefined}
         onSend={() => undefined}
@@ -103,8 +126,8 @@ describe("native queue MAIN presentation", () => {
         retryable={false}
       />,
     );
-    expect(html).toContain("Queue held");
-    expect(html.match(/>Resume queue<\/button>/g)).toHaveLength(1);
+    expect(html).not.toContain("Queue held");
+    expect(html).not.toContain("Resume queue");
     expect(html.match(/aria-label="Cancel editing queued message"/g)).toHaveLength(1);
     expect(html).toContain('aria-current="true"');
     expect(html.match(/aria-label="Edit queued message"/g)).toHaveLength(1);
@@ -133,8 +156,11 @@ describe("native queue MAIN presentation", () => {
         retryable={false}
       />,
     );
-    expect(pending).toContain("Queuing…");
-    expect(pending).toContain(">Queued</span>");
+    // "Queuing…" waits for a slow admission; an accepted row never says "Queued".
+    expect(pending).toContain('data-testid="thread-queue-pending-pending"');
+    expect(pending).toContain('data-testid="thread-queue-pending-accepted"');
+    expect(pending).not.toContain("Queuing…");
+    expect(pending).not.toContain("Queued<");
     expect(pending).not.toContain('aria-label="Edit queued message"');
     const error = renderToStaticMarkup(
       <ThreadQueueStrip

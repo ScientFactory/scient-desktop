@@ -221,7 +221,10 @@ function ProviderSettingsPlaceholder({
       ) : null}
       <SettingsGroup
         divided={false}
-        className={cn(providerCardHeightClassName, "flex overflow-x-hidden overflow-y-auto")}
+        className={cn(
+          providerCardHeightClassName,
+          "scrollbar-gutter-both flex overflow-x-hidden overflow-y-auto",
+        )}
       >
         <Empty>
           <EmptyMedia variant="icon">{icon}</EmptyMedia>
@@ -585,9 +588,21 @@ export function EnvironmentProviderSettings({
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
-  const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
-    targetInstanceId ?? null,
-  );
+  const [selection, setSelection] = useState({
+    targetInstanceId,
+    selectedInstanceId: targetInstanceId ?? null,
+  });
+  // A new deep link is new selection intent; status refreshes retain manual picks.
+  const selectedInstanceId =
+    selection.targetInstanceId === targetInstanceId
+      ? selection.selectedInstanceId
+      : (targetInstanceId ?? null);
+  if (selection.targetInstanceId !== targetInstanceId) {
+    setSelection({ targetInstanceId, selectedInstanceId });
+  }
+  const setSelectedInstanceId = (instanceId: ProviderInstanceId) => {
+    setSelection({ targetInstanceId, selectedInstanceId: instanceId });
+  };
   const [connectionRequest, setConnectionRequest] = useState<{
     readonly instanceId: ProviderInstanceId;
     readonly initialRuntimeAction?: ProviderManagedRuntimeAction;
@@ -1185,6 +1200,25 @@ export function EnvironmentProviderSettings({
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"
+        titleAction={
+          !readOnly ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                    aria-label="Add provider"
+                  >
+                    <PlusIcon />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Add provider</TooltipPopup>
+            </Tooltip>
+          ) : null
+        }
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
             <ProviderUpdatesAction />
@@ -1212,23 +1246,6 @@ export function EnvironmentProviderSettings({
               />
               <TooltipPopup side="top">Refresh provider status</TooltipPopup>
             </Tooltip>
-            {!readOnly ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="ghost-muted"
-                      onClick={() => setIsAddInstanceDialogOpen(true)}
-                      aria-label="Add provider"
-                    >
-                      <PlusIcon />
-                    </Button>
-                  }
-                />
-                <TooltipPopup side="top">Add provider</TooltipPopup>
-              </Tooltip>
-            ) : null}
           </div>
         }
       >
@@ -1258,6 +1275,16 @@ export function EnvironmentProviderSettings({
             >
               <div className="divide-y divide-border/50">
                 {rows.map((row) => renderProviderInstance(row, "list"))}
+                {!readOnly ? (
+                  <button
+                    type="button"
+                    className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
+                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                  >
+                    <PlusIcon className="size-4 shrink-0" />
+                    Add provider
+                  </button>
+                ) : null}
               </div>
             </ScrollArea>
           </div>

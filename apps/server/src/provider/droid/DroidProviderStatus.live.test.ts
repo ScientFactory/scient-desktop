@@ -18,7 +18,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { DroidDriver } from "../Drivers/DroidDriver.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
-import { qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
+import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;
 beforeAll(() => qualifyDroidTestBinary(binary), 10_000);
@@ -92,9 +92,9 @@ it.live.skipIf(!binary)(
       // Every Factory request goes to this stub; no account or hosted inference is used.
       const server = yield* Effect.acquireRelease(
         Effect.sync(() =>
-          NodeHttp.createServer((_request, response) => {
+          NodeHttp.createServer((request, response) => {
             response.writeHead(200, { "content-type": "application/json" });
-            response.end("{}");
+            response.end(factoryFixtureBody(request.url));
           }),
         ),
         (server) =>

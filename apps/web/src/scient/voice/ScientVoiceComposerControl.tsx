@@ -41,6 +41,7 @@ import {
   voiceTranscriptCorrectionCommand,
 } from "./voiceTranscriptCorrectionClient.ts";
 import { hasReadySelectedVoiceModel } from "./voiceModelReadiness.ts";
+import type { VoiceDraftOrigin } from "./voiceDraftDelivery.ts";
 
 export { describeVoiceError } from "./voiceErrorPresentation.ts";
 export { describeVoiceRecorderError, formatVoiceTimer } from "./useScientVoiceController.ts";
@@ -48,6 +49,10 @@ export { describeVoiceRecorderError, formatVoiceTimer } from "./useScientVoiceCo
 export interface ScientVoiceComposerControlProps {
   readonly disabled?: boolean;
   readonly environmentId?: EnvironmentId;
+  /** Composer draft that committed dictation lands in, even after leaving. */
+  readonly draftOrigin?: VoiceDraftOrigin | null;
+  /** Field that local (non-draft) dictation belongs to; see the controller. */
+  readonly localFieldKey?: string | null;
   readonly onBusyChange?: (busy: boolean) => void;
   readonly onTranscript: (text: string) => void;
   readonly onRequestSubmit?: () => void;
@@ -57,7 +62,7 @@ export interface ScientVoiceComposerControlProps {
   readonly readyModelOnly?: boolean;
 }
 
-export const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
+export { EMPTY_TRANSCRIPT_MESSAGE } from "./voiceProcessing.ts";
 
 function formatModelSize(byteSize: number): string {
   return `~${Math.round(byteSize / 1024 / 1024)} MiB`;
@@ -199,6 +204,8 @@ export function VoiceModelSetupPicker({
 export function ScientVoiceComposerControl({
   disabled = false,
   environmentId,
+  draftOrigin = null,
+  localFieldKey = null,
   onTranscript,
   onBusyChange,
   onRequestSubmit,
@@ -225,6 +232,8 @@ export function ScientVoiceComposerControl({
     correctionEnabled,
     languagePreference,
     ...(environmentId === undefined ? {} : { environmentId }),
+    draftOrigin,
+    localFieldKey,
     onTranscript,
     ...(onRequestSubmit ? { onRequestSubmit } : {}),
   });

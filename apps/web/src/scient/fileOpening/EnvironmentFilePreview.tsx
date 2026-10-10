@@ -317,7 +317,7 @@ function EnvironmentMediaSurface(props: {
     setFailure({ refreshToken: props.refreshToken, url: asset.url });
   };
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
+    <div className="scrollbar-gutter-both flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
       {props.kind === "audio" ? (
         <div className="flex w-full max-w-xl flex-col items-center gap-4">
           <Music2 className="size-8 text-muted-foreground" aria-hidden="true" />
@@ -419,7 +419,7 @@ function EnvironmentTextSurface(props: {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         {load.truncated ? <TruncatedNotice file={props.file} /> : null}
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
           <ChatMarkdown
             text={load.contents}
             cwd={pathDirectory(props.file.canonicalPath)}

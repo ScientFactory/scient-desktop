@@ -38,6 +38,10 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+When switching Settings pages, a short **Loading settings…** message appears if the page needs
+more time to open. If it fails to open, use **Reload app** to retry loading it.
+Choosing another provider or scheduled task within the same scope keeps the page in place.
+
 ## Worktree branch names
 
 In **Settings → Source Control → Worktree branch naming**, choose a static prefix,

@@ -254,6 +254,8 @@ describe("the LaTeX surface on a document session", () => {
       <ScientLatexSurface
         onDownloadActions={() => {}}
         onRenameContext={() => {}}
+        startBar={null}
+        templateActions={null}
         environmentId={environmentId}
         cwd={cwd}
         relativePath={relativePath}
@@ -842,6 +844,8 @@ describe("navigation between LaTeX source and its PDF", () => {
         <ScientLatexSurface
           onDownloadActions={() => {}}
           onRenameContext={() => {}}
+          startBar={null}
+          templateActions={null}
           environmentId={environmentId}
           cwd={cwd}
           relativePath={relativePath}
@@ -1051,6 +1055,8 @@ describe("document actions before Visual has ever mounted", () => {
         <ScientLatexSurface
           onDownloadActions={() => {}}
           onRenameContext={() => {}}
+          startBar={null}
+          templateActions={null}
           environmentId={environmentId}
           cwd={cwd}
           relativePath="paper.tex"

@@ -9,6 +9,7 @@ import {
   DIALOG_MEDIA_BACKDROP_CLASS,
   DIALOG_MEDIA_POPUP_CLASS,
   DIALOG_MOBILE_SHEET_CLASS,
+  DIALOG_PAPER_BACKDROP_CLASS,
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -29,12 +30,16 @@ function DialogBackdrop({
   className,
   variant = "default",
   ...props
-}: DialogPrimitive.Backdrop.Props & { variant?: "default" | "media" }) {
+}: DialogPrimitive.Backdrop.Props & { variant?: "default" | "media" | "paper" }) {
   return (
     <DialogPrimitive.Backdrop
       forceRender
       className={cn(
-        variant === "media" ? DIALOG_MEDIA_BACKDROP_CLASS : DIALOG_BACKDROP_CLASS,
+        variant === "paper"
+          ? DIALOG_PAPER_BACKDROP_CLASS
+          : variant === "media"
+            ? DIALOG_MEDIA_BACKDROP_CLASS
+            : DIALOG_BACKDROP_CLASS,
         className,
       )}
       data-slot="dialog-backdrop"
@@ -67,25 +72,33 @@ function DialogPopup({
   padding = "default",
   gap = "default",
   backdropClassName,
+  layer = "default",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   showBackdrop?: boolean;
   bottomStickOnMobile?: boolean;
-  variant?: "default" | "media";
+  variant?: "default" | "media" | "paper";
   /** Shared layout for large, media-like content viewers. */
   layout?: "default" | "visual";
   padding?: "default" | "none";
   gap?: "default" | "none";
   /** Allows feature-owned dialogs to tune the shared backdrop without replacing it. */
   backdropClassName?: string;
+  /** A viewer opened from a menu or preview card must sit above its opener. */
+  layer?: "default" | "above-popovers";
 }) {
+  const isViewer = variant !== "default";
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
       {showBackdrop ? (
         <DialogBackdrop
-          className={cn(variant === "media" && "z-[60]", backdropClassName)}
+          className={cn(
+            isViewer && "z-[60]",
+            layer === "above-popovers" && "z-[150]",
+            backdropClassName,
+          )}
           variant={variant}
         />
       ) : null}
@@ -93,14 +106,15 @@ function DialogPopup({
         className={cn(
           !showBackdrop && "pointer-events-none",
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
-          variant === "media" &&
+          isViewer &&
             "z-[60] grid-rows-1 place-items-center px-4 py-6 [-webkit-app-region:no-drag]",
+          layer === "above-popovers" && "z-[150]",
         )}
       >
         <DialogPrimitive.Popup
           className={cn(
             !showBackdrop && "pointer-events-auto",
-            variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
+            isViewer ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
             "row-start-2 text-popover-foreground",
             variant === "default" && "max-h-full max-w-lg",
             layout === "visual" &&
@@ -183,12 +197,17 @@ function DialogTitle({
   className,
   size = "default",
   ...props
-}: DialogPrimitive.Title.Props & { size?: "default" | "compact" | "large" }) {
+}: DialogPrimitive.Title.Props & { size?: "default" | "compact" | "large" | "caption" }) {
   return (
     <DialogPrimitive.Title
       className={cn(
-        "wrap-anywhere font-heading font-semibold leading-none",
-        size === "compact" ? "text-base" : size === "large" ? "text-lg leading-5" : "text-xl",
+        "wrap-anywhere font-heading leading-none",
+        size === "caption"
+          ? "text-xs font-normal text-muted-foreground"
+          : cn(
+              "font-semibold",
+              size === "compact" ? "text-base" : size === "large" ? "text-lg leading-5" : "text-xl",
+            ),
         className,
       )}
       data-slot="dialog-title"

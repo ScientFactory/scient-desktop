@@ -19,6 +19,7 @@ export function LatexMatrixDialog({
   onOpenChange,
   onOpenChangeComplete,
   onInsert,
+  display,
 }: {
   open: boolean;
   environment: MatrixEnvironment;
@@ -26,10 +27,11 @@ export function LatexMatrixDialog({
   onOpenChange: (open: boolean) => void;
   onOpenChangeComplete: (open: boolean) => void;
   onInsert: (tex: string) => void;
+  display: boolean;
 }) {
   const [rows, setRows] = useState(2);
   const [columns, setColumns] = useState(2);
-  const matrix = insertMatrix({ from: 0, to: 0 }, environment, rows, columns);
+  const matrix = insertMatrix({ from: 0, to: 0 }, environment, rows, columns, display);
   return (
     <Dialog open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
       <DialogPopup data-dock-command-scope="latex" finalFocus={false}>

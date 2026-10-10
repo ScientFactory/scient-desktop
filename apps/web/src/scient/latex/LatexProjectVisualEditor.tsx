@@ -428,7 +428,10 @@ export function LatexProjectVisualEditor(props: Props) {
     !document.missing.length &&
     !readError &&
     !document.errors.length &&
-    paths.every((path) => states.get(path)?.data);
+    // The open file's text comes from the surface (`files` above), so it never
+    // waits for its session to report; after an in-place rename that would
+    // unmount the editor for a render.
+    paths.every((path) => path === props.relativePath || states.get(path)?.data);
   return (
     <>
       {[...new Set([...paths, ...pendingPaths, ...saveErrors.keys()])].map((path) => (
@@ -447,7 +450,7 @@ export function LatexProjectVisualEditor(props: Props) {
         <LatexVisualEditor
           {...props}
           compiledBibliography={compiledBibliography}
-          key={root}
+          key={props.editorInstanceKey ?? root}
           source={document.source}
           rootSource={document.source}
           canEditRoot={!error}

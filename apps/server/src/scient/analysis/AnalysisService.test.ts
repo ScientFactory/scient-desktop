@@ -156,6 +156,8 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
       }),
   };
   const workspaceFileSystem = WorkspaceFileSystem.WorkspaceFileSystem.of({
+    replaceFileRetained: () => Effect.die("Unexpected retained mutation"),
+    removeFileRetained: () => Effect.die("Unexpected retained removal"),
     createBinaryFile: () => Effect.die("createBinaryFile is not used by the analysis service test"),
     inspectWriteTarget: (input) =>
       Effect.succeed({
@@ -174,6 +176,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     viewFile: () => Effect.die("viewFile is not used by the analysis service test"),
     writeFile: () => Effect.die("writeFile is not used by the analysis service test"),
     renameFile: () => Effect.die("renameFile is not used by the analysis service test"),
+    deleteFile: () => Effect.die("deleteFile is not used by the analysis service test"),
     watchFile: () => Stream.empty,
   });
   const workspacePaths = WorkspacePaths.WorkspacePaths.of({

@@ -127,6 +127,7 @@ export function MarkdownCodeBlockFrame({
       data-wrap={wrapped ? "true" : "false"}
     >
       <div
+        data-thread-find-ignore="true"
         {...headerProps}
         className={cn(
           "chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none",

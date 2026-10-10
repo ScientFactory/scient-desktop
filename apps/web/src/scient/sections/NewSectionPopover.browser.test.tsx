@@ -17,6 +17,17 @@ afterEach(() => {
 const nextFrame = () =>
   new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
 
+async function settledBounds(popup: HTMLElement) {
+  // One frame can still catch the popup's scale and position transitions.
+  await expect.poll(() => popup.hasAttribute("data-starting-style")).toBe(false);
+  await Promise.all(
+    (popup.parentElement ?? popup)
+      .getAnimations({ subtree: true })
+      .map((animation) => animation.finished),
+  );
+  return popup.getBoundingClientRect();
+}
+
 function renderForm(submit: (name: string) => Promise<boolean>, native = false) {
   function Probe() {
     const [open, setOpen] = useState(false);
@@ -62,11 +73,16 @@ it.each([false, true])(
     await nextFrame();
     const popup = document.querySelector<HTMLElement>('[data-slot="popover-popup"]')!;
     const input = document.querySelector<HTMLInputElement>('input[placeholder="Section name"]')!;
-    const rect = popup.getBoundingClientRect();
+    const rect = await settledBounds(popup);
     expect(rect.width).toBeLessThanOrEqual(260);
     expect(rect.height).toBeLessThan(180);
     expect(rect.left).toBeGreaterThanOrEqual(130);
-    expect(Math.abs(rect.top - 80)).toBeLessThan(5);
+    // A point anchor aligns with the transform origin, which Base UI insets
+    // from the rounded corner. An element anchor aligns with the popup's top.
+    const originOffset = native
+      ? Number.parseFloat(getComputedStyle(popup).transformOrigin.split(" ")[1]!)
+      : 0;
+    expect(Math.abs(rect.top + originOffset - 80)).toBeLessThan(1);
     expect(document.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
     expect(document.activeElement).toBe(input);
     await userEvent.keyboard("research");

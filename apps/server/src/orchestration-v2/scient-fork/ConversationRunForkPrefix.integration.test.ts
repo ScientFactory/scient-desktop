@@ -47,6 +47,7 @@ import {
 } from "../testkit/fixtures/shared.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 import { conversationForkBoundaryItem } from "./ConversationForkBoundaryItem.ts";
+import { presentInheritedItem } from "./ForkHistory.ts";
 
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeFrame = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -371,12 +372,21 @@ it.live.each(
           });
           const boundaryRun = boundary.runs.at(-1);
           assert.ok(boundaryRun);
+          // The child shows its prefix by reference (copies only for live work), then its boundary.
+          const copies = new Map(expectedPrefix.items.map((item) => [item.id, item]));
+          const sources = new Map(
+            boundary.visibleTurnItems.map((row) => [row.sourceItemId, row.item]),
+          );
           const owned = [
-            ...expectedPrefix.items,
+            ...expectedPrefix.history.map((entry, position) =>
+              entry.sourceThreadId === childId
+                ? copies.get(entry.sourceItemId)!
+                : presentInheritedItem(sources.get(entry.sourceItemId)!, position, childId),
+            ),
             conversationForkBoundaryItem({
               targetThreadId: childId,
               source: { type: "run", threadId: parentId, runId: boundaryRun.id },
-              ordinal: expectedPrefix.items.length,
+              ordinal: expectedPrefix.history.length,
               createdAt: now,
             }),
           ];
@@ -529,12 +539,18 @@ it.live.each(
           });
           assert.ok(path);
           assert.equal(yield* (yield* FileSystem.FileSystem).readFileString(path), "measured");
-          assert.notEqual(copy.source.id, copy.target.id);
+          // Files are shared with the fork, not copied.
+          assert.equal(copy.source.id, copy.target.id);
           const contextRecord = ready.value.messages.find((message) => message.context)?.context
             ?.records[0];
           assert.ok(contextRecord?.kind === "file" && "attachmentId" in contextRecord);
           assert.equal(contextRecord.attachmentId, copy.target.id);
-          const answer = ready.value.turnItems.find((item) => item.type === "user_input_request");
+          const answerRow = ready.value.visibleTurnItems.find(
+            (row) => row.item.type === "user_input_request",
+          );
+          assert.equal(answerRow?.visibility, "inherited");
+          assert.equal(answerRow?.sourceThreadId, parentId);
+          const answer = answerRow?.item;
           assert.ok(answer?.type === "user_input_request");
           assert.equal(answer.runId, null);
           assert.equal(
@@ -553,8 +569,17 @@ it.live.each(
           commandId: CommandId.make("native-run-fork-delete-parent"),
           threadId: parentId,
         });
+        if (nested) {
+          // Deleting the parent keeps the files its live fork still shows.
+          const sharedId = ready.value.thread.conversationFork?.attachmentCopies[0]?.target.id;
+          assert.ok(sharedId);
+          assert.notInclude(yield* projectionStore.getReleasableFiles(parentId), sharedId);
+        }
         if (sourceFilePath !== undefined)
-          yield* (yield* FileSystem.FileSystem).remove(sourceFilePath, { force: true });
+          assert.equal(
+            yield* (yield* FileSystem.FileSystem).readFileString(sourceFilePath),
+            "measured",
+          );
         const retainedBoundary = yield* projectionStore.getTimelinePage(childId, {
           itemId: boundaryItem.id,
           limit: 1,
@@ -580,8 +605,11 @@ it.live.each(
         assert.isNull((yield* Ref.get(driver.state)).failure);
         assert.equal(delivered.thread.conversationFork?.sourceThreadId, parentId);
         assert.lengthOf(
-          delivered.turnItems.filter(
-            (item) => item.runId === null && item.type === "assistant_message",
+          delivered.visibleTurnItems.filter(
+            (row) =>
+              row.visibility === "inherited" &&
+              row.item.runId === null &&
+              row.item.type === "assistant_message",
           ),
           nested ? 2 : 1,
         );

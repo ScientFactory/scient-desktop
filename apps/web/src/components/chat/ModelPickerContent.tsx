@@ -69,6 +69,7 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import { isActiveProviderConnectionOperation } from "~/scient/providerConnection/providerConnectionPresentation";
 
 export type ModelPickerItem = {
   isDefault?: boolean | undefined;
@@ -129,15 +130,20 @@ export function shouldIncludeModelPickerOption(input: {
 export function shouldOfferModelPickerSetup(
   entry: ProviderInstanceEntry,
   options: ReadonlyArray<ModelEsque>,
+  setupAvailable = hasProviderSetup(entry.snapshot),
 ): boolean {
   return (
     entry.enabled &&
     entry.status !== "disabled" &&
-    hasProviderSetup(entry.snapshot) &&
-    (!isProviderInstancePickerReady(entry) ||
+    setupAvailable &&
+    (entry.snapshot.probePending === true ||
+      !isProviderInstancePickerReady(entry) ||
       !entry.installed ||
       entry.snapshot.auth.status === "unauthenticated" ||
-      !options.some((option) => !option.isUnavailable))
+      isActiveProviderConnectionOperation(entry.snapshot.connection?.operation) ||
+      isActiveProviderConnectionOperation(entry.snapshot.connection?.accountOperation) ||
+      (!entry.models.some((model) => !model.unavailableReason) &&
+        !options.some((option) => !option.isUnavailable)))
   );
 }
 
@@ -147,6 +153,7 @@ export function adjacentModelPickerProvider(input: {
   direction: 1 | -1;
   disabledInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
   selectableUnavailableInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
+  setupAvailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
 }) {
   const providers: Array<ProviderInstanceId | "favorites"> = [
     "favorites",
@@ -155,7 +162,8 @@ export function adjacentModelPickerProvider(input: {
         (entry) =>
           !input.disabledInstanceIds?.has(entry.instanceId) &&
           (isProviderInstancePickerReady(entry) ||
-            input.selectableUnavailableInstanceIds?.has(entry.instanceId)),
+            input.selectableUnavailableInstanceIds?.has(entry.instanceId) ||
+            input.setupAvailableInstanceIds?.has(entry.instanceId)),
       )
       .map((entry) => entry.instanceId),
   ];
@@ -276,11 +284,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     ) &&
     !isProviderInstancePickerReady(activeEntry);
   const activeInstanceNeedsSetup =
-    props.onOpenProviderSetup !== undefined &&
+    (props.onOpenProviderSetup !== undefined || props.renderProviderSetup !== undefined) &&
     activeEntry !== undefined &&
     shouldOfferModelPickerSetup(
       activeEntry,
       modelOptionsByInstance.get(props.activeInstanceId) ?? [],
+      props.isProviderSetupAvailable?.(activeEntry) ?? hasProviderSetup(activeEntry.snapshot),
     );
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
     () => {
@@ -487,16 +496,29 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     const instanceIds = new Set<ProviderInstanceId>();
     for (const entry of sidebarInstanceEntries) {
-      if (!isProviderInstancePickerReady(entry) && props.isProviderSetupAvailable(entry)) {
+      if (
+        shouldOfferModelPickerSetup(
+          entry,
+          modelOptionsByInstance.get(entry.instanceId) ?? [],
+          props.isProviderSetupAvailable(entry),
+        )
+      ) {
         instanceIds.add(entry.instanceId);
       }
     }
     return instanceIds.size > 0 ? instanceIds : undefined;
-  }, [isLocked, props.isProviderSetupAvailable, props.renderProviderSetup, sidebarInstanceEntries]);
+  }, [
+    isLocked,
+    modelOptionsByInstance,
+    props.isProviderSetupAvailable,
+    props.renderProviderSetup,
+    sidebarInstanceEntries,
+  ]);
   const selectedSetupEntry =
     selectedInstanceId !== "favorites" && setupAvailableInstanceIds?.has(selectedInstanceId)
       ? entryByInstanceId.get(selectedInstanceId)
       : undefined;
+  const isShowingSetup = selectedSetupEntry !== undefined;
   const selectedFooterEntry =
     !isSearching && selectedInstanceId !== "favorites"
       ? entryByInstanceId.get(selectedInstanceId)
@@ -818,10 +840,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => filteredItemKeys.length * MODEL_LIST_ESTIMATED_ITEM_SIZE,
   );
   const [searchHeight, setSearchHeight] = useState(0);
-  useLayoutEffect(
-    () => modelListRef.current?.getState().listen("totalSize", setModelListContentSize),
-    [],
-  );
+  const modelListSizeCleanup = useRef<(() => void) | null>(null);
+  // Setup unmounts the virtualized list. Attach measurement to each real list,
+  // including the new list mounted when setup finishes.
+  const attachModelList = useCallback((list: LegendListRef | null) => {
+    modelListSizeCleanup.current?.();
+    modelListSizeCleanup.current = null;
+    modelListRef.current = list;
+    if (list) {
+      const state = list.getState();
+      setModelListContentSize(state.contentLength);
+      modelListSizeCleanup.current = state.listen("totalSize", setModelListContentSize);
+    }
+  }, []);
   // Fit the list to its rows plus the combobox list `py-1` and LegendList `py-1.5`.
   const modelListHeight =
     filteredItemKeys.length === 0 ? 0 : `calc(${modelListContentSize}px + var(--spacing) * 5)`;
@@ -890,11 +921,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           direction: command === "modelPicker.nextProvider" ? 1 : -1,
           disabledInstanceIds: lockedDisabledInstanceIds,
           selectableUnavailableInstanceIds,
+          ...(setupAvailableInstanceIds ? { setupAvailableInstanceIds } : {}),
         });
         setSearchQuery("");
         handleSelectInstance(next);
         return;
       }
+      if (isShowingSetup) return;
       const jumpIndex = modelPickerJumpIndexFromCommand(command ?? "");
       if (jumpIndex === null) {
         return;
@@ -928,11 +961,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     selectableUnavailableInstanceIds,
     selectedInstanceId,
     sidebarInstanceEntries,
+    setupAvailableInstanceIds,
+    isShowingSetup,
   ]);
 
   useLayoutEffect(() => {
     setShowTopScrollFade(false);
-    setShowBottomScrollFade(filteredItemKeys.length > 5);
+    setShowBottomScrollFade(!isShowingSetup && filteredItemKeys.length > 5);
     let nestedFrame = 0;
     const frame = window.requestAnimationFrame(() => {
       updateModelListScrollFades();
@@ -942,15 +977,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       window.cancelAnimationFrame(frame);
       window.cancelAnimationFrame(nestedFrame);
     };
-  }, [filteredItemKeys, updateModelListScrollFades]);
+  }, [filteredItemKeys, isShowingSetup, updateModelListScrollFades]);
 
   return (
     <TooltipProvider delay={0}>
       <div
         ref={pickerContentRef}
-        className="relative flex max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
+        className="relative flex max-h-[min(21.625rem,var(--available-height,85vh))] w-screen max-w-90 flex-row overflow-hidden"
         // Hold the height from when the search started; results scroll instead of resizing.
-        style={isSearching ? { height: searchHeight } : undefined}
+        style={isSearchingModels ? { height: searchHeight } : undefined}
         data-model-picker-content="true"
       >
         {/* Sidebar */}
@@ -976,8 +1011,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         {/* Main content area */}
         <Combobox<string, boolean>
           inline
-          items={allItemKeys}
-          filteredItems={filteredItemKeys}
+          items={isShowingSetup ? [] : allItemKeys}
+          filteredItems={isShowingSetup ? [] : filteredItemKeys}
           filter={null}
           autoHighlight
           open
@@ -1096,122 +1131,127 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               />
             ) : null}
 
-            {/* Model list */}
-            <div
-              className="relative min-h-0 overflow-hidden pr-px"
-              style={{ height: modelListHeight }}
-            >
-              {selectedSetupEntry && props.renderProviderSetup ? (
-                <div className="absolute inset-0 z-10 flex overflow-y-auto bg-muted/40">
-                  {props.renderProviderSetup(selectedSetupEntry)}
-                </div>
-              ) : null}
-              <ComboboxListVirtualized padding="none">
-                <LegendList<string>
-                  ref={modelListRef}
-                  data={filteredItemKeys}
-                  extraData={modelListExtraData}
-                  keyExtractor={(modelKey) => modelKey}
-                  renderItem={({ item: modelKey, index }) => {
-                    if (legacySection?.key === modelKey) {
+            {/* Scient: setup has intrinsic height independent of the model catalog. */}
+            {selectedSetupEntry && props.renderProviderSetup ? (
+              <div
+                className="min-h-0 flex-auto overflow-y-auto overscroll-y-contain bg-muted/40"
+                data-model-picker-setup="true"
+              >
+                {props.renderProviderSetup(selectedSetupEntry)}
+              </div>
+            ) : (
+              <div
+                className="relative min-h-0 overflow-hidden pr-px"
+                style={{ height: modelListHeight }}
+                data-model-picker-models="true"
+              >
+                <ComboboxListVirtualized padding="none">
+                  <LegendList<string>
+                    ref={attachModelList}
+                    data={filteredItemKeys}
+                    extraData={modelListExtraData}
+                    keyExtractor={(modelKey) => modelKey}
+                    renderItem={({ item: modelKey, index }) => {
+                      if (legacySection?.key === modelKey) {
+                        return (
+                          <ComboboxItem
+                            hideIndicator
+                            index={index}
+                            value={modelKey}
+                            aria-expanded={legacySection.isExpanded}
+                            className="group w-full cursor-pointer"
+                          >
+                            <ModelListDisclosureContent
+                              label={droidGroups ? "More models" : "Legacy models"}
+                              count={legacySection.legacyModels.length}
+                              expanded={legacySection.isExpanded}
+                            />
+                          </ComboboxItem>
+                        );
+                      }
+                      const sourceSection = sourceSectionRows?.sections.get(modelKey);
+                      if (sourceSection) {
+                        return (
+                          <ComboboxItem
+                            hideIndicator
+                            index={index}
+                            value={modelKey}
+                            aria-expanded={sourceSection.expanded}
+                            className="group w-full cursor-pointer"
+                          >
+                            <ModelListDisclosureContent
+                              label={modelSourceSectionLabel(
+                                sourceSection.section,
+                                selectedEntry?.displayName ?? "provider",
+                              )}
+                              count={sourceSection.count}
+                              expanded={sourceSection.expanded}
+                            />
+                          </ComboboxItem>
+                        );
+                      }
+                      const model = filteredModelByKey.get(modelKey);
+                      if (!model) {
+                        return null;
+                      }
+                      const disabledReason =
+                        getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
                       return (
-                        <ComboboxItem
-                          hideIndicator
-                          index={index}
-                          value={modelKey}
-                          aria-expanded={legacySection.isExpanded}
-                          className="group w-full cursor-pointer"
-                        >
-                          <ModelListDisclosureContent
-                            label={droidGroups ? "More models" : "Legacy models"}
-                            count={legacySection.legacyModels.length}
-                            expanded={legacySection.isExpanded}
-                          />
-                        </ComboboxItem>
-                      );
-                    }
-                    const sourceSection = sourceSectionRows?.sections.get(modelKey);
-                    if (sourceSection) {
-                      return (
-                        <ComboboxItem
-                          hideIndicator
-                          index={index}
-                          value={modelKey}
-                          aria-expanded={sourceSection.expanded}
-                          className="group w-full cursor-pointer"
-                        >
-                          <ModelListDisclosureContent
-                            label={modelSourceSectionLabel(
-                              sourceSection.section,
-                              selectedEntry?.displayName ?? "provider",
+                        <div>
+                          {droidGroups?.custom[0] === model ? (
+                            <div className="px-2 pt-3 pb-1 text-[11px] text-muted-foreground">
+                              Custom models
+                            </div>
+                          ) : null}
+                          <ModelListRow
+                            key={modelKey}
+                            index={index}
+                            model={model}
+                            instanceId={model.instanceId}
+                            driverKind={model.driverKind}
+                            providerDisplayName={model.instanceDisplayName}
+                            providerAccentColor={model.instanceAccentColor}
+                            acpRegistryAgentId={model.acpRegistryAgentId}
+                            acpRegistryIconUrl={model.acpRegistryIconUrl}
+                            isFavorite={favoritesSet.has(
+                              providerModelKey(model.instanceId, model.slug),
                             )}
-                            count={sourceSection.count}
-                            expanded={sourceSection.expanded}
+                            isSelected={
+                              selectedModelKeys !== undefined
+                                ? selectedModelKeySet.has(modelKey)
+                                : modelKey === activeModelKey
+                            }
+                            showSelection={selectedModelKeys !== undefined}
+                            showProvider
+                            preferShortName={!isLocked}
+                            useTriggerLabel={false}
+                            showNewBadge={model.badge === "new"}
+                            unavailable={model.isUnavailable === true}
+                            jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
+                            disabledReason={disabledReason}
+                            onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}
                           />
-                        </ComboboxItem>
+                        </div>
                       );
-                    }
-                    const model = filteredModelByKey.get(modelKey);
-                    if (!model) {
-                      return null;
-                    }
-                    const disabledReason =
-                      getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
-                    return (
-                      <div>
-                        {droidGroups?.custom[0] === model ? (
-                          <div className="px-2 pt-3 pb-1 text-[11px] text-muted-foreground">
-                            Custom models
-                          </div>
-                        ) : null}
-                        <ModelListRow
-                          key={modelKey}
-                          index={index}
-                          model={model}
-                          instanceId={model.instanceId}
-                          driverKind={model.driverKind}
-                          providerDisplayName={model.instanceDisplayName}
-                          providerAccentColor={model.instanceAccentColor}
-                          acpRegistryAgentId={model.acpRegistryAgentId}
-                          acpRegistryIconUrl={model.acpRegistryIconUrl}
-                          isFavorite={favoritesSet.has(
-                            providerModelKey(model.instanceId, model.slug),
-                          )}
-                          isSelected={
-                            selectedModelKeys !== undefined
-                              ? selectedModelKeySet.has(modelKey)
-                              : modelKey === activeModelKey
-                          }
-                          showSelection={selectedModelKeys !== undefined}
-                          showProvider
-                          preferShortName={!isLocked}
-                          useTriggerLabel={false}
-                          showNewBadge={model.badge === "new"}
-                          unavailable={model.isUnavailable === true}
-                          jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
-                          disabledReason={disabledReason}
-                          onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}
-                        />
-                      </div>
-                    );
-                  }}
-                  estimatedItemSize={MODEL_LIST_ESTIMATED_ITEM_SIZE}
-                  drawDistance={480}
-                  recycleItems
-                  contentContainerClassName="pl-2 pr-px"
-                  ItemSeparatorComponent={ModelListSeparator}
-                  onLayout={updateModelListScrollFades}
-                  onScroll={updateModelListScrollFades}
-                  className={cn(
-                    "scrollbar-gutter-stable h-full overflow-x-hidden overscroll-y-contain py-1.5 [&::-webkit-scrollbar-track]:my-2",
-                    getVirtualizedScrollFadeClassName({
-                      top: showTopScrollFade,
-                      bottom: showBottomScrollFade,
-                    }),
-                  )}
-                />
-              </ComboboxListVirtualized>
-            </div>
+                    }}
+                    estimatedItemSize={MODEL_LIST_ESTIMATED_ITEM_SIZE}
+                    drawDistance={480}
+                    recycleItems
+                    contentContainerClassName="pl-2 pr-px"
+                    ItemSeparatorComponent={ModelListSeparator}
+                    onLayout={updateModelListScrollFades}
+                    onScroll={updateModelListScrollFades}
+                    className={cn(
+                      "scrollbar-gutter-stable h-full overflow-x-hidden overscroll-y-contain py-1.5 [&::-webkit-scrollbar-track]:my-2",
+                      getVirtualizedScrollFadeClassName({
+                        top: showTopScrollFade,
+                        bottom: showBottomScrollFade,
+                      }),
+                    )}
+                  />
+                </ComboboxListVirtualized>
+              </div>
+            )}
             <ComboboxEmpty
               size="compact"
               className={cn("empty:h-0", selectedSetupEntry && "hidden")}

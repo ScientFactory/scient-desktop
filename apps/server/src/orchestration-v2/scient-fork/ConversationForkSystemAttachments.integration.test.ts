@@ -176,7 +176,10 @@ it.live(
           commandId: CommandId.make("system-file-source-delete"),
           threadId: source,
         });
-        yield* fs.remove(sourcePath!, { force: true });
+        // The fork still shows the deleted source's history, so the source's
+        // cleanup leaves the shared file alone.
+        assert.deepEqual(yield* (yield* ProjectionStoreV2).getThreadAttachmentIds(source), []);
+        assert.isTrue(yield* fs.exists(sourcePath!));
         const snapshots = yield* Snapshots.ConversationSnapshotService;
         const captured = yield* snapshots.capture({
           threadId: target,
@@ -185,20 +188,22 @@ it.live(
         assert.equal(
           captured.attachmentFiles.size,
           1,
-          "The fork must own system-only bytes after its source is gone",
+          "The fork must keep system-only bytes after its source is gone",
         );
         const system = captured.snapshot.messages.find((message) => message.role === "system");
         assert.ok(system);
-        assert.notEqual(system.id, "system-file-history");
         assert.equal(system.text, "Preserve this system history.");
-        const ownedId = receipt.forkAttachmentIdMap[attachment.id];
-        assert.ok(ownedId);
+        // Shared, not copied: the fork names the source's file.
+        assert.equal(receipt.forkAttachmentIdMap[attachment.id], attachment.id);
+        const ownedId = attachment.id;
         assert.equal(system.attachments[0]?.localId, ownedId);
         const targetProjection = yield* (yield* ProjectionStoreV2).getThreadProjection(target);
-        const systemItem = targetProjection.turnItems.find(
-          (item) =>
-            item.type === "dynamic_tool" && item.toolName === HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
-        );
+        const systemItem = targetProjection.visibleTurnItems
+          .map((row) => row.item)
+          .find(
+            (item) =>
+              item.type === "dynamic_tool" && item.toolName === HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
+          );
         assert.ok(systemItem?.type === "dynamic_tool");
         const systemRecord = yield* decodeHistoricalSystemMessage(systemItem.input);
         assert.deepEqual(systemRecord.context, {
@@ -240,6 +245,15 @@ it.live(
           })).snapshot.messages,
           captured.snapshot.messages,
         );
+        // Deleting the last conversation that shows it releases the system file.
+        yield* (yield* OrchestratorV2).dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("system-file-target-delete"),
+          threadId: target,
+        });
+        assert.deepEqual(yield* (yield* ProjectionStoreV2).getReleasableFiles(target), [
+          attachment.id,
+        ]);
       }).pipe(Effect.provide(testLayer), Effect.timeout("15 seconds")),
     ),
 );

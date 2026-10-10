@@ -137,7 +137,7 @@ const textCommands = new Set([
   "chapter",
 ]);
 
-export const LATEX_COMPLETION_ENVIRONMENTS = [
+const LATEX_COMPLETION_ENVIRONMENTS = [
   "equation",
   "equation*",
   "align",
@@ -201,7 +201,7 @@ export function latexCommandChoices(
     .sort((a, b) => Number(b.label === query) - Number(a.label === query));
 }
 
-export function latexChoiceInsertion(choice: LatexCommandChoice) {
+function latexChoiceInsertion(choice: LatexCommandChoice) {
   const first = choice.latex.indexOf("#?");
   return {
     replacement: choice.latex.replace(/#\?/gu, ""),

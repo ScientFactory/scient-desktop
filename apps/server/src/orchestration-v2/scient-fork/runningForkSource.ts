@@ -21,7 +21,25 @@ import type * as ProjectionStore from "../ProjectionStore.ts";
 import type * as ProjectStore from "../ProjectStore.ts";
 import type { ProviderEventRoutingState } from "../RunExecutionService.ts";
 
-/** Read the thread and fail with owner-lost unless the captured owner still runs it. */
+/** The records that decide whether a captured owner still runs its thread. */
+const RUNNING_FORK_OWNER_FIELDS = [
+  "runs",
+  "attempts",
+  "nodes",
+  "providerThreads",
+  "providerTurns",
+  "providerSessions",
+  "turnItems",
+] as const;
+type RunningForkOwnerRecords = ProjectionStore.ProjectionRecords<
+  (typeof RUNNING_FORK_OWNER_FIELDS)[number]
+>;
+
+/**
+ * Read the thread's control records (no history: its only items are the run's
+ * stop requests and results) and fail with owner-lost unless the captured
+ * owner still runs it.
+ */
 export const readCurrentRunningForkOwner = Effect.fnUntraced(function* (
   deps: {
     readonly projectionStore: ProjectionStore.ProjectionStoreV2Shape;
@@ -30,7 +48,14 @@ export const readCurrentRunningForkOwner = Effect.fnUntraced(function* (
   owner: ProviderTextSnapshotOwner,
 ) {
   const { projectionStore, projectStore } = deps;
-  const current = yield* projectionStore.getThreadProjection(owner.threadId);
+  const current: RunningForkOwnerRecords = yield* projectionStore.getThreadRecords(
+    owner.threadId,
+    RUNNING_FORK_OWNER_FIELDS,
+    {
+      turnItemRunIds: [owner.runId],
+      turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
+    },
+  );
   const project = yield* projectStore.get(current.thread.projectId);
   const run = current.runs.find((row) => row.id === owner.runId);
   const attempt = current.attempts.find((row) => row.id === owner.activeAttemptId);
@@ -95,7 +120,7 @@ export const readCurrentRunningForkOwner = Effect.fnUntraced(function* (
 export const runningForkAuthorityChanged = (
   owner: ProviderTextSnapshotOwner,
   capture: ProviderTextSnapshotProjection,
-  current: OrchestrationV2ThreadProjection,
+  current: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "providerTurns" | "nodes">,
   project: Option.Option<{ readonly workspaceRoot: string }>,
 ): boolean => {
   const before = capture.projection;

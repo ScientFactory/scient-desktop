@@ -39,6 +39,7 @@ import {
 import { createLatexFieldJournal } from "./latexFieldJournal";
 import "mathlive/fonts.css";
 import { installMathEditingGuides } from "./mathEditingGuides";
+import { installMathMatrixSpacing } from "./mathMatrixSpacing";
 import { editableMathMacros, installMathMacroEditing } from "./mathMacroEditing";
 import { mathSymbolMacros } from "./mathSymbolPresentation";
 import { LatexDocumentMathContext } from "./LatexDocumentMathContext";
@@ -191,6 +192,11 @@ export const LatexMathField = forwardRef<
   const lastAcknowledged = useRef(value);
   const dirty = useRef(false);
   const journalKey = useRef(draftKey);
+  // An in-place rename moves where drafts are kept. A field with unsaved input
+  // keeps its key until that input is published (a rename waits for it anyway).
+  useLayoutEffect(() => {
+    if (!dirty.current) journalKey.current = draftKey;
+  }, [draftKey]);
   const { reportDraft } = useContext(LatexDraftContext);
   const draftId = useId();
   const change = useRef(onChange);
@@ -359,6 +365,10 @@ export const LatexMathField = forwardRef<
         () => ({ ...completionContext.current, macros: initialMacros.current }),
       );
       const removeEditingGuides = installMathEditingGuides(math);
+      const removeMatrixSpacing = installMathMatrixSpacing(
+        math,
+        () => currentConfiguration.current.display,
+      );
       const macroEditing = installMathMacroEditing(math);
       const formattingScopes = installMathFormattingScopes(math);
       // Use native caret placement and command completion inside the formula.
@@ -1256,6 +1266,7 @@ export const LatexMathField = forwardRef<
         window.removeEventListener("resize", resetVerticalIntent);
         commandCompletion.dispose();
         removeEditingGuides();
+        removeMatrixSpacing();
         stopPointerSelection();
         cancelPointerSelection.current = () => {};
         publication.cancel();

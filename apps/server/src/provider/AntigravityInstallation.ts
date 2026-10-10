@@ -401,9 +401,17 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     options.validate ??
     Effect.fn("AntigravityInstallation.validate")(
       function* (executable: AntigravityExecutable, expectedVersion: string) {
-        const profileDirectory = yield* installerFs.makeTempDirectoryScoped({
+        const profileDirectory = yield* fs.makeTempDirectory({
           prefix: "t3-antigravity-validate-",
         });
+        let processesClosed = true;
+        yield* Effect.addFinalizer(() =>
+          processesClosed
+            ? installerFs.remove(profileDirectory).pipe(Effect.orDie)
+            : Effect.logWarning(
+                "Antigravity validation retained its temporary profile because process exit could not be confirmed.",
+              ),
+        );
         const profile = yield* prepareAntigravityProfile({
           profileDirectory,
           platform,
@@ -412,6 +420,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           // root keeps it under Windows' path limit.
           tempDirectory: profileDirectory,
         });
+        processesClosed = false;
         const runtime = yield* makeAntigravityAcpRuntime({
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,
@@ -420,26 +429,47 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             baseEnv: environment,
           }),
           cwd: profileDirectory,
+          ownDetachedProcessGroup: true,
+          processGroupPlatform: platform,
           childProcessSpawner: spawner,
           clientInfo: { name: "t3-code", version: "0.0.0" },
         });
-        const initialized = yield* runtime.initialize();
-        if (
-          initialized.agentInfo?.name !== "antigravity-acp" ||
-          initialized.agentInfo.version !== expectedVersion ||
-          // Antigravity 1.1.1 can report 2 with the legacy ACP response shape.
-          // The ACP client chooses the session wire format from that shape.
-          (initialized.protocolVersion !== 1 && initialized.protocolVersion !== 2) ||
-          initialized.agentCapabilities?.loadSession !== true ||
-          !initialized.agentCapabilities.sessionCapabilities?.resume ||
-          !initialized.agentCapabilities.auth?.logout ||
-          !initialized.authMethods?.some((method) => method.id === "oauth-personal")
-        ) {
+        const terminate = runtime.terminateProcessGroup;
+        if (!terminate)
           return yield* installationError(
             "verify",
-            "The downloaded runtime did not identify as the expected Google Antigravity release.",
+            "Antigravity validation could not establish process ownership.",
           );
-        }
+        yield* Effect.gen(function* () {
+          const initialized = yield* runtime.initialize();
+          if (
+            initialized.agentInfo?.name !== "antigravity-acp" ||
+            initialized.agentInfo.version !== expectedVersion ||
+            // Antigravity 1.1.1 can report 2 with the legacy ACP response shape.
+            // The ACP client chooses the session wire format from that shape.
+            (initialized.protocolVersion !== 1 && initialized.protocolVersion !== 2) ||
+            initialized.agentCapabilities?.loadSession !== true ||
+            !initialized.agentCapabilities.sessionCapabilities?.resume ||
+            !initialized.agentCapabilities.auth?.logout ||
+            !initialized.authMethods?.some((method) => method.id === "oauth-personal")
+          ) {
+            return yield* installationError(
+              "verify",
+              "The downloaded runtime did not identify as the expected Google Antigravity release.",
+            );
+          }
+        }).pipe(
+          Effect.ensuring(
+            terminate.pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  processesClosed = true;
+                }),
+              ),
+              Effect.orDie,
+            ),
+          ),
+        );
       },
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),

@@ -6,7 +6,7 @@ export function PandocInstallStatus(props: {
   readonly controller: PandocToolController;
   readonly showReady?: boolean;
 }) {
-  const { view, act } = props.controller;
+  const { view, act, checking } = props.controller;
   if (view.kind === "ready" && props.showReady !== true) return null;
   const problem = view.kind === "failed" || view.kind === "reinstall";
   return (
@@ -18,7 +18,13 @@ export function PandocInstallStatus(props: {
         {view.detail}
       </p>
       {view.actionLabel !== null ? (
-        <Button type="button" size="xs" variant="outline" disabled={view.busy} onClick={act}>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={view.busy || checking}
+          onClick={act}
+        >
           {view.actionLabel}
         </Button>
       ) : null}

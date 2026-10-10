@@ -71,6 +71,7 @@ export function LatexMathMenuItems({
       <MenuSeparator />
       <LatexBracketsMenu disabled={disabled} onInsert={onBrackets} />
       <LatexMatrixSizeMenu
+        display={placement !== "inline-math" && displayAvailable}
         environment={matrixEnvironment}
         onEnvironmentChange={onMatrixEnvironment}
         disabled={disabled}

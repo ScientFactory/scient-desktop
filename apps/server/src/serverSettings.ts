@@ -6,7 +6,7 @@
  * text generation model selection).
  *
  * Follows the same pattern as `keybindings.ts`: JSON file + Cache + PubSub +
- * Semaphore + FileSystem.watch for concurrency and external edit detection.
+ * Semaphore + scoped directory watches for concurrency and external edit detection.
  *
  * @module ServerSettings
  */
@@ -40,6 +40,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -49,6 +50,13 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
+// SCIENT-FORK:START — scoped native hints and authoritative settings metadata fallback.
+import {
+  SettingsDirectoryWatch,
+  SettingsFileMetadata,
+  acquireSettingsMetadataChanges,
+} from "./settingsDirectoryWatch.ts";
+// SCIENT-FORK:END
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
@@ -661,6 +669,10 @@ const make = Effect.gen(function* () {
   const { settingsPath } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
+  // SCIENT-FORK:START — readiness-aware Node settings watcher.
+  const directoryWatch = yield* SettingsDirectoryWatch;
+  const settingsMetadata = yield* SettingsFileMetadata;
+  // SCIENT-FORK:END
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const modelReasoning = makeCustomModelReasoning();
   const sql = yield* SqlClient.SqlClient;
@@ -1365,21 +1377,39 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  const watchFileChanges = (filePath: string) => {
-    const directory = pathService.dirname(filePath);
-    const fileName = pathService.basename(filePath);
-    const resolvedFilePath = pathService.resolve(filePath);
-    return fs
-      .watch(directory)
-      .pipe(
+  // SCIENT-FORK:START — buffer native hints; metadata covers asynchronous OS establishment gaps.
+  const acquireFileChanges = Effect.fnUntraced(
+    function* (filePath: string) {
+      const directory = pathService.dirname(filePath);
+      const fileName = pathService.basename(filePath);
+      const resolvedFilePath = pathService.resolve(filePath);
+      const events = yield* directoryWatch.acquire(directory);
+      return events.pipe(
         Stream.filter(
-          (event) =>
-            event.path === fileName ||
-            event.path === filePath ||
-            pathService.resolve(directory, event.path) === resolvedFilePath,
+          (eventPath) =>
+            eventPath === fileName ||
+            eventPath === filePath ||
+            pathService.resolve(directory, eventPath) === resolvedFilePath,
         ),
       );
-  };
+    },
+    Effect.catch((error) =>
+      Effect.logError(error).pipe(
+        Effect.as<Stream.Stream<string, PlatformError.PlatformError>>(Stream.empty),
+      ),
+    ),
+  );
+
+  const watchFileChanges = (filePath: string, ready: Deferred.Deferred<void>) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const events = yield* acquireFileChanges(filePath);
+        yield* revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+        yield* Deferred.succeed(ready, undefined);
+        return events;
+      }),
+    );
+  // SCIENT-FORK:END
 
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
@@ -1396,6 +1426,12 @@ const make = Effect.gen(function* () {
     );
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+    // SCIENT-FORK:START — metadata baseline precedes every startup re-read.
+    const metadataChanges = yield* acquireSettingsMetadataChanges(
+      settingsPath,
+      settingsMetadata.readFingerprint,
+    );
+    // SCIENT-FORK:END
 
     // A symlinked settings file is rewritten in its destination's directory,
     // which a watch on the link's directory never sees. The link is resolved
@@ -1414,15 +1450,27 @@ const make = Effect.gen(function* () {
       return Option.some(linkTargetPath);
     }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
+    // SCIENT-FORK:START — resolve the initial link only after parent registration.
+    const parentWatchScope = yield* Scope.fork(watcherScope, "sequential");
+    const settingsFileEvents = yield* Scope.provide(
+      acquireFileChanges(settingsPath),
+      parentWatchScope,
+    );
+    const linkEvents = yield* Scope.provide(acquireFileChanges(settingsPath), parentWatchScope);
+    const targetWatchReady = yield* Deferred.make<void>();
+    // SCIENT-FORK:END
     const initialLinkTarget = yield* watchLinkTarget;
     const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
-      Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
+      Stream.concat(linkEvents.pipe(Stream.mapEffect(() => watchLinkTarget))),
       Stream.changes,
       Stream.switchMap(
         Option.match({
-          onNone: () => Stream.empty,
+          // SCIENT-FORK:START — re-read only after the new destination is registered.
+          onNone: () =>
+            Stream.fromEffect(Deferred.succeed(targetWatchReady, undefined)).pipe(Stream.drain),
           onSome: (linkTargetPath) =>
-            watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
+            watchFileChanges(linkTargetPath, targetWatchReady).pipe(Stream.ignore({ log: true })),
+          // SCIENT-FORK:END
         }),
       ),
     );
@@ -1430,16 +1478,28 @@ const make = Effect.gen(function* () {
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
     // `fs.watch` can fire before the content has been flushed to disk.
+    // SCIENT-FORK:START — all hints and metadata changes share the existing debounce/read owner.
     const debouncedSettingsEvents = Stream.merge(
-      watchFileChanges(settingsPath),
-      linkTargetEvents,
+      Stream.merge(settingsFileEvents, linkTargetEvents),
+      metadataChanges,
     ).pipe(Stream.debounce(Duration.millis(100)));
+    // SCIENT-FORK:END
 
     yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
+      // SCIENT-FORK:START — consumer failure stops native hints and metadata; no implicit retry owner.
+      Effect.ensuring(
+        Scope.close(parentWatchScope, Exit.void).pipe(
+          Effect.andThen(Deferred.succeed(targetWatchReady, undefined)),
+        ),
+      ),
+      // SCIENT-FORK:END
       Effect.ignoreCause({ log: true }),
       Effect.forkIn(watcherScope),
       Effect.asVoid,
     );
+    // SCIENT-FORK:START — startup refresh follows adapter acquisition; metadata handles OS lag.
+    yield* Deferred.await(targetWatchReady);
+    // SCIENT-FORK:END
   });
 
   const start = Effect.gen(function* () {
@@ -1454,7 +1514,19 @@ const make = Effect.gen(function* () {
       yield* getSettingsFromCache;
     });
 
-    const startupExit = yield* Effect.exit(startup);
+    // SCIENT-FORK:START — cancelled/failed startup cannot leave registered watches behind.
+    const startupExit = yield* Effect.exit(
+      startup.pipe(
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit)
+            ? Scope.close(watcherScope, Exit.void).pipe(
+                Effect.andThen(Deferred.failCause(startedDeferred, exit.cause)),
+              )
+            : Effect.void,
+        ),
+      ),
+    );
+    // SCIENT-FORK:END
     if (startupExit._tag === "Failure") {
       yield* Deferred.failCause(startedDeferred, startupExit.cause).pipe(Effect.orDie);
       return yield* Effect.failCause(startupExit.cause);

@@ -11,7 +11,7 @@ import type { ScientMarkdownEditorSnapshot, ScientMarkdownEditorView } from "../
 import { TableActions, TableMenuItems } from "./ScientMarkdownControls";
 
 /** Where the caret is, in the words the bar uses for the same things. */
-export function markdownCaretPosition(
+function markdownCaretPosition(
   snapshot: ScientMarkdownEditorSnapshot,
   state: EditorState | null,
 ): string {

@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { readLocalApi } from "~/localApi";
-import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
+import { registerRenameParticipant } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 import { Button } from "~/components/ui/button";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { attachShortcutHost } from "../keyboard/host";
@@ -42,7 +42,10 @@ import { showScientMarkdownTableContextMenu } from "./tableContextMenu";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
 import { ScientMarkdownFooter } from "./ui/ScientMarkdownFooter";
 import { useFinalUnmount } from "./useFinalUnmount";
-import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
+import {
+  documentIdentity,
+  type MarkdownPersistenceLease,
+} from "./persistence/markdownPersistenceRegistry";
 import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
 
 const CHROME_BLOCK_SHORTCUTS = [
@@ -94,10 +97,7 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
  */
 export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSurfaceProps) {
   return (
-    <ScientMarkdownWorkspaceSurfaceOwner
-      key={projectFileOperationKey(props.persistence.target)}
-      {...props}
-    />
+    <ScientMarkdownWorkspaceSurfaceOwner key={documentIdentity(props.persistence)} {...props} />
   );
 }
 
@@ -267,6 +267,17 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
       }),
     [controller, props.persistence],
   );
+
+  // An in-place rename waits while an input method is composing here.
+  useEffect(
+    () =>
+      registerRenameParticipant(documentIdentity(props.persistence), {
+        readyToMove: () => !composingRef.current && controller.view?.composing !== true,
+      }),
+    [controller, props.persistence],
+  );
+
+  useEffect(() => controller.setAriaLabel(props.ariaLabel), [controller, props.ariaLabel]);
 
   useEffect(() => {
     if (previousThemeRef.current !== props.resolvedTheme) {

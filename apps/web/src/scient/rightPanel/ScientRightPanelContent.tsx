@@ -10,11 +10,6 @@ import type { OpenFileOptions } from "~/rightPanelStore";
 
 import type { ScientRightPanelSurface } from "./surfaces";
 
-const ScientDocumentsPanel = lazy(() =>
-  import("../documents/ScientDocumentsPanel").then((module) => ({
-    default: module.ScientDocumentsPanel,
-  })),
-);
 const ScientSourcesPanel = lazy(() =>
   import("../sources/ScientSourcesPanel").then((module) => ({
     default: module.ScientSourcesPanel,
@@ -56,7 +51,6 @@ export interface ScientRightPanelContentProps {
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly openFileSourceSurface: (path: string, line?: number, options?: OpenFileOptions) => void;
-  readonly addFilesSurface: () => void;
   readonly closeRightPanelSurface: (surface: ScientRightPanelSurface) => void;
   readonly openScientSourcePdf: (input: {
     readonly sourceId: string;
@@ -79,8 +73,6 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
     availableEditors,
     keybindings,
     closeRightPanelSurface,
-    openFileSourceSurface,
-    addFilesSurface,
     openScientSourcePdf,
   } = input;
   return renderedRightPanelSurface?.kind === "scient" &&
@@ -150,22 +142,6 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
         fileName={renderedRightPanelSurface.fileName}
         root={activeWorkspaceRoot}
         sourceId={renderedRightPanelSurface.sourceId}
-      />
-    </Suspense>
-  ) : renderedRightPanelSurface?.kind === "scient" &&
-    renderedRightPanelSurface.module === "documents" &&
-    activeThreadRef &&
-    activeWorkspaceRoot ? (
-    <Suspense fallback={null}>
-      <ScientDocumentsPanel
-        key={`${activeThreadRef.environmentId}:${activeWorkspaceRoot}`}
-        environmentId={activeThreadRef.environmentId}
-        cwd={activeWorkspaceRoot}
-        projectTitle={activeProject?.title ?? "Project"}
-        onOpenDocument={(path) =>
-          openFileSourceSurface(path, undefined, { latexPreviewMode: "visual" })
-        }
-        onOpenFiles={addFilesSurface}
       />
     </Suspense>
   ) : renderedRightPanelSurface?.kind === "scient" &&

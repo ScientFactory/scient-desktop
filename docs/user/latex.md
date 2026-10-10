@@ -9,24 +9,43 @@ change it, and drag the divider to resize either side.
 
 ## Start a document
 
-Choose **Documents** from **Open a surface** or the panel's **+** menu. Enter a
-filename and press Enter (or **Create**). The `.tex` extension is added when needed,
-and the filename becomes the default printed title. A blank article is the default;
-**Use a template** optionally selects Assignment, Report, Research proposal, or
-Thesis in the same form. Author and date can be added while writing. Known filename
-collisions receive a numbered suffix; existing files are never overwritten.
+Choose **Documents** in the side panel, or under **+**, then **LaTeX** (or
+**Markdown**). A new `untitled.tex` opens straight in Visual, set up from your
+default template, with the cursor in the title. Nothing else needs filling in:
+type the title and keep writing. Once the title is saved and you move on, the
+file takes its name from it once, for example `spectral-bounds.tex`; later
+title changes leave the file name alone. Templates without a title, such as a
+letter or a CV, ask for a document name instead. Existing files are never
+overwritten, and a name that is taken gets a number.
 
-Built-in starters are bundled `.tex` templates. A successful save reports the
-created filename; creation failures keep your entries and display an error.
+Until you write in the body, the templates and the document language (English
+or Hebrew) sit above the page: choosing another one switches the empty
+document in place and keeps your title. The first few templates are on the
+page; the rest are under **More**. The Thesis template is a folder of its own,
+with chapters and a bibliography beside `main.tex`. Right-click a template to
+make it the default, move it between the page and **More**, or hide it, and
+drag to reorder. **More > New template…** saves a copy of the chosen template
+as your own, which you can then edit, rename, or delete.
 
-The Documents surface also searches the project's `.tex` files and remembers
-documents opened through it on this device. **Use a project template** copies an
-existing `.tex` file beside its original, keeping relative supporting-file paths
-intact. For an institutional template with supporting files, open that folder as
-a project first. The built-in thesis starter is a general article-based structure,
-not an institutional thesis class. Project creation remains in the project sidebar.
+Hover over a template name to preview its first page. Click the preview to open
+a larger view with zoom and scrolling; Escape closes it. Opening a preview
+does not select the template. Click the template's name to use it. Previews work
+offline, including saved personal templates with a captured first page.
 
-Templates, writing, project image selection, and bibliography search work locally.
+**Settings > Documents** keeps these choices in one place:
+
+- **LaTeX**: the LaTeX installation on the server (with **Install TinyTeX**
+  when none is found), **Templates** (the default and the full list to arrange,
+  hide, show again, rename, or delete your own), the language for new
+  documents, and the view LaTeX files open in.
+- **Markdown**: whether Markdown files open Rich or as Source.
+- **Word**: the Pandoc converter that Word export uses, and its install.
+
+Template, language, and view choices stay on this device. The installs belong
+to the server shown at the top of the page; with that server offline, they
+read **Offline**. The view a file opens in is the one you last used, in
+Settings or in the editor.
+
 PDF generation requires an installed TeX toolchain and the packages used by your
 document. Install those packages before working offline; no hosted compiler or AI
 service is required for the writing workflow.
@@ -118,12 +137,16 @@ inside figures, tables and other objects is not searched.
 
 A thin footer stays under the document. On the left, one control opens the
 current object's options. Extra structural choices are grouped inside that panel.
-Click outside or press Escape to close it; closing keeps unfinished fields intact.
-Headings show a compact **Label** field directly in the footer instead of an
-options panel. Enter a unique reference key and press Enter or leave the field
-to apply it. Invalid or duplicate keys stay as drafts. Renaming a key in a
-single-file document updates its recognized cross-references in one undoable
-change; included files require a coordinated rename. Clearing the field removes
+The entire footer, including its empty space and word count, belongs to the
+current editing context. Clicking there keeps the object controls and open
+options in place. Click elsewhere in the document or outside it, use Close, or
+press Escape to close the options; closing keeps unfinished fields intact.
+Available labels show their reference key in gray directly in the footer.
+Click the key, or **Add label** when empty, to edit it; a thin border appears
+while focused. Press Enter or leave the field to apply a valid change. Invalid
+or duplicate keys stay as drafts; Escape cancels unfinished input.
+For headings, renaming a key in a single-file document updates its recognized
+cross-references in one undoable change; included files require a coordinated rename. Clearing the field removes
 the heading's label. Heading numbering stays in **Text > Paragraph style**.
 On the right it shows where the caret is, for example "Section" or "Table · row 3, column 2",
 and the word count:
@@ -802,8 +825,10 @@ BibTeX entries offer title, author, year and additional fields, plus Entry sourc
 for expressions and custom fields. Manual entries offer their formatted LaTeX
 text and optional custom label. Existing keys stay fixed to preserve citations;
 new entries let you choose a unique key. Save applies the entry, while Cancel
-discards its form draft. Closing or switching entries asks you to finish a dirty
-draft first. Removal asks for confirmation because existing citations keep
+discards its form draft. Close hides the panel and retains the draft during the
+app session; reopen References to resume it. A save already in progress continues
+while the panel is closed. Switching entries asks you to finish a dirty draft
+first. Removal asks for confirmation because existing citations keep
 their keys and become unresolved. The last manual entry can be removed without
 changing the document's bibliography approach.
 

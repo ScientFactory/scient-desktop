@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { normalizePdfZoom } from "../pdf/pdfReaderModel";
 
-export const MIN_VISUAL_ZOOM = normalizePdfZoom(0);
-export const MAX_VISUAL_ZOOM = normalizePdfZoom(Infinity);
-
 /** Chromium trackpad pinches arrive as Ctrl+wheel, just as in our PDF reader. */
 export function useLatexPinchZoom(
   scrollRef: RefObject<HTMLDivElement | null>,

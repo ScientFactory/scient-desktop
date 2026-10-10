@@ -11,10 +11,9 @@ import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { startCodexBrowserSignIn } from "./codexLifecycleActions";
 import {
-  isRuntimePlanStale,
-  managedRuntimeSwitchNeedsDecision,
-} from "./ManagedRuntimeSwitchDecision";
-import type { ProviderSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
+  providerSettingsLifecyclePresentation,
+  type ProviderSettingsLifecyclePresentation,
+} from "./providerSettingsLifecyclePresentation";
 import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
@@ -97,13 +96,45 @@ function resolveProviderSettingsHeaderAction(
 
 export function ProviderSettingsLifecycleAction(props: ProviderSettingsLifecycleActionProps) {
   const action = resolveProviderSettingsHeaderAction(props.provider);
+  const presentation = providerSettingsLifecyclePresentation(props.provider, props.displayName);
+  const operationActive = presentation.kind === "installing" || presentation.kind === "signing-in";
+  const externalUpdateActive =
+    props.externalUpdateRunning === true ||
+    props.provider.updateState?.status === "queued" ||
+    props.provider.updateState?.status === "running";
+  const progressLabel = operationActive
+    ? presentation.statusLabel
+    : externalUpdateActive
+      ? "Updating"
+      : null;
   return (
     <ProviderSettingsActions
       displayName={props.displayName}
       onManage={props.onManage}
-      labeled={action === "manage"}
+      labeled={progressLabel === null && action === "manage"}
     >
-      {action === "install" ? (
+      {progressLabel !== null ? (
+        <Button
+          aria-label={`${progressLabel} ${props.displayName}`}
+          onClick={() => props.onManage()}
+          size="compact"
+          type="button"
+          variant="ghost-primary"
+        >
+          <LoaderIcon aria-hidden className="animate-spin" />
+          <span role="status" className="inline-flex items-baseline gap-1.5">
+            {progressLabel}
+            {operationActive && presentation.downloadPercent !== undefined ? (
+              <span
+                aria-label={`Download progress ${presentation.downloadPercent}%`}
+                className="text-[11px] font-normal tabular-nums text-muted-foreground"
+              >
+                {presentation.downloadPercent}%
+              </span>
+            ) : null}
+          </span>
+        </Button>
+      ) : action === "install" ? (
         <ManagedRuntimeActionButton
           action="install"
           displayName={props.displayName}
@@ -231,18 +262,8 @@ function ManagedRuntimeActionButton(props: {
     setPending(true);
     try {
       const plan = await controller.planRuntime(props.action);
-      // Replacing a newer system runtime, or one of unknown version, is decided
-      // in the dialog, which plans the action again; this click starts nothing.
-      if (managedRuntimeSwitchNeedsDecision(plan)) {
-        props.onManage(props.action);
-        return;
-      }
       await controller.startRuntime(plan);
     } catch (error) {
-      if (isRuntimePlanStale(error)) {
-        props.onManage(props.action);
-        return;
-      }
       toastManager.add(
         stackedThreadToast({
           type: "error",

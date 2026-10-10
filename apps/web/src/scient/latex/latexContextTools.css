@@ -186,13 +186,17 @@
   .scient-latex-context-toolbar[data-context-presentation="inline"]:not([hidden]) {
   display: flex;
   align-items: center;
-  gap: 0;
-  height: 28px;
+  gap: 8px;
+  height: var(--scient-document-footer-control-height, 28px);
   white-space: nowrap;
-  font: 11px/16px var(--font-sans);
+  font: var(--scient-document-footer-font-size, 11px)/16px var(--font-sans);
 }
-.scient-latex-context-tools[data-inspector][data-inline] .scient-latex-math-bar {
-  gap: 2px;
+.scient-latex-context-tools[data-inspector][data-inline]
+  .scient-latex-context-toolbar[data-context-presentation="inline"]
+  > button:not([data-slot]) {
+  height: var(--scient-document-footer-control-height, 24px);
+  min-height: var(--scient-document-footer-control-height, 24px);
+  padding: 3px 6px;
 }
 .scient-latex-context-tools[data-inspector][data-inline] .scient-latex-math-source-popover {
   position: absolute;
@@ -201,11 +205,139 @@
   width: min(360px, calc(100% - 16px));
   max-height: min(400px, 70dvh);
   overflow: auto;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--popover);
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   box-shadow: 0 6px 22px #0002;
+}
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-math-source-popover
+  textarea {
+  min-height: 64px;
+  max-height: min(320px, 60dvh);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--background);
+  font: 12px/1.5 var(--font-mono);
+  resize: none;
+}
+.scient-latex-source-resize-handle {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+.scient-latex-source-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 9px;
+  height: 9px;
+  color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  background: repeating-linear-gradient(45deg, transparent 0 2px, currentColor 2px 3px);
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+.scient-latex-source-resize-handle:is(:hover, :focus-visible)::after {
+  color: var(--muted-foreground);
+}
+.scient-latex-source-resize-handle:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-math-source-popover:focus-within
+  textarea {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+.scient-latex-context-tools[data-inline]
+  .scient-latex-math-source-popover
+  .scient-latex-math-source-error {
+  margin: 0;
+  padding: 0 10px 8px;
+  white-space: normal;
+}
+.scient-latex-reference-label-control {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--foreground);
+}
+.scient-latex-reference-label-control > label {
+  flex: none;
+  cursor: text;
+}
+.scient-latex-reference-label-control .scient-latex-reference-label-field {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-reference-label-control
+  textarea {
+  display: block;
+  field-sizing: content;
+  width: auto;
+  min-width: 8ch;
+  max-width: min(24ch, 30vw);
+  height: var(--scient-document-footer-field-height, 24px);
+  min-height: var(--scient-document-footer-field-height, 24px);
+  max-height: var(--scient-document-footer-field-height, 24px);
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: var(--scient-document-footer-font-size, 12px)/16px var(--font-mono);
+  white-space: pre;
+  overflow: hidden;
+  resize: none;
+}
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-reference-label-control
+  textarea:focus {
+  border-color: var(--ring);
+  outline: none;
+  outline-offset: -1px;
+  color: var(--foreground);
+}
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-reference-label-control
+  textarea::placeholder {
+  color: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+}
+.scient-latex-context-tools[data-inspector]
+  .scient-latex-context-toolbar
+  .scient-latex-reference-label-control
+  p {
+  position: absolute;
+  z-index: 60;
+  bottom: calc(100% + 6px);
+  inset-inline-start: 0;
+  width: max-content;
+  max-width: min(260px, 70vw);
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--popover);
+  color: var(--destructive);
+  white-space: normal;
 }
 .scient-latex-context-tools[data-inline] .scient-latex-math-bar-error {
   position: absolute;
@@ -217,92 +349,14 @@
   background: var(--popover);
   white-space: normal;
 }
-.scient-latex-context-tools[data-inspector][data-inline]
-  :is(
-    .scient-latex-heading-reference,
-    .scient-latex-math-reference,
-    .scient-latex-table-reference,
-    .scient-latex-figure-reference,
-    .scient-latex-statement-reference,
-    .scient-latex-algorithm-reference,
-    .scient-latex-code-reference
-  ) {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font: 11px/16px var(--font-sans);
-}
-:is(
-    .scient-latex-heading-reference,
-    .scient-latex-math-reference,
-    .scient-latex-table-reference,
-    .scient-latex-figure-reference,
-    .scient-latex-statement-reference,
-    .scient-latex-algorithm-reference,
-    .scient-latex-code-reference
-  )
-  .scient-latex-reference-label-field {
-  position: relative;
-  flex: 0 1 120px;
-  min-width: 12ch;
-  width: 120px;
-  display: flex;
-}
-/* Labels are single-line identifiers. Native caret scrolling remains available
-   for long keys, without a scrollbar taking over the compact field's height. */
+/* Keep native caret scrolling for long labels without displaying a scrollbar. */
 .scient-latex-reference-label-field > textarea {
   box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
   overflow: hidden;
   scrollbar-width: none;
 }
 .scient-latex-reference-label-field > textarea::-webkit-scrollbar {
   display: none;
-}
-.scient-latex-context-tools[data-inspector][data-inline]
-  :is(
-    .scient-latex-heading-reference,
-    .scient-latex-math-reference,
-    .scient-latex-table-reference,
-    .scient-latex-figure-reference,
-    .scient-latex-statement-reference,
-    .scient-latex-algorithm-reference,
-    .scient-latex-code-reference
-  )
-  textarea {
-  height: 22px;
-  min-height: 22px;
-  max-height: 22px;
-  padding: 2px 5px;
-  font: 11px/16px var(--font-sans);
-  white-space: pre;
-  resize: none;
-}
-:is(
-    .scient-latex-heading-reference,
-    .scient-latex-math-reference,
-    .scient-latex-table-reference,
-    .scient-latex-figure-reference,
-    .scient-latex-statement-reference,
-    .scient-latex-algorithm-reference,
-    .scient-latex-code-reference
-  )
-  .scient-latex-reference-label-field
-  > p {
-  position: absolute;
-  z-index: 60;
-  bottom: calc(100% + 6px);
-  inset-inline-start: 0;
-  width: max-content;
-  max-width: min(260px, 70vw);
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--popover);
-  color: var(--popover-foreground);
-  white-space: normal;
 }
 
 /* Compact forms share native field navigation inside document menus. Shared controls own their look. */

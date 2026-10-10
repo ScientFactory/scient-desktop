@@ -998,3 +998,58 @@ it.effect("settles a delegated child once its restart continuation fails for goo
     }).pipe(Effect.provide(layer));
   }),
 );
+
+it.effect("keeps retrying a file release past the attempt budget while its files are held", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const workerId = "worker-release-thread-files";
+    const effect: EffectOutbox.OrchestrationEffectV2 = {
+      id: "effect:release-thread-files",
+      commandId: CommandId.make("command:release-thread-files"),
+      threadId: ThreadId.make("thread:release-thread-files"),
+      request: { type: "scient.release-thread-files" },
+      status: "running",
+      attemptCount: 9,
+      availableAt: now,
+      leaseOwner: workerId,
+      leaseExpiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      lastError: null,
+    };
+    const retries = yield* Ref.make(0);
+    const failures = yield* Ref.make(0);
+    const outbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(effect)),
+      get: () => Effect.succeed(Option.some(effect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
+      fail: () => Ref.update(failures, (count) => count + 1).pipe(Effect.as(true)),
+    });
+    const executor = Layer.succeed(
+      EffectWorker.OrchestrationEffectExecutorV2,
+      EffectWorker.OrchestrationEffectExecutorV2.of({
+        execute: () =>
+          Effect.fail(
+            new EffectWorker.OrchestrationEffectExecutionError({
+              effectId: effect.id,
+              effectType: effect.request.type,
+              cause: "A file is reserved by an admission in progress.",
+            }),
+          ),
+      }),
+    );
+    yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((worker) => worker.runOnce),
+      Effect.provide(
+        EffectWorker.layerWithOptions({ workerId, maxAttempts: 5 }).pipe(
+          Layer.provide(Layer.merge(outbox, executor)),
+        ),
+      ),
+    );
+    assert.equal(yield* Ref.get(retries), 1);
+    assert.equal(yield* Ref.get(failures), 0);
+  }),
+);

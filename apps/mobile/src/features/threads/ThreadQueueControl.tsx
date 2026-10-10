@@ -13,7 +13,6 @@ import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-scree
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
-import { MaterialButton } from "../../components/MaterialButton";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
@@ -33,13 +32,18 @@ import {
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
 import { threadDragGapOffset } from "./threadDragGap";
+// SCIENT-FORK:START queued-run-send
+import { canSendScientQueuedRow, useScientQueuedRunSendEvidence } from "./scientQueuedRunSend";
+// SCIENT-FORK:END queued-run-send
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 const REMOVE_ACTION_WIDTH = 76;
 const THUMBNAIL_LIMIT = 3;
 
 type QueueTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
-type QueueAction = "steer" | "edit" | "up" | "down" | "remove";
+// SCIENT-FORK:START queued-run-send — "send" starts a held message and resumes the queue.
+type QueueAction = "steer" | "send" | "edit" | "up" | "down" | "remove";
+// SCIENT-FORK:END queued-run-send
 type QueueRowLayout = { readonly id: RunId; readonly y?: number; readonly height?: number };
 
 export function useThreadQueueWorkflow(target: QueueTarget) {
@@ -61,8 +65,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun, "reorder queued message");
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
-  const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
-  const [resuming, setResuming] = useState(false);
+  // SCIENT-FORK:START queued-run-send — Send on a row replaces the held header's Resume queue.
+  const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "send queued message");
+  const sendEvidence = useScientQueuedRunSendEvidence(target);
+  // SCIENT-FORK:END queued-run-send
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const busyRef = useRef(false);
   const [draggedRunId, setDraggedRunId] = useState<RunId | null>(null);
@@ -138,13 +144,17 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       navigation.goBack();
       return;
     }
-    if (action !== "steer" && action !== "remove") return;
+    if (action !== "steer" && action !== "remove" && action !== "send") return;
     busyRef.current = true;
     setBusyRunId(runId);
     void Haptics.selectionAsync();
     try {
       if (action === "remove") {
         await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
+        // SCIENT-FORK:START queued-run-send
+      } else if (action === "send") {
+        await resume({ ...target, input: { threadId: target.threadId, runId } });
+        // SCIENT-FORK:END queued-run-send
       } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
         await promote({
           ...target,
@@ -184,26 +194,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
-      {workflow?.isHeld && queuedRuns.length > 0 ? (
-        <View className="gap-2 py-3">
-          <Text className="text-sm text-foreground-muted">Queue held after restart</Text>
-          <MaterialButton
-            label="Resume queue"
-            disabled={resuming || busyRunId !== null}
-            onPress={async () => {
-              if (busyRef.current) return;
-              busyRef.current = true;
-              setResuming(true);
-              try {
-                await resume({ ...target, input: { threadId: target.threadId } });
-              } finally {
-                busyRef.current = false;
-                setResuming(false);
-              }
-            }}
-          />
-        </View>
-      ) : null}
+      {/* SCIENT-FORK: no held header or Resume queue; each held row offers Send. */}
       {queuedRuns.length === 0 ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
           No messages waiting in this queue.
@@ -229,6 +220,15 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
         });
         const title =
           controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
+        // SCIENT-FORK:START queued-run-send
+        const canSend = canSendScientQueuedRow({
+          ...sendEvidence,
+          isHeld: workflow?.isHeld === true,
+          runId: run.id,
+          busy: busyRunId !== null || draggedRunId !== null,
+          isEditing: controls.isEditing,
+        });
+        // SCIENT-FORK:END queued-run-send
         return (
           <QueueShiftedRow
             key={run.id}
@@ -327,6 +327,17 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   accessibilityLabel={`Actions for queued message ${index + 1}`}
                   shouldOpenOnLongPress
                   actions={[
+                    // SCIENT-FORK:START queued-run-send
+                    ...(canSend
+                      ? [
+                          {
+                            id: "send",
+                            title: "Send now",
+                            image: Platform.OS === "ios" ? "arrow.up" : "arrow_upward",
+                          },
+                        ]
+                      : []),
+                    // SCIENT-FORK:END queued-run-send
                     ...(workflow?.canPromoteToSteer
                       ? [
                           {
@@ -399,6 +410,18 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         </Text>
                       </Pressable>
                     ) : null}
+                    {/* SCIENT-FORK:START queued-run-send */}
+                    {canSend ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Send message ${index + 1} now`}
+                        onPress={() => void act(run.id, "send")}
+                        className="h-8 shrink-0 justify-center rounded-full bg-primary px-3 active:opacity-70"
+                      >
+                        <Text className="font-t3-medium text-xs text-primary-foreground">Send</Text>
+                      </Pressable>
+                    ) : null}
+                    {/* SCIENT-FORK:END queued-run-send */}
                   </Pressable>
                 </ControlPillMenu>
               </QueueRowSwipeable>

@@ -81,9 +81,10 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
               ? {}
               : { assetDirectory: args.payload.assetDirectory }),
           }).pipe(
-            Effect.catchTag("WorkspaceImageOperationError", (cause) =>
-              failEnvironmentInternal("scient_latex_build_failed", cause.cause),
-            ),
+            Effect.catchTags({
+              WorkspaceImageOperationError: (cause) =>
+                failEnvironmentInternal("scient_latex_build_failed", cause.cause),
+            }),
           );
         }),
       )

@@ -1,5 +1,5 @@
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import {
-  formatProviderSkillDisplayName,
   isScientManagedSkill,
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,

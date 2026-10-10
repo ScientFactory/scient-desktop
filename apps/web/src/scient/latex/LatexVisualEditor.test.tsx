@@ -226,6 +226,12 @@ describe("writing editor source transactions", () => {
     expect(option, optionLabel).toBeDefined();
     await act(() => option!.click());
   }
+  async function focusReferenceLabel(label: string) {
+    const field = container.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${label}"]`)!;
+    expect(field).not.toBeNull();
+    await act(() => field.focus());
+    return field;
+  }
   async function selectKind(kind: string) {
     let position = -1;
     editor().state.doc.descendants((node, offset) => {
@@ -275,13 +281,14 @@ describe("writing editor source transactions", () => {
     });
   }
 
-  it("shows a heading label directly in the footer and adds/removes it through source and undo", async () => {
+  it("edits a visible heading label in the footer and adds/removes it through source and undo", async () => {
     await mount("\\section{Introduction}\n\nSee Section~\\ref{sec:intro}.");
     await act(() => editor().commands.setTextSelection(3));
     const field = () =>
-      container.querySelector<HTMLTextAreaElement>(
+      document.body.querySelector<HTMLTextAreaElement>(
         'textarea[aria-label="Heading reference label"]',
       )!;
+    await focusReferenceLabel("Heading reference label");
     expect(field()).not.toBeNull();
     expect(container.querySelector(".scient-latex-context-tools[data-inline]")).not.toBeNull();
     expect(container.querySelector(".scient-latex-context-inspector")?.hasAttribute("inert")).toBe(
@@ -311,9 +318,7 @@ describe("writing editor source transactions", () => {
       "\\usepackage{hyperref}\n",
     );
     await act(() => editor().commands.setTextSelection(3));
-    const field = container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Heading reference label"]',
-    )!;
+    const field = await focusReferenceLabel("Heading reference label");
     await act(() => {
       field.focus();
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
@@ -347,8 +352,9 @@ describe("writing editor source transactions", () => {
       "\\section{Introduction}\\label{sec:intro}\n\n\\section{Results}\\label{sec:results}",
     );
     await act(() => editor().commands.setTextSelection(3));
+    await focusReferenceLabel("Heading reference label");
     const field = () =>
-      container.querySelector<HTMLTextAreaElement>(
+      document.body.querySelector<HTMLTextAreaElement>(
         'textarea[aria-label="Heading reference label"]',
       )!;
     await setField(field(), "bad label");
@@ -361,6 +367,25 @@ describe("writing editor source transactions", () => {
     await setField(field(), "sec:summary");
     expect(field().getAttribute("aria-invalid")).toBe("false");
     expect(current).toContain("\\label{sec:summary}");
+  });
+
+  it("keeps table label editing attached to its object through the inline footer field", async () => {
+    await mount(`\\begin{table}
+\\caption{Results}
+\\label{tab:old}
+\\begin{tabular}{ll}
+Method & Score \\\\
+Control & 1 \\\\
+\\end{tabular}
+\\end{table}`);
+    await selectKind("table");
+    const field = await focusReferenceLabel("Table reference label");
+    expect(field.value).toBe("tab:old");
+    await setField(field, "tab:new");
+    expect(current).toContain("\\label{tab:new}");
+    expect(current).toContain("Control & 1");
+    await act(() => editor().commands.undo());
+    expect(current).toContain("\\label{tab:old}");
   });
 
   it("retains a manual reference until its document save is confirmed", async () => {
@@ -655,6 +680,31 @@ describe("writing editor source transactions", () => {
     await act(() => right.click());
     expect(current).toContain("\\begin{flushright}");
     expect(editor().isFocused).toBe(true);
+  });
+
+  it("keeps Backspace typed in the title inside the title, whatever the document selects", async () => {
+    await mount("\\maketitle\nFirst.\n\nSecond.", "\\title{Title}\n");
+    const title = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Document title']",
+    )!;
+    // The document's own selection is the whole title block, as after a click on it.
+    const titlePosition = editor().view.posAtDOM(title.closest(".scient-latex-title-preview")!, 0);
+    await act(() => editor().commands.setNodeSelection(Math.max(0, titlePosition - 1)));
+    await act(async () => title.focus());
+    const backspace = new KeyboardEvent("keydown", {
+      key: "Backspace",
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      title.dispatchEvent(backspace);
+    });
+    // The field keeps the key; the document editor neither deletes nor blocks it.
+    expect(backspace.defaultPrevented).toBe(false);
+    expect(current).toContain("\\maketitle");
+    expect(current).toContain("\\title{Title}");
+    expect(current).toContain("First.");
+    expect(current).toContain("Second.");
   });
 
   it("starts a titled document with formatting ready on body text", async () => {
@@ -1108,16 +1158,168 @@ describe("writing editor source transactions", () => {
     const equation = container.querySelector(".scient-latex-visual-inline-math") as HTMLElement;
     await act(async () => equation.click());
     const sourceButton = document.body.querySelector<HTMLButtonElement>(
-      'button[aria-label="Edit formula as LaTeX"]',
+      "[aria-label='Edit formula as LaTeX']",
     )!;
+    expect(sourceButton.getAttribute("aria-expanded")).toBe("false");
     await act(async () => sourceButton.click());
     const source = container.querySelector(
       "textarea[aria-label='LaTeX formula code']",
     ) as HTMLTextAreaElement;
     expect(source.value).toBe("x^2");
+    expect(sourceButton.getAttribute("aria-expanded")).toBe("true");
     expect(container.textContent).toContain("x^2");
     expect(document.body.querySelector("[aria-label='Math tools']")).not.toBeNull();
     expect(document.body.querySelector("[aria-label='Edit formula as LaTeX']")).not.toBeNull();
+    await setField(source, "y^3");
+    expect(current).toContain("$y^3$");
+    const resizeHandle = container.querySelector<HTMLDivElement>(
+      '[aria-label="Resize LaTeX code editor"]',
+    )!;
+    await act(() => {
+      resizeHandle.focus();
+      resizeHandle.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(container.querySelector("textarea[aria-label='LaTeX formula code']")).toBeNull();
+    expect(sourceButton.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps the selected equation and its source editor through whole footer clicks", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount("\\begin{equation}\nx^2\n\\end{equation}\n\nOther text.", "", headerSlot);
+      await selectKind("latexDisplayMath");
+      await act(() =>
+        container.querySelector<HTMLElement>(".scient-latex-visual-display-math")!.click(),
+      );
+      await act(() =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Edit formula as LaTeX"]')!.click(),
+      );
+      const selected = editor().state.selection.toJSON();
+      const footer = container.querySelector<HTMLElement>(".scient-document-footer")!;
+      for (const selector of [
+        ".scient-document-footer-options",
+        ".scient-document-footer-status",
+        ".scient-document-footer-count",
+      ]) {
+        const target = footer.querySelector<HTMLElement>(selector)!;
+        expect(target).not.toBeNull();
+        await act(() => target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+        expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).not.toBeNull();
+        expect(editor().state.selection.toJSON()).toEqual(selected);
+      }
+      await act(() => footer.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+      expect(container.querySelector('[aria-label="Math tools"]')).not.toBeNull();
+      expect(writes).not.toHaveBeenCalled();
+      await act(() =>
+        container
+          .querySelector(".ProseMirror p")!
+          .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })),
+      );
+      expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).toBeNull();
+      expect(container.querySelector('[aria-label="Math tools"]')).toBeNull();
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  it("saves a label on blur after a footer click while keeping its equation controls", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount("\\begin{equation}\nx^2\n\\end{equation}", "", headerSlot);
+      await selectKind("latexDisplayMath");
+      const field = await focusReferenceLabel("Equation reference label");
+      await act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+          field,
+          "eq:new",
+        );
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(current).not.toContain("\\label{eq:new}");
+      await act(() => {
+        container
+          .querySelector(".scient-document-footer-count")!
+          .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+        field.blur();
+      });
+      expect(current).toContain("\\label{eq:new}");
+      expect(container.querySelector('[aria-label="Math tools"]')).not.toBeNull();
+      expect(editor().state.selection.$from.nodeAfter?.type.name).toBe("latexDisplayMath");
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  it("adds an equation label in its visible footer field without losing the selected equation", async () => {
+    await mount("\\begin{equation}\nx^2\n\\end{equation}");
+    await selectKind("latexDisplayMath");
+    await act(() =>
+      container.querySelector<HTMLElement>(".scient-latex-visual-display-math")!.click(),
+    );
+    const field = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Equation reference label"]',
+    )!;
+    expect(field).not.toBeNull();
+    expect(field.placeholder).toBe("Add label");
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit formula as LaTeX"]')!.click(),
+    );
+    expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).not.toBeNull();
+    await act(() => field.focus());
+    expect(container.querySelector('textarea[aria-label="LaTeX formula code"]')).toBeNull();
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe("");
+    await setField(field, "eq:new");
+    expect(current).toContain("\\label{eq:new}");
+    expect(editor().state.selection.$from.nodeAfter?.type.name).toBe("latexDisplayMath");
+    expect(container.querySelector('[aria-label="Math tools"]')).not.toBeNull();
+    await act(() => editor().commands.undo());
+    expect(current).not.toContain("\\label{eq:new}");
+    expect(field.value).toBe("");
+  });
+
+  it("retains invalid equation label edits on blur and cancels them with Escape", async () => {
+    await mount(
+      "\\begin{equation}\nx^2\\label{eq:first}\n\\end{equation}\n\n\\begin{equation}\ny^2\\label{eq:second}\n\\end{equation}",
+    );
+    await selectKind("latexDisplayMath");
+    await act(() =>
+      container.querySelector<HTMLElement>(".scient-latex-visual-display-math")!.click(),
+    );
+    const field = () =>
+      container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="Equation reference label"]',
+      )!;
+    const saved = current;
+    await setField(field(), "eq:second");
+    expect(field().getAttribute("aria-invalid")).toBe("true");
+    expect(field().value).toBe("eq:second");
+    expect(current).toBe(saved);
+    await act(() => {
+      field().focus();
+      field().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(field().value).toBe("eq:first");
+    expect(field().getAttribute("aria-invalid")).toBe("false");
+    expect(field().hasAttribute("data-local-draft")).toBe(false);
+    expect(current).toBe(saved);
+    await setField(field(), "bad label");
+    expect(current).toBe(saved);
+    await act(() => {
+      field().focus();
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        field(),
+        "eq:summary",
+      );
+      field().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(() =>
+      field().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+    expect(current).toContain("\\label{eq:summary}");
+    expect(field().getAttribute("aria-invalid")).toBe("false");
   });
 
   it("changes a display wrapper from the compact source popover", async () => {
@@ -1495,9 +1697,7 @@ Theory & Proofs \\\\
     expect(current).toContain("\\hline");
     expect(current).toContain("\\caption{Research areas \\& evidence.}");
     await selectKind("table");
-    const reference = container.querySelector<HTMLTextAreaElement>(
-      "textarea[aria-label='Table reference label']",
-    )!;
+    const reference = await focusReferenceLabel("Table reference label");
     await setField(reference, "tab:research");
     expect(current).toContain("\\label{tab:research}");
   });

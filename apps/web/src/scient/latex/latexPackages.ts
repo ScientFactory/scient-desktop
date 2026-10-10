@@ -77,10 +77,6 @@ export function latexCommands(source: string) {
   return [...latexWithoutComments(source).matchAll(/\\([A-Za-z]+|[^\r\n])/gu)];
 }
 
-export function requiredLatexCommandPackages(source: string): Set<string> {
-  return new Set(latexCommands(source).flatMap((match) => commandPackages[match[1]!] ?? []));
-}
-
 /** Existing commands do not turn an unrelated prose edit into a package edit. */
 export function newLatexCommandPackages(previous: string, next: string): Set<string> {
   const remaining = new Map<string, number>();

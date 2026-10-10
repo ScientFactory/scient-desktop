@@ -15,7 +15,7 @@ import {
   DockMenu,
   dockButtonClass,
 } from "../writing/dockChrome";
-import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
+import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { useLatexObjectContext } from "./useLatexObjectContext";
 import { LatexTableProperties } from "./LatexTableProperties";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
@@ -115,7 +115,7 @@ export function LatexTableToolbar(props: Props) {
       aria-label="Table tools"
       onClick={(event) => event.stopPropagation()}
     >
-      <DockMenu label="Rows & columns" icon="Rows & columns" commandScope="latex">
+      <DockMenu label="Rows & columns" icon="Rows & columns" commandScope="latex" side="top">
         <MenuSub>
           <MenuSubTrigger id={`${id}-rows`}>Rows</MenuSubTrigger>
           <MenuSubPopup
@@ -192,7 +192,7 @@ export function LatexTableToolbar(props: Props) {
         <MenuSeparator />
         {action("Delete table", props.onDelete, readOnly, true)}
       </DockMenu>
-      <DockMenu label="Cells" icon="Cells" commandScope="latex">
+      <DockMenu label="Cells" icon="Cells" commandScope="latex" side="top">
         {action(
           "Merge cells",
           () => props.onProperties({ kind: "merge" }),
@@ -204,7 +204,7 @@ export function LatexTableToolbar(props: Props) {
           contentReason ?? (!props.canSplitCell ? "Choose a merged cell to split." : null),
         )}
       </DockMenu>
-      <DockMenu label="Appearance" icon="Appearance" commandScope="latex">
+      <DockMenu label="Appearance" icon="Appearance" commandScope="latex" side="top">
         <LatexTableProperties
           key={props.column}
           source={props.source}
@@ -296,23 +296,20 @@ export function LatexTableToolbar(props: Props) {
         Caption
       </button>
       {props.hasCaption && (
-        <label className="scient-latex-table-reference">
-          Label
-          <LatexReferenceLabelField
-            label="Table reference label"
-            value={props.label}
-            allowEmpty
-            draftKey={props.draftKey}
-            commitOn="blur"
-            disabled={Boolean(contentReason) || !props.labelEditable}
-            isAvailable={(value) =>
-              !value ||
-              value === props.label ||
-              !latexEquationReferencesKey.getState(props.editor.state)?.labels.has(value)
-            }
-            onCommit={props.onLabel}
-          />
-        </label>
+        <LatexReferenceLabelControl
+          label="Table reference label"
+          value={props.label}
+          allowEmpty
+          draftKey={props.draftKey}
+          commitOn="blur"
+          disabled={Boolean(contentReason) || !props.labelEditable}
+          isAvailable={(value) =>
+            !value ||
+            value === props.label ||
+            !latexEquationReferencesKey.getState(props.editor.state)?.labels.has(value)
+          }
+          onCommit={props.onLabel}
+        />
       )}
     </div>,
     host,

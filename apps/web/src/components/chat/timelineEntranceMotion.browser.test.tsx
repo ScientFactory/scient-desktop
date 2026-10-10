@@ -134,13 +134,13 @@ const animationsOf = (element: Element | null | undefined) =>
     : [];
 const working = { isWorking: true, activeTurnInProgress: true, runningRunId: RunId.make("run-1") };
 
-it("gives the working label the thinking traces' live shine for as long as the turn works", async () => {
+it("marks the working header with its dot while the turn works, the sweep staying on Thinking", async () => {
   const prompt = entry(1, "First question");
   render("motion:working", [prompt], working);
-  const shine = () =>
-    host!.querySelector('[data-timeline-row-kind="working"] .live-activity-focus');
-  await expect.poll(() => shine()).not.toBeNull();
-  // The same overlay the thinking row uses, and no one-time entrance on the label.
+  const dot = () => host!.querySelector('[data-timeline-row-kind="working"] .live-activity-dot');
+  await expect.poll(() => dot()).not.toBeNull();
+  // One sweep, on the current activity (chat/liveActivity.tsx), and no one-time entrance on the label.
+  expect(host!.querySelector('[data-timeline-row-kind="working"] .live-activity-focus')).toBeNull();
   expect(
     host!.querySelector('[data-timeline-row-kind="thinking"] .live-activity-focus'),
   ).not.toBeNull();

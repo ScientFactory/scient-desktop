@@ -902,7 +902,18 @@ describe("orchestrator MCP toolkit", () => {
                 Effect.flatMap((scope) => invokeAs(scope, name, args)),
               );
 
+            // Settling would stop the session, so the agent's own turn keeps running.
+            const deferredSettle = yield* invoke("scient_thread_organize", { action: "settle" });
+            expect(deferredSettle.isError).toBe(false);
+            expect(deferredSettle.structuredContent).toEqual({ settlesWhenTurnEnds: true });
+            const afterDeferredSettle = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(afterDeferredSettle.thread.settledOverride).not.toBe("settled");
+            expect(afterDeferredSettle.runs.find((run) => run.id === parentRun?.id)?.status).toBe(
+              "running",
+            );
+
             const pinned = yield* invoke("scient_thread_organize", { action: "pin" });
+            expect(pinned.isError).toBe(false);
             expect(pinned.structuredContent).toHaveProperty("sequence");
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).not.toBeNull();
             yield* invoke("scient_thread_organize", { action: "unpin" });
@@ -2252,6 +2263,20 @@ describe("orchestrator MCP toolkit", () => {
                 legacyDelegatedRun,
               ),
             ).toBe(true);
+            // A queue Stop held waits for the user; it is not pending child work.
+            expect(
+              hasPendingChildRuns(
+                {
+                  ...legacyChildProjection,
+                  runs: legacyChildProjection.runs.map((run) =>
+                    run.id === activeChildFollowup.runId
+                      ? { ...run, status: "queued", queueHeld: true }
+                      : run,
+                  ),
+                },
+                legacyDelegatedRun,
+              ),
+            ).toBe(false);
             const completedTaskCancelCall = yield* invoke("task_cancel", {
               taskId: delegated.taskId,
               reason: "Stop the child's later work too.",
@@ -2824,7 +2849,8 @@ describe("orchestrator MCP toolkit", () => {
             expect(
               forkedProjection.visibleTurnItems.some(
                 (row) =>
-                  row.sourceThreadId === forkedThreadId &&
+                  row.visibility === "inherited" &&
+                  row.sourceThreadId === promptedThread.threadId &&
                   row.item.inheritedFrom?.threadId === promptedThread.threadId &&
                   row.item.type === "user_message",
               ),
@@ -2839,7 +2865,32 @@ describe("orchestrator MCP toolkit", () => {
             expect(
               forkedRead.items.find((item) => item.text === createdThreadPrompt),
             ).toMatchObject({
-              sourceThreadId: forkedThreadId,
+              sourceThreadId: promptedThread.threadId,
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            // Rewriting the original's provenance after the fork leaves the fork's
+            // report as the fork shows it.
+            const shownPrompt = promptedProjection.messages.find(
+              (message) => message.text === createdThreadPrompt,
+            )!;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("event:mcp-orchestrator-inherited-provenance"),
+                  type: "message.updated",
+                  threadId: promptedThread.threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...shownPrompt, createdBy: "user", creationSource: "web" },
+                },
+              ],
+            });
+            const reread = yield* decodeThreadReadResult(
+              (yield* invoke("scient_thread_inspect", { threadId: forkedThreadId }))
+                .structuredContent,
+            ).pipe(Effect.orDie);
+            expect(reread.items.find((item) => item.text === createdThreadPrompt)).toMatchObject({
+              sourceThreadId: promptedThread.threadId,
               createdBy: "agent",
               creationSource: "mcp",
             });

@@ -1,14 +1,18 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Scient's workspace file mutations: revision-checked saves, exclusive creates
- * and renames that never replace their destination. Each mutation resolves its
+ * Scient's workspace file mutations: revision-checked saves, exclusive creates,
+ * renames that never replace their destination and deletes that never take a
+ * changed file. Each mutation resolves its
  * canonical target, locks it, and revalidates it after waiting for the lock.
  * WorkspaceFileSystem builds these once and serves them as its write methods.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 
 import type {
+  ProjectDeleteFileInput,
+  ProjectDeleteFileResult,
   ProjectRenameFileInput,
   ProjectRenameFileResult,
   ProjectWriteFileInput,
@@ -20,6 +24,13 @@ import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import {
+  mutateRetainedFile,
+  assertRootBinding,
+  type RetainedMutationInput,
+  type RetainedMutationResult,
+  type RetainedMutationHooks,
+} from "./RetainedFileMutation.ts";
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import type * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import {
@@ -48,8 +59,24 @@ export interface WorkspaceCreateBinaryFileInput {
   readonly bytes: Uint8Array;
 }
 
+export interface WorkspaceRetainedFileMethods {
+  /** Durably retain the displaced file, never overwrite or delete it in place. Reuse id to recover. */
+  readonly replaceFileRetained: (
+    input: RetainedMutationInput,
+  ) => Effect.Effect<
+    RetainedMutationResult,
+    WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+  >;
+  readonly removeFileRetained: (
+    input: Omit<RetainedMutationInput, "bytes">,
+  ) => Effect.Effect<
+    RetainedMutationResult,
+    WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+  >;
+}
+
 /** The Scient mutation methods WorkspaceFileSystem serves beside its reads. */
-export interface WorkspaceFileMutationMethods {
+export interface WorkspaceFileMutationMethods extends WorkspaceRetainedFileMethods {
   /** Resolve the canonical destination used by a workspace write. */
   readonly inspectWriteTarget: (
     input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
@@ -62,6 +89,16 @@ export interface WorkspaceFileMutationMethods {
     input: ProjectRenameFileInput,
   ) => Effect.Effect<
     ProjectRenameFileResult,
+    WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+  >;
+  /**
+   * Delete a regular file only while it is the revision the client last read,
+   * and optionally the folders it leaves empty below the workspace root.
+   */
+  readonly deleteFile: (
+    input: ProjectDeleteFileInput,
+  ) => Effect.Effect<
+    ProjectDeleteFileResult,
     WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
   >;
   /** Atomically create a binary file and fail if the destination exists. */
@@ -87,6 +124,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly workspacePaths: WorkspacePaths.WorkspacePaths["Service"];
   readonly workspaceEntries: WorkspaceEntries.WorkspaceEntries["Service"];
   readonly readFile: WorkspaceFileSystem["Service"]["readFile"];
+  readonly retainedHooks?: RetainedMutationHooks;
 }) {
   const { fileSystem, path, workspacePaths, workspaceEntries, readFile } = deps;
   /**
@@ -133,6 +171,114 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         }),
       );
     });
+
+  // `rmdir` removes only an empty folder, so a folder anything else still holds
+  // stays; the walk stops there and never reaches the workspace root. Each
+  // folder must still be itself, reached without a link: one replaced by a link
+  // since would lead the walk outside, so the walk stops there.
+  const removeEmptyFoldersAbove = (realWorkspaceRoot: string, filePath: string) =>
+    Effect.promise(async () => {
+      for (let folder = path.dirname(filePath); ; folder = path.dirname(folder)) {
+        const relative = path.relative(realWorkspaceRoot, folder);
+        if (
+          !relative ||
+          relative === ".." ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative)
+        )
+          return;
+        try {
+          const stat = await NodeFSP.lstat(folder);
+          if (!stat.isDirectory() || (await NodeFSP.realpath(folder)) !== folder) return;
+          await NodeFSP.rmdir(folder);
+        } catch {
+          return;
+        }
+      }
+    });
+
+  /**
+   * Moves `targetPath` out of the way and keeps it only if it is the expected
+   * revision. See deleteFile. Any failure after the move puts the file back.
+   */
+  const deleteVerified = async (
+    targetPath: string,
+    expectedRevision: string,
+  ): Promise<{ readonly deleted: true } | { readonly revision: string }> => {
+    const id = NodeCrypto.randomBytes(6).toString("hex");
+    // Private to this user: a file moved here must not become readable by
+    // others, and a folder someone else made (or a link) is never used.
+    const uid = process.getuid?.();
+    const recoveryRoot = path.join(
+      NodeOS.tmpdir(),
+      uid === undefined ? "scient-deleted-files" : `scient-deleted-files-${uid}`,
+    );
+    await NodeFSP.mkdir(recoveryRoot, { recursive: true, mode: 0o700 });
+    const owned = await NodeFSP.lstat(recoveryRoot);
+    if (!owned.isDirectory() || (uid !== undefined && owned.uid !== uid))
+      throw new Error(`${recoveryRoot} is not this user's own folder.`);
+    await NodeFSP.chmod(recoveryRoot, 0o700);
+    const recovery = path.join(recoveryRoot, id);
+    await NodeFSP.mkdir(recovery, { mode: 0o700 });
+    let held = path.join(recovery, path.basename(targetPath));
+    let recoverable = true;
+    try {
+      await NodeFSP.rename(targetPath, held);
+    } catch (cause) {
+      if (!isNodeError(cause, "EXDEV")) {
+        await NodeFSP.rm(recovery, { recursive: true, force: true });
+        throw cause;
+      }
+      await NodeFSP.rm(recovery, { recursive: true, force: true });
+      held = path.join(
+        path.dirname(targetPath),
+        `.${path.basename(targetPath)}.scient-delete-${id}`,
+      );
+      recoverable = false;
+      await NodeFSP.rename(targetPath, held);
+    }
+    let revision = "unreadable";
+    try {
+      const stat = await NodeFSP.lstat(held);
+      if (stat.isFile() && stat.size <= PROJECT_READ_FILE_MAX_BYTES) {
+        revision = revisionForBytes(await NodeFSP.readFile(held));
+        if (revision === expectedRevision) {
+          if (!recoverable) await NodeFSP.unlink(held);
+          return { deleted: true };
+        }
+      }
+    } catch {
+      // Unreadable now: it goes back as it is.
+    }
+    await putBack(held, targetPath);
+    if (recoverable) await NodeFSP.rm(path.dirname(held), { recursive: true, force: true });
+    return { revision };
+  };
+
+  /** A file set aside goes back under its name, or beside it if that name is taken. */
+  const putBack = async (held: string, targetPath: string) => {
+    const extension = path.extname(targetPath);
+    const stem = targetPath.slice(0, targetPath.length - extension.length);
+    for (let index = 0; index <= 100; index++) {
+      const name =
+        index === 0 ? targetPath : `${stem} (recovered${index > 1 ? ` ${index}` : ""})${extension}`;
+      try {
+        // A link never replaces a file written there meanwhile; on another
+        // volume (no hard link), a copy that refuses an existing name.
+        try {
+          await NodeFSP.link(held, name);
+        } catch (cause) {
+          if (!isNodeError(cause, "EXDEV")) throw cause;
+          await NodeFSP.copyFile(held, name, NodeFSP.constants.COPYFILE_EXCL);
+        }
+        await NodeFSP.unlink(held);
+        return;
+      } catch (cause) {
+        if (!isNodeError(cause, "EEXIST")) throw cause;
+      }
+    }
+    throw new Error(`Could not put ${targetPath} back; it is kept at ${held}.`);
+  };
 
   // Resolve the nearest existing ancestor before creating missing segments.
   // This keeps revision-less creates from escaping through a directory symlink.
@@ -222,6 +368,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const canonicalRelativePath = relativeRealPath.replaceAll("\\", "/");
     return {
       target,
+      realWorkspaceRoot,
       realTargetPath: realTargetPath.path,
       canonicalRelativePath,
       traversesSymlink:
@@ -758,6 +905,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               }),
           });
           if (!moved) return yield* conflict(revision);
+          if (input.removeEmptyFolders) {
+            yield* removeEmptyFoldersAbove(source.realWorkspaceRoot, source.realTargetPath);
+          }
           yield* workspaceEntries.refresh(input.cwd);
           return {
             relativePath: sourceTarget.relativePath,
@@ -769,5 +919,179 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     );
   });
 
-  return { createBinaryFile, inspectWriteTarget, renameFile, writeFile };
+  const deleteFile: WorkspaceFileSystem["Service"]["deleteFile"] = Effect.fn(
+    "WorkspaceFileSystem.deleteFile",
+  )(function* (input) {
+    const initial = yield* resolveRealWriteTarget(input);
+    const semaphore = yield* writeSemaphoreFor(initial.realTargetPath);
+    return yield* semaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const resolved = yield* revalidateWriteTarget(input, initial.realTargetPath);
+        const targetPath = resolved.realTargetPath;
+        // The name itself must be a file: a link is never followed to delete
+        // what it points to (folders on the way may still be aliases).
+        const named = yield* Effect.tryPromise({
+          try: () => NodeFSP.lstat(resolved.target.absolutePath),
+          catch: (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: resolved.target.absolutePath,
+              operationPath: resolved.target.absolutePath,
+              operation: "stat",
+              cause,
+            }),
+        });
+        if (!named.isFile() || named.isSymbolicLink()) {
+          return yield* new WorkspacePathNotFileError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: resolved.target.absolutePath,
+          });
+        }
+        const identity = () =>
+          Effect.tryPromise({
+            try: async () => {
+              const stat = await NodeFSP.lstat(targetPath, { bigint: true });
+              return stat.isFile() && !stat.isSymbolicLink()
+                ? { dev: stat.dev, ino: stat.ino }
+                : null;
+            },
+            catch: (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: targetPath,
+                operationPath: targetPath,
+                operation: "stat",
+                cause,
+              }),
+          });
+        const before = yield* identity();
+        if (before === null) {
+          return yield* new WorkspacePathNotFileError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: targetPath,
+          });
+        }
+        // Only the revision the client saw is deleted, and only while the name
+        // still holds the file that was read: one replaced by another program
+        // since (an editor or a compiler writing atomically) is left alone.
+        const current = yield* readFile({ cwd: input.cwd, relativePath: input.relativePath });
+        const after = yield* identity();
+        if (
+          current.truncated ||
+          current.revision !== input.expectedRevision ||
+          after === null ||
+          after.dev !== before.dev ||
+          after.ino !== before.ino
+        ) {
+          return yield* new WorkspaceFileRevisionConflictError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: targetPath,
+            currentRevision: current.revision,
+          });
+        }
+        // Another program can still replace or rewrite the file between that
+        // check and its removal, so nothing is removed outright. The name is
+        // moved into a recovery folder, which takes whatever it holds at that
+        // instant, and is never unlinked: a later write to it stays recoverable.
+        // Only a file at the expected revision stays there; anything else goes
+        // back under its name, or beside it as a recovered copy if that name was
+        // written again meanwhile. On another volume, where a move would copy,
+        // the file is set aside in its own folder instead and removed once
+        // verified.
+        const outcome = yield* Effect.tryPromise({
+          try: () => deleteVerified(targetPath, input.expectedRevision),
+          catch: (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: targetPath,
+              operationPath: targetPath,
+              operation: "unlink",
+              cause,
+            }),
+        });
+        if (!("deleted" in outcome)) {
+          return yield* new WorkspaceFileRevisionConflictError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: targetPath,
+            currentRevision: outcome.revision,
+          });
+        }
+        if (input.removeEmptyFolders) {
+          yield* removeEmptyFoldersAbove(resolved.realWorkspaceRoot, targetPath);
+        }
+        yield* workspaceEntries.refresh(input.cwd);
+        return { relativePath: resolved.target.relativePath };
+      }),
+    );
+  });
+
+  const replaceFileRetained: WorkspaceRetainedFileMethods["replaceFileRetained"] = Effect.fn(
+    "WorkspaceFileSystem.replaceFileRetained",
+  )(function* (input) {
+    const checkRoot = () =>
+      Effect.tryPromise({
+        try: () => assertRootBinding(input.cwd, input.expectedRootIdentity),
+        catch: (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: input.cwd,
+            operationPath: input.cwd,
+            operation: "realpath-workspace-root",
+            cause,
+          }),
+      });
+    yield* checkRoot();
+    const initial = yield* resolveRealWriteTarget(input);
+    const semaphore = yield* writeSemaphoreFor(initial.realTargetPath);
+    return yield* semaphore
+      .withPermits(1)(
+        Effect.gen(function* () {
+          yield* checkRoot();
+          const current = yield* revalidateWriteTarget(input, initial.realTargetPath);
+          if (current.traversesSymlink)
+            return yield* new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: current.realTargetPath,
+              operationPath: current.realTargetPath,
+              operation: "realpath-target",
+              cause: new Error("Retained mutations refuse symlink paths."),
+            });
+          const result = yield* Effect.tryPromise({
+            try: () => mutateRetainedFile(input, current.realTargetPath, deps.retainedHooks),
+            catch: (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: current.realTargetPath,
+                operationPath: current.realTargetPath,
+                operation: "write-file",
+                cause,
+              }),
+          });
+          yield* workspaceEntries.refresh(input.cwd);
+          return result;
+        }),
+      )
+      .pipe(Effect.uninterruptible);
+  });
+  const removeFileRetained: WorkspaceRetainedFileMethods["removeFileRetained"] = (input) =>
+    replaceFileRetained({ ...input, bytes: null });
+  return {
+    createBinaryFile,
+    deleteFile,
+    inspectWriteTarget,
+    renameFile,
+    writeFile,
+    replaceFileRetained,
+    removeFileRetained,
+  };
 });

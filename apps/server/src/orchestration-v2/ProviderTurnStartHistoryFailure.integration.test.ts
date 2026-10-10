@@ -911,11 +911,10 @@ it.live(
             Effect.timeout("15 seconds"),
           );
           assert.ok(Option.isSome(acceptedFork));
-          const provision = yield* outbox.get("scient-fork:clone-history-fork:provision");
-          assert.ok(Option.isSome(provision));
-          assert.equal(provision.value.status, "pending");
-          assert.equal(provision.value.request.type, "scient-fork.provision");
-          yield* worker.drain(8);
+          // A local fork shares its history by reference and is ready at once.
+          assert.isTrue(
+            Option.isNone(yield* outbox.get("scient-fork:clone-history-fork:provision")),
+          );
           yield* Fiber.join(pendingFork);
           const frozen = yield* orchestrator.getThreadProjection(targetId);
           assert.equal(frozen.contextTransfers[0]?.status, "pending");
@@ -955,12 +954,15 @@ it.live(
           );
           assert.ok(run && queued);
           assert.equal(before.contextTransfers[0]?.targetRunId, run.id);
+          // The fork reads its history from the source's answer.
           const [history] = yield* sql<{ turn_item_id: string; payload_json: string }>`
-            SELECT turn_item_id, payload_json FROM orchestration_v2_projection_turn_items
-            WHERE thread_id = ${targetId} AND run_id IS NULL AND type = 'assistant_message'`;
+            SELECT i.turn_item_id, i.payload_json FROM scient_fork_history h
+            JOIN orchestration_v2_projection_turn_items i
+              ON i.thread_id = h.source_thread_id AND i.turn_item_id = h.source_item_id
+            WHERE h.thread_id = ${targetId} AND i.type = 'assistant_message'`;
           assert.ok(history);
           yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{}'
-            WHERE thread_id = ${targetId} AND turn_item_id = ${history.turn_item_id}`;
+            WHERE thread_id = ${sourceId} AND turn_item_id = ${history.turn_item_id}`;
           const [start] = yield* sql<{ effect_id: string }>`
             SELECT effect_id FROM orchestration_v2_effect_outbox
             WHERE thread_id = ${targetId} AND effect_type = 'provider-turn.start' AND status = 'pending'`;
@@ -1014,7 +1016,7 @@ it.live(
           assert.deepEqual(retained?.selectedScientSkillNames, ["retained-child-skill"]);
           // Restore only the deliberate decoder fault; native execution remains held.
           yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = ${history.payload_json}
-            WHERE thread_id = ${targetId} AND turn_item_id = ${history.turn_item_id}`;
+            WHERE thread_id = ${sourceId} AND turn_item_id = ${history.turn_item_id}`;
           const after = yield* orchestrator.getThreadProjection(targetId);
           assert.equal(after.contextTransfers[0]?.status, "pending");
           assert.equal(after.contextTransfers[0]?.resolution, null);

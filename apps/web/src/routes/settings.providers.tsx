@@ -1,3 +1,7 @@
+import {
+  SettingsRoutePending,
+  SettingsRouteError,
+} from "../components/settings/SettingsRouteLoading";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
@@ -31,6 +35,10 @@ function SettingsProvidersRoute() {
 }
 
 export const Route = createFileRoute("/settings/providers")({
+  pendingComponent: SettingsRoutePending,
+  pendingMs: 80,
+  pendingMinMs: 0,
+  errorComponent: SettingsRouteError,
   validateSearch: (raw: Record<string, unknown>) => ({
     ...(typeof raw.environmentId === "string" && raw.environmentId.trim()
       ? { environmentId: EnvironmentId.make(raw.environmentId) }

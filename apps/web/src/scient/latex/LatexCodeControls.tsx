@@ -27,7 +27,7 @@ import {
   type LatexListingPresentation,
 } from "./latexLiteral";
 import { LatexContextMenuForm } from "./LatexContextMenuForm";
-import { LatexReferenceLabelField } from "./LatexReferenceLabelField";
+import { LatexReferenceLabelControl } from "./LatexReferenceLabelControl";
 import { latexLabelInventory } from "./latexLabelAuthoring";
 
 function CodeSubmenu(props: { label: string; disabled?: boolean; children: ReactNode }) {
@@ -319,25 +319,22 @@ export function LatexCodeControls({
         Caption
       </button>
       {captioned && (
-        <label className="scient-latex-code-reference">
-          Label
-          <LatexReferenceLabelField
-            label="Code reference label"
-            value={label}
-            allowEmpty
-            draftKey={draftKey}
-            commitOn="blur"
-            disabled={!editable}
-            isAvailable={(value) =>
-              !value || value === label || !inventory.targets.some((target) => target.key === value)
-            }
-            onCommit={(value, fieldId) => {
-              if (value === label || !editable) return;
-              if (value && label && context.renameLabel) context.renameLabel(label, value, fieldId);
-              else if (context.prepare()) updateAttributes({ label: value || null });
-            }}
-          />
-        </label>
+        <LatexReferenceLabelControl
+          label="Code reference label"
+          value={label}
+          allowEmpty
+          draftKey={draftKey}
+          commitOn="blur"
+          disabled={!editable}
+          isAvailable={(value) =>
+            !value || value === label || !inventory.targets.some((target) => target.key === value)
+          }
+          onCommit={(value, fieldId) => {
+            if (value === label || !editable) return;
+            if (value && label && context.renameLabel) context.renameLabel(label, value, fieldId);
+            else if (context.prepare()) updateAttributes({ label: value || null });
+          }}
+        />
       )}
     </>
   );

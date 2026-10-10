@@ -16,7 +16,7 @@ function Switch({
   mixed = false,
   ...props
 }: SwitchPrimitive.Root.Props & {
-  size?: "default" | "sm";
+  size?: "default" | "sm" | "xs";
   motion?: "default" | "none";
   mixed?: boolean;
 }) {
@@ -24,9 +24,11 @@ function Switch({
     <SwitchPrimitive.Root
       className={cn(
         "inline-flex h-[calc(var(--thumb-size)+2px)] w-[calc(var(--thumb-size)*2-2px)] shrink-0 cursor-pointer items-center rounded-full p-[2px] outline-none transition-[background-color,box-shadow] duration-200 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-checked:bg-primary data-unchecked:bg-input data-disabled:cursor-not-allowed data-disabled:opacity-64 data-[mixed]:bg-input",
-        size === "sm"
-          ? "[--thumb-size:--spacing(4)] sm:[--thumb-size:--spacing(3.5)]"
-          : "[--thumb-size:--spacing(5)] sm:[--thumb-size:--spacing(4)]",
+        size === "xs"
+          ? "[--thumb-size:12px]"
+          : size === "sm"
+            ? "[--thumb-size:--spacing(4)] sm:[--thumb-size:--spacing(3.5)]"
+            : "[--thumb-size:--spacing(5)] sm:[--thumb-size:--spacing(4)]",
         motion === "none" && "transition-none",
         className,
       )}

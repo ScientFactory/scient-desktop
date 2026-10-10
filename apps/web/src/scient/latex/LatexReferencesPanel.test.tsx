@@ -60,6 +60,7 @@ describe("References bibliography session", () => {
   let publication: ReturnType<typeof deferred<{ revision: string }>>;
   let draftKey: string;
   const onSaved = vi.fn();
+  const onClose = vi.fn();
   const onDraftChange = vi.fn();
   const write = vi.fn();
   let sequence = 0;
@@ -68,6 +69,7 @@ describe("References bibliography session", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     localStorage.clear();
     onSaved.mockReset();
+    onClose.mockReset();
     onDraftChange.mockReset();
     write.mockReset();
     disk.source = "@article{known,\n  title = {Original},\n}\n";
@@ -110,18 +112,20 @@ describe("References bibliography session", () => {
     await act(() => root.unmount());
     await act(() => tab.release());
     host.remove();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
   const mount = (
     setupSource = "\\addbibresource{refsA.bib}",
     documents: readonly BibliographyDocument[] = [],
+    options: { open?: boolean; request?: { key?: string; sequence: number } } = {},
   ) =>
     act(async () =>
       root.render(
         <LatexReferencesPanel
-          open
-          request={{ key: "known", sequence: 1 }}
-          onClose={() => {}}
+          open={options.open ?? true}
+          request={options.request ?? { key: "known", sequence: 1 }}
+          onClose={onClose}
           documents={documents}
           setupSource={setupSource}
           rootRelativePath="paper.tex"
@@ -152,6 +156,66 @@ describe("References bibliography session", () => {
         .querySelector("form")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
+  const close = () =>
+    act(() =>
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent === "Close")!
+        .click(),
+    );
+
+  it("closes an untouched reference without saving", async () => {
+    await mount();
+    await close();
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(write).not.toHaveBeenCalled();
+    await mount(undefined, [], { open: false });
+    expect(host.querySelector('[aria-label="References"]')).toBeNull();
+  });
+
+  it("closes without discarding an unsaved entry and restores it on reopening", async () => {
+    await mount();
+    await type("Keep my edits");
+    await close();
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(write).not.toHaveBeenCalled();
+    await mount(undefined, [], { open: false });
+    expect(host.querySelector('[aria-label="References"]')).toBeNull();
+    expect(onDraftChange).toHaveBeenLastCalledWith(true);
+    await mount(undefined, [], { request: { sequence: 2 } });
+    expect(field()?.value).toBe("Keep my edits");
+    expect(host.textContent).not.toContain("before opening another reference");
+    await save();
+    await act(async () => {
+      publication.resolve({ revision: "r2" });
+      expect(await tab.flushNow()).toBe(true);
+    });
+    expect(disk.source).toContain("Keep my edits");
+    expect(onSaved).toHaveBeenCalledOnce();
+  });
+
+  it("can close during a save while publication continues in the same session", async () => {
+    await mount();
+    const open = vi.spyOn(markdownPersistenceRegistry, "open");
+    await type("Finish this save");
+    await save();
+    expect(write).toHaveBeenCalledOnce();
+    await close();
+    expect(onClose).toHaveBeenCalledOnce();
+    await mount(undefined, [], { open: false });
+    expect(host.querySelector('[aria-label="References"]')).toBeNull();
+    expect(open).not.toHaveBeenCalled();
+    await act(async () => {
+      publication.resolve({ revision: "r2" });
+      expect(await tab.flushNow()).toBe(true);
+    });
+    expect(disk.source).toContain("Finish this save");
+    expect(onSaved).toHaveBeenCalledOnce();
+    expect(onDraftChange).toHaveBeenLastCalledWith(false);
+    await mount(undefined, [], { request: { key: "known", sequence: 2 } });
+    expect(field()?.value).toBe("Finish this save");
+    expect(write).toHaveBeenCalledOnce();
+    expect(open).not.toHaveBeenCalled();
+  });
 
   it("shares one saver with a tab and clears the form only after publication", async () => {
     await mount();

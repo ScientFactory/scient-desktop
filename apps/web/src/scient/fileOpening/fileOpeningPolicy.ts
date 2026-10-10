@@ -1,4 +1,6 @@
 export const SCIENT_DEFAULT_RENDER_MARKDOWN = true;
+/** Whether Markdown opens Rich or Source; shared by the file panel and Settings ▸ Documents. */
+export const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 export const SCIENT_DEFAULT_FILE_EXPLORER_OPEN = false;
 
 export function resolveInitialFileExplorerOpen(savedPreference: boolean | null): boolean {

@@ -209,17 +209,24 @@ interface RightPanelStoreState {
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
+  /**
+   * A renamed file's tab follows it to the new path, in the same place. A tab
+   * already open on the new path takes over instead. `keepState` keeps the
+   * tab's reveal, presentation and LaTeX root (an in-place move); otherwise the
+   * tab starts fresh at the new path.
+   */
+  renameFileSurface: (
+    ref: ScopedThreadRef,
+    fromPath: string,
+    toPath: string,
+    options?: { readonly keepState?: boolean },
+  ) => void;
   openFile: (
     ref: ScopedThreadRef,
     relativePath: string,
     line?: number,
     options?: OpenFileOptions,
   ) => void;
-  /**
-   * A file renamed while open: its tab now shows the new path, in the same
-   * place. A tab already open on the new path takes over instead.
-   */
-  renameFileSurface: (ref: ScopedThreadRef, fromPath: string, toPath: string) => void;
   consumeLatexPresentationRequest: (
     ref: ScopedThreadRef,
     relativePath: string,
@@ -825,6 +832,36 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       // SCIENT-FORK:START — Scient surfaces and file presentation requests
       ...scientRightPanelActions(set, { updateThread, upsertSurface, userAction }),
       // SCIENT-FORK:END
+      renameFileSurface: (ref, fromPath, toPath, options) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const fromId = `file:${fromPath}`;
+            const toId = `file:${toPath}`;
+            const index = current.surfaces.findIndex((surface) => surface.id === fromId);
+            if (index < 0) return current;
+            const taken = current.surfaces.some((surface) => surface.id === toId);
+            const surfaces = taken
+              ? current.surfaces.filter((surface) => surface.id !== fromId)
+              : current.surfaces.map((surface, at) => {
+                  if (at !== index) return surface;
+                  if (!options?.keepState || surface.kind !== "file")
+                    return fileSurface(toPath, null, 0);
+                  return {
+                    ...surface,
+                    id: `file:${toPath}` as const,
+                    relativePath: toPath,
+                    ...(surface.latexRootRelativePath === fromPath
+                      ? { latexRootRelativePath: toPath }
+                      : {}),
+                  };
+                });
+            return {
+              ...current,
+              surfaces,
+              activeSurfaceId: current.activeSurfaceId === fromId ? toId : current.activeSurfaceId,
+            };
+          }),
+        ),
       openFile: (ref, requestedPath, line, options) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -960,26 +997,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? { ...current, isOpen: true, activeSurfaceId: surfaceId }
               : current,
           ),
-        ),
-      renameFileSurface: (ref, fromPath, toPath) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const fromId = `file:${fromPath}`;
-            const toId = `file:${toPath}`;
-            const index = current.surfaces.findIndex((surface) => surface.id === fromId);
-            if (index < 0) return current;
-            const taken = current.surfaces.some((surface) => surface.id === toId);
-            const surfaces = taken
-              ? current.surfaces.filter((surface) => surface.id !== fromId)
-              : current.surfaces.map((surface, at) =>
-                  at === index ? fileSurface(toPath, null, 0) : surface,
-                );
-            return {
-              ...current,
-              surfaces,
-              activeSurfaceId: current.activeSurfaceId === fromId ? toId : current.activeSurfaceId,
-            };
-          }),
         ),
       closeSurface: (ref, surfaceId) =>
         set((state) =>

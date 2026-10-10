@@ -238,6 +238,7 @@
 }
 .scient-latex-references-header {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -246,6 +247,7 @@
 }
 .scient-latex-references-content {
   display: grid;
+  flex: 1;
   align-content: start;
   gap: 12px;
   overflow: auto;
@@ -296,8 +298,6 @@
 .scient-latex-references-list {
   display: grid;
   gap: 4px;
-  max-height: 240px;
-  overflow: auto;
 }
 .scient-latex-references-list > button {
   display: grid;
@@ -1690,6 +1690,14 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font-size: var(--scient-latex-title-size, 1.728em);
   font-weight: 400;
   line-height: 1.2;
+}
+/* While the title is written the caret starts at the left of the hint, as in
+   any text box, and the field keeps the hint's width (2.11em of "Title") so the
+   first letters grow rightwards instead of jumping to the middle. Leaving the
+   field centres it again, as \maketitle prints it. */
+.scient-latex-title-preview textarea[aria-label="Document title"]:focus {
+  min-width: 2.15em;
+  text-align: start;
 }
 .scient-latex-title-preview textarea[aria-label="Document author"],
 .scient-latex-title-preview textarea[aria-label="Document date"] {
@@ -3879,7 +3887,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 /* The Visual footer follows the shared footer's rules when the reader controls
    live in the header: one compact line for the selected object's options. */
 .scient-latex-reader-footer.scient-document-footer {
-  height: 28px;
+  height: var(--scient-document-footer-height);
   border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
 }
 .scient-latex-reader-footer.scient-document-footer > .scient-latex-visual-recovery {
@@ -3890,7 +3898,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding-inline: 0;
 }
 .scient-document-footer .scient-latex-context-tools > button {
-  height: 22px;
+  height: var(--scient-document-footer-control-height);
 }
 
 /* Build messages: the mark sits on the first line of its message. */
@@ -4074,8 +4082,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 
 .scient-latex-scope-outline {
-  --scient-scope-ink: rgba(100, 106, 116, 0.8);
-  --scient-scope-corner: min(calc(3 * var(--scient-scope-pixel, 1px)), 25%);
+  --scient-scope-ink: rgba(100, 106, 116, 0.5);
+  --scient-scope-corner: min(calc(4 * var(--scient-scope-pixel, 1px)), 32%);
   background:
     linear-gradient(var(--scient-scope-ink), var(--scient-scope-ink)) left top /
       var(--scient-scope-corner) var(--scient-scope-pixel, 1px),
@@ -4096,8 +4104,12 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   background-repeat: no-repeat;
   border-radius: 0;
 }
+/* The other vacant slots: present, but quieter than where the caret is. */
+.scient-latex-scope-outline[data-guide="vacant"] {
+  --scient-scope-ink: rgba(100, 106, 116, 0.32);
+}
 .scient-latex-selection-overlay[data-scient-selection-held] .scient-latex-scope-outline {
-  --scient-scope-ink: rgba(100, 106, 116, 0.5);
+  --scient-scope-ink: rgba(100, 106, 116, 0.32);
 }
 
 .scient-latex-retained-selection {

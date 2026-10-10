@@ -1,8 +1,12 @@
+import {
+  SettingsRoutePending,
+  SettingsRouteError,
+} from "../components/settings/SettingsRouteLoading";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { useSettingsRestore } from "../components/settings/useSettingsRestore";
 
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -16,10 +20,17 @@ import {
 } from "../components/settings/SettingsScopeContext";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
+import {
+  settingsPageChoosesOneEnvironment,
+  settingsPageIgnoresProjects,
+  settingsPageRendersOffline,
+  settingsPageScopeSearch,
+} from "../scient/settings/settingsPageScopes";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
+  settingsContentResetKey,
   validateSettingsRouteSearch,
 } from "../components/settings/settingsScopeNavigation";
 import {
@@ -98,7 +109,11 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         <p className="text-sm text-muted-foreground">{scope.message}</p>
       </SettingsPageContainer>
     );
-  if (scope.kind === "environment" && connectedEnvironments.length === 0) {
+  if (
+    scope.kind === "environment" &&
+    connectedEnvironments.length === 0 &&
+    !settingsPageRendersOffline(pathname)
+  ) {
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
@@ -137,7 +152,7 @@ function SettingsContentLayout() {
         </WorkspacePageHeader>
 
         <div
-          key={`${JSON.stringify(search)}:${restoreSignal}`}
+          key={settingsContentResetKey(search, restoreSignal)}
           className="min-h-0 flex flex-1 flex-col"
         >
           <SettingsScopeBoundary pathname={location.pathname}>
@@ -155,17 +170,19 @@ function SettingsRouteLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
   return (
     <SettingsScopeProvider
-      search={rawSearch}
-      singleEnvironment={pathname === "/settings/providers"}
+      search={settingsPageScopeSearch(pathname, rawSearch)}
+      singleEnvironment={settingsPageChoosesOneEnvironment(pathname)}
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target
-        // even when the choice is "all", which is the absence of a key.
+        // even when the choice is "all", which is the absence of a key. A
+        // server-only page keeps the project the other pages are set to.
+        const keepProject = settingsPageIgnoresProjects(pathname);
         void navigate({
           to: pathname,
           search: () => ({
-            project: next.project,
+            project: keepProject ? rawSearch.project : next.project,
             machine: next.machine,
-            checkout: next.checkout,
+            checkout: keepProject ? undefined : next.checkout,
           }),
           hash: "",
           resetScroll: false,
@@ -178,6 +195,10 @@ function SettingsRouteLayout() {
 }
 
 export const Route = createFileRoute("/settings")({
+  pendingComponent: SettingsRoutePending,
+  pendingMs: 80,
+  pendingMinMs: 0,
+  errorComponent: SettingsRouteError,
   validateSearch: validateSettingsRouteSearch,
   search: { middlewares: [retainSettingsScope] },
   beforeLoad: async ({ context, location }) => {

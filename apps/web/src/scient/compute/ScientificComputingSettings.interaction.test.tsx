@@ -580,8 +580,9 @@ describe("Scientific Computing settings interactions", () => {
     expect(container.textContent).toContain("Default runtime");
     expect(container.textContent).toContain("3.12.13");
     expect(container.textContent).toContain("Scient-managed");
-    expect(container.textContent).toContain("Word export (Pandoc)");
-    expect(container.querySelectorAll("h3")).toHaveLength(5);
+    // Word export lives on Settings ▸ Documents.
+    expect(container.textContent).not.toContain("Word export (Pandoc)");
+    expect(container.querySelectorAll("h3")).toHaveLength(4);
     expect(runtimeValue()).toBe(managedPath);
     expect(
       container
@@ -688,8 +689,8 @@ describe("Scientific Computing settings interactions", () => {
     expect(container.textContent).not.toContain("Python & MATLAB");
     expect(container.textContent).not.toContain("Advanced");
     const rows = container.querySelectorAll("[data-slot=settings-row]");
-    expect(rows).toHaveLength(5);
-    expect(container.textContent).toContain("Word export (Pandoc)");
+    expect(rows).toHaveLength(4);
+    expect(container.textContent).not.toContain("Word export (Pandoc)");
     const card = container.querySelector("div.rounded-xl.border");
     expect(card).not.toBeNull();
     expect(card?.className).toContain("bg-card/40");

@@ -19,6 +19,7 @@ import {
 } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import { AttachmentRollbackPruneService } from "./AttachmentRollbackPruneService.ts";
+import { ThreadFileRelease } from "./scient-fork/ThreadFileRelease.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -108,6 +109,7 @@ export const layerExecutor: Layer.Layer<
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
     const resourceCleanup = yield* ResourceCleanupService.ResourceCleanupService;
     const rollbackPrune = yield* AttachmentRollbackPruneService;
+    const threadFileRelease = yield* ThreadFileRelease;
     const checkpointRollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
@@ -124,6 +126,17 @@ export const layerExecutor: Layer.Layer<
         switch (effect.request.type) {
           case "scient-fork.provision":
             return conversationForks.provision(effect.threadId, willRetry).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          case "scient.release-thread-files":
+            return threadFileRelease.release(effect.threadId).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -957,7 +970,9 @@ export const layerWithOptions = (
                   !checkpointSettlementPending &&
                   // SCIENT-FORK:END checkpoint-capture-final-attempt
                   !deferredDroidSteer &&
-                  effect.request.type !== "attachment.rollback-prune")
+                  effect.request.type !== "attachment.rollback-prune" &&
+                  // SCIENT-FORK: a release waits out admissions holding its files.
+                  effect.request.type !== "scient.release-thread-files")
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))

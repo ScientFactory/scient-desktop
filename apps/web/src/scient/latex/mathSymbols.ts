@@ -25,7 +25,7 @@ export function mathSymbolCommand(symbol: MathSymbol): string {
 // Command membership and Unicode/package facts were checked against LyX's
 // lib/ui/stdtoolbars.inc and lib/symbols (2026-09-24). The UI, insertion templates
 // and search vocabulary here are Scient's. No LyX icons or implementation code.
-export const MATH_SYMBOL_CATEGORIES = [
+const MATH_SYMBOL_CATEGORIES = [
   ["structures", "Structures", "√"],
   ["annotations", "Braces & annotations", "⏟"],
   ["latex_greek", "Greek letters", "α"],

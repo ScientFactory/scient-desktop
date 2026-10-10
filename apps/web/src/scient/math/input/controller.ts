@@ -26,6 +26,8 @@ export interface MathInputSnapshot {
   readonly identity?: object;
   readonly location?: string;
   readonly latexPackages?: readonly string[];
+  /** Raw TeX math fields omit their enclosing inline/display delimiters. */
+  readonly display?: boolean;
 }
 export interface MathInputAdapter {
   read(): MathInputSnapshot | null;
@@ -210,6 +212,7 @@ export class MathInputController {
         current.snapshot.source,
         current.snapshot.selection,
         id.slice("math.matrix.".length) as MatrixAction,
+        current.snapshot.display ?? current.region.display,
       );
       return edit !== null && this.commit(edit, false);
     }
@@ -249,7 +252,13 @@ export class MathInputController {
     )
       return false;
     if (!this.allowsPackage("amsmath")) return false;
-    const edit = insertMatrix(current.snapshot.selection, environment, rows, columns);
+    const edit = insertMatrix(
+      current.snapshot.selection,
+      environment,
+      rows,
+      columns,
+      current.snapshot.display ?? (current.region === "prose" || current.region.display),
+    );
     return edit !== null && this.commit(edit, true);
   }
   private completion(): { command: string; from: number; to: number } | null {
@@ -302,6 +311,7 @@ export class MathInputController {
         current.snapshot.source,
         current.snapshot.selection,
         event.key === "Enter" ? "addRow" : event.shiftKey ? "previous" : "next",
+        current.snapshot.display ?? current.region.display,
       ) !== null
     );
   }
@@ -356,6 +366,7 @@ export class MathInputController {
         current.snapshot.source,
         current.snapshot.selection,
         event.key === "Enter" ? "addRow" : event.shiftKey ? "previous" : "next",
+        current.snapshot.display ?? current.region.display,
       );
     if (!edit) return false;
     // Hold-to-repeat must not add structural edits such as matrix rows.
