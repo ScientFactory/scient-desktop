@@ -44,11 +44,6 @@
       "purpose": "Give native Codex replay qualification an isolated server-owned LaTeX state directory."
     },
     {
-      "path": "apps/server/src/orchestration-v2/Adapters/CursorAdapterV2.testkit.ts",
-      "anchor": "latexDir: path.join(stateDir, \"latex\")",
-      "purpose": "Give native Cursor replay qualification an isolated server-owned LaTeX state directory."
-    },
-    {
       "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.ts",
       "anchor": "latexDir: path.join(stateDir, \"latex\")",
       "purpose": "Retain LaTeX state isolation when the shared native provider harness creates disposable server configuration."
