@@ -297,7 +297,9 @@ The app ships both provider packaging policy and a last-known-good release catal
 catalog service may fetch a newer qualified catalog from the generated
 `automation/managed-runtime-catalog-v1` branch when provider update checks are enabled. It starts an
 immediate non-blocking refresh, revalidates successful results at most hourly using HTTP ETags, and
-retries a failed fetch after five minutes. Re-enabling update checks also triggers a refresh. Memory
+retries a failed fetch after five minutes. The first permitted refresh in each process fetches the
+complete catalog; ETags remain in memory because an older app may have filtered entries out of its
+disk cache. Re-enabling update checks also triggers a refresh. Memory
 and an atomic disk cache keep provider status available while offline. An explicit Install, Update,
 or Repair click may wait for the same TTL-gated refresh. The Settings **Refresh providers** action
 bypasses those automatic success/retry windows while still honoring the update-check setting, request
