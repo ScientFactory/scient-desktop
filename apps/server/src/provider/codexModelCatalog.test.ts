@@ -76,6 +76,7 @@ describe("applyCodexModelCatalog", () => {
     const classified = applyCodexModelCatalog(
       draft("1.2.0", [
         model({ slug: "openai.gpt-test", isLegacy: true }),
+        model({ slug: "openai.gpt-unversioned", isLegacy: true }),
         model({ slug: "openai.gpt-retired" }),
       ]),
       catalog,
@@ -83,7 +84,8 @@ describe("applyCodexModelCatalog", () => {
     assert.deepStrictEqual(
       classified.models.map((entry) => [entry.slug, entry.isLegacy ?? false]),
       [
-        ["openai.gpt-test", false],
+        ["openai.gpt-test", true],
+        ["openai.gpt-unversioned", false],
         ["openai.gpt-retired", true],
       ],
     );

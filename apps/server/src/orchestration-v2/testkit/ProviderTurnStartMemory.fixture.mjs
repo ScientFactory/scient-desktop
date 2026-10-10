@@ -29,6 +29,7 @@ const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project
     app("project/ProjectService"),
     app("provider/ProviderAuthService"),
   ]);
+const McpSessions = await providerCore("McpProviderSessions");
 const Settings = await app("serverSettings");
 const Config = await app("config");
 const NodeServices = await import(
@@ -54,6 +55,7 @@ const dependencies = Layer.mergeAll(
     Layer.provide(NodeServices.layer),
   ),
   Settings.layerTest(),
+  McpSessions.layer,
   Layer.mock(Handoff.ContextHandoffServiceV2)({}),
   Id.layer,
   FileSystem.layerNoop({}),
