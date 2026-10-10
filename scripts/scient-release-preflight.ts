@@ -106,9 +106,10 @@ export function renderScientReleaseNotesMarkdown(note: ScientReleaseNoteLike): s
 }
 
 async function verifyReleaseNote(options: Options): Promise<{
-  readonly source: "catalog" | "explicit-note-free";
+  readonly source: "catalog" | "explicit-note-free" | "beta-note-free";
   readonly markdown: string;
 }> {
+  if (options.channel === "beta") return { source: "beta-note-free", markdown: "" };
   const catalogPath = NodePath.join(options.root, "apps/web/src/scient/releaseNotes/catalog.ts");
   const modelPath = NodePath.join(options.root, "apps/web/src/scient/releaseNotes/model.ts");
 
@@ -130,7 +131,7 @@ async function verifyReleaseNote(options: Options): Promise<{
   ]);
   const catalog = SCIENT_RELEASE_NOTES as ReadonlyArray<ScientReleaseNoteLike>;
   const issues = validateScientReleaseNotesCatalog(catalog) as ReadonlyArray<string>;
-  const noteVersion = options.channel === "beta" ? options.version.split("-")[0]! : options.version;
+  const noteVersion = options.version;
   const source = resolveReleaseNoteSource({
     catalog,
     issues,

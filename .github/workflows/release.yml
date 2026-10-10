@@ -4,31 +4,31 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Release channel (Beta uses its isolated artifact repository)"
+        description: "Stable candidate or automatically published Beta (no release notes)"
         required: true
         default: stable
         type: choice
         options: [stable, beta]
       version:
-        description: "Exact version: 0.6.23 or 0.6.24-beta.20261010.1"
-        required: true
+        description: "Stable: required x.y.z. Beta: leave blank to generate the next version"
+        required: false
         type: string
       source_sha:
-        description: "Exact green main commit (Stable must be promoted to release/stable)"
-        required: true
+        description: "Stable: required promoted SHA. Beta: leave blank for this main commit"
+        required: false
         type: string
       publish_release:
-        description: "Build a publishable candidate and request production approval"
+        description: "Stable: request production approval. Beta always builds and publishes"
         required: true
         default: false
         type: boolean
       allow_note_free:
-        description: "Explicitly permit a release without a What's New entry"
+        description: "Stable: explicitly permit missing release notes. Beta always omits notes"
         required: true
         default: false
         type: boolean
       allow_unsigned_windows:
-        description: "Explicitly permit an unsigned Windows installer for this release"
+        description: "Stable: permit unsigned Windows. Beta uses the approved Windows exception"
         required: true
         default: false
         type: boolean
@@ -47,8 +47,38 @@ env:
   RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
 
 jobs:
+  beta-inventory:
+    name: Read isolated Beta release reservations
+    if: inputs.channel == 'beta'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: beta
+    outputs:
+      latest_stable_version: ${{ steps.inventory.outputs.latest_stable_version }}
+      beta_tags: ${{ steps.inventory.outputs.beta_tags }}
+    steps:
+      - id: inventory
+        name: Read published and draft Beta versions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SCIENT_BETA_RELEASE_TOKEN }}
+          RELEASES_ENABLED: ${{ vars.SCIENT_DESKTOP_BETA_RELEASES_ENABLED }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "$SCIENT_DESKTOP_CANONICAL_REPOSITORY" && "$GITHUB_REF" == "refs/heads/main" ]] || exit 1
+          [[ "$RELEASES_ENABLED" == "true" ]] || { echo "Beta publication is disabled." >&2; exit 1; }
+          [[ -n "$GH_TOKEN" ]] || { echo "SCIENT_BETA_RELEASE_TOKEN is required to read draft reservations." >&2; exit 1; }
+          stable_version="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
+          beta_tags="$(gh api --paginate --slurp "repos/$SCIENT_DESKTOP_BETA_REPOSITORY/releases?per_page=100" \
+            | jq -c '[.[][] | select(.tag_name | contains("-beta.")) | .tag_name]')"
+          echo "latest_stable_version=$stable_version" >> "$GITHUB_OUTPUT"
+          echo "beta_tags=$beta_tags" >> "$GITHUB_OUTPUT"
+
   preflight:
     name: Exact-commit release preflight
+    needs: beta-inventory
+    # Stable skips Beta inventory; downstream jobs explicitly require their own successful prerequisites.
+    if: ${{ !cancelled() && (inputs.channel != 'beta' || needs.beta-inventory.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -73,27 +103,6 @@ jobs:
             exit 1
           }
           [[ "$RELEASE_CHANNEL" == "stable" || "$RELEASE_CHANNEL" == "beta" ]] || exit 1
-
-      - name: Refuse an existing tag or release before builds
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          distribution_repository="$GITHUB_REPOSITORY"
-          [[ "$RELEASE_CHANNEL" == "beta" ]] && distribution_repository="$SCIENT_DESKTOP_BETA_REPOSITORY"
-          version="${RELEASE_VERSION#v}"
-          release_tag="v$version"
-          if gh release view "$release_tag" --repo "$distribution_repository" >/dev/null 2>&1; then
-            echo "Release $release_tag already exists; refusing to rebuild it." >&2
-            exit 1
-          fi
-          if git ls-remote --exit-code --tags "https://github.com/$distribution_repository.git" \
-            "refs/tags/$release_tag" >/dev/null 2>&1; then
-            echo "Tag $release_tag already exists; refusing to rebuild or repurpose it." >&2
-            exit 1
-          fi
 
       - name: Checkout exact release head
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -126,13 +135,55 @@ jobs:
           name: release-dependency-verification
           path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
 
-      - name: Verify exact source and approved release notes
+      - id: inputs
+        name: Resolve channel-specific release inputs
         shell: bash
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
-          ALLOW_NOTE_FREE: ${{ inputs.allow_note_free }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          ALLOW_UNSIGNED_WINDOWS: ${{ inputs.allow_unsigned_windows }}
           GH_TOKEN: ${{ github.token }}
+          LATEST_STABLE_VERSION: ${{ needs.beta-inventory.outputs.latest_stable_version }}
+          BETA_TAGS_JSON: ${{ needs.beta-inventory.outputs.beta_tags }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
+            export BETA_TAGS_FILE="$RUNNER_TEMP/scient-beta-tags.json"
+            printf '%s' "$BETA_TAGS_JSON" > "$BETA_TAGS_FILE"
+          fi
+          RELEASE_DATE="$(date -u +%Y%m%d)"
+          export RELEASE_DATE
+          node scripts/resolve-scient-release-inputs.ts
+
+      - name: Refuse an existing tag or release before builds
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.inputs.outputs.version }}
+        run: |
+          set -euo pipefail
+          distribution_repository="$GITHUB_REPOSITORY"
+          [[ "$RELEASE_CHANNEL" == "beta" ]] && distribution_repository="$SCIENT_DESKTOP_BETA_REPOSITORY"
+          release_tag="v$RELEASE_VERSION"
+          if gh release view "$release_tag" --repo "$distribution_repository" >/dev/null 2>&1; then
+            echo "Release $release_tag already exists; refusing to rebuild it." >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags "https://github.com/$distribution_repository.git" \
+            "refs/tags/$release_tag" >/dev/null 2>&1; then
+            echo "Tag $release_tag already exists; refusing to rebuild or repurpose it." >&2
+            exit 1
+          fi
+
+      - name: Verify exact source and channel release-note policy
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.inputs.outputs.version }}
+          SOURCE_SHA: ${{ steps.inputs.outputs.source_sha }}
+          ALLOW_NOTE_FREE: ${{ inputs.allow_note_free }}
+          LATEST_BETA_VERSION: ${{ steps.inputs.outputs.latest_beta_version }}
+          LATEST_STABLE_VERSION: ${{ needs.beta-inventory.outputs.latest_stable_version }}
         run: |
           args=(
             --version "$RELEASE_VERSION"
@@ -145,10 +196,8 @@ jobs:
             args+=(--allow-note-free)
           fi
           if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
-            stable_version="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
-            args+=(--latest-stable-version "$stable_version")
-            beta_version="$(gh api "repos/$SCIENT_DESKTOP_BETA_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == true and (.tag_name | contains("-beta.")))] | .[0].tag_name // ""')"
-            [[ -z "$beta_version" ]] || args+=(--latest-beta-version "$beta_version")
+            args+=(--latest-stable-version "$LATEST_STABLE_VERSION")
+            [[ -z "$LATEST_BETA_VERSION" ]] || args+=(--latest-beta-version "$LATEST_BETA_VERSION")
           fi
           node scripts/scient-release-preflight.ts "${args[@]}"
 
@@ -156,7 +205,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_SHA: ${{ steps.inputs.outputs.source_sha }}
         run: |
           set -euo pipefail
           result="$(gh run list \
@@ -176,10 +225,10 @@ jobs:
         name: Export immutable release metadata
         shell: bash
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release }}
-          ALLOW_UNSIGNED_WINDOWS: ${{ inputs.allow_unsigned_windows }}
+          RELEASE_VERSION: ${{ steps.inputs.outputs.version }}
+          SOURCE_SHA: ${{ steps.inputs.outputs.source_sha }}
+          PUBLISH_RELEASE: ${{ steps.inputs.outputs.publish_release }}
+          ALLOW_UNSIGNED_WINDOWS: ${{ steps.inputs.outputs.allow_unsigned_windows }}
         run: |
           set -euo pipefail
           if [[ "$ALLOW_UNSIGNED_WINDOWS" == "true" && "$PUBLISH_RELEASE" != "true" ]]; then
@@ -262,6 +311,7 @@ jobs:
   build_wsl_node_pty:
     name: Build WSL node-pty
     needs: preflight
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -293,6 +343,7 @@ jobs:
   build_synctex_runtime:
     name: Build SyncTeX / ${{ matrix.label }}
     needs: preflight
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
@@ -344,6 +395,7 @@ jobs:
   build_desktop:
     name: Package ${{ matrix.label }}
     needs: [preflight, build_wsl_node_pty, build_synctex_runtime]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_wsl_node_pty.result == 'success' && needs.build_synctex_runtime.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
@@ -690,6 +742,7 @@ jobs:
   build_server_asset:
     name: Package exact remote server asset
     needs: [preflight, build_desktop]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_desktop.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -757,6 +810,7 @@ jobs:
   assemble:
     name: Assemble and attest release
     needs: [preflight, build_desktop, build_server_asset]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_desktop.result == 'success' && needs.build_server_asset.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -825,6 +879,9 @@ jobs:
             --assets-dir release-assets \
             --version "$RELEASE_VERSION" \
             --channel "$RELEASE_CHANNEL"
+      - name: Rehearse Beta updater discovery and downloads
+        if: needs.preflight.outputs.channel == 'beta'
+        run: node apps/desktop/scripts/qualify-update-channels.cjs
       - name: Create checksums and compatibility handoff
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
@@ -871,7 +928,9 @@ jobs:
             echo "- Artifact digest: \`$ARTIFACT_DIGEST\`"
             echo "- Artifact URL: $ARTIFACT_URL"
             echo
-            if [[ "$PUBLISH_RELEASE" == "true" ]]; then
+            if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
+              echo "Beta publication continues automatically after artifact and updater verification."
+            elif [[ "$PUBLISH_RELEASE" == "true" ]]; then
               echo "Download and accept this exact candidate before approving the pending $RELEASE_CHANNEL deployment."
               echo "Approval publishes this run's assembled artifact without rebuilding it."
             else
@@ -881,7 +940,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    if: needs.preflight.outputs.publish_release == 'true'
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.assemble.result == 'success' && needs.preflight.outputs.publish_release == 'true' }}
     needs: [preflight, assemble]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -898,29 +957,14 @@ jobs:
             echo "The selected channel release gate must equal true." >&2
             exit 1
           }
-      - name: Require Beta update-path qualification for this candidate
+      - name: Require isolated Beta publishing credential
         if: needs.preflight.outputs.channel == 'beta'
         shell: bash
         env:
-          QUALIFICATION: ${{ vars.SCIENT_DESKTOP_BETA_QUALIFICATION }}
           BETA_TOKEN: ${{ secrets.SCIENT_BETA_RELEASE_TOKEN }}
-          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
-          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-          ARTIFACT_DIGEST: ${{ needs.assemble.outputs.artifact_digest }}
         run: |
           set -euo pipefail
           [[ -n "$BETA_TOKEN" ]] || { echo "SCIENT_BETA_RELEASE_TOKEN is required for the isolated artifact repository." >&2; exit 1; }
-          jq -e --arg sha "$SOURCE_SHA" --arg version "$RELEASE_VERSION" --arg digest "$ARTIFACT_DIGEST" '
-            .sourceSha == $sha and .version == $version and
-            (.artifactDigest | sub("^sha256:"; "")) == ($digest | sub("^sha256:"; "")) and
-            ([.paths[] | select(.passed == true and (.receipt | test("^https://"))) | .name] | sort) ==
-            (["beta-to-beta", "beta-to-stable", "stable-isolation", "stable-to-beta"] | sort) and
-            ([.platforms[] | select(.passed == true and (.receipt | test("^https://"))) | .name] | sort) ==
-            (["linux-x64", "mac-arm64", "mac-x64", "windows-x64"] | sort)
-          ' <<<"$QUALIFICATION" >/dev/null || {
-            echo "Beta publication requires native update receipts tied to this source, version and artifact digest. See docs/operations/beta-releases.md." >&2
-            exit 1
-          }
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: scient-release-v${{ needs.preflight.outputs.version }}

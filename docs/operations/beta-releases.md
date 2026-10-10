@@ -2,8 +2,7 @@
 
 Stable and Beta share source, signing identity, installed app identity and saved
 data. Users choose their update track in Settings. Existing Stable users remain
-on Stable; the next stable release carrying this implementation exposes the
-selector. Beta installers default to Beta. Returning to Stable waits until its
+on Stable. Beta installers default to Beta. Returning to Stable waits until its
 version is at least as new as the installed Beta; automatic downgrades are off.
 Legacy Nightly preferences migrate to Stable, preserving unrelated settings.
 
@@ -26,122 +25,94 @@ source repository, exact source commit/tree, distribution channel/repository and
 asset hashes. Never substitute the artifact repository's tag SHA for source
 provenance. Stable tags continue to point at their exact source SHA.
 
-## Preparing a candidate
+## Triggering a Beta
 
-Release the stable bridge containing the selector first. The first Beta then
-uses a higher target core than that bridge release (for example, bridge 0.6.23
-then Beta 0.6.24-beta.YYYYMMDD.N). The publisher rechecks current Stable after
-approval, so a candidate that became obsolete while awaiting review is refused.
+In GitHub Actions, open **Scient desktop release**, choose **Run workflow** from
+`main`, select `channel=beta`, and run it. The trigger authorizes the whole Beta
+build and publication. There is no later approval or manual publish step.
 
-Start with a reviewed `main` commit with successful exact-commit CI. Dispatch
-`release.yml` from `main`, select `channel=beta`, and supply that exact commit.
-Use a target stable version greater than current Stable, followed by
-`-beta.YYYYMMDD.N`, for example `0.6.24-beta.20261010.1`. Increment N for another
-candidate; each Beta must also be newer than the last published Beta. Never
-replace an existing tag or uploaded artifact.
+Leave `version` and `source_sha` blank for the normal path. The workflow pins the
+exact `main` commit at dispatch and requires successful CI for that exact commit.
+It generates `x.y.z-beta.YYYYMMDD.N` using the UTC date and the next stable patch
+core, retaining a higher existing Beta core if one exists. It advances beyond
+all existing Beta release versions, including reserved drafts, and increments N
+for another candidate on the same date. Beta runs are serialized. An explicit
+version or source SHA is permitted, but the version must be newer than Stable
+and every existing Beta, and the SHA must equal the dispatched commit.
 
-The channel is independent of cadence. Beta is manual initially, allowing a
-candidate when testing is useful. The existing stable scheduler is unchanged.
+Beta always publishes, even when `publish_release` is left at its default
+`false`; that checkbox controls Stable only. Beta has no What's New catalog
+requirement and omits release notes. `allow_note_free` also controls Stable only.
+The owner-approved unsigned-Windows exception applies automatically to Beta,
+with the Windows signing notice retained in its GitHub release body. macOS
+signing and notarization remain mandatory. Stable's publication, notes, signing
+exception inputs and protected `production` approval remain unchanged.
 
-The default `publish_release=false` assembles an unsigned build proof without
-creating a release. A publishable run (`publish_release=true`) builds signed
-macOS candidates and applies the existing explicit Windows signing exception.
-It retains the immutable candidate for 30 days and waits for environment
-approval. Download and test that exact artifact; never rebuild it after testing.
-Beta uses the approved catalog entry for its target stable core. Release notes
-still need explicit approval through the release catalog or the
-existing `allow_note_free` decision.
+Beta is manual rather than scheduled. Release the stable bridge containing the
+selector before the first Beta. A Beta must target a core ahead of current
+Stable (for example, Stable 0.6.23 then Beta 0.6.24-beta.YYYYMMDD.N). The publisher
+rechecks current Stable immediately before uploading, refusing a candidate that
+became obsolete during the build. Never replace an existing tag or artifact.
 
-The `beta` environment must allow only `main`, require the accountable owner's
-review and disallow administrator bypass. Keep
-`SCIENT_DESKTOP_BETA_RELEASES_ENABLED=false` until qualification is complete.
-Configure `SCIENT_BETA_RELEASE_TOKEN` there with Contents read/write access to
-**only** the Beta artifact repository. The source repository's ordinary
-`GITHUB_TOKEN` cannot publish into another repository. Do not reuse the general
-CLI credential or grant the Beta token write access to the stable repository.
-Beta uses the existing repository signing secrets; no new signing identity is
-needed.
+## Environment setup
 
-## Update qualification before publication
+Configure the source repository's `beta` environment to allow only `main`, with
+no required reviewers or wait timer. Keep administrator bypass disabled. Set
+`SCIENT_DESKTOP_BETA_RELEASES_ENABLED=true` to enable the automatic lane; set it
+to `false` to stop publication. Stable's `production` environment is separate.
 
-Run the local full gate from `AGENTS.md`. The desktop test suite runs
+Configure secret `SCIENT_BETA_RELEASE_TOKEN` in the `beta` environment with
+Contents read/write access to **only** `ScientFactory/scient-desktop-beta`.
+The source repository's ordinary `GITHUB_TOKEN` cannot publish into another
+repository. Do not reuse the general CLI credential or grant the Beta token
+write access to the stable repository. Beta uses the existing repository macOS
+signing secrets; no new signing identity is needed. A short Beta-only inventory
+job uses this credential before packaging so version generation includes draft
+reservations, which GitHub hides from public readers. Stable skips that job.
+The old
+`SCIENT_DESKTOP_BETA_QUALIFICATION` variable is no longer consumed.
+
+## Automatic checks and acceptance
+
+The release run builds and signs the exact source, validates the complete
+updater/server asset set, and runs
 `apps/desktop/scripts/qualify-update-channels.cjs` against the locked updater.
-That rehearsal exercises GitHub channel selection for all three platforms,
-loopback download/cache events, checksum rejection and feed switching using
-synthetic data. It executes no installer and verifies no native signature.
+That rehearsal checks GitHub channel discovery for all platforms, loopback
+download/cache events, checksum rejection and feed switching with synthetic data.
+It executes no installer and verifies no native signature. Native signing is
+checked separately during packaging; the approved Windows exception remains.
 
-Before approving publication, use disposable machines/profiles and the exact
-retained candidate to verify:
+The run retains an immutable candidate for 30 days. Publication verifies its
+run, artifact digest, source/tree, distribution identity and all asset hashes.
+It stages a draft in the isolated Beta repository, downloads and compares every
+uploaded byte, then automatically makes it public as a prerelease with
+`latest=false`. It verifies that canonical Stable Latest did not change.
+Missing CI, signing failures, invalid assets, failed updater rehearsals, missing
+credentials, a disabled publication gate or reused release identities fail the
+run instead of publishing. No manual per-candidate receipt is required.
 
-1. **stable-to-beta:** the stable bridge release exposes the selector; choosing
-   Beta checks its isolated feed, downloads the candidate and restarts into the
-   expected Beta version. The persisted channel survives restart.
-2. **beta-to-beta:** an enrolled Beta receives a newer Beta, downloads and
-   restarts; a current Beta has no update and never regresses to an older Beta.
-3. **beta-to-stable:** selecting Stable while it is older offers no downgrade;
-   publishing the matching stable core offers the stable upgrade and preserves
-   the user's Stable choice after restart.
-4. **stable-isolation:** an unenrolled bridge installation and an older stable
-   installation continue to resolve only Stable while Beta is available. The
-   canonical latest release and stable download page remain unchanged.
-
-Exercise installation/restart on macOS arm64, macOS x64, Windows x64 and Linux
-x64 AppImage. Confirm native signature/notarization requirements, updated local
-server version, data and settings preservation, retry after failed download,
-and rejection of a modified payload. Use approved synthetic fixtures and an
-isolated test feed for unpublished artifacts. The generic mock server can serve
-`beta*.yml` and `latest*.yml`; pass the existing mock-update configuration only
-to disposable packaged test copies. Keep this native rehearsal distinct from
-the GitHub-provider integration test and verify final artifact URLs after
-publication. Do not operate a production profile to obtain these receipts.
-
-Save evidence URLs for every path and platform, then set the environment
-variable `SCIENT_DESKTOP_BETA_QUALIFICATION` to the following JSON shape. Each
-receipt must identify the source, artifact digest, fixture/feed and observed
-installed versions. Do not mark a path passed based on mocked events.
-
-```json
-{
-  "sourceSha": "<exact source SHA>",
-  "version": "0.6.24-beta.20261010.1",
-  "artifactDigest": "sha256:<GitHub candidate digest>",
-  "paths": [
-    { "name": "stable-to-beta", "passed": true, "receipt": "https://<evidence>" },
-    { "name": "beta-to-beta", "passed": true, "receipt": "https://<evidence>" },
-    { "name": "beta-to-stable", "passed": true, "receipt": "https://<evidence>" },
-    { "name": "stable-isolation", "passed": true, "receipt": "https://<evidence>" }
-  ],
-  "platforms": [
-    { "name": "mac-arm64", "passed": true, "receipt": "https://<evidence>" },
-    { "name": "mac-x64", "passed": true, "receipt": "https://<evidence>" },
-    { "name": "windows-x64", "passed": true, "receipt": "https://<evidence>" },
-    { "name": "linux-x64", "passed": true, "receipt": "https://<evidence>" }
-  ]
-}
-```
-
-The publisher checks the receipt identity against this run's immutable artifact
-digest and refuses missing, stale or incomplete qualification. Copy the digest
-from the run's handoff; the optional `sha256:` prefix is accepted for receipts
-and normalized before comparison. Set the Beta
-enable variable to `true` only after review, then approve that same pending run.
-Beta is published as a prerelease with `latest=false`; the publisher downloads
-the staged draft and compares every byte before making it public, then verifies
-that canonical Stable Latest did not change. Verify public manifests, asset
-downloads and the updater against the published feed afterward.
+Automatic qualification is not native installation acceptance. For the first
+Beta, updater changes, and before promotion to Stable, use disposable machines
+and synthetic profiles to exercise stable-to-beta, beta-to-beta,
+beta-to-stable and stable isolation on macOS arm64/x64, Windows x64 and Linux
+x64 AppImage. Verify signatures/notarization, restart, the local server version,
+settings/data preservation, download retry and modified-payload rejection.
+Use an isolated test feed for unpublished artifacts and verify final public
+manifests and artifact URLs after publication. Do not operate production
+profiles to obtain test evidence.
 
 ## Promotion and recovery
 
-Beta acceptance is evidence for a stable source, not authority to release it.
-Use the stable promotion/release workflow and production approval. The optional
-`beta_version` promotion input permits the exact published Beta source when
-`main` has advanced: it verifies Beta's immutable handoff, successful source CI
-and main ancestry before the existing fast-forward-only promotion. Without that
-input, promotion still requires current main. The stable version must match the
-tested Beta's core; source release notes still need normal stable approval.
+Beta publication is not authority to release Stable. Use the stable
+promotion/release workflow and production approval. The optional `beta_version`
+promotion input selects a published Beta's exact source when `main` has advanced:
+it verifies the immutable handoff, successful source CI and main ancestry before
+the existing fast-forward-only promotion. Without that input, promotion still
+requires current main. The stable version must match the tested Beta core and
+still needs the normal stable release notes and manual acceptance.
 
-If a Beta is faulty, stop further Beta publication and produce a higher-version
-fix from reviewed source. Do not replace a release, move a published tag, mirror
-Beta into Stable, or force a downgrade. Users can select Stable and wait for its
-forward release. Stable/Beta saved data are shared, so test migrations forward
-and use synthetic profiles for rollback experiments.
+If a Beta is faulty, disable further Beta publication and produce a
+higher-version fix from reviewed source. Do not replace a release, move a
+published tag, mirror Beta into Stable, or force a downgrade. Users can select
+Stable and wait for its forward release. Stable/Beta saved data are shared, so
+test migrations forward and use synthetic profiles for rollback experiments.
