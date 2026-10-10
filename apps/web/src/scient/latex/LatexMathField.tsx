@@ -1324,36 +1324,34 @@ export const LatexMathField = forwardRef<
         delete preview.current.dataset.mathPreviewReady;
         queued?.cancel();
         cancelPreview?.();
-        queued = scheduleMathFieldMount(() => {
-          if (field.current || !preview.current || !container.isConnected) return;
-          const apply = (markup: string | null) => {
-            queued = scheduleMathFieldMount(() => {
-              if (field.current || !preview.current || !reading || !container.isConnected) return;
-              if (previewConfiguration !== next) return;
-              if (markup === null) reading.textContent = currentConfiguration.current.value;
-              else reading.innerHTML = markup;
-              previewPending = false;
-              preview.current.dataset.mathPreviewReady = "true";
-              container.dispatchEvent(
-                new CustomEvent("scient-latex-math-preview", { bubbles: true }),
-              );
-            }, priority);
-          };
-          try {
-            const configuration = currentConfiguration.current;
-            cancelPreview = mathReadingPreview(
-              configuration.value,
-              configuration.display,
-              initialMacros.current,
-              completionContext.current.colors,
-              apply,
-              priority,
+        const apply = (markup: string | null) => {
+          // Only DOM installation needs a rendering budget. Submitting a
+          // worker request must not wait for another browser paint first.
+          queued = scheduleMathFieldMount(() => {
+            if (field.current || !preview.current || !reading || !container.isConnected) return;
+            if (previewConfiguration !== next) return;
+            if (markup === null) reading.textContent = currentConfiguration.current.value;
+            else reading.innerHTML = markup;
+            previewPending = false;
+            preview.current.dataset.mathPreviewReady = "true";
+            container.dispatchEvent(
+              new CustomEvent("scient-latex-math-preview", { bubbles: true }),
             );
-          } catch {
-            // A failed preview must retain readable source and remain editable.
-            apply(null);
-          }
-        }, priority);
+          }, priority);
+        };
+        try {
+          cancelPreview = mathReadingPreview(
+            configuration.value,
+            configuration.display,
+            initialMacros.current,
+            completionContext.current.colors,
+            apply,
+            priority,
+          );
+        } catch {
+          // A failed preview must retain readable source and remain editable.
+          apply(null);
+        }
       };
       renderPreview.current();
     };

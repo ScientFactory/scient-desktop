@@ -1,5 +1,6 @@
 import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Decoration, type EditorView } from "@tiptap/pm/view";
+import { latexViewportMeasurement } from "./latexViewport";
 
 export type ParagraphSpacingCache = WeakMap<
   DocumentNode,
@@ -14,6 +15,7 @@ export function latexParagraphSpacing(
   view: EditorView,
   cache: ParagraphSpacingCache,
   unchanged?: (element: HTMLElement) => boolean,
+  reuseUnchangedWidth = false,
 ) {
   const decorations: Decoration[] = [];
   const context = document.createElement("canvas").getContext("2d");
@@ -26,7 +28,6 @@ export function latexParagraphSpacing(
     const paragraph = view.nodeDOM(position);
     if (!(paragraph instanceof HTMLElement)) return false;
     const previous = paragraph.previousElementSibling;
-    const widthOnScreen = paragraph.clientWidth;
     let cached = cache.get(node);
     const decorate = (spacing: number) => {
       if (spacing)
@@ -39,6 +40,22 @@ export function latexParagraphSpacing(
           ),
         );
     };
+    if (paragraph.hasAttribute("data-latex-viewport-closed")) {
+      decorate(latexViewportMeasurement(view, node, position)?.wordSpacing ?? cached?.spacing ?? 0);
+      return false;
+    }
+    // The local measurement path already checked the paper width/typography.
+    // Reusing an unchanged paragraph must not wake its distant layout subtree.
+    if (
+      reuseUnchangedWidth &&
+      cached?.element === paragraph &&
+      cached.previous === previous &&
+      unchanged?.(paragraph)
+    ) {
+      decorate(cached.spacing);
+      return false;
+    }
+    const widthOnScreen = paragraph.clientWidth;
     if (
       cached?.element === paragraph &&
       cached.width === widthOnScreen &&

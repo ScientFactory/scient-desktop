@@ -31,6 +31,32 @@ const canonicalCommand = (tex: string) => {
   return aliases[command] ?? command;
 };
 
+// The built-in catalog is immutable. Resolve its completion aliases once,
+// rather than scanning and normalizing every command for every palette symbol.
+const completionIds = new Map<string, string[]>();
+for (const entry of MATH_COMMANDS) {
+  if (!entry.completion) continue;
+  const command = canonicalCommand(`\\${entry.completion}`);
+  const ids = completionIds.get(command) ?? [];
+  ids.push(entry.id);
+  completionIds.set(command, ids);
+}
+
+type BindingHint = { index: number; label: string };
+const bindingHints = new WeakMap<readonly SurfaceBinding[], Map<string, BindingHint[]>>();
+function hintsByCommand(bindings: readonly SurfaceBinding[]) {
+  const cached = bindingHints.get(bindings);
+  if (cached) return cached;
+  const hints = new Map<string, BindingHint[]>();
+  bindings.forEach((binding, index) => {
+    const entries = hints.get(binding.command) ?? [];
+    entries.push({ index, label: labelKeys(binding.keys) });
+    hints.set(binding.command, entries);
+  });
+  bindingHints.set(bindings, hints);
+  return hints;
+}
+
 /** Read effective bindings, including user overrides and disabled bindings. */
 export function mathSymbolShortcuts(
   symbol: MathSymbol,
@@ -40,13 +66,12 @@ export function mathSymbolShortcuts(
   const ids =
     command && symbol.category === "structures"
       ? [`math.${command}`]
-      : MATH_COMMANDS.filter(
-          (entry) =>
-            entry.completion &&
-            canonicalCommand(`\\${entry.completion}`) === canonicalCommand(symbol.command),
-        ).map((entry) => entry.id);
-  const hints = bindings
-    .filter((binding) => ids.includes(binding.command))
-    .map((binding) => labelKeys(binding.keys));
-  return [...new Set(hints)];
+      : (completionIds.get(canonicalCommand(symbol.command)) ?? []);
+  const hints = hintsByCommand(bindings);
+  // Preserve effective-binding order when several command aliases match.
+  const labels = ids
+    .flatMap((id) => hints.get(id) ?? [])
+    .sort((a, b) => a.index - b.index)
+    .map((hint) => hint.label);
+  return [...new Set(labels)];
 }

@@ -92,6 +92,18 @@ export const latexEquationReferencesKey = new PluginKey<EquationReferences>(
 );
 
 const referenceLayouts = new WeakMap<EquationReferences, EquationReferences>();
+const referenceValues = new WeakMap<EquationReferences, string>();
+
+function referenceValue(references: EquationReferences): string {
+  let value = referenceValues.get(references);
+  if (value === undefined) {
+    value = JSON.stringify(references, (_key, item: unknown) =>
+      item instanceof Map ? [...item] : item,
+    );
+    referenceValues.set(references, value);
+  }
+  return value;
+}
 
 export function latexReferencePresentation(state: EditorState) {
   const references = latexEquationReferencesKey.getState(state);
@@ -808,8 +820,13 @@ export function latexEquationReferences(
     state: {
       init: (_config, state) => equationReferences(state.doc, source(), bibliography()),
       apply: (transaction, previous, _oldState, state) => {
-        if (transaction.getMeta(latexEquationReferencesKey))
-          return equationReferences(state.doc, source(), bibliography());
+        if (transaction.getMeta(latexEquationReferencesKey)) {
+          const next = equationReferences(state.doc, source(), bibliography());
+          // Source acknowledgements still recheck packages/counters and compiled
+          // bibliography. An equal presentation retains its identity and layout
+          // caches; positions have already been mapped by the typing transaction.
+          return referenceValue(next) === referenceValue(previous) ? previous : next;
+        }
         if (!transaction.docChanged) return previous;
         // Text edits preserve numbering and labels; heading edits update only their titles.
         if (isOrdinaryTyping(transaction)) {

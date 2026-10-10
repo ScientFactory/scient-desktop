@@ -2,6 +2,15 @@ import { mathArrayCellSelector } from "./mathEditingGuides";
 
 /** Match outer equation rows to MathLive's rendered baselines without changing math. */
 export function positionEquationNumbers(root: HTMLElement, rowCount: number): () => void {
+  // The single-row position is already supplied by CSS. It never needs a
+  // resize/mutation observer or a layout read when preview glyphs arrive.
+  if (rowCount <= 1) {
+    for (const number of root.querySelectorAll<HTMLElement>("[data-latex-equation-row]")) {
+      if (number.style.top) number.style.removeProperty("top");
+      if (number.style.transform) number.style.removeProperty("transform");
+    }
+    return () => {};
+  }
   let dispose: (() => void) | undefined;
   const refresh = () => {
     dispose?.();
@@ -44,11 +53,15 @@ function observeEquationNumbers(root: HTMLElement, rowCount: number): (() => voi
           ? cells[row]?.parentElement?.querySelector<HTMLElement>(":scope > .ML__pstrut")
           : null;
       if (rowCount > 1 && strut) {
-        number.style.top = `${(strut.getBoundingClientRect().bottom - rect.top) / scale}px`;
-        number.style.transform = "translateY(-.8em)";
+        const top = `${(strut.getBoundingClientRect().bottom - rect.top) / scale}px`;
+        if (number.style.top !== top) number.style.top = top;
+        if (number.style.transform !== "translateY(-0.8em)")
+          number.style.transform = "translateY(-.8em)";
       } else {
-        number.style.top = `${((row + 0.5) * 100) / rowCount}%`;
-        number.style.transform = "translateY(-50%)";
+        const top = `${((row + 0.5) * 100) / rowCount}%`;
+        if (number.style.top !== top) number.style.top = top;
+        if (number.style.transform !== "translateY(-50%)")
+          number.style.transform = "translateY(-50%)";
       }
     }
   };

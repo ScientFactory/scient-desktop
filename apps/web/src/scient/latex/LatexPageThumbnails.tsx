@@ -7,6 +7,9 @@ import {
   measureLatexPagePreview,
 } from "./latexPagePreview";
 import "mathlive/static.css";
+import type { Editor } from "@tiptap/core";
+import { latexPaginationKey } from "./latexVisualPaginationExtension";
+import { presentLatexViewportPages } from "./latexViewport";
 
 export function LatexPageThumbnails(props: {
   readonly stage: RefObject<HTMLDivElement | null>;
@@ -27,9 +30,31 @@ export function LatexPageThumbnails(props: {
     const refresh = createEditorBackgroundTask(500, 2000);
     let styles: CSSStyleSheet | null = null;
     let lastInput = 0;
+    const editor = () =>
+      (
+        source.querySelector(".scient-latex-visual-document") as
+          | (HTMLElement & { editor?: Editor })
+          | null
+      )?.editor;
     const update = () => {
-      if (!visible.size) return;
+      if (!visible.size) {
+        const current = editor();
+        if (current) presentLatexViewportPages(current.view, new Set(), []);
+        return;
+      }
       if (performance.now() - lastInput < 500) {
+        refresh.schedule(update);
+        return;
+      }
+      const current = editor();
+      if (
+        current &&
+        !presentLatexViewportPages(
+          current.view,
+          new Set([...visible].map((host) => Number(host.dataset.page))),
+          latexPaginationKey.getState(current.state)?.pages ?? [],
+        )
+      ) {
         refresh.schedule(update);
         return;
       }
@@ -103,15 +128,19 @@ export function LatexPageThumbnails(props: {
     };
     source.addEventListener("beforeinput", typing, true);
     source.addEventListener("load", schedule, true);
+    source.addEventListener("scient-latex-math-preview", schedule);
     source.ownerDocument.fonts.addEventListener("loadingdone", schedule);
     return () => {
       refresh.cancel();
+      const current = editor();
+      if (current) presentLatexViewportPages(current.view, new Set(), []);
       observer.disconnect();
       mutations.disconnect();
       styleChanges.disconnect();
       source.removeEventListener("input", schedule);
       source.removeEventListener("beforeinput", typing, true);
       source.removeEventListener("load", schedule, true);
+      source.removeEventListener("scient-latex-math-preview", schedule);
       source.ownerDocument.fonts.removeEventListener("loadingdone", schedule);
     };
   }, [stage, pageCount, width, height, gap]);

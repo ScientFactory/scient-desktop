@@ -189,7 +189,7 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
@@ -229,6 +229,11 @@ export default defineConfig(() => {
         "effect/Array",
         "effect/Order",
         "react-dom/client",
+        // The passive math converter loads in a module worker. Discovering its
+        // dependency after the page starts can leave that worker waiting on a
+        // new optimizer pass; prepare both MathLive entry points up front.
+        "mathlive",
+        "mathlive/ssr",
         ...(process.env.VITEST
           ? [
               "@base-ui/react/alert-dialog",
@@ -300,7 +305,9 @@ export default defineConfig(() => {
       // modules one import-level at a time while the browser waits — which
       // over a tailnet origin turns into minutes of waterfall.
       warmup: {
-        clientFiles: ["./src/main.tsx"],
+        // Component fixtures load their own entry. Warming the entire chat app
+        // can hold their test page behind unrelated transforms and time it out.
+        clientFiles: mode === "test" ? [] : ["./src/main.tsx"],
       },
       ...(devProxyTarget
         ? {

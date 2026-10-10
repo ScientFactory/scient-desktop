@@ -287,17 +287,31 @@ export function LatexReferencesPanel(props: {
     [indexed],
   );
   const catalogChanged = props.onCatalogChange;
-  useEffect(
-    () =>
-      catalogChanged(
-        candidates.map(({ document, entry }) => ({
-          key: entry.key,
-          title: bibliographyEntryTitle(entry),
-          path: document.path,
-        })),
-      ),
-    [candidates, catalogChanged],
-  );
+  const publishedCatalog = useRef<{
+    listener: typeof catalogChanged;
+    entries: BibliographyDetails[];
+  } | null>(null);
+  useEffect(() => {
+    const entries = candidates.map(({ document, entry }) => ({
+      key: entry.key,
+      title: bibliographyEntryTitle(entry),
+      path: document.path,
+    }));
+    const previous = publishedCatalog.current;
+    if (
+      previous?.listener === catalogChanged &&
+      previous.entries.length === entries.length &&
+      entries.every(
+        (entry, index) =>
+          entry.key === previous.entries[index]!.key &&
+          entry.title === previous.entries[index]!.title &&
+          entry.path === previous.entries[index]!.path,
+      )
+    )
+      return;
+    publishedCatalog.current = { listener: catalogChanged, entries };
+    catalogChanged(entries);
+  }, [candidates, catalogChanged]);
   const target = draft
     ? documents.find(
         (document) => document.id === draft.documentId && document.path === draft.documentPath,

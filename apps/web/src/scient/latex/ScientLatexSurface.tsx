@@ -111,6 +111,7 @@ import { useLatexSourceIdentity } from "./visualPdfPublication";
 import { prepareLatexDocument } from "./prepareLatexDocument";
 import { latexDocumentInputs } from "./latexDocumentInputs";
 import { useLatexAutoBuild } from "./useLatexAutoBuild";
+import { observeLatexHeaderFit } from "./observeLatexHeaderFit";
 
 import "./scient-latex.css";
 
@@ -1061,25 +1062,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   useLayoutEffect(() => {
     const row = headerRow.current;
     if (!row) return;
-    const fit = () => {
-      const hidden: string[] = [];
-      row.dataset.fit = "";
-      for (const step of HEADER_FIT_STEPS) {
-        if (row.scrollWidth <= row.clientWidth + 1) break;
-        hidden.push(step);
-        row.dataset.fit = hidden.join(" ");
-      }
-    };
-    fit();
-    const resize = new ResizeObserver(fit);
-    resize.observe(row);
-    // Content changes too: page count, zoom, build messages, a pane's controls.
-    const content = new MutationObserver(fit);
-    content.observe(row, { childList: true, subtree: true, characterData: true });
-    return () => {
-      resize.disconnect();
-      content.disconnect();
-    };
+    return observeLatexHeaderFit(row, HEADER_FIT_STEPS);
   }, []);
   // Changing the view, or Split's right pane, redraws the switch that had
   // focus. Give focus to the same switch once it is back in the row.

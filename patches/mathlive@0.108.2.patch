@@ -1,5 +1,5 @@
 diff --git a/mathlive.js b/mathlive.js
-index eae437bb1f9751cc87514f59bc3dec8e2f945743..4453ff68f1f37c6be38de33d3e51940a47cc9e2b 100644
+index eae437bb1f9751cc87514f59bc3dec8e2f945743..0ad09f88075ad1e44ec551f2c21b4169d6a14f53 100644
 --- a/mathlive.js
 +++ b/mathlive.js
 @@ -25927,36 +25927,47 @@ Note there are a different set of tooltip rules for the keyboard toggle
@@ -81,8 +81,35 @@ index eae437bb1f9751cc87514f59bc3dec8e2f945743..4453ff68f1f37c6be38de33d3e51940a
      if (evt.preventDefault) evt.preventDefault();
      return false;
    }
+@@ -40215,6 +40228,11 @@ If you are using Vue, this may be because you are using the runtime-only build o
+       if (mathfield_element_default.restoreFocusWhenDocumentFocused) {
+         const controller = new AbortController();
+         const signal = controller.signal;
++        // Restoration belongs to this field, including when it leaves the document.
++        this.eventController.signal.addEventListener("abort", () => controller.abort(), {
++          once: true,
++          signal
++        });
+         window.addEventListener(
+           "blur",
+           () => {
+@@ -40229,10 +40247,12 @@ If you are using Vue, this may be because you are using the runtime-only build o
+           { once: true, signal }
+         );
+         document.addEventListener("focusin", () => controller.abort(), {
+-          once: true
++          once: true,
++          signal
+         });
+         document.addEventListener("click", () => controller.abort(), {
+-          once: true
++          once: true,
++          signal
+         });
+       }
+     }
 diff --git a/mathlive.mjs b/mathlive.mjs
-index 1b366afaba08162ce304c0495b47abdace20a6c1..a2f4a257db12f84dd44b27eefe86fced2ebbc129 100644
+index 1b366afaba08162ce304c0495b47abdace20a6c1..9973431c800db3ef857c86ff3ee2338a555463ac 100644
 --- a/mathlive.mjs
 +++ b/mathlive.mjs
 @@ -25887,36 +25887,47 @@ function latexToMarkup(mf, latex) {
@@ -164,6 +191,33 @@ index 1b366afaba08162ce304c0495b47abdace20a6c1..a2f4a257db12f84dd44b27eefe86fced
    if (evt.preventDefault) evt.preventDefault();
    return false;
  }
+@@ -40175,6 +40188,11 @@ If you are using Vue, this may be because you are using the runtime-only build o
+     if (mathfield_element_default.restoreFocusWhenDocumentFocused) {
+       const controller = new AbortController();
+       const signal = controller.signal;
++      // Restoration belongs to this field, including when it leaves the document.
++      this.eventController.signal.addEventListener("abort", () => controller.abort(), {
++        once: true,
++        signal
++      });
+       window.addEventListener(
+         "blur",
+         () => {
+@@ -40189,10 +40207,12 @@ If you are using Vue, this may be because you are using the runtime-only build o
+         { once: true, signal }
+       );
+       document.addEventListener("focusin", () => controller.abort(), {
+-        once: true
++        once: true,
++        signal
+       });
+       document.addEventListener("click", () => controller.abort(), {
+-        once: true
++        once: true,
++        signal
+       });
+     }
+   }
 diff --git a/package.json b/package.json
 index 0df3630beb8cca77dc467bb2b74e93c52597f997..0fbd8211a7e3e31df384e2bdb05dc7c4bdd0ed3b 100644
 --- a/package.json

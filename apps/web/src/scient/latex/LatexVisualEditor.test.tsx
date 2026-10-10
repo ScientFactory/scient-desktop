@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import type { Editor } from "@tiptap/core";
+import type { Editor, NodeViewRenderer, NodeViewRendererProps } from "@tiptap/core";
+import type { LatexMathFieldHandle } from "./LatexMathField";
 import { act as reactAct, useImperativeHandle, useState, type ReactNode, type Ref } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -7,14 +8,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 // Test the actual ProseMirror transaction/save boundary. MathLive's native
 // shadow-DOM keyboard is checked in the running desktop, not simulated here.
 vi.mock("./LatexMathField", () => ({
-  LatexMathField: ({ value, ref }: { value: string; ref: Ref<unknown> }) => {
+  LatexMathField: ({ value, ref }: { value: string; ref: Ref<LatexMathFieldHandle> }) => {
     useImperativeHandle(ref, () => ({
       flush: () => true,
       focus: () => {},
+      isEmpty: () => value.length === 0,
       clearSelection: () => {},
+      cancelPointerSelection: () => {},
+      insert: () => {},
+      toggleTextFormat: () => false,
+      textFormatActive: () => false,
+      command: () => false,
     }));
     return <span>{value}</span>;
   },
+}));
+// These source-transaction cases use the interactive adapter above. Passive
+// math preparation and activation are exercised by the real browser cases.
+vi.mock("./mathReadingNodeView", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mathReadingNodeView")>()),
+  mathReadingNodeView: (props: NodeViewRendererProps, interactive: NodeViewRenderer) =>
+    interactive(props),
 }));
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
@@ -52,6 +66,7 @@ describe("writing editor source transactions", () => {
   let current: string;
   let confirmed: string | null;
   const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, "getAnimations");
+  const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
   const writes = vi.fn();
   const flushReferences = vi.fn<() => Promise<boolean>>();
   const tex = (body: string) =>
@@ -61,6 +76,10 @@ describe("writing editor source transactions", () => {
     Object.defineProperty(Element.prototype, "getAnimations", {
       configurable: true,
       value: () => [],
+    });
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: Object.assign(new EventTarget(), { ready: Promise.resolve(), status: "loaded" }),
     });
     writes.mockReset();
     confirmed = null;
@@ -86,6 +105,8 @@ describe("writing editor source transactions", () => {
     if (originalGetAnimations)
       Object.defineProperty(Element.prototype, "getAnimations", originalGetAnimations);
     else Reflect.deleteProperty(Element.prototype, "getAnimations");
+    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+    else Reflect.deleteProperty(document, "fonts");
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -104,8 +125,40 @@ describe("writing editor source transactions", () => {
     expect(item).toBeDefined();
     await act(() => item.click());
   }
+  async function openReferenceEntry() {
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
+    );
+    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "References",
+    );
+    expect(references).toBeDefined();
+    await act(() => references!.click());
+    const entry = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Bibliography entries"] button',
+    );
+    expect(entry).not.toBeNull();
+    await act(() => entry!.click());
+  }
   function editor(): Editor {
     return (container.querySelector(".ProseMirror") as HTMLElement & { editor: Editor }).editor;
+  }
+  async function contextMenuAction(menu: string, submenu: string | null, name: string) {
+    const trigger = container.querySelector<HTMLButtonElement>(`button[aria-label="${menu}"]`);
+    expect(trigger).not.toBeNull();
+    await act(() => trigger!.click());
+    const find = (label: string) =>
+      [...document.body.querySelectorAll<HTMLElement>('[role^="menuitem"]')].find(
+        (item) => item.textContent?.trim() === label,
+      );
+    if (submenu) {
+      const group = find(submenu);
+      expect(group).toBeDefined();
+      await act(() => group!.click());
+    }
+    const action = find(name);
+    expect(action).toBeDefined();
+    await act(() => action!.click());
   }
   async function openCellFormatting() {
     await act(() =>
@@ -315,11 +368,7 @@ describe("writing editor source transactions", () => {
       "\\begin{thebibliography}{99}\n\\bibitem{known} Original entry\n\\end{thebibliography}",
     );
     await selectKind("bibliography");
-    const manage = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent?.trim() === "Manage references",
-    )!;
-    expect(manage).toBeDefined();
-    await act(() => manage.click());
+    await openReferenceEntry();
     const field = () =>
       container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Reference entry text"]');
     expect(field()).not.toBeNull();
@@ -358,11 +407,7 @@ describe("writing editor source transactions", () => {
       "\\begin{thebibliography}{99}\n\\bibitem{known} Original entry\n\\end{thebibliography}",
     );
     await selectKind("bibliography");
-    await act(() =>
-      [...container.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent?.trim() === "Manage references")!
-        .click(),
-    );
+    await openReferenceEntry();
     const field = () =>
       container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Reference entry text"]');
     await setField(field()!, "Entry A");
@@ -1043,14 +1088,16 @@ describe("writing editor source transactions", () => {
     expect(container.querySelector("h2")?.hasAttribute("data-latex-unnumbered")).toBe(true);
     await setField(title, "A Better Guide");
     expect(current).toContain("\\title{A Better Guide}");
-    await act(async () => title.focus());
-    const removeAuthor = container.querySelector<HTMLInputElement>(
-      ".scient-latex-title-author-toggle input",
+    const author = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Document author']",
     )!;
-    await act(async () => removeAuthor.click());
+    await setField(author, "");
     expect(current).toContain("\\author{}");
-    expect(container.querySelector("textarea[aria-label='Document author']")).toBeNull();
-    await selectOption("Title date", "Date: Hidden");
+    expect(editor().state.doc.firstChild!.attrs.authorEnabled).toBe(false);
+    const date = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Document date']",
+    )!;
+    await setField(date, "");
     expect(current).toContain("\\date{}");
     expect(container.querySelector("textarea[aria-label='Document date']")).toBeNull();
   });
@@ -1061,7 +1108,7 @@ describe("writing editor source transactions", () => {
     const equation = container.querySelector(".scient-latex-visual-inline-math") as HTMLElement;
     await act(async () => equation.click());
     const sourceButton = document.body.querySelector<HTMLButtonElement>(
-      ".scient-latex-math-bar-source",
+      'button[aria-label="Edit formula as LaTeX"]',
     )!;
     await act(async () => sourceButton.click());
     const source = container.querySelector(
@@ -1091,10 +1138,10 @@ describe("writing editor source transactions", () => {
     await selectKind("latexDisplayMath");
     const equation = container.querySelector(".scient-latex-visual-display-math") as HTMLElement;
     await act(async () => equation.click());
-    const footerMath = container.querySelector<HTMLButtonElement>(
-      '.scient-latex-math-bar button[aria-label="Math"]',
+    const math = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Writing tools"] button[aria-label="Math"]',
     )!;
-    await act(() => footerMath.click());
+    await act(() => math.click());
     const inline = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
       (item) => item.textContent?.trim() === "Inline math",
     )!;
@@ -1301,16 +1348,38 @@ describe("writing editor source transactions", () => {
 
   it("expands a cell's Select All to the whole table and restores a deleted table with undo", async () => {
     await mount("\\begin{tabular}{ll}\nOne & Two\\\\\n\\end{tabular}");
+    const before = current;
     const field = container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
     const inner = (field as HTMLElement & { editor: Editor }).editor;
     await act(() => inner.chain().focus().selectAll().run());
+    await act(() => {
+      field.focus();
+      field.dispatchEvent(new FocusEvent("focusin", { bubbles: true, composed: true }));
+    });
     await act(() =>
       field.dispatchEvent(
         new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }),
       ),
     );
+    // The cell's complete document is a scope before the table's cell range.
+    expect(inner.state.selection.from).toBe(0);
+    expect(inner.state.selection.to).toBe(inner.state.doc.content.size);
+    expect(current).toBe(before);
+    await act(() =>
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }),
+      ),
+    );
+    const cell = container.querySelector<HTMLElement>('[data-table-selection="cells"]');
+    expect(cell).not.toBeNull();
+    await act(() =>
+      cell!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }),
+      ),
+    );
     const table = container.querySelector<HTMLElement>('[data-table-selection="whole"]');
     expect(table).not.toBeNull();
+    expect(current).toBe(before);
     await act(() =>
       table!.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }),
@@ -1413,23 +1482,19 @@ Theory & Proofs \\\\
     expect(container.querySelector("[contenteditable][aria-label='Table row 2 column 2']")).toBe(
       evidence,
     );
-    const addRow = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Insert below",
-    )!;
-    await act(async () => addRow.click());
+    await contextMenuAction("Rows & columns", "Rows", "Insert below");
     expect(current).toContain(" &  \\\\");
     expect(
       container.querySelector("[contenteditable][aria-label='Table row 3 column 1']"),
     ).not.toBeNull();
-    const addColumn = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Insert right",
-    )!;
-    await act(async () => addColumn.click());
+    await contextMenuAction("Rows & columns", "Columns", "Insert right");
     expect(
       container.querySelector("[contenteditable][aria-label='Table row 1 column 3']"),
     ).not.toBeNull();
-    await selectOption("Table style", "Full grid");
+    await contextMenuAction("Appearance", "Rules", "Full grid");
     expect(current).toContain("\\hline");
+    expect(current).toContain("\\caption{Research areas \\& evidence.}");
+    await selectKind("table");
     const reference = container.querySelector<HTMLTextAreaElement>(
       "textarea[aria-label='Table reference label']",
     )!;
@@ -1456,6 +1521,11 @@ Theory & Proofs \\\\
     await mount("Before");
     await insertMenuItem("Claim");
     const position = await selectKind("latexScientific");
+    await act(() =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Add statement title"]')!
+        .click(),
+    );
     const title = container.querySelector<HTMLTextAreaElement>(
       "textarea[aria-label='Scientific statement title']",
     )!;
@@ -1484,16 +1554,17 @@ Theory & Proofs \\\\
       editor().commands.insertContent(projectLatexVisualDocument(tex(figure)).content.content!),
     );
     expect(current).toContain("\\usepackage{graphicx}");
-    await selectKind("figure");
-    const path = container.querySelector<HTMLTextAreaElement>(
-      "textarea[aria-label='Figure image path']",
-    )!;
-    await setField(path, "images/result.png");
+    const position = await selectKind("figure");
+    await act(() =>
+      editor().view.dispatch(
+        editor().state.tr.setNodeMarkup(position, undefined, {
+          ...editor().state.doc.nodeAt(position)!.attrs,
+          path: "images/result.png",
+        }),
+      ),
+    );
     expect(current).toContain("\\includegraphics[width=0.8\\textwidth]{images/result.png}");
-    const remove = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Delete figure",
-    )!;
-    await act(async () => remove.click());
+    await contextMenuAction("Figure appearance", null, "Delete figure");
     expect(current).not.toContain("\\begin{figure}");
   });
 
@@ -1552,12 +1623,14 @@ Theory & Proofs \\\\
   it("rejects a destructive transaction spanning protected source", async () => {
     await mount("Hello\n\n\\custom{keep}");
     const before = current;
+    const beforeDocument = editor().state.doc;
     await act(async () => {
       editor().commands.selectAll();
       editor().commands.deleteSelection();
     });
     expect(current).toBe(before);
-    expect(container.textContent).toContain("source was left unchanged");
+    expect(editor().state.doc).toBe(beforeDocument);
+    expect(container.textContent).toContain("This edit is unavailable in Visual");
   });
 
   it("discards obsolete undo history when external source is adopted", async () => {

@@ -163,6 +163,9 @@ title returns to the body. Printed-title clicks retain the clicked caret positio
 Statement Title enters at the beginning. Listing/float labels share validation,
 single-file reference renaming and navigation. Retain statement footer context
 after title removal and app focus changes.
+Label fields keep one visible line without a native scrollbar, retain a usable
+minimum width in the footer, and scroll the caret within long identifiers. Empty
+fields remain empty; validation and Enter/blur commits retain their existing rules.
 
 Nested menus retain selection ownership. Shared Numbered/Line numbers/page-break
 switches keep their menu open. Compact custom forms reserve the widest unit option,

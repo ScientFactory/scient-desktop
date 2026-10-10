@@ -1,5 +1,6 @@
 import { latexLayoutLength } from "./latexPageLayouts";
 import { latexSourceCommands, latexSourceArgument } from "./latexSourceSyntax";
+import { latexPreambleEnd, latexWithoutComments } from "./latexPackages";
 /** Literal xcolor expressions and a bounded tcolorbox adapter; no TeX execution. */
 const basic: Record<string, string> = {
   black: "#000000",
@@ -25,7 +26,7 @@ const basic: Record<string, string> = {
 
 export function latexDocumentColors(source: string): Record<string, string> {
   const colors = { ...basic };
-  const preamble = source.split("\\begin{document}")[0]!.replace(/(?<!\\)%[^\r\n]*/gu, "");
+  const preamble = latexWithoutComments(source.slice(0, latexPreambleEnd(source)));
   let conditional = 0,
     through = 0;
   for (const command of latexSourceCommands(preamble)) {

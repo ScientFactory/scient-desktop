@@ -622,7 +622,7 @@ describe("the LaTeX surface on a document session", () => {
     expect(stored()).toBeNull();
   });
 
-  it("keeps taking Visual edits while a conflict waits, and never overwrites the newer file", async () => {
+  it("pauses Visual edits during a conflict and retains the accepted draft without overwriting the newer file", async () => {
     await mount("visual");
     await act(async () => {
       visual.props!.onEdit(BASE, typed("Mine."));
@@ -632,20 +632,20 @@ describe("the LaTeX surface on a document session", () => {
       expect(await lease.flushNow()).toBe(false);
     });
     expect(lease.getSnapshot().conflict).not.toBeNull();
-    expect(visual.props!.disabled).toBe(false);
+    expect(visual.props!.disabled).toBe(true);
     let accepted = false;
     await act(async () => {
       accepted = visual.props!.onEdit(typed("Mine."), typed("Mine again."));
     });
-    expect(accepted).toBe(true);
+    expect(accepted).toBe(false);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_000);
     });
     expect(lease.getSnapshot()).toMatchObject({
-      draftSource: typed("Mine again."),
+      draftSource: typed("Mine."),
       conflict: { externalSource: typed("Agent.") },
     });
-    expect(stored()).toEqual({ source: typed("Mine again."), baseRevision: revisionOf(BASE) });
+    expect(stored()).toEqual({ source: typed("Mine."), baseRevision: revisionOf(BASE) });
     expect(disk.source).toBe(typed("Agent."));
   });
 

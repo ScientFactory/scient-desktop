@@ -588,7 +588,7 @@
   break-after: column;
   pointer-events: none;
 }
-.scient-latex-visual-document[data-latex-column-measuring] .scient-latex-column-break-gap {
+[data-latex-column-measuring] .scient-latex-visual-document .scient-latex-column-break-gap {
   display: none;
 }
 .scient-latex-visual-document p:has(.scient-latex-inline-column-break) {
@@ -717,14 +717,14 @@
   text-align: center;
   transform: translateY(-50%);
 }
-.scient-latex-visual-document[data-latex-measuring] .scient-latex-pagination-gap {
+[data-latex-measuring] .scient-latex-visual-document .scient-latex-pagination-gap {
   display: none;
 }
-.scient-latex-visual-document[data-latex-measuring] .scient-latex-table-page-gap {
+[data-latex-measuring] .scient-latex-visual-document .scient-latex-table-page-gap {
   display: none;
 }
-.scient-latex-visual-document[data-latex-measuring] tr[data-latex-longtable-band="head"],
-.scient-latex-visual-document[data-latex-measuring] tr[data-latex-longtable-band="foot"] {
+[data-latex-measuring] .scient-latex-visual-document tr[data-latex-longtable-band="head"],
+[data-latex-measuring] .scient-latex-visual-document tr[data-latex-longtable-band="foot"] {
   /* Retain their contribution to column widths while removing their height. */
   visibility: collapse;
 }
@@ -744,7 +744,7 @@
 tr[data-latex-longtable-band] {
   user-select: none;
 }
-.scient-latex-visual-document[data-latex-measuring] .scient-latex-object-page-gap {
+[data-latex-measuring] .scient-latex-visual-document .scient-latex-object-page-gap {
   display: none;
 }
 
@@ -1036,21 +1036,95 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-display-math[data-equation-numbered] {
   padding-inline: 3em;
 }
+/* Opaque offscreen node views retain source positions and measured page gaps. */
+.scient-latex-visual-document [data-latex-viewport-closed] {
+  position: relative;
+  box-sizing: border-box;
+  height: calc(
+    var(--scient-latex-viewport-natural-height) + var(--scient-latex-viewport-gap-height)
+  );
+  content-visibility: visible;
+}
+[data-latex-windowed].scient-latex-visual-document
+  [data-latex-viewport][data-latex-viewport-closed] {
+  content-visibility: visible;
+}
+[data-latex-measuring] .scient-latex-visual-document [data-latex-viewport-closed] {
+  height: var(--scient-latex-viewport-natural-height);
+}
+.scient-latex-visual-document .node-latexDisplayMath[data-latex-viewport-closed],
+[data-latex-measuring]
+  .scient-latex-visual-document
+  .node-latexDisplayMath[data-latex-viewport-closed] {
+  height: auto;
+}
+.scient-latex-visual-document
+  .node-latexDisplayMath[data-latex-viewport-closed]
+  > .scient-latex-visual-display-math {
+  height: var(--scient-latex-viewport-display-height);
+  content-visibility: visible;
+}
+.scient-latex-visual-document [data-latex-viewport-closed] > .scient-latex-pagination-gap {
+  position: absolute;
+  float: none;
+}
+.scient-latex-viewport-accessible {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 /* Keep document/selection ownership intact while skipping distant math paint. */
 .scient-latex-visual-document[data-latex-windowed] :is(p, .scient-latex-visual-display-math) {
-  content-visibility: auto;
+  /* Unprepared mounted units must obtain real geometry. The viewport bounds
+     their admission; only units with a measured fallback skip offscreen layout. */
+  content-visibility: visible;
   contain-intrinsic-block-size: auto var(--scient-latex-block-height, 100px);
 }
-.scient-latex-visual-document[data-latex-measuring] :is(p, .scient-latex-visual-display-math),
+.scient-latex-visual-document p[data-latex-viewport="mounted"][data-latex-viewport-prepared="true"],
+.scient-latex-visual-document
+  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared="true"]
+  .scient-latex-visual-display-math {
+  /* Prepared geometry owns the offscreen size; a remembered browser size can
+     belong to an older wrapping or pagination layout. Visible content remains
+     naturally laid out by content-visibility:auto. */
+  content-visibility: auto;
+  contain-intrinsic-block-size: var(--scient-latex-block-height, 100px);
+}
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  :is(p, .scient-latex-visual-display-math),
+.scient-latex-visual-document[data-latex-windowed] :is(p, .scient-latex-visual-display-math) {
+  /* The first natural pass must use the eventual reading formatting context. */
+  contain: content;
+}
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  :is(p, .scient-latex-visual-display-math),
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  p[data-latex-viewport="mounted"][data-latex-viewport-prepared="true"],
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared="true"]
+  .scient-latex-visual-display-math,
 .scient-latex-visual-document :is(h4, h5) + p,
 .scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p,
 .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]),
 .scient-latex-page-preview .scient-latex-visual-display-math {
   content-visibility: visible;
 }
+.scient-latex-visual-document :is(h4, h5) + p,
+.scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p {
+  contain: none;
+}
 @media print {
   .scient-latex-visual-document :is(p, .scient-latex-visual-display-math) {
     content-visibility: visible !important;
+    contain: none !important;
   }
 }
 .scient-latex-equation-numbers {
@@ -1478,7 +1552,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font-size: 0.7em;
   vertical-align: super;
 }
-.scient-latex-visual-document[data-latex-measuring]
+[data-latex-measuring]
+  .scient-latex-visual-document
   .scient-latex-page-footnotes.ProseMirror-widget {
   display: none;
 }
@@ -2807,7 +2882,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-scientific-structure {
   display: flow-root;
-  margin-block: var(--scient-latex-theorem-sep, 0.8em);
+  --scient-latex-statement-sep: var(--scient-latex-theorem-sep, 0.8em);
+  margin-block: var(--scient-latex-statement-sep);
 }
 .scient-latex-scientific-body {
   /* Let paragraph line boxes flow beside the noneditable run-in heading. */
@@ -2815,6 +2891,17 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-scientific-body > div > p:first-child {
   text-indent: 0;
+}
+/* The first paragraph shares its inline flow with the heading. Layout
+   containment would indent every line beside the float, instead of only the
+   first line. Retain viewport mounting, but do not contain this shared flow. */
+.scient-latex-visual-document
+  .scient-latex-scientific-structure[data-run-in]
+  > .scient-latex-scientific-body
+  > [data-node-view-content-react]
+  > p:first-child {
+  content-visibility: visible;
+  contain: none;
 }
 .scient-latex-scientific-structure[data-theorem-style="plain"] > .scient-latex-scientific-body {
   font-style: italic;
@@ -2833,12 +2920,18 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-scientific-note {
   font-weight: normal;
   font-style: normal;
+  /* Bold and regular faces have different baseline metrics. The parent line
+     supplies the strut; a note must not enlarge this float into the next line. */
+  line-height: 1;
 }
 .scient-latex-statement-title {
   position: relative;
   display: inline-grid;
   vertical-align: baseline;
-  max-width: min(40ch, 65vw);
+  max-width: 100%;
+}
+.scient-latex-statement-title:has(> textarea) {
+  line-height: inherit;
 }
 .scient-latex-statement-title[data-empty] {
   min-width: 3ch;
@@ -2870,18 +2963,58 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   outline: none;
 }
 .scient-latex-scientific-structure[data-theorem-style="remark"] {
-  margin-block: calc(var(--scient-latex-theorem-sep, 0.8em) / 2);
+  --scient-latex-statement-sep: calc(var(--scient-latex-theorem-sep, 0.8em) / 2);
 }
 .scient-latex-scientific-structure[data-proof] {
-  margin-block: var(--scient-latex-proof-sep, 0.6em);
+  --scient-latex-statement-sep: var(--scient-latex-proof-sep, 0.6em);
+}
+/* amsthm's adjacent trivlists combine their skips with addvspace. Keep the
+   preceding paragraph gap, but contribute only the larger environment skip. */
+.node-latexScientific:has(> .scient-latex-scientific-structure:not([data-quote-wrapper]))
+  + .node-latexScientific
+  > .scient-latex-scientific-structure:not([data-quote-wrapper]),
+.node-latexScientific:has(> .scient-latex-scientific-structure:not([data-quote-wrapper]))
+  + .scient-latex-pagination-gap
+  + .node-latexScientific
+  > .scient-latex-scientific-structure:not([data-quote-wrapper]) {
+  --scient-latex-previous-statement-sep: var(--scient-latex-theorem-sep, 0.8em);
+  margin-block-start: max(
+    0px,
+    calc(var(--scient-latex-statement-sep) - var(--scient-latex-previous-statement-sep))
+  );
+}
+.node-latexScientific:has(
+    > .scient-latex-scientific-structure[data-theorem-style="remark"]:not([data-quote-wrapper])
+  )
+  + .node-latexScientific
+  > .scient-latex-scientific-structure:not([data-quote-wrapper]),
+.node-latexScientific:has(
+    > .scient-latex-scientific-structure[data-theorem-style="remark"]:not([data-quote-wrapper])
+  )
+  + .scient-latex-pagination-gap
+  + .node-latexScientific
+  > .scient-latex-scientific-structure:not([data-quote-wrapper]) {
+  --scient-latex-previous-statement-sep: calc(var(--scient-latex-theorem-sep, 0.8em) / 2);
+}
+.node-latexScientific:has(> .scient-latex-scientific-structure[data-proof])
+  + .node-latexScientific
+  > .scient-latex-scientific-structure:not([data-quote-wrapper]),
+.node-latexScientific:has(> .scient-latex-scientific-structure[data-proof])
+  + .scient-latex-pagination-gap
+  + .node-latexScientific
+  > .scient-latex-scientific-structure:not([data-quote-wrapper]) {
+  --scient-latex-previous-statement-sep: var(--scient-latex-proof-sep, 0.6em);
 }
 .scient-latex-scientific-structure[data-quote-wrapper] {
   margin-inline: 2.5em;
 }
 .scient-latex-scientific-structure[data-run-in] > .scient-latex-scientific-heading {
   float: left;
-  margin-inline-end: 0.5em;
+  margin-inline-end: var(--scient-latex-theorem-head-sep, 0.5em);
   padding: 0;
+}
+.scient-latex-scientific-structure[data-proof][data-run-in] > .scient-latex-scientific-heading {
+  margin-inline-end: 0.5em;
 }
 .scient-latex-scientific-structure[data-quote-wrapper][data-run-in]
   > .scient-latex-scientific-heading {

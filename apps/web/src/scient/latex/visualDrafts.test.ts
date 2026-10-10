@@ -7,6 +7,7 @@ import {
   discardVisualDraft,
   flushVisualDraft,
   readPersistedVisualDraft,
+  readVisualDraftForSource,
 } from "./visualDrafts";
 
 const keys = [
@@ -52,6 +53,28 @@ afterEach(() => {
 });
 
 describe("Visual draft recovery", () => {
+  it("finds a queued checkpoint without taking an unrelated view's stored record", () => {
+    const slot = "scient:latex-visual-draft:source:pending";
+    const theirs = JSON.stringify({ source: before, baseRevision: "other-view" });
+    localStorage.setItem(slot, theirs);
+    retain("pending", "new visual prose", after);
+    expect(readVisualDraftForSource("pending", after)).toEqual({
+      source: after,
+      baseRevision: "disk-one",
+    });
+    expect(readVisualDraftForSource("pending", afterBoth)).toBeNull();
+    expect(localStorage.getItem(slot)).toBe(theirs);
+  });
+
+  it("finds the persisted buffer until its exact save is acknowledged", () => {
+    retain("confirmed", "new visual prose", after);
+    expect(flushVisualDraft("confirmed")).toBe(true);
+    expect(readVisualDraftForSource("confirmed", after)?.source).toBe(after);
+    expect(readVisualDraftForSource("confirmed", before)).toBeNull();
+    expect(confirmVisualDraft("confirmed", after)).toBe(true);
+    expect(readVisualDraftForSource("confirmed", after)).toBeNull();
+  });
+
   it("keeps an optimistic complete-source checkpoint durable until disk confirmation", () => {
     retain("pending", "new visual prose", after);
     checkpointVisualDraft("pending", "new visual prose", before, after, "disk-one");

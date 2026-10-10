@@ -641,7 +641,8 @@ describe("recovering unsaved work", () => {
     });
     localStorage.setItem(TYPING_SLOT, theirs);
     await click("Discard");
-    expect(readStoredRecovery(KEY)?.text).toContain("Written in the other view");
+    expect(localStorage.getItem(TYPING_SLOT)).toBe(theirs);
+    expect(JSON.stringify(readTypingDraft(KEY)?.content)).toContain("Written in the other view");
     expect(page()).toContain("Agent paragraph.");
   });
 
@@ -948,7 +949,9 @@ describe("recovering unsaved work", () => {
         show(disk);
       });
       await settle(300);
-      expect(message()).toBe("Unsaved changes · keep this document open");
+      expect(message(), container.textContent ?? "").toBe(
+        "Unsaved changes · keep this document open",
+      );
       expect(editable()).toBe(false);
       expect(localStorage.getItem(SOURCE_SLOT)).toBe(theirs);
       // Using it does not take the slot from the other view's work either.

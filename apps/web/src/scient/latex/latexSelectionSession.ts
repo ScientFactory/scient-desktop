@@ -55,6 +55,11 @@ const clearParentHistory = () => {
 };
 const workspace = (participant: Participant | null) =>
   participant?.element.closest(".scient-latex-visual-workspace");
+const participantGuide = (participant: Participant | null) =>
+  participant?.element.closest<HTMLElement>(
+    "math-field,.scient-latex-rich-preview,.scient-latex-title-preview," +
+      ".scient-latex-abstract-preview,.scient-latex-simple-preview,.scient-latex-scientific-structure",
+  ) ?? null;
 
 function present(participant: Participant | null, selected = false, selectionOverlay = false) {
   if (presentation !== participant) {
@@ -63,11 +68,7 @@ function present(participant: Participant | null, selected = false, selectionOve
     presentation?.element.removeAttribute("data-scient-selection-overlay");
     presentation = participant;
   }
-  const next =
-    participant?.element.closest<HTMLElement>(
-      "math-field,.scient-latex-rich-preview,.scient-latex-title-preview," +
-        ".scient-latex-abstract-preview,.scient-latex-simple-preview,.scient-latex-scientific-structure",
-    ) ?? null;
+  const next = participantGuide(participant);
   if (next !== guideOwner) {
     guideOwner?.removeAttribute("data-scient-editing-guides");
     guideOwner?.removeAttribute("data-scient-selection-active");
@@ -129,7 +130,6 @@ function paint() {
     overlay?.replaceChildren();
     return;
   }
-  root.dispatchEvent(new CustomEvent("scient-latex-selection-scope", { detail: snapshot.path }));
   if (!overlay) {
     overlay = document.createElement("div");
     overlay.className = "scient-latex-selection-overlay";
@@ -151,7 +151,6 @@ function paint() {
     overlay.replaceChildren();
     return;
   }
-  overlay.style.setProperty("--scient-scope-pixel", `${1 / origin.width}px`);
   const boxes = (
     rects: readonly DOMRect[],
     kind: string,
@@ -178,22 +177,19 @@ function paint() {
       return [box];
     });
   const selection = snapshot.selection();
-  present(active, selection.length > 0, snapshot.selectionOverlay === true);
   const documentStyle = getComputedStyle(
     active.element.closest(".scient-latex-visual-document") ?? root,
   );
-  for (const name of [
+  const colors = [
     "--scient-latex-selection-background",
     "--scient-latex-cell-selection-background",
     "--scient-latex-retained-selection-background",
-  ])
-    overlay.style.setProperty(name, documentStyle.getPropertyValue(name));
-  const emptyText = emptyTextGuideRects(guideOwner);
+  ].map((name) => [name, documentStyle.getPropertyValue(name)] as const);
+  const emptyText = emptyTextGuideRects(participantGuide(active));
   const activeEmptyText =
     (active.element instanceof HTMLInputElement || active.element instanceof HTMLTextAreaElement) &&
     !active.element.value;
-  overlay.toggleAttribute("data-scient-selection-held", Boolean(held));
-  overlay.replaceChildren(
+  const children = [
     ...(selection.length
       ? boxes(snapshot.emptyScopes?.() ?? [], "scient-latex-scope-outline", 0)
       : [
@@ -210,7 +206,16 @@ function paint() {
               : "scient-latex-range-selection",
         )
       : []),
-  );
+  ];
+  // Finish ink, guide and color reads before presentation changes invalidate
+  // styles. In particular, computed styles are live: read all three colors
+  // before writing any overlay variable, rather than flushing after each one.
+  present(active, selection.length > 0, snapshot.selectionOverlay === true);
+  for (const [name, value] of [["--scient-scope-pixel", `${1 / origin.width}px`], ...colors])
+    if (overlay.style.getPropertyValue(name) !== value) overlay.style.setProperty(name, value);
+  overlay.toggleAttribute("data-scient-selection-held", Boolean(held));
+  overlay.replaceChildren(...children);
+  root.dispatchEvent(new CustomEvent("scient-latex-selection-scope", { detail: snapshot.path }));
 }
 function schedule() {
   if (!frame) frame = requestAnimationFrame(paint);

@@ -25,5 +25,24 @@ export type VisualProcessingOutput =
   | { kind: "references"; choices: LatexReferenceChoice[] }
   | { kind: "bibliography"; choices: LatexReferenceChoice[] };
 
-export type VisualProcessingRequest = { id: number; input: VisualProcessingInput };
-export type VisualProcessingReply = { id: number; output: VisualProcessingOutput | null };
+export type VisualChangeInput = Extract<VisualProcessingInput, { kind: "change" }>;
+export type VisualChangeDelta = {
+  kind: "change-delta";
+  base: number;
+  prefix: number;
+  suffix: number;
+  content: JSONContent;
+  rootSource: string | null;
+  allowRootUpdates: boolean;
+};
+
+export type VisualProcessingRequest = {
+  id: number;
+  input: VisualProcessingInput | VisualChangeDelta;
+};
+export type VisualProcessingReply = {
+  id: number;
+  output: VisualProcessingOutput | null;
+  needsFull?: boolean;
+  contentMatchesInput?: boolean;
+};

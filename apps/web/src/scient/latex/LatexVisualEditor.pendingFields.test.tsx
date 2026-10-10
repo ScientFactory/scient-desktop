@@ -98,6 +98,9 @@ describe("pending fields across outside document changes", () => {
     });
     expect(position).toBeGreaterThanOrEqual(0);
     await act(() => editor().commands.setNodeSelection(position));
+    const title = container.querySelector<HTMLElement>(".scient-latex-statement-title");
+    expect(title).not.toBeNull();
+    await act(() => title!.click());
     expect(field()).not.toBeNull();
   }
   async function typeTitle() {

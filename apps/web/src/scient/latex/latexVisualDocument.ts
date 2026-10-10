@@ -67,6 +67,7 @@ import {
   newLatexCommandPackages,
   latexCommands,
   latexWithoutComments,
+  latexPreambleEnd,
 } from "./latexPackages";
 import {
   latexLengthInches,
@@ -106,12 +107,37 @@ interface LatexVisualSetup {
   readonly declarations: ReturnType<typeof latexEnvironmentDeclarations>;
 }
 
+const visualSetups = new Map<string, LatexVisualSetup>();
+let visualSetupCharacters = 0;
+
 function visualSetup(source: string): LatexVisualSetup {
-  return {
-    colors: latexDocumentColors(source),
-    math: latexDocumentMathSetup(source),
-    declarations: latexEnvironmentDeclarations(source),
+  const preamble = source.slice(0, latexPreambleEnd(source));
+  const key = preamble.length <= 65536 ? JSON.stringify(preamble) : undefined;
+  const cached = key === undefined ? undefined : visualSetups.get(key);
+  if (cached && key !== undefined) {
+    visualSetups.delete(key);
+    visualSetups.set(key, cached);
+    return cached;
+  }
+  // Own the small preamble string instead of retaining a substring of the body.
+  // A fragment without a document boundary uses its complete declaration input.
+  const input = key === undefined ? preamble : (JSON.parse(key) as string);
+  const setup = {
+    colors: latexDocumentColors(input),
+    math: latexDocumentMathSetup(input),
+    declarations: latexEnvironmentDeclarations(input),
   };
+  if (key !== undefined && key.length <= 131072) {
+    visualSetups.set(key, setup);
+    visualSetupCharacters += key.length;
+    while (visualSetups.size > 8 || visualSetupCharacters > 131072) {
+      const oldest = visualSetups.keys().next().value;
+      if (oldest === undefined) break;
+      visualSetups.delete(oldest);
+      visualSetupCharacters -= oldest.length;
+    }
+  }
+  return setup;
 }
 
 export interface LatexRootUpdate {
@@ -549,6 +575,15 @@ function inlineTextToken(
     if (!marks.includes("code") && source.startsWith(token)) return { source: token, text };
   }
   if (/^[\\%{}&#^_$]/u.test(source)) return null;
+  // Consume ordinary prose together rather than allocating and merging one
+  // text node per character. Stop before TeX syntax, punctuation transforms,
+  // whitespace, and an ASCII base followed by a Unicode combining mark.
+  const plain = /^(?:(?![\\%{}&#^_$~\t\r\n '`-])[\x00-\x7f])+/u.exec(source)?.[0];
+  if (plain) {
+    let end = plain.length;
+    if (/^\p{Mark}/u.test(source.slice(end))) end--;
+    if (end > 0) return { source: source.slice(0, end), text: source.slice(0, end) };
+  }
   // Ordinary ASCII avoids allocating a grapheme iterator for every keystroke.
   if (/^[\x00-\x7f](?!\p{Mark})/u.test(source)) return { source: source[0]!, text: source[0]! };
   const text = textGraphemes.segment(source)[Symbol.iterator]().next().value?.segment;
@@ -695,6 +730,24 @@ function inlinePiece(
   scoped = false,
 ): InlinePiece | null {
   const rest = source.slice(at);
+  // Protection changes expansion in moving arguments, not the visible command.
+  // Keep it attached to the supported command in both projection and source maps.
+  const protection = /^(?:\\protect(?![A-Za-z])[\t\r\n ]*)+(?=\\[A-Za-z])/u.exec(rest);
+  if (protection) {
+    const prefix = protection[0];
+    const piece = inlinePiece(source, at + prefix.length, marks, scoped);
+    if (!piece || (!piece.node && !piece.group)) return null;
+    if (piece.group)
+      return { ...piece, group: { ...piece.group, prefix: prefix + piece.group.prefix } };
+    const node = piece.node!;
+    return {
+      ...piece,
+      node:
+        typeof node.attrs?.raw === "string"
+          ? { ...node, attrs: { ...node.attrs, raw: prefix + node.attrs.raw } }
+          : node,
+    };
+  }
   const literal = inlineLatexLiteral(source, at);
   if (literal) {
     return {
@@ -4113,6 +4166,12 @@ export function latexInlineCommandSource(
   linkText = "",
   raw = "",
 ): string {
+  const protection = /^(?:\\protect(?![A-Za-z])[\t\r\n ]*)+(?=\\[A-Za-z])/u.exec(raw);
+  if (protection) {
+    const unprotected = raw.slice(protection[0].length);
+    if (/^\\([A-Za-z]+)/u.exec(unprotected)?.[1] === name)
+      return protection[0] + latexInlineCommandSource(name, argument, linkText, unprotected);
+  }
   if (name === "columnbreak")
     return /^\\columnbreak\b(?:[\t ]*\[4\])?\s*$/u.test(raw) ? raw : "\\columnbreak";
   if (name === "verb") return inlineLatexLiteralSource(argument, raw) ?? raw;
@@ -5793,6 +5852,7 @@ function inlineSourceUnits(
   marks: readonly string[] = [],
   wrappers: readonly string[] = [],
   scoped = false,
+  literalSpaces = false,
 ): InlineSourceUnit[] | null {
   const units: InlineSourceUnit[] = [];
   let currentMarks = marks;
@@ -5807,6 +5867,7 @@ function inlineSourceUnits(
         currentMarks,
         [...currentWrappers, source.slice(at, color.body.from)],
         scoped,
+        literalSpaces,
       );
       if (!children) return null;
       for (const child of children) {
@@ -5847,19 +5908,41 @@ function inlineSourceUnits(
         group.marks,
         [...currentWrappers, group.prefix],
         true,
+        literalSpaces,
       );
       if (!children) return null;
       units.push(...children);
     } else {
       const node = piece.node!;
-      units.push({
-        key: latexVisualNodeSignature(node),
-        node,
-        from: offset + at,
-        to: offset + piece.end,
-        marks: currentMarks,
-        wrappers: currentWrappers,
-      });
+      // Projection consumes ordinary ASCII in runs, but a narrow source map
+      // compares individual graphemes and must retain their physical offsets.
+      const raw = source.slice(at, piece.end);
+      const plainRun =
+        node.type === "text" &&
+        (raw === node.text || (literalSpaces && node.text === " " && /^ +$/u.test(raw))) &&
+        raw.length > 1 &&
+        /^\p{ASCII}+$/u.test(raw);
+      if (plainRun) {
+        for (let index = 0; index < raw.length; index++) {
+          const character = { ...node, text: raw[index]! };
+          units.push({
+            key: latexVisualNodeSignature(character),
+            node: character,
+            from: offset + at + index,
+            to: offset + at + index + 1,
+            marks: currentMarks,
+            wrappers: currentWrappers,
+          });
+        }
+      } else
+        units.push({
+          key: latexVisualNodeSignature(node),
+          node,
+          from: offset + at,
+          to: offset + piece.end,
+          marks: currentMarks,
+          wrappers: currentWrappers,
+        });
     }
     at = piece.end;
   }
@@ -5931,7 +6014,11 @@ function splitParagraphSource(
   return results;
 }
 
-function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent): string | null {
+function minimallyPatchedBlock(
+  block: LatexVisualSourceBlock,
+  next: JSONContent,
+  preserveIslands = true,
+): string | null {
   const noIndentPrefix =
     block.node.type === "paragraph" && block.node.attrs?.latexNoIndent && next.attrs?.latexNoIndent
       ? /^\s*\\noindent\b\s*/u.exec(block.source)
@@ -5944,6 +6031,7 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
         node: { ...block.node, attrs: { ...block.node.attrs, latexNoIndent: false } },
       },
       { ...next, attrs: { ...next.attrs, latexNoIndent: false } },
+      preserveIslands,
     );
     return value === null ? null : noIndentPrefix[0] + value;
   }
@@ -5965,8 +6053,23 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
   )
     ? (block.node.content ?? []).map((node) => node.text ?? "").join("")
     : null;
+  // A published typing snapshot can retain meaningful trailing spaces after
+  // marked text. Trimming those spaces from the source mapper leaves them
+  // behind on undo and can force whole-paragraph canonical serialization.
+  let completeUnits = plain === null && !heading ? inlineSourceUnits(block.source) : null;
+  const previousKeys = completeUnits
+    ? inlineEditorUnits(block.node.content ?? []).map(latexVisualNodeSignature)
+    : null;
+  const matchesPrevious = (units: readonly InlineSourceUnit[] | null) =>
+    units &&
+    previousKeys &&
+    units.length === previousKeys.length &&
+    units.every((unit, index) => unit.key === previousKeys[index]);
+  if (completeUnits && !matchesPrevious(completeUnits))
+    completeUnits = inlineSourceUnits(block.source, 0, [], [], false, true);
+  const completeMatches = matchesPrevious(completeUnits);
   const trimmed: readonly [number, number] =
-    plain !== null && block.source === escapeText(plain)
+    (plain !== null && block.source === escapeText(plain)) || completeMatches
       ? [0, block.source.length]
       : trimSourceRange(block.source, 0, block.source.length);
   const from = heading?.[0].length ?? trimmed[0];
@@ -5982,7 +6085,9 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
   const after = plainText(next.content);
   if (before !== null && after !== null && block.source.slice(from, to) === escapeText(before))
     return block.source.slice(0, from) + escapeText(after) + block.source.slice(to);
-  const oldUnits = inlineSourceUnits(block.source.slice(from, to), from);
+  const oldUnits = completeMatches
+    ? completeUnits
+    : inlineSourceUnits(block.source.slice(from, to), from);
   if (!oldUnits) return null;
   const nextUnits = inlineEditorUnits(next.content ?? []);
   const keys = nextUnits.map(latexVisualNodeSignature);
@@ -5997,6 +6102,83 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
   )
     suffix++;
   const oldEnd = oldUnits.length - suffix;
+  // A compound change can surround an unchanged formula or reference. Patch
+  // each side independently so its authored wrappers need not be serialized.
+  // Only unique, unwrapped atoms are safe source boundaries; repeated/moved or
+  // nested atoms continue through the existing validated replacement path.
+  if (
+    preserveIslands &&
+    oldUnits
+      .slice(prefix, oldEnd)
+      .some((unit) => unit.node.type !== "text" && !unit.marks.length && !unit.wrappers.length)
+  ) {
+    const positions = new Map<string, number>();
+    keys.forEach((key, index) => positions.set(key, positions.has(key) ? -1 : index));
+    const counts = new Map<string, number>();
+    for (const unit of oldUnits) counts.set(unit.key, (counts.get(unit.key) ?? 0) + 1);
+    const anchors = oldUnits.flatMap((unit, index) => {
+      const position = positions.get(unit.key) ?? -1;
+      return index >= prefix &&
+        index < oldEnd &&
+        position >= prefix &&
+        position < keys.length - suffix &&
+        counts.get(unit.key) === 1 &&
+        unit.node.type !== "text" &&
+        !unit.marks.length &&
+        !unit.wrappers.length
+        ? [{ unit, index, position }]
+        : [];
+    });
+    if (
+      anchors.length &&
+      anchors.length <= 16 &&
+      anchors.every((anchor, index) => !index || anchor.position > anchors[index - 1]!.position)
+    ) {
+      let originalAt = 0,
+        desiredAt = 0,
+        sourceAt = from;
+      let candidate = block.source.slice(0, from);
+      let valid = true;
+      for (const anchor of [
+        ...anchors,
+        { unit: { from: to, to }, index: oldUnits.length, position: keys.length },
+      ]) {
+        const original = oldUnits.slice(originalAt, anchor.index);
+        const desired = nextUnits.slice(desiredAt, anchor.position);
+        const segment = block.source.slice(sourceAt, anchor.unit.from);
+        const value =
+          original.length === desired.length &&
+          original.every((unit, index) => unit.key === latexVisualNodeSignature(desired[index]!))
+            ? segment
+            : minimallyPatchedBlock(
+                {
+                  ...block,
+                  source: segment,
+                  node: { type: "paragraph", content: original.map((unit) => unit.node) },
+                },
+                { type: "paragraph", content: desired },
+                false,
+              );
+        if (value === null) {
+          valid = false;
+          break;
+        }
+        candidate += value + block.source.slice(anchor.unit.from, anchor.unit.to);
+        originalAt = anchor.index + 1;
+        desiredAt = anchor.position + 1;
+        sourceAt = anchor.unit.to;
+      }
+      if (valid) {
+        candidate += block.source.slice(to);
+        const units = inlineSourceUnits(
+          candidate.slice(from, to + candidate.length - block.source.length),
+          from,
+        );
+        if (units?.length === keys.length && units.every((unit, index) => unit.key === keys[index]))
+          return candidate;
+      }
+    }
+  }
   const changed = nextUnits.slice(prefix, keys.length - suffix);
   const left = oldUnits[prefix - 1];
   const right = oldUnits[oldEnd];
@@ -6034,6 +6216,25 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
           block.source.slice(end),
         );
         const candidate = before + delimiter + preserved + block.source.slice(end);
+        // The block classifier trims boundary whitespace when reopening source.
+        // Validate the edited inline argument itself so a still-typing trailing
+        // space can stay in the guarded snapshot without rewriting its wrappers.
+        let candidateUnits = inlineSourceUnits(
+          candidate.slice(from, to + candidate.length - block.source.length),
+          from,
+        );
+        const matches = (units: readonly InlineSourceUnit[] | null) =>
+          units?.length === keys.length && units.every((unit, index) => unit.key === keys[index]);
+        if (!matches(candidateUnits))
+          candidateUnits = inlineSourceUnits(
+            candidate.slice(from, to + candidate.length - block.source.length),
+            from,
+            [],
+            [],
+            false,
+            true,
+          );
+        if (matches(candidateUnits)) return candidate;
         const reparsed = classifyBlock(candidate, 0);
         if (reparsed && roundTripSignature(reparsed) === roundTripSignature(next)) return candidate;
       }
@@ -6292,15 +6493,17 @@ export function applyLatexVisualDocumentChange(
   while (
     prefix < previous.length &&
     prefix < next.length &&
-    latexVisualNodeSignature(previous[prefix]!.node) === latexVisualNodeSignature(next[prefix]!)
+    (previous[prefix]!.node === next[prefix]! ||
+      latexVisualNodeSignature(previous[prefix]!.node) === latexVisualNodeSignature(next[prefix]!))
   )
     prefix++;
   let suffix = 0;
   while (
     suffix < previous.length - prefix &&
     suffix < next.length - prefix &&
-    latexVisualNodeSignature(previous[previous.length - 1 - suffix]!.node) ===
-      latexVisualNodeSignature(next[next.length - 1 - suffix]!)
+    (previous[previous.length - 1 - suffix]!.node === next[next.length - 1 - suffix]! ||
+      latexVisualNodeSignature(previous[previous.length - 1 - suffix]!.node) ===
+        latexVisualNodeSignature(next[next.length - 1 - suffix]!))
   )
     suffix++;
   if (prefix === previous.length && prefix === next.length)
@@ -6536,8 +6739,15 @@ export function applyLatexVisualDocumentChange(
           ? {
               ...parsed.blocks[0]!,
               id: block.id,
-              from: from + parsed.blocks[0]!.from,
-              to: from + parsed.blocks[0]!.to,
+              // The live paragraph owns the complete patch, including its
+              // newly typed boundary spaces. Reopening trims those spaces, but
+              // trimming this session range would strand them after undo.
+              from: newChanged[0]!.type === "paragraph" ? from : from + parsed.blocks[0]!.from,
+              to:
+                newChanged[0]!.type === "paragraph"
+                  ? from + replacement.length
+                  : from + parsed.blocks[0]!.to,
+              ...(newChanged[0]!.type === "paragraph" ? { source: replacement } : {}),
               node: newChanged[0]!,
             }
           : index > prefix

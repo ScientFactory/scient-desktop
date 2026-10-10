@@ -245,9 +245,21 @@
   .scient-latex-reference-label-field {
   position: relative;
   flex: 0 1 120px;
-  min-width: 0;
+  min-width: 12ch;
   width: 120px;
   display: flex;
+}
+/* Labels are single-line identifiers. Native caret scrolling remains available
+   for long keys, without a scrollbar taking over the compact field's height. */
+.scient-latex-reference-label-field > textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+.scient-latex-reference-label-field > textarea::-webkit-scrollbar {
+  display: none;
 }
 .scient-latex-context-tools[data-inspector][data-inline]
   :is(

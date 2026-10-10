@@ -171,6 +171,14 @@ export function readPersistedVisualDraft(key: string): Draft | null {
   return readPersisted(key);
 }
 
+/** Find the checkpoint for the buffer being replaced, including a queued write. */
+export function readVisualDraftForSource(key: string, source: string): Draft | null {
+  const unwritten = drafts.get(key);
+  if (unwritten?.source === source) return unwritten;
+  const persisted = readPersisted(key);
+  return persisted?.source === source ? persisted : null;
+}
+
 /** Remove the persisted record only if it is still exactly `draft`; unwritten checkpoints stay. */
 export function removePersistedVisualDraft(key: string, draft: Draft): boolean {
   const persisted = readPersisted(key);

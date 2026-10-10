@@ -2,6 +2,7 @@ import type { JSONContent } from "@tiptap/core";
 import type { Node as DocumentNode } from "@tiptap/pm/model";
 import type { Transaction } from "@tiptap/pm/state";
 import { ReplaceStep } from "@tiptap/pm/transform";
+import { serializedVisualDocument } from "./visualDocumentJson";
 
 /** Classify editor operations only. No source parsing, serialization or TeX checks. */
 export function isOrdinaryTyping(transaction: Transaction): boolean {
@@ -101,7 +102,7 @@ export function retainTypingDraft(
   doc: DocumentNode,
   previousIdentity: string | null = null,
 ): string | null {
-  const stored = JSON.stringify({ baseSource, content: doc.toJSON() });
+  const stored = `{"baseSource":${JSON.stringify(baseSource)},"content":${serializedVisualDocument(doc)}}`;
   try {
     const occupant = localStorage.getItem(keyFor(key));
     if (occupant !== null && occupant !== previousIdentity && occupant !== stored) {

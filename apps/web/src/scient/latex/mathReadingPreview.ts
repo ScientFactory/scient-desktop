@@ -5,24 +5,40 @@ import staticMathStyles from "mathlive/static.css?inline";
 import type { MathPreviewContext, MathPreviewRequest } from "./mathReadingPreviewProtocol";
 
 let previewStyles: CSSStyleSheet | undefined;
+let previewStyleText: string | undefined;
+
+function mathReadingStyles() {
+  // Every formula uses the same CSS. Strip global font declarations once,
+  // including on browsers which need a separate style node per shadow root.
+  return (previewStyleText ??= `${staticMathStyles.replace(/@font-face\s*\{[^}]*\}/gu, "")}
+    ::selection { background: transparent; color: inherit; }
+  `);
+}
+/** Passive completion state stays inside the shadow root, outside the editor's DOM observer. */
+export function mathReadingPreviewReady(element: Element): boolean {
+  return (
+    element.hasAttribute("data-math-preview-ready") ||
+    Boolean(
+      element.shadowRoot?.querySelector("[data-math-preview-content][data-math-preview-ready]"),
+    )
+  );
+}
+
 /** Keep mathematical layout independent of prose CSS and document invalidation. */
 export function installMathReadingPreview(element: HTMLElement): ShadowRoot {
   const root = element.shadowRoot ?? element.attachShadow({ mode: "open" });
   if (root.querySelector("[data-math-preview-content]")) return root;
-  const styles = `${staticMathStyles.replace(/@font-face\s*\{[^}]*\}/gu, "")}
-    ::selection { background: transparent; color: inherit; }
-  `;
   // Fonts are already bundled globally by MathLive's fonts.css. Share one
   // parsed layout sheet across previews instead of hundreds of style nodes.
   if (typeof CSSStyleSheet !== "undefined" && "replaceSync" in CSSStyleSheet.prototype) {
     if (!previewStyles) {
       previewStyles = new CSSStyleSheet();
-      previewStyles.replaceSync(styles);
+      previewStyles.replaceSync(mathReadingStyles());
     }
     root.adoptedStyleSheets = [previewStyles];
   } else {
     const style = document.createElement("style");
-    style.textContent = styles;
+    style.textContent = mathReadingStyles();
     root.append(style);
   }
   const content = document.createElement("span");
@@ -59,14 +75,19 @@ function previewMacros(macros: Readonly<Record<string, DocumentMathMacro>>) {
 
 type PreviewJob = {
   id: number;
+  key: string;
   source: string;
   display: boolean;
   contextId: number;
   context: MathPreviewContext;
-  complete: ((markup: string | null) => void) | undefined;
-  priority: () => number;
+  subscribers: Map<symbol, { complete: (markup: string | null) => void; priority: () => number }>;
 };
 const pending = new Map<number, PreviewJob>();
+const requests = new Map<string, PreviewJob>();
+const markupCache = new Map<string, string>();
+let cacheBytes = 0;
+const maximumCacheBytes = 16 * 1024 * 1024;
+const maximumCacheEntries = 512;
 let worker: Worker | undefined;
 let ready = false;
 let active: PreviewJob | undefined;
@@ -123,20 +144,54 @@ function stopWorker() {
   sentContexts.clear();
 }
 
+function remember(key: string, markup: string) {
+  const bytes = (key.length + markup.length) * 2;
+  if (bytes > maximumCacheBytes) return;
+  const previous = markupCache.get(key);
+  if (previous !== undefined) cacheBytes -= (key.length + previous.length) * 2;
+  markupCache.delete(key);
+  markupCache.set(key, markup);
+  cacheBytes += bytes;
+  while (cacheBytes > maximumCacheBytes || markupCache.size > maximumCacheEntries) {
+    const oldest = markupCache.entries().next().value!;
+    cacheBytes -= (oldest[0].length + oldest[1].length) * 2;
+    markupCache.delete(oldest[0]);
+  }
+}
+
+function deliver(job: PreviewJob, markup: string | null) {
+  requests.delete(job.key);
+  for (const [id, subscriber] of job.subscribers) {
+    job.subscribers.delete(id);
+    try {
+      subscriber.complete(markup);
+    } catch (error) {
+      // A detached view must not strand every other formula in the queue.
+      reportError(error);
+    }
+  }
+}
+
 function finish(markup: string | null) {
   clearTimeout(deadline);
   const job = active;
   active = undefined;
-  job?.complete?.(markup);
-  pump();
+  try {
+    if (job) {
+      if (markup !== null) remember(job.key, markup);
+      deliver(job, markup);
+    }
+  } finally {
+    pump();
+  }
 }
 
 function pump() {
   if (active) return;
   clearTimeout(idle);
   if (pending.size === 0) {
-    // Closing a document releases the worker as well as its cancelled jobs.
-    idle = setTimeout(stopWorker, 2000);
+    // Keep the converter warm across ordinary view switches, then release it.
+    idle = setTimeout(stopWorker, 30_000);
     return;
   }
   if (!worker) {
@@ -163,25 +218,27 @@ function pump() {
         pending.clear();
         const current = active;
         active = undefined;
-        current?.complete?.(null);
-        for (const job of jobs) job.complete?.(null);
+        if (current) deliver(current, null);
+        for (const job of jobs) deliver(job, null);
       };
       worker.addEventListener("error", (event) => {
         event.preventDefault();
         unavailable();
       });
-      deadline = setTimeout(unavailable, 15_000);
+      deadline = setTimeout(unavailable, import.meta.env.DEV ? 60_000 : 15_000);
     } catch {
       const jobs = [...pending.values()];
       pending.clear();
-      for (const job of jobs) job.complete?.(null);
+      for (const job of jobs) deliver(job, null);
     }
     return;
   }
   if (!ready) return;
   let maximum = -Infinity;
   for (const job of pending.values()) {
-    const priority = job.priority();
+    let priority = -Infinity;
+    for (const subscriber of job.subscribers.values())
+      priority = Math.max(priority, subscriber.priority());
     if (priority > maximum) {
       active = job;
       maximum = priority;
@@ -215,7 +272,7 @@ function pump() {
   }
 }
 
-/** One cancellable worker queue for reading math; never one worker per formula. */
+/** Share immutable markup and in-flight work; cancellation belongs to each view. */
 export function mathReadingPreview(
   source: string,
   display: boolean,
@@ -225,23 +282,43 @@ export function mathReadingPreview(
   priority: () => number = () => 0,
 ) {
   const context = contextFor(macros, colors);
-  const job: PreviewJob = {
-    id: ++sequence,
-    source,
-    display,
-    contextId: context.id,
-    context: context.value,
-    complete,
-    priority,
-  };
-  pending.set(job.id, job);
+  const key = JSON.stringify([context.id, display, source]);
+  const cached = markupCache.get(key);
+  if (cached !== undefined) {
+    markupCache.delete(key);
+    markupCache.set(key, cached);
+    complete(cached);
+    return () => {};
+  }
+  let job = requests.get(key);
+  if (!job) {
+    job = {
+      id: ++sequence,
+      key,
+      source,
+      display,
+      contextId: context.id,
+      context: context.value,
+      subscribers: new Map(),
+    };
+    requests.set(key, job);
+    pending.set(job.id, job);
+  }
+  const subscriber = Symbol();
+  job.subscribers.set(subscriber, { complete, priority });
   pump();
   return () => {
-    job.complete = undefined;
+    if (!job.subscribers.delete(subscriber)) return;
+    if (job.subscribers.size) return;
     pending.delete(job.id);
-    if (pending.size === 0 && active === job) {
+    if (requests.get(key) === job) requests.delete(key);
+    if (active === job) {
+      // A converter cannot process a cancellation while stuck in synchronous
+      // expansion. Release its owner and resume other views in a fresh worker;
+      // late responses from the terminated worker are already owner-guarded.
       active = undefined;
       stopWorker();
-    }
+      pump();
+    } else if (pending.size === 0 && !active) stopWorker();
   };
 }

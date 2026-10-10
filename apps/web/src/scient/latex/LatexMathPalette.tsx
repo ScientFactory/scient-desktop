@@ -235,11 +235,14 @@ export function LatexMathPalette({
     getKeyboardPreferences,
   );
   const shortcuts = useMemo(() => {
+    // Hints are shown only inside the panel. Activating a formula should not
+    // prepare the entire symbol catalog while that panel is closed.
+    if (!open) return new Map<string, string[]>();
     const bindings = effectiveSurfaceBindings(keyboard.preferences, isMacKeyboard());
     return new Map(
       MATH_SYMBOLS.map((symbol) => [symbol.id, mathSymbolShortcuts(symbol, bindings)]),
     );
-  }, [keyboard]);
+  }, [keyboard, open]);
   const panelId = useId();
   const ownerId = useId();
   const panelRoot = useRef<HTMLElement>(null);

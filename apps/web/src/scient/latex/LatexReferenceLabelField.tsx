@@ -27,6 +27,7 @@ export function LatexReferenceLabelField(props: {
         aria-describedby={message ? messageId : undefined}
         aria-invalid={message !== null}
         rows={1}
+        wrap="off"
         spellCheck={false}
         disabled={props.disabled}
         value={props.value}

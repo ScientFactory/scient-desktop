@@ -121,8 +121,8 @@ patchedDependencies:
   expo-modules-core@58.0.11: faa99c9a269bc6ffae1d642e6470eac2142b9513be488a478217750b1eed635c
   expo-notifications@58.0.11: 7db40176b83c90aebdee02e7d271c4d1b9fc7214a2ad91d0fdc5a348de20e969
   expo-sharing@58.0.13: fe40d857765bcd6a77aac1fed275e5b8f9415c29b972decdce05fb96de5665e6
-  mathlive@0.108.2: abadf99ceb2542588eda76bb60dcda2406b1f177b953a0b220d9aa83ec2c1079
   expo-widgets@58.0.11: d00838b5b215a4c45f89b8b7d34878d158528756fbcf281bae1cbd6f0752deed
+  mathlive@0.108.2: 6a400003bb543d1b685dbfc0a8de89db5d1d55ff8cf01e5309c6aaf0d5d54df6
   react-native-gesture-handler@3.2.1: 3037216c0dd1b14e8877441bde1a7404d1c6e9c09f835bd184c3cdba4aa066ad
   react-native-keyboard-controller@1.22.6: 6e448411781347cd0b87868ee279117514a399801c18f233ddca4fa3935be75d
   react-native-nitro-markdown@0.5.8: 642b47830730acff3761fe29cf54271d18b493c0070c750097850b7ea032e00c
@@ -918,7 +918,7 @@ importers:
         version: 3.2.2
       mathlive:
         specifier: 0.108.2
-        version: 0.108.2(patch_hash=abadf99ceb2542588eda76bb60dcda2406b1f177b953a0b220d9aa83ec2c1079)
+        version: 0.108.2(patch_hash=6a400003bb543d1b685dbfc0a8de89db5d1d55ff8cf01e5309c6aaf0d5d54df6)
       mermaid:
         specifier: 12.0.0
         version: 12.0.0
@@ -22193,7 +22193,7 @@ snapshots:
 
   mathjax@3.2.2: {}
 
-  mathlive@0.108.2(patch_hash=abadf99ceb2542588eda76bb60dcda2406b1f177b953a0b220d9aa83ec2c1079):
+  mathlive@0.108.2(patch_hash=6a400003bb543d1b685dbfc0a8de89db5d1d55ff8cf01e5309c6aaf0d5d54df6):
     dependencies:
       '@cortex-js/compute-engine': 0.30.2
 

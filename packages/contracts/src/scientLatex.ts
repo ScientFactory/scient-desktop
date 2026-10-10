@@ -216,12 +216,22 @@ export const ScientLatexArtworkRequest = Schema.Struct({
   algorithmNumber: Schema.optional(
     Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100_000 })),
   ),
+  rasterPixelRatio: Schema.optional(
+    Schema.Number.check(Schema.isBetween({ minimum: 2, maximum: 3 })),
+  ),
 });
 export type ScientLatexArtworkRequest = typeof ScientLatexArtworkRequest.Type;
 
 export const ScientLatexArtworkResult = Schema.Union([
   Schema.TaggedStruct("ready", {
     pdfBase64: Schema.String.check(Schema.isMaxLength(8_000_000)),
+    raster: Schema.optional(
+      Schema.Struct({
+        pngBase64: Schema.String.check(Schema.isMaxLength(8_000_000)),
+        widthPoints: Schema.Number.check(Schema.isGreaterThan(0)),
+        heightPoints: Schema.Number.check(Schema.isGreaterThan(0)),
+      }),
+    ),
   }),
   Schema.TaggedStruct("unavailable", { message: Schema.String }),
 ]);

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   adoptLatexVisualContent,
   applyLatexVisualDocumentChange,
+  latexInlineCommandSource,
   latexVisualFigureSource,
   latexVisualLayoutProfile,
   latexVisualScientificSource,
@@ -28,6 +29,101 @@ const edit = (source: string, content: JSONContent[]) =>
   });
 
 describe("source-derived writing projection", () => {
+  it.each([String.raw`\ref{sec:one}`, String.raw`\protect \ref{sec:one}`, "$x+y$"])(
+    "preserves authored wrappers during compound edits around an unchanged atom: %s",
+    (atom) => {
+      const source = document(String.raw`Before \protect\textit{italic} and ` + atom + " after.");
+      const projection = projectLatexVisualDocument(source);
+      expect(projection.rawBlocks).toBe(0);
+      const content = structuredClone(projection.content);
+      const nodes = content.content![0]!.content!;
+      const italic = nodes.find((node) => node.marks?.some((mark) => mark.type === "italic"))!;
+      italic.text = "changed";
+      nodes.at(-1)!.text = " ending.";
+      const changed = applyLatexVisualDocumentChange(source, projection, content);
+      expect(changed?.source).toBe(
+        source.replace("{italic}", "{changed}").replace(" after.", " ending."),
+      );
+      const reopened = projectLatexVisualDocument(changed!.source);
+      expect(reopened.rawBlocks).toBe(0);
+      const restored = applyLatexVisualDocumentChange(
+        changed!.source,
+        reopened,
+        projection.content,
+      );
+      expect(restored?.source).toBe(source);
+    },
+  );
+
+  it("retains protection when a reference argument changes", () => {
+    const source = document(String.raw`See \protect \ref{old}.`);
+    const projection = projectLatexVisualDocument(source);
+    const content = structuredClone(projection.content);
+    content.content![0]!.content!.find(
+      (node) => node.type === "latexInlineCommand",
+    )!.attrs!.argument = "new";
+    expect(applyLatexVisualDocumentChange(source, projection, content)?.source).toBe(
+      source.replace("{old}", "{new}"),
+    );
+    expect(latexInlineCommandSource("ref", "new", "", String.raw`\protect \ref{old}`)).toBe(
+      String.raw`\protect \ref{new}`,
+    );
+  });
+
+  it.each([
+    String.raw`\protect\unknown{content}`,
+    String.raw`\protect`,
+    String.raw`\protection{content}`,
+  ])("keeps unsupported protected commands as exact source: %s", (body) => {
+    const projection = projectLatexVisualDocument(document(body));
+    expect(projection.rawBlocks).toBe(1);
+    expect(projection.blocks[0]!.source).toBe(body);
+  });
+
+  it.each([1, 12])(
+    "undoes %s prose additions after marked text without changing command spelling or trailing spaces",
+    (count) => {
+      const source = document(
+        "Before $x+y$.\n\n" +
+          String.raw`Plain \textbf{bold} and \textit{italic} ending.` +
+          "\n\nAfter $z^2$.",
+      );
+      const projection = projectLatexVisualDocument(source);
+      const content = structuredClone(projection.content);
+      const last = content.content![1]!.content!.at(-1)!;
+      const addition = " additional wrapping words ".repeat(count);
+      last.text += addition;
+      const inserted = applyLatexVisualDocumentChange(source, projection, content);
+      expect(inserted?.source).toBe(source.replace("ending.", "ending." + addition));
+      const restored = applyLatexVisualDocumentChange(
+        inserted!.source,
+        inserted!.projection,
+        projection.content,
+      );
+      expect(restored?.source).toBe(source);
+    },
+  );
+
+  it("keeps text-run boundaries equivalent across TeX syntax and Unicode accents", () => {
+    const body =
+      "A long ordinary phrase ``quoted'' -- then --- \\textbf{bold prose}~" +
+      "escaped \\% and \\& with cafe\u0301, \\'{e}, Hebrew שָ and emoji 🧪.";
+    const source = document(body);
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.rawBlocks).toBe(0);
+    const nodes = projection.content.content![0]!.content!;
+    expect(nodes.map((node) => node.text ?? "").join("")).toBe(
+      "A long ordinary phrase “quoted” – then — bold prose\u00a0" +
+        "escaped % and & with cafe\u0301, é, Hebrew שָ and emoji 🧪.",
+    );
+    expect(nodes.find((node) => node.marks?.some((mark) => mark.type === "bold"))?.text).toBe(
+      "bold prose",
+    );
+    expect(
+      applyLatexVisualDocumentChange(source, projection, projection.content)?.source ?? source,
+    ).toBe(source);
+  });
+
   it("changes only the edited range, retaining preamble, comments and unknown commands", () => {
     const source = document(
       "\\section*{Title}\n\nHello world.\n\n% keep this comment\n\\custom{opaque}",

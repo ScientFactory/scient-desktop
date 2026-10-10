@@ -70,6 +70,8 @@ async function mount(body: string) {
     );
   }
   root.render(<Harness />);
+  await expect.poll(() => host!.querySelector(".scient-latex-math-preview")).toBeTruthy();
+  await userEvent.click(host.querySelector<HTMLElement>(".scient-latex-mathfield")!);
   await expect.poll(() => host!.querySelector("math-field")).toBeTruthy();
   const math = host.querySelector<MathfieldElement>("math-field")!;
   await expect.poll(() => math.getValue()).toBeTruthy();
@@ -153,7 +155,9 @@ it("real Visual editor expands bracket/exponent boundaries and paints the comple
   await selectScope();
   await selectScope();
   expect(math.getValue(math.selection, "latex-without-placeholders")).toContain("underbrace");
-  expect(document.querySelectorAll(".scient-latex-cell-selection")).toHaveLength(1);
+  expect(
+    document.querySelectorAll(".scient-latex-range-selection,.scient-latex-cell-selection"),
+  ).toHaveLength(1);
   expect({ edits, inputs, transactions }).toEqual({ edits: 0, inputs: [], transactions: [] });
   expect(source).toBe(original);
 });
