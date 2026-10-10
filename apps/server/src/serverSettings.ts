@@ -1074,7 +1074,7 @@ const make = Effect.gen(function* () {
     if (!legacySecretsCopied) {
       return yield* new ServerSettingsError({
         settingsPath,
-        operation: "migrate-source-control-secrets",
+        operation: "write-secret",
         cause: new Error(
           "Source control credentials could not be migrated. Retry loading settings.",
         ),

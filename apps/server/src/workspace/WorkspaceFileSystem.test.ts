@@ -130,21 +130,22 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "keeps metadata for whitespace-distinct filenames separate",
-      Effect.gen(function* () {
-        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const path = yield* Path.Path;
-        const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "report", "plain");
-        yield* writeTextFile(cwd, "report ", "trailing whitespace");
-        expect(
-          (yield* service.getMetadata({
-            paths: [path.join(cwd, "report"), path.join(cwd, "report ")],
-          })).entries,
-        ).toEqual([
-          { kind: "file", byteLength: 5 },
-          { kind: "file", byteLength: 19 },
-        ]);
-      }),
+      () =>
+        Effect.gen(function* () {
+          const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "report", "plain");
+          yield* writeTextFile(cwd, "report ", "trailing whitespace");
+          expect(
+            (yield* service.getMetadata({
+              paths: [path.join(cwd, "report"), path.join(cwd, "report ")],
+            })).entries,
+          ).toEqual([
+            { kind: "file", byteLength: 5 },
+            { kind: "file", byteLength: 19 },
+          ]);
+        }),
     );
 
     it.effect.skipIf(!symlinksSupported)("follows file and directory symlinks", () =>

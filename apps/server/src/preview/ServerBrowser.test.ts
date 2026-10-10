@@ -1205,7 +1205,7 @@ it.live("only the current controller can answer a file picker", () =>
       yield* first.input({ type: "releaseControl" });
       yield* second.input({ type: "takeControl" });
       const answered = yield* browser.answerFileChooser({
-        threadId: scope.thread.threadId,
+        threadId: scope.threadId,
         tabId,
         chooserId: offered.id,
         files: [{ name: "a.txt", mimeType: "text/plain", buffer: Buffer.from("a") }],

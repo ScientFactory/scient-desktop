@@ -8062,15 +8062,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 // revoked. Any attached prompt must settle before retirement.
                 const active = yield* Ref.get(activeTurn);
                 if (active !== null) {
+                  const completedAt = yield* DateTime.now;
                   const failure = providerFailureFromResult(
                     message,
+                    completedAt,
                     active.authenticationFailureMessage,
                     false,
                   );
                   yield* finalizeActiveTurn({
                     context: active,
                     status: "failed",
-                    completedAt: yield* DateTime.now,
+                    completedAt,
                     result: message,
                     ...(failure === null ? {} : { failure }),
                   });

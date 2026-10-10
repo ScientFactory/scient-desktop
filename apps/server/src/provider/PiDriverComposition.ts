@@ -20,6 +20,7 @@ import {
 import type { PiSettings } from "@t3tools/provider-pi/settings";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as Path from "effect/Path";
 
 import { customModelDiscoverySnapshot } from "../customModelCapabilities.ts";
 import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
@@ -155,7 +156,7 @@ const resolvePiRuntime = (
   });
 
 /** Production Pi driver with Scient-owned runtime, model and prompt policy. */
-export const PiDriver: ScientProviderDriver<PiSettings, PiCompositionRequirements> = makePiDriver<
-  PiCompositionRequirements,
-  PiCompositionExtension
->({ resolveRuntime: resolvePiRuntime });
+export const PiDriver: ScientProviderDriver<PiSettings, PiCompositionRequirements, Path.Path> =
+  makePiDriver<PiCompositionRequirements, PiCompositionExtension>({
+    resolveRuntime: resolvePiRuntime,
+  });
