@@ -42,6 +42,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "src/scient/skills/ScientV2SkillTurn.test.ts",
+      "purpose": "Record CI durations for skills behavioral tests in the shared server shard profile; scheduling changes retain every test and assertion (weightedShardSequencer.test.ts and the full current-file assignment check)."
+    },
+    {
       "path": "apps/mobile/src/lib/projectThreadStartTurn.ts",
       "anchor": "selectedScientSkillNames",
       "purpose": "Preserve explicit Scient skill selection when starting a mobile project thread."

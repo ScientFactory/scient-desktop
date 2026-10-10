@@ -134,6 +134,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "src/provider/omp/OmpRpcProcess.test.ts",
+      "purpose": "Record CI durations for Oh My Pi behavioral tests in the shared server shard profile; scheduling changes retain every test and assertion (weightedShardSequencer.test.ts and the full current-file assignment check)."
+    },
+    {
       "path": "packages/provider-core/src/server/snapshotProbe.ts",
       "anchor": "export function retainUnavailableAgentModels(",
       "purpose": "Retain previously discovered Pi and Oh My Pi models as unavailable after successful catalog removal, scoped to each provider instance."

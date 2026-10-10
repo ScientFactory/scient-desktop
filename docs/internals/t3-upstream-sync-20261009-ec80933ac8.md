@@ -1100,3 +1100,15 @@ limits, assertions and coverage remain unchanged. The existing sequencer tests
 and current-file assignment check prove each of the 950 files is scheduled
 exactly once. Timing estimates describe scheduling, not a completed CI pass;
 the next pushed head still requires all hosted checks to finish successfully.
+
+The hosted provenance job at `5ab7759b3f` passed ancestry but failed its
+changed-path seam classification: the refreshed profile names Skills, analysis,
+LaTeX and Oh My Pi behavioral tests without a classified shared metadata mount.
+The prior local inventory-only seam check did not cover the PR diff and is not
+proof of changed-path coverage. Classify the upstream-owned shard profile in
+those four existing manifests, with feature-test locators and an explicit CI
+scheduling purpose. The classifier, signals, ownership and runtime code stay
+unchanged. Recheck the complete PR diff against owned base `397befbdaab` using
+the same provenance and seam arguments as hosted CI, not inventory-only mode.
+The previous cancelled server result remains failed evidence; the next pushed
+head still needs all hosted checks to pass.
