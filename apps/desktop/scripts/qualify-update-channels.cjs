@@ -103,7 +103,8 @@ async function availabilityCase(name, current, target, allowDowngrade, expected)
 
 async function downloadPath() {
   const payload = Buffer.from("Synthetic installer fixture. Never executed.");
-  const sha512 = crypto.createHash("sha512").update(payload).digest("base64");
+  const stablePayload = Buffer.from("Distinct promoted Stable installer fixture. Never executed.");
+  const payloadForTag = (tag) => (tag === promoted ? stablePayload : payload);
   const requests = [];
   let corrupt = false;
   let stablePublished = stable;
@@ -118,11 +119,13 @@ async function downloadPath() {
       res.end(JSON.stringify({ tag_name: stablePublished }));
     } else if (req.url.endsWith(".yml")) {
       const tag = req.url.split("/").at(-2);
+      const selectedPayload = payloadForTag(tag);
+      const sha512 = crypto.createHash("sha512").update(selectedPayload).digest("base64");
       res.end(
-        `version: ${tag.slice(1)}\nfiles:\n  - url: Scient-${tag.slice(1)}-x64.exe\n    size: ${payload.length}\n    sha512: ${sha512}\n`,
+        `version: ${tag.slice(1)}\nfiles:\n  - url: Scient-${tag.slice(1)}-x64.exe\n    size: ${selectedPayload.length}\n    sha512: ${sha512}\n`,
       );
     } else if (req.url.endsWith(".exe")) {
-      res.end(corrupt ? Buffer.from("corrupted") : payload);
+      res.end(corrupt ? Buffer.from("corrupted") : payloadForTag(req.url.split("/").at(-2)));
     } else {
       res.writeHead(404).end();
     }
@@ -219,10 +222,12 @@ async function downloadPath() {
     assert.equal((await betaUpdater.checkForUpdates()).updateInfo.version, promoted.slice(1));
     assert.equal(betaUpdater.allowDowngrade, false);
     const stableFiles = await betaUpdater.downloadUpdate();
-    assert.deepEqual(await fs.readFile(stableFiles[0]), payload);
+    assert.deepEqual(await fs.readFile(stableFiles[0]), stablePayload);
     assert.ok(
-      requests.some((request) =>
-        request.startsWith(`/ScientFactory/scient-desktop/releases/download/${promoted}/`),
+      requests.some(
+        (request) =>
+          request.startsWith(`/ScientFactory/scient-desktop/releases/download/${promoted}/`) &&
+          request.endsWith(".exe"),
       ),
       "return to Stable must download from its canonical repository",
     );
