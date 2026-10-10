@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -324,18 +325,15 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                           }),
                         ),
                       );
-                      const observed = stream.pipe(Stream.ensuring(completeObservation));
-                      const resubscribeAfter = options?.resubscribeOnCompleteAfter;
-                      return resubscribeAfter === undefined
-                        ? observed
-                        : observed.pipe(
-                            Stream.concat(
-                              Stream.fromEffect(Effect.sleep(resubscribeAfter)).pipe(Stream.drain),
-                            ),
-                            Stream.concat(Stream.suspend(subscribeToSession)),
-                          );
+                      return stream.pipe(Stream.ensuring(completeObservation));
                     }),
                   ).pipe(
+                    (attempt) =>
+                      options?.resubscribeOnCompleteAfter === undefined
+                        ? attempt
+                        : attempt.pipe(
+                            Stream.repeat(Schedule.spaced(options.resubscribeOnCompleteAfter)),
+                          ),
                     Stream.tapCause((cause) =>
                       options?.onDefect !== undefined &&
                       cause.reasons.some(

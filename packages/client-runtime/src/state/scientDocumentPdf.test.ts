@@ -120,22 +120,29 @@ describe("document host requests", () => {
     ),
   );
 
-  it.effect("reconnects after the server ends the host stream", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const host = yield* observeHostRequests([
-          Stream.make(connected("evicted")),
-          Stream.concat(Stream.make(connected("replacement")), Stream.never),
-        ]);
+  it.effect(
+    "reconnects after the server ends the host stream",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const host = yield* observeHostRequests([
+            Stream.make(connected("evicted")),
+            Stream.concat(Stream.make(connected("replacement")), Stream.never),
+          ]);
 
-        yield* Effect.promise(() =>
-          vi.waitFor(() => expect(host.events.at(-1)).toEqual(connected("replacement")), {
-            timeout: 5_000,
-          }),
-        );
-        expect(host.subscriptions()).toBe(2);
-        expect(host.events.map((event) => event.connectionId)).toEqual(["evicted", "replacement"]);
-      }),
-    ),
+          yield* Effect.promise(() =>
+            vi.waitFor(() => expect(host.events.at(-1)).toEqual(connected("replacement")), {
+              timeout: 5_000,
+            }),
+          );
+          expect(host.subscriptions()).toBe(2);
+          expect(host.events.map((event) => event.connectionId)).toEqual([
+            "evicted",
+            "replacement",
+          ]);
+        }),
+      ),
+    // The reconnect delay runs on the atom runtime's real clock.
+    15_000,
   );
 });
