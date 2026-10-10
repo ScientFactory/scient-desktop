@@ -424,13 +424,16 @@ describe("Scient release machinery", () => {
     const result = resolveReleaseNoteSource({
       catalog: SCIENT_RELEASE_NOTES,
       issues: validateScientReleaseNotesCatalog(SCIENT_RELEASE_NOTES),
-      version: "0.6.22",
+      version: "0.6.23",
       allowNoteFree: false,
     });
     expect(result).toBe("catalog");
     const note = SCIENT_RELEASE_NOTES[0]!;
     if (note.format !== "paragraphs") throw new Error("Expected the expanded paragraph note.");
     const markdown = renderScientReleaseNotesMarkdown(note);
+    const previous = SCIENT_RELEASE_NOTES.find((entry) => entry.version === "0.6.22");
+    if (!previous) throw new Error("Expected the previous published release note.");
+    expect(markdown).toBe(renderScientReleaseNotesMarkdown(previous));
     expect(markdown.match(/^- \*\*/gmu)).toHaveLength(9);
     for (const highlight of note.highlights) {
       expect(markdown).toContain(`**${highlight.title}**`);

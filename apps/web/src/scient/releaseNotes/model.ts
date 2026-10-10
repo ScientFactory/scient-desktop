@@ -110,16 +110,11 @@ export function formatScientReleaseMonth(publishedAt: string): string {
   }).format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
-const STANDARD_PARAGRAPH_LIMITS = {
-  highlights: 7,
-  description: 240,
-  alsoIncluded: 320,
-  totalCopy: 1_600,
-};
-
-// Only the approved 0.6.22 feature release gets an expanded, still bounded note.
-const PARAGRAPH_LIMIT_OVERRIDES: Readonly<Record<string, typeof STANDARD_PARAGRAPH_LIMITS>> = {
-  "0.6.22": { highlights: 9, description: 500, alsoIncluded: 400, totalCopy: 4_000 },
+const PARAGRAPH_LIMITS = {
+  highlights: 9,
+  description: 500,
+  alsoIncluded: 400,
+  totalCopy: 4_000,
 };
 
 export function validateScientReleaseNotesCatalog(
@@ -130,7 +125,7 @@ export function validateScientReleaseNotesCatalog(
 
   for (const [releaseIndex, release] of catalog.entries()) {
     const releasePath = `release[${releaseIndex}]`;
-    const limits = PARAGRAPH_LIMIT_OVERRIDES[release.version] ?? STANDARD_PARAGRAPH_LIMITS;
+    const limits = PARAGRAPH_LIMITS;
     if (parseSemver(release.version) === null) {
       issues.push(`${releasePath}.version must be a valid semantic version.`);
     }
