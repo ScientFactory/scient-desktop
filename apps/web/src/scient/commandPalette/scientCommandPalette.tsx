@@ -3,11 +3,7 @@ import {
   canonicalizeUneditedBrowseQuery,
   getFilesystemBrowsePath,
 } from "@t3tools/client-runtime/state/filesystem";
-import type {
-  EnvironmentId,
-  FilesystemBrowseResult,
-  SourceControlDiscoveryResult,
-} from "@t3tools/contracts";
+import type { EnvironmentId, FilesystemBrowseResult } from "@t3tools/contracts";
 import { FolderPlusIcon } from "lucide-react";
 import {
   type ComponentProps,
@@ -518,26 +514,5 @@ export function useScientProjectFolderActions({
     projectFolderDrop,
     beginNewProjectFolder,
     canBeginNewProjectFolder,
-  };
-}
-
-/** With Git missing, every remote source says so instead of its provider status. */
-export function scientMissingGitReadiness(discovery: SourceControlDiscoveryResult) {
-  const gitMissing = discovery.versionControlSystems.some(
-    (item) => item.kind === "git" && item.status === "missing",
-  );
-  if (!gitMissing) return null;
-  const missingGit = {
-    ready: false,
-    hint: "Git is unavailable in this environment.",
-  } as const;
-  return {
-    url: missingGit,
-    github: missingGit,
-    gitlab: missingGit,
-    forgejo: missingGit,
-    bitbucket: missingGit,
-    "azure-devops": missingGit,
-    gitcafe: missingGit,
   };
 }

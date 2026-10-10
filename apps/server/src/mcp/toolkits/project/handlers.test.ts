@@ -330,6 +330,7 @@ const projectLaunchHarness = (input: {
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly threadCaller?: boolean;
+  readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus" };
@@ -389,6 +390,7 @@ const projectLaunchHarness = (input: {
         }),
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
+      checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
       launch: (launch) => {
         input.launched.push(launch);
         return Effect.succeed({
@@ -556,4 +558,49 @@ it.effect("a launch binds only an existing checkout that is one of the project's
       code: "invalid_request",
     });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a launch into a new worktree creates nothing when its base ref has no commit", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = projectLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      threadCaller: true,
+      checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
+        workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
+          ? Effect.fail(
+              new ThreadLaunch.ThreadLaunchBaseRefError({
+                projectId,
+                projectTitle: "Client target",
+                workspaceRoot: "/projects/client-target",
+                baseRef: workspaceStrategy.baseRef,
+              }),
+            )
+          : Effect.void,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launchFrom = (baseRef: string) =>
+      toolkit
+        .handle("scient_thread_launch", {
+          title: "Fix",
+          projectId,
+          workspaceStrategy: { type: "worktree", baseRef, startFromOrigin: false },
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    const refused = (yield* launchFrom("t3/renamed")).at(-1)?.result;
+    expect(refused).toMatchObject({ code: "invalid_request" });
+    expect((refused as { message: string }).message).toContain(
+      'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created.',
+    );
+    expect(launched).toHaveLength(0);
+
+    expect((yield* launchFrom("main")).at(-1)?.result).toMatchObject({ projectId });
+    expect(launched).toHaveLength(1);
+  }),
 );
