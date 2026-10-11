@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- discovery checks .venv existence and resolves paths.
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
@@ -494,7 +494,7 @@ export function makePythonRuntimeAdapter(
   const discover: ComputeLanguageAdapter["discover"] = (request) =>
     Effect.gen(function* () {
       if (request.refresh === true) probeCache.clear();
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const managedRuntime =
         options.managedRuntime === undefined ? null : yield* options.managedRuntime();
       const candidates = discoverCandidates(
@@ -630,8 +630,8 @@ export function makePythonRuntimeAdapter(
     languageId: PYTHON_LANGUAGE_ID,
     transportKind: JUPYTER_BRIDGE_TRANSPORT_KIND,
     listInstallations: Effect.fn("PythonRuntimeAdapter.listInstallations")(function* (request) {
-      const platform = yield* HostProcessPlatform;
-      const environment = yield* HostProcessEnvironment;
+      const platform = yield* HostProcess.Platform;
+      const environment = yield* HostProcess.Environment;
       const resolveExecutable = yield* SpawnExecutableResolution;
       const managed = options.managedRuntime === undefined ? null : yield* options.managedRuntime();
       const installations: ComputeRuntimeInstallation[] = [];

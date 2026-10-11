@@ -1,7 +1,7 @@
 // @effect-diagnostics globalTimersInEffect:off -- This host watchdog must remain independent of the Effect test clock.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- This host watchdog must remain independent of the Effect test clock.
 import * as NodeTimers from "node:timers";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ComputeExecutionId,
   ComputeLanguageId,
@@ -424,7 +424,7 @@ const harness = (options: HarnessOptions = {}) =>
         : undefined,
     ).pipe(
       Layer.provide(
-        Layer.succeed(HostProcessEnvironment, {
+        Layer.succeed(HostProcess.Environment, {
           ...process.env,
           SCIENT_COMPUTE_MAX_LIVE_SESSIONS: String(options.capacity ?? 32),
         }),

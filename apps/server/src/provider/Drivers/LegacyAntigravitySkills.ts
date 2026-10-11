@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcess } from "effect/process";
 
-import { spawnAndCollect } from "../providerSnapshot.ts";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 
 const SKILLS_PROBE_TIMEOUT_MS = 15_000;
 const SKILLS_OUTPUT_LIMIT = 2_000_000;

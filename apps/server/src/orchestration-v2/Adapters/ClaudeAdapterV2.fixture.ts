@@ -17,7 +17,7 @@ import {
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterInterruptError,
   type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 
 const isStopInterruptError = Schema.is(ProviderAdapterInterruptError);

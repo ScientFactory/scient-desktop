@@ -254,9 +254,9 @@ Approvability guard and privacy-link withholding remain. The receipt records
 two independent source reviews, complete local qualification, actual-app visual
 evidence and the remaining hosted/platform boundaries.
 
-The current locally qualified alignment is recorded in
+The preceding locally qualified alignment is recorded in
 [the 2a93885bac receipt](docs/internals/t3-upstream-sync-20261008-2a93885bac.md)
-and `upstream-state.json` ([Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487)).
+([Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487)).
 It receives all 63 subsequent first-parent official commits through
 `2a93885bac5798a79d55069a0b5dc3e53c6176bc` onto owned base
 `565b3bd15cbb7660250e53b2421915d2f6bdebc5`. Literal merge
@@ -273,6 +273,44 @@ frozen history, managed runtime, privacy and publication boundaries remain.
 The receipt separates complete local qualification with exact affected-scope reuse,
 independent review and bounded stress from hosted CI and the user's visual acceptance.
 
+The previous locally qualified alignment through `bd2346eda2e2c380d1844869c7fd16c279d2190f`
+is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009-ec80933ac8.md)
+([Scient PR #498](https://github.com/ScientFactory/scient-desktop/pull/498)).
+It receives 160 official first-parent commits: the original 43 plus the
+117-commit extension. It adopts canonical Effect 4 services, shared provider
+and source-control packages, ModelCatalog and scoped MCP sessions while
+preserving Scient's instruction, tool, fork, queue and lifecycle ownership.
+Provider Settings retains visible built-in default slots even when disabled or
+unconfigured; showing a row does not enable, install or persist an instance.
+The receipt records complete aggregate local test qualification, static/build
+checks, affected follow-up qualification, independent source review and explicit
+native/platform limits.
+Literal extension merge `de4f75bb7267e9bb0cbfcc5cc8ce8b2c8675222c` retains the
+exact official target. Owned-main catch-up `71b1799a9db1feb1a8f102b5f528314e32230ca2`
+retains main `397befbdaab86d5798c840168a398d653e96f081`, including transactional
+legacy-source reconciliation and isolated Stable/Beta release channels.
+The original 43-commit callback-composition tradeoff remains the maintainer's
+bounded 2026-10-10 exception, documented with paired Scient comments at its
+application seams. No publication authority or general extraction-line waiver
+is added. The development candidate is held stopped until requested for app
+acceptance; hosted CI qualifies the pushed revision separately.
+
+The current locally qualified alignment through `74dfbb697235b0db87355d3f8575dc2ba45dddf7`
+is recorded in [the 2026-10-11 receipt](docs/internals/t3-upstream-sync-20261011-74dfbb6972.md)
+([Scient PR #513](https://github.com/ScientFactory/scient-desktop/pull/513)).
+It receives all 54 official first-parent commits after the previous boundary.
+Literal merge `274000eb4a28df36ba2af097075bf5c215641e7f` has the exact PR #498
+head `298c0c03053d71eeec72a37943196c877f3b326b` as its first parent and the
+official target as its second parent. The source-control host migration,
+Claude/Pi/OpenCode lifecycle and credential changes, authorization, bounded
+queue/history, attachment metadata and preview/layout changes compose with
+Scient's owned policies and scientific surfaces. No publication boundary is
+activated. The receipt separates complete local tests, real native stress,
+independent source review and final isolated desktop visual/interaction checks
+from hosted CI, optional platform/account skips and the user's approval.
+The isolated review candidate remains open for user acceptance; the layer
+requires separate merge approval and does not alter its parent PR's policy.
+
 ## Receiving T3 updates
 
 The local alignment through `1ab2dfb5` is documented in the
@@ -281,8 +319,12 @@ composer default, multi-model thread creation in separate worktrees, automatic s
 directory-safe file navigation, broader command-palette discovery, improved pull-request and chat
 presentation, checkpoint and settlement reliability, Android Material surfaces, mobile worktree
 handoff, dictation wake-lock behavior, mobile model favorites, and the preview-picker navigation
-fix. Scient's approved stable-only update policy also removes the unsupported track selector and
-normalizes stale Nightly preferences without replacing download or install mechanics.
+fix. Scient's owned update policy exposes Stable and Beta. Beta uses the isolated
+`ScientFactory/scient-desktop-beta` artifact repository; Stable keeps its existing feed.
+Legacy Nightly preferences return to Stable, and channel changes never enable downgrades.
+Source, app identity and state roots remain canonical. Beta publishes automatically
+when manually dispatched, without catalog notes, after CI, signing, updater and
+artifact verification. Stable retains its production approval.
 Scient's provider lifecycle, scientific surfaces,
 identity, signed npm-pinned server runtime, durable server-authoritative queue, project-first
 policy, state roots, and cloud/mobile publication holds remain.
@@ -650,6 +692,13 @@ Synara behavior must enter through a separately justified Scient-native lane,
 never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
+
+Scient's legacy-source reconciliation repairs stale V2 snapshots without replacing the live V2
+database. Preserve its read-only original source, before-images, source identity boundary, separate
+Scient migration ledger, and conflict versions. The `EventSink` transaction hook prepares recovery
+events against current projections before appending them, so edits and interrupted retries remain
+safe. Historical imports never acquire provider-session, queue, or checkpoint execution authority.
+See [legacy migration and recovery](docs/internals/legacy-orchestration-migration.md).
 
 The agent-capability foundation keeps workspace authority under
 `scient/projectScope`, not in T3's host project schema. Scient's existing
@@ -1025,17 +1074,20 @@ hosted-web aliases, or release bot. The owned manual workflow packages the
 exact promoted Scient tree, embeds the owned updater repository, and
 distributes the exact server runtime as a GitHub release asset.
 
-Scient publishes one desktop update track: stable. Preserve T3's internal
-channel contracts and updater implementation for alignment compatibility, but
-do not expose the inherited Stable/Nightly selector in the Scient desktop.
-Desktop settings normalize and remove stale saved channel overrides before the
-updater is configured, so users who previously selected Nightly return to the
-owned stable feed. This product-policy boundary must not fork Electron update
-discovery, download, installation, or the release workflow.
+Scient exposes Stable and Beta desktop update tracks. Stable retains its owned
+feed; Beta uses the isolated `ScientFactory/scient-desktop-beta` artifact
+repository and separate publication gates. Preserve the explicit saved
+preference, empty-Beta handling, integrity checks and non-downgrade policy.
+Legacy Nightly preferences migrate to Stable without enrolling users in Beta;
+non-Beta builds default to Stable. Keep T3's internal channel contracts where
+the owned implementation consumes them, without exposing a Nightly choice or
+forking Electron discovery, download and installation.
 
-The downloaded-update notification links to the exact version under the shared
-`SCIENT_DESKTOP_RELEASE_REPOSITORY` in `packages/shared/src/scientRelease.ts`.
-It must not combine a Scient version with T3's release repository. The brand
+The downloaded-update notification links to the exact version using
+`scientReleaseRepository` in `packages/shared/src/scientRelease.ts`: Stable
+versions use the owned desktop repository and Beta versions use its isolated
+Beta artifact repository. It must not combine a Scient version with T3's
+release repository. The brand
 guard rejects upstream release links on active product surfaces; source
 attribution and donor-only surfaces remain allowed. This presentation seam
 does not change update-feed configuration, download, or installation behavior.

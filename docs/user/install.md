@@ -98,7 +98,7 @@ computer.
 | Grok        | Install [Grok CLI](https://x.ai/cli), then run `grok login`.                                                                                              |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
 | Antigravity | Install and sign in with Google from Scient's provider settings.                                                                                          |
-| Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup.                                                                    |
+| Pi          | Use Scient's managed **Install** action or [set up Pi](./providers-pi.md#setup) with Node.js 22.19 or newer, then run `pi` and `/login`.                  |
 | Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
 
 Provider CLIs must be on the server's `PATH`. If Scient cannot find one, set its

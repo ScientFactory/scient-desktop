@@ -13,6 +13,8 @@ const [Effect, Layer, FileSystem] = await Promise.all([
   load("FileSystem"),
 ]);
 const app = (file) => import(NodeURL.pathToFileURL(root + "/apps/server/src/" + file + ".ts"));
+const providerCore = (file) =>
+  import(NodeURL.pathToFileURL(root + "/packages/provider-core/src/server/" + file + ".ts"));
 const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project, Auth] =
   await Promise.all([
     app("orchestration-v2/ProviderTurnStartService"),
@@ -20,13 +22,14 @@ const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project
     app("orchestration-v2/RunExecutionService"),
     app("orchestration-v2/ProviderSessionManager"),
     app("orchestration-v2/RuntimePolicy"),
-    app("orchestration-v2/IdAllocator"),
+    providerCore("IdAllocator"),
     app("orchestration-v2/EventSink"),
     app("orchestration-v2/ContextHandoffService"),
     app("git/GitWorkflowService"),
     app("project/ProjectService"),
     app("provider/ProviderAuthService"),
   ]);
+const McpSessions = await providerCore("McpProviderSessions");
 const Settings = await app("serverSettings");
 const Config = await app("config");
 const NodeServices = await import(
@@ -52,6 +55,7 @@ const dependencies = Layer.mergeAll(
     Layer.provide(NodeServices.layer),
   ),
   Settings.layerTest(),
+  McpSessions.layer,
   Layer.mock(Handoff.ContextHandoffServiceV2)({}),
   Id.layer,
   FileSystem.layerNoop({}),

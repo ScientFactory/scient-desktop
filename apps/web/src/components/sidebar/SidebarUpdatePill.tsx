@@ -45,7 +45,11 @@ export function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
   state: DesktopUpdateState | null,
 ): boolean {
-  return showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0;
+  return (
+    showUpdateDetails &&
+    (state?.channel === "beta" || state?.channel === "nightly") &&
+    state.releaseNotes.length > 0
+  );
 }
 
 export function shouldShowSidebarUpdateRestartIcon(state: DesktopUpdateState | null): boolean {
@@ -327,7 +331,7 @@ function SidebarUpdateControl() {
       }
       aria-disabled={isInteractionDisabled || undefined}
       className={cn(
-        "inline-flex items-center justify-center outline-hidden ring-ring transition-colors focus-visible:ring-2",
+        "inline-flex items-center justify-center outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
         showUpdateIconState
           ? cn(
@@ -454,7 +458,7 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Nightly update release notes"
+            aria-label={`${state.channel === "beta" ? "Beta" : "Nightly"} update release notes`}
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

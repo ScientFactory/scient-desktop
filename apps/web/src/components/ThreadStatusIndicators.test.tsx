@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
@@ -76,7 +77,33 @@ describe("linked pull request snapshots", () => {
         baseRef: "main",
         updatedAt: "2026-01-02T00:00:00Z",
       },
-      sourceControlProvider: { kind: "gitlab", name: "gitlab", baseUrl: "" },
+      sourceControlProvider: {
+        kind: SourceControlProviderKind.make("gitlab"),
+        name: "gitlab",
+        baseUrl: "",
+      },
     });
+  });
+  it.each([
+    ["https://git.cafe/owner/repo/pulls/42", "gitcafe"],
+    ["https://staging.git.cafe/owner/repo/pulls/42", "gitcafe"],
+    ["https://codeberg.org/owner/repo/pulls/42", "forgejo"],
+    ["https://gitlab.example.com/acme/web/-/merge_requests/42", "gitlab"],
+    ["https://github.com/owner/repo/pull/42", "github"],
+  ])("classifies %s as %s", (url, kind) => {
+    const result = linkedPullRequestSnapshotStatus({
+      ...link,
+      url,
+      snapshot: {
+        state: "open",
+        title: "Change",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: null,
+        syncedAt: "2026-01-03T00:00:00Z",
+      },
+    });
+    expect(result?.sourceControlProvider.kind).toBe(kind);
   });
 });

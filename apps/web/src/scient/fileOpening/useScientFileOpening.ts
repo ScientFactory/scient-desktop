@@ -49,7 +49,6 @@ export function useScientFileOpening(input: {
           const result = await openFileInPreview({
             threadRef,
             workspaceRoot,
-            relativePath,
             filePath: workspaceFileHostPath(relativePath, workspaceRoot),
             httpBaseUrl: environmentHttpBaseUrl,
             createAssetUrl,

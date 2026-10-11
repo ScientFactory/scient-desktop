@@ -38,23 +38,22 @@ function writeManifest(
   NodeFS.writeFileSync(NodePath.join(root, name), lines.join("\n"));
 }
 
-function createValidFixture(): string {
+function createValidFixture(version = "0.6.0", channel = "latest"): string {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-release-assets-"));
-  const version = "0.6.0";
-  writeManifest(root, "latest-mac.yml", version, [
+  writeManifest(root, `${channel}-mac.yml`, version, [
     { name: `Scient-${version}-arm64.dmg`, value: "arm-dmg" },
     { name: `Scient-${version}-arm64.zip`, value: "arm-zip" },
     { name: `Scient-${version}-x64.dmg`, value: "x64-dmg" },
     { name: `Scient-${version}-x64.zip`, value: "x64-zip" },
   ]);
-  writeManifest(root, "latest.yml", version, [
+  writeManifest(root, `${channel}.yml`, version, [
     { name: `Scient-${version}-x64.exe`, value: "windows" },
   ]);
   NodeFS.writeFileSync(
     NodePath.join(root, `Scient-${version}-x64.exe.blockmap`),
     "windows-blockmap",
   );
-  writeManifest(root, "latest-linux.yml", version, [
+  writeManifest(root, `${channel}-linux.yml`, version, [
     {
       name: `Scient-${version}-x86_64.AppImage`,
       value: "linux",
@@ -81,6 +80,23 @@ describe("Scient release asset verification", () => {
       assert.equal(result.version, "0.6.0");
       assert(result.assets.includes("Scient-0.6.0-arm64.dmg"));
       assert(result.assets.includes("Scient-0.6.0-x64.exe"));
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts Beta manifests only in the Beta lane and rejects stable-feed contamination", () => {
+    const version = "0.6.23-beta.20261010.1";
+    const root = createValidFixture(version, "beta");
+    try {
+      const args = ["--assets-dir", root, "--version", version];
+      assert.throws(() => verifyScientReleaseAssets(args), "Stable releases require");
+      assert.equal(verifyScientReleaseAssets([...args, "--channel", "beta"]).version, version);
+      NodeFS.copyFileSync(NodePath.join(root, "beta.yml"), NodePath.join(root, "latest.yml"));
+      assert.throws(
+        () => verifyScientReleaseAssets([...args, "--channel", "beta"]),
+        "unexpected or unattested files",
+      );
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }

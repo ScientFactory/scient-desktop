@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { observeResize } from "../../lib/observeResize";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /**
@@ -29,15 +30,13 @@ export function ProviderVersionLabel(props: {
 
   useEffect(() => {
     const element = ref.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
+    if (!element) return;
     // The observer reports the initial size too, so a label that starts
     // clipped fades without a separate measurement. A new version can clip
     // without resizing the label, so each version is observed afresh.
-    const observer = new ResizeObserver(() => {
+    return observeResize(element, () => {
       setMeasurement({ version, overflowing: element.scrollWidth > element.clientWidth });
     });
-    observer.observe(element);
-    return () => observer.disconnect();
   }, [version]);
 
   // A measurement of an earlier version says nothing about this one.

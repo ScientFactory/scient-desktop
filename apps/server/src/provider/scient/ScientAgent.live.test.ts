@@ -16,7 +16,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 
 import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { checkOmpProviderStatus } from "../OmpProvider.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyModel } from "../omp/OmpLive.testFixtures.ts";
@@ -43,7 +44,11 @@ import { scientAgentProcessEnvironment, scientAgentTarget } from "./ScientAgentT
 const scientAgentBinary = process.env.SCIENT_AGENT_QUALIFY_BINARY || undefined;
 const fullTurn = process.env.SCIENT_AGENT_QUALIFY_FULL_TURN === "1";
 const binary = scientAgentBinary ?? "";
-const layer = Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer);
+const layer = Layer.mergeAll(
+  NodeServices.layer,
+  OmpExecutableGate.layer,
+  McpProviderSessions.layer,
+);
 
 /** The production process factory, leasing from this test's executable gate. */
 const gatedProcess = Effect.map(
@@ -85,7 +90,7 @@ const scientAgentInstance = (home: string, stateDir: string, instanceId: string)
         NO_PROXY: "127.0.0.1,localhost",
       },
       root: agentRoot,
-      platform: HostProcessPlatform.defaultValue(),
+      platform: HostProcess.Platform.defaultValue(),
     }),
   };
 };

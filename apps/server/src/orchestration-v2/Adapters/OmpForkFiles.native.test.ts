@@ -5,9 +5,10 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Schema from "effect/Schema";
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 import { nativeOmpSession } from "../../provider/testUtils/nativeOmpSession.ts";
@@ -81,7 +82,7 @@ it.live(
         if (!context) return yield* Effect.die("Missing private fork prompt path");
         expect(NodePath.relative(NodeFS.realpathSync(stateDir), context)).not.toMatch(/^\.\./u);
         expect(NodeFS.readFileSync(context, "utf8")).toBe(text);
-        if ((yield* HostProcessPlatform) !== "win32")
+        if ((yield* HostProcess.Platform) !== "win32")
           expect(NodeFS.statSync(context).mode & 0o777).toBe(0o600);
         expect(paths).toContain(NodeFS.realpathSync(imagePath));
         expect(sent?.frame.message).toContain("Read the entire conversation");
@@ -111,7 +112,8 @@ it.live(
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
-          Layer.succeed(HostProcessPlatform, HostProcessPlatform.defaultValue()),
+          McpProviderSessions.layer,
+          Layer.succeed(HostProcess.Platform, HostProcess.Platform.defaultValue()),
         ),
       ),
     ),

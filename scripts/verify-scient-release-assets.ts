@@ -6,7 +6,10 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { isExactScientReleaseVersion, scientServerAssetName } from "@t3tools/shared/scientRelease";
+import {
+  assertScientReleaseChannelVersion,
+  scientServerAssetName,
+} from "@t3tools/shared/scientRelease";
 
 import { parseUpdateManifest } from "./lib/update-manifest.ts";
 
@@ -54,16 +57,16 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
 } {
   const assetsDir = NodePath.resolve(requiredValue(args, "--assets-dir"));
   const version = requiredValue(args, "--version").replace(/^v/u, "");
-  if (!isExactScientReleaseVersion(version) || version.includes("-")) {
-    throw new Error(`Stable releases require a canonical x.y.z version, received '${version}'.`);
-  }
+  const channel = args.includes("--channel") ? requiredValue(args, "--channel") : "stable";
+  assertScientReleaseChannelVersion(version, channel);
+  const manifestChannel = channel === "beta" ? "beta" : "latest";
   if (!NodeFS.statSync(assetsDir, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`Release assets directory does not exist: ${assetsDir}.`);
   }
 
   const definitions: ReadonlyArray<ManifestDefinition> = [
     {
-      name: "latest-mac.yml",
+      name: `${manifestChannel}-mac.yml`,
       label: "macOS",
       requiredPayloads: [
         `Scient-${version}-arm64.dmg`,
@@ -73,12 +76,12 @@ export function verifyScientReleaseAssets(args: ReadonlyArray<string>): {
       ],
     },
     {
-      name: "latest.yml",
+      name: `${manifestChannel}.yml`,
       label: "Windows",
       requiredPayloads: [`Scient-${version}-x64.exe`],
     },
     {
-      name: "latest-linux.yml",
+      name: `${manifestChannel}-linux.yml`,
       label: "Linux",
       requiredPayloads: [`Scient-${version}-x86_64.AppImage`],
     },

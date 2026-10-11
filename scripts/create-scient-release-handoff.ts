@@ -5,6 +5,10 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import {
+  assertScientReleaseChannelVersion,
+  scientReleaseRepository,
+} from "@t3tools/shared/scientRelease";
 
 interface ReleaseAsset {
   readonly name: string;
@@ -34,6 +38,9 @@ function sha256(path: string): string {
 export function createScientReleaseHandoff(args: ReadonlyArray<string>): string {
   const assetsDir = NodePath.resolve(value(args, "--assets-dir"));
   const version = value(args, "--version").replace(/^v/u, "");
+  const channel = args.includes("--channel") ? value(args, "--channel") : "stable";
+  assertScientReleaseChannelVersion(version, channel);
+  const distributionRepository = scientReleaseRepository(version);
   const sourceRepository = repository(args);
   const sourceSha = value(args, "--source-sha");
   const sourceTree = value(args, "--source-tree");
@@ -62,6 +69,7 @@ export function createScientReleaseHandoff(args: ReadonlyArray<string>): string 
         product: "Scient",
         version,
         tag: `v${version}`,
+        distribution: { repository: distributionRepository, channel },
         source: {
           repository: sourceRepository,
           commit: sourceSha,

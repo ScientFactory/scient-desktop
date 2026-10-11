@@ -26,7 +26,7 @@ import { OrchestratorDispatchError } from "../Orchestrator.ts";
 import type {
   ProviderAdapterV2InitiatedWorkIdentity,
   ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { binary, json, layer } from "./PiNativeTestHarness.ts";
 import {
   runNativeInitiatedWorkScenario,
@@ -153,7 +153,7 @@ void (async () => { while (true) {
         }),
         databaseLayer: (h) => {
           const real = makeSqlitePersistenceLive(
-            `${h.adapterOptions.serverConfig.stateDir}/pig-${h.root.split("/").at(-1)}.sqlite`,
+            `${h.serverConfig.stateDir}/pig-${h.root.split("/").at(-1)}.sqlite`,
           ).pipe(Layer.provide(NodeServices.layer));
           return Layer.effect(
             SqlClient.SqlClient,

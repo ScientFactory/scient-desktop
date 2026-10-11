@@ -135,7 +135,11 @@ function stopWithFailure(detail: string, actual?: unknown): void {
   writeStatus(failure);
   process.stderr.write(`ACP replay mismatch: ${JSON.stringify(failure)}\n`);
   process.exitCode = 1;
-  process.stdin.pause();
+  // A paused stdin keeps the child process alive after a mismatch. Destroy the
+  // input and end the protocol stream so the test runner receives this failure
+  // instead of waiting for its timeout; queued diagnostics are flushed by Node.
+  process.stdin.destroy();
+  process.stdout.end();
 }
 
 function advance(): void {

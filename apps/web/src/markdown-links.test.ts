@@ -276,12 +276,19 @@ describe("resolveMarkdownFileLinkTarget", () => {
   });
 
   it("resolves links from an external document without assigning them to its thread workspace", () => {
-    expect(resolveMarkdownFileLinkMeta("figure.svg", "/tmp/report-pack", null)).toMatchObject({
+    expect(
+      resolveMarkdownFileLinkMeta("figure.svg", "/tmp/report-pack", "/tmp/report-pack", null),
+    ).toMatchObject({
       filePath: "/tmp/report-pack/figure.svg",
       workspaceRelativePath: null,
     });
     expect(
-      resolveInlineCodeFileLinkMeta("./data/results.csv", "/tmp/report-pack", null),
+      resolveInlineCodeFileLinkMeta(
+        "./data/results.csv",
+        "/tmp/report-pack",
+        "/tmp/report-pack",
+        null,
+      ),
     ).toMatchObject({
       filePath: "/tmp/report-pack/data/results.csv",
       workspaceRelativePath: null,
@@ -373,18 +380,47 @@ describe("resolveMarkdownFileLinkTarget", () => {
 
 describe("relative links inside a rendered host file", () => {
   it("anchor to the file's directory while workspace membership follows cwd", () => {
-    const meta = resolveMarkdownFileLinkMeta("appendix.md", "/repo", "/repo", "/tmp/report");
+    const meta = resolveMarkdownFileLinkMeta("appendix.md", "/repo", "/tmp/report", "/repo");
     expect(meta).toMatchObject({
       filePath: "/tmp/report/appendix.md",
       workspaceRelativePath: null,
     });
-    const inline = resolveInlineCodeFileLinkMeta("Makefile:12", "/repo", "/repo", "/tmp/report");
+    const inline = resolveInlineCodeFileLinkMeta("Makefile:12", "/repo", "/tmp/report", "/repo");
     expect(inline).toMatchObject({ filePath: "/tmp/report/Makefile", line: 12 });
     expect(
-      resolveMarkdownFileLinkMeta("src/main.ts", "/repo", "/repo", "/repo/docs"),
+      resolveMarkdownFileLinkMeta("src/main.ts", "/repo", "/repo/docs", "/repo"),
     ).toMatchObject({
       filePath: "/repo/docs/src/main.ts",
       workspaceRelativePath: "docs/src/main.ts",
+    });
+  });
+
+  it("resolve multi-segment inline code from the workspace root in a workspace file", () => {
+    expect(
+      resolveInlineCodeFileLinkMeta("docs/ai/design.md", "/repo", "/repo/docs/ai"),
+    ).toMatchObject({ filePath: "/repo/docs/ai/design.md" });
+    expect(
+      resolveInlineCodeFileLinkMeta("src/index.ts:4", "/repo", "/repo/packages/a"),
+    ).toMatchObject({ filePath: "/repo/src/index.ts", line: 4 });
+  });
+
+  it("keep sibling and explicitly relative inline code beside the file", () => {
+    expect(resolveInlineCodeFileLinkMeta("design.md:12", "/repo", "/repo/docs/ai")).toMatchObject({
+      filePath: "/repo/docs/ai/design.md",
+      line: 12,
+    });
+    expect(
+      resolveInlineCodeFileLinkMeta("./src/index.ts", "/repo", "/repo/packages/a"),
+    ).toMatchObject({ filePath: "/repo/packages/a/./src/index.ts" });
+    expect(resolveInlineCodeFileLinkMeta("../b/notes.md", "/repo", "/repo/docs/a")).toMatchObject({
+      filePath: "/repo/docs/a/../b/notes.md",
+    });
+  });
+
+  it("keep multi-segment inline code beside a file outside the workspace", () => {
+    expect(resolveInlineCodeFileLinkMeta("src/main.ts", "/repo", "/tmp/report")).toMatchObject({
+      filePath: "/tmp/report/src/main.ts",
+      workspaceRelativePath: null,
     });
   });
 });
@@ -426,7 +462,7 @@ describe("links that climb out of the workspace", () => {
 
   it("resolve against a rendered file's own directory", () => {
     expect(
-      resolveMarkdownFileLinkMeta("../../notes.md", "/repo", "/repo", "/repo/docs"),
+      resolveMarkdownFileLinkMeta("../../notes.md", "/repo", "/repo/docs", "/repo"),
     ).toMatchObject({ filePath: "/notes.md", workspaceRelativePath: null });
   });
 });

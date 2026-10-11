@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { CommandId, MessageId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -8,12 +9,13 @@ import type { ThreadManagementServiceShape } from "../ThreadManagementService.ts
 import { EventStoreV2 } from "../EventStore.ts";
 import { applyToProjection, emptyProjection } from "../ProjectionStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { layer as allocatorLayer } from "../IdAllocator.ts";
+import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { nativeOmpOrchestration as fixture } from "../../provider/testUtils/nativeOmpOrchestration.ts";
 
 const dependencies = Layer.mergeAll(
   NodeServices.layer,
   allocatorLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-background-native-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),

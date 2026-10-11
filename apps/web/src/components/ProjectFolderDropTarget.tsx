@@ -19,7 +19,7 @@ export function ProjectFolderDropTarget(props: {
           onClick={props.onBrowse}
           data-drop-state={props.isActive ? "active" : "idle"}
           className={cn(
-            "flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-default disabled:opacity-64",
+            "flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-start text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40 disabled:cursor-default disabled:opacity-64",
             props.isActive ? "text-foreground" : "text-muted-foreground hover:bg-muted/40",
           )}
         >
