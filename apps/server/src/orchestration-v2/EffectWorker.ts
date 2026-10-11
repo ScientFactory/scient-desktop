@@ -245,51 +245,71 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           }
-          case "provider-turn.interrupt":
+          case "provider-turn.interrupt": {
+            const request = effect.request;
             return providerTurnControl
               .interrupt({
                 threadId: effect.threadId,
-                providerSessionId: effect.request.providerSessionId,
-                providerThreadId: effect.request.providerThreadId,
-                providerTurnId: effect.request.providerTurnId,
-                ...(effect.request.subagent === undefined
-                  ? {}
-                  : { subagent: effect.request.subagent }),
+                providerSessionId: request.providerSessionId,
+                providerThreadId: request.providerThreadId,
+                providerTurnId: request.providerTurnId,
+                ...(request.subagent === undefined ? {} : { subagent: request.subagent }),
               })
               .pipe(
                 Effect.catch((cause) =>
-                  isNonRetryableProviderTurnControlFailure(
-                    effect.request.type,
-                    Cause.pretty(Cause.fail(cause)),
-                  )
-                    ? Effect.void
-                    : Effect.fail(cause),
+                  Effect.gen(function* () {
+                    if (
+                      !isNonRetryableProviderTurnControlFailure(
+                        request.type,
+                        Cause.pretty(Cause.fail(cause)),
+                      )
+                    ) {
+                      return yield* Effect.fail(cause);
+                    }
+                    // An adapter failure is not a stop receipt. A concurrent
+                    // release can still prove that this child's producer is gone.
+                    if (
+                      request.subagent !== undefined &&
+                      Option.isNone(yield* providerSessions.get(request.providerSessionId))
+                    ) {
+                      return "session-absent" as const;
+                    }
+                    return "not-interrupted" as const;
+                  }),
                 ),
-                // The provider has stopped what it still ran and reported it.
-                // Whatever the thread still shows on that provider thread is
-                // work no process will report on, so the Stop ends it too.
-                // One Stop can interrupt several provider threads, so the
-                // settle is keyed by effect, not by the Stop command.
-                Effect.andThen(
-                  effect.request.subagent !== undefined
+                // Live native children remain SDK-authoritative. Only a released
+                // session permits repairing the captured child locally.
+                Effect.flatMap((outcome) =>
+                  request.subagent !== undefined && outcome !== "session-absent"
                     ? Effect.void
-                    : threads.dispatch({
-                        type: "thread.background-work.settle",
-                        commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                        threadId: effect.threadId,
-                        providerThreadId: effect.request.providerThreadId,
-                        providerTurnId: effect.request.providerTurnId,
-                      }),
+                    : threads
+                        .dispatch({
+                          type: "thread.background-work.settle",
+                          commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                          threadId: effect.threadId,
+                          providerThreadId: request.providerThreadId,
+                          providerTurnId: request.providerTurnId,
+                          ...(request.subagent === undefined
+                            ? {}
+                            : {
+                                subagent: {
+                                  ...request.subagent,
+                                  providerSessionId: request.providerSessionId,
+                                },
+                              }),
+                        })
+                        .pipe(Effect.asVoid),
                 ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
                       effectId: effect.id,
-                      effectType: effect.request.type,
+                      effectType: request.type,
                       cause,
                     }),
                 ),
               );
+          }
           case "provider-turn.steer":
             return providerTurnControl
               .steer({

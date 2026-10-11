@@ -9573,6 +9573,129 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         return;
       const now = yield* DateTime.now;
+      if (command.subagent !== undefined) {
+        const target = command.subagent;
+        const owner = stopped.providerThread;
+        const turn = stopped.providerTurn;
+        const task = projection.subagents.find((candidate) => candidate.id === target.id);
+        const node = projection.nodes.find((candidate) => candidate.id === target.id);
+        const root = projection.nodes.find((candidate) => candidate.id === node?.rootNodeId);
+        const item = projection.turnItems.find(
+          (candidate) => candidate.type === "subagent" && candidate.subagentId === target.id,
+        );
+        if (
+          owner === undefined ||
+          turn === undefined ||
+          owner.id !== command.providerThreadId ||
+          owner.appThreadId !== command.threadId ||
+          owner.providerSessionId !== target.providerSessionId ||
+          owner.driver !== "claudeAgent" ||
+          owner.nativeThreadRef?.driver !== owner.driver ||
+          owner.nativeThreadRef.strength !== "strong" ||
+          owner.nativeThreadRef.nativeId === null ||
+          turn.providerThreadId !== owner.id ||
+          stoppedRun.providerThreadId !== owner.id ||
+          stoppedRun.providerInstanceId !== owner.providerInstanceId ||
+          turn.nodeId !== stoppedRun.rootNodeId ||
+          task?.origin !== "provider_native" ||
+          task.threadId !== command.threadId ||
+          task.runId !== stoppedRun.id ||
+          task.driver !== owner.driver ||
+          task.providerInstanceId !== owner.providerInstanceId ||
+          task.nativeTaskRef?.driver !== owner.driver ||
+          task.nativeTaskRef.strength !== "strong" ||
+          task.nativeTaskRef.nativeId !== target.nativeTaskId ||
+          node?.kind !== "subagent" ||
+          node.threadId !== command.threadId ||
+          node.runId !== task.runId ||
+          node.parentNodeId !== task.parentNodeId ||
+          node.providerThreadId !== owner.id ||
+          node.providerTurnId !== turn.id ||
+          node.nativeItemRef?.driver !== owner.driver ||
+          node.nativeItemRef.strength !== "strong" ||
+          node.nativeItemRef.nativeId !== target.nativeTaskId ||
+          root?.kind !== "root_turn" ||
+          root.rootNodeId !== root.id ||
+          root.threadId !== command.threadId ||
+          root.runId === null ||
+          root.providerThreadId !== owner.id ||
+          !projection.runs.some(
+            (candidate) =>
+              candidate.id === root.runId &&
+              candidate.rootNodeId === root.id &&
+              candidate.providerThreadId === owner.id &&
+              candidate.providerInstanceId === owner.providerInstanceId,
+          ) ||
+          item?.type !== "subagent" ||
+          item.origin !== "provider_native" ||
+          item.threadId !== command.threadId ||
+          item.runId !== task.runId ||
+          item.nodeId !== node.id ||
+          item.providerThreadId !== owner.id ||
+          item.providerTurnId !== turn.id ||
+          item.driver !== owner.driver ||
+          item.providerInstanceId !== owner.providerInstanceId ||
+          item.childThreadId !== task.childThreadId ||
+          Option.isSome(yield* providerSessions.get(target.providerSessionId))
+        ) {
+          return;
+        }
+        const allocateEventId = () =>
+          idAllocator.allocate.event({
+            threadId: command.threadId,
+            commandId: command.commandId,
+          });
+        const ended = yield* endOrphanedNativeSubagent({
+          projection,
+          subagentId: task.id,
+          status: "interrupted",
+          now,
+          emitted: yield* Ref.get(events),
+          allocateEventId,
+        }).pipe(mapDispatchError(command));
+        yield* Ref.update(events, (existing) => [...existing, ...ended]);
+        if (task.childThreadId !== null) {
+          const child = yield* projectionStore
+            .getThreadRecords(task.childThreadId, ["nodes", "turnItems"], {
+              turnItemRunIds: [null],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            })
+            .pipe(
+              Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+              mapDispatchError(command),
+            );
+          if (
+            child !== null &&
+            isProviderNativeSubagentThread(child.thread) &&
+            child.thread.lineage.parentThreadId === command.threadId &&
+            child.thread.providerInstanceId === task.providerInstanceId &&
+            child.thread.forkedFrom?.type === "node" &&
+            child.thread.forkedFrom.nodeId === task.id
+          ) {
+            const childEnded = yield* endRunlessRootTurns({
+              threadId: child.thread.id,
+              providerInstanceId: task.providerInstanceId,
+              projection: {
+                nodes: child.nodes.filter(
+                  (candidate) =>
+                    candidate.threadId === child.thread.id &&
+                    candidate.rootNodeId === candidate.id &&
+                    candidate.nativeItemRef?.driver === task.driver &&
+                    candidate.nativeItemRef.strength === "strong" &&
+                    candidate.nativeItemRef.nativeId === target.nativeTaskId,
+                ),
+                turnItems: child.turnItems,
+              },
+              status: "interrupted",
+              now,
+              emitted: yield* Ref.get(events),
+              allocateEventId,
+            }).pipe(mapDispatchError(command));
+            yield* Ref.update(events, (existing) => [...existing, ...childEnded]);
+          }
+        }
+        return;
+      }
       if (stopped.providerTurn !== undefined && stoppedRun.status === "running") {
         const output = yield* projectionStore
           .getThreadRecords(command.threadId, ["messages"], {
@@ -9619,17 +9742,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         "runs",
         "subagents",
         "providerThreads",
+        "nodes",
         "providerTurns",
       ]);
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
       const subagent = projection.subagents.find(
         (candidate) => candidate.id === command.subagentId,
       );
+      const node = projection.nodes.find((candidate) => candidate.id === command.subagentId);
       if (
         subagent === undefined ||
+        subagent.threadId !== command.threadId ||
         subagent.runId !== command.runId ||
         subagent.origin !== "provider_native" ||
         subagent.driver !== "claudeAgent" ||
+        subagent.nativeTaskRef?.driver !== subagent.driver ||
         subagent.nativeTaskRef?.strength !== "strong" ||
         subagent.nativeTaskRef.nativeId === null
       ) {
@@ -9644,13 +9771,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (candidate) => candidate.id === run?.providerThreadId,
       );
       const providerTurn = projection.providerTurns.findLast(
-        (candidate) => candidate.providerThreadId === providerThread?.id,
+        (candidate) =>
+          candidate.providerThreadId === providerThread?.id &&
+          candidate.runAttemptId === run?.activeAttemptId &&
+          candidate.nodeId === run?.rootNodeId,
       );
       if (
         providerThread?.providerSessionId == null ||
         providerTurn === undefined ||
         providerThread.driver !== subagent.driver ||
-        providerThread.providerInstanceId !== subagent.providerInstanceId
+        providerThread.providerInstanceId !== subagent.providerInstanceId ||
+        providerThread.appThreadId !== command.threadId ||
+        node?.kind !== "subagent" ||
+        node.threadId !== command.threadId ||
+        node.runId !== command.runId ||
+        node.parentNodeId !== subagent.parentNodeId ||
+        node.providerThreadId !== providerThread.id ||
+        node.nativeItemRef?.driver !== subagent.driver ||
+        node.nativeItemRef.strength !== "strong" ||
+        node.nativeItemRef.nativeId !== subagent.nativeTaskRef.nativeId
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,

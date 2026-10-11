@@ -8,12 +8,15 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderSessionId,
   ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -22,6 +25,7 @@ import * as Queue from "effect/Queue";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -30,11 +34,9 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { makeSubagentChildThread } from "@t3tools/provider-core/server/subagentProjection";
+import { ProviderAdapterProtocolError } from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-
-const driver = ProviderDriverKind.make("codex");
-const instanceId = ProviderInstanceId.make("codex");
-const modelSelection = { instanceId, model: "test-model" };
 
 // Codex turns leave commands running, then the thread moves to another
 // provider thread (a provider switch). Stop must end all of the Codex work,
@@ -44,6 +46,7 @@ const stopEarlierBackgroundWork = ({
   stopWithQueue,
   olderStart = false,
   stalledRun,
+  nativeStop,
 }: {
   readonly failedStart?: boolean;
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
@@ -54,17 +57,26 @@ const stopEarlierBackgroundWork = ({
     | "returned-interrupt"
     | "returned-interrupt-terminal"
     | "superseded-attempt";
+  readonly nativeStop?: "released" | "live" | "nonretryable";
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
+      const driver = ProviderDriverKind.make(nativeStop === undefined ? "codex" : "claudeAgent");
+      const instanceId = ProviderInstanceId.make(
+        nativeStop === undefined ? "codex" : "claudeAgent",
+      );
+      const modelSelection = { instanceId, model: "test-model" };
+      const capabilities =
+        nativeStop === undefined ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2;
       const cwd = yield* checkpointWorkspace("background-work-stop");
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
       const interrupts: ProviderAdapter.ProviderAdapterV2InterruptInput[] = [];
+      const stoppedTasks: string[] = [];
       const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
-        getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+        getCapabilities: () => Effect.succeed(capabilities),
         planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
         openSession: (input) =>
           Effect.gen(function* () {
@@ -80,7 +92,7 @@ const stopEarlierBackgroundWork = ({
                 status: "ready",
                 cwd,
                 model: modelSelection.model,
-                capabilities: CodexProviderCapabilitiesV2,
+                capabilities,
                 createdAt: now,
                 updatedAt: now,
                 lastError: null,
@@ -133,6 +145,21 @@ const stopEarlierBackgroundWork = ({
                 Effect.sync(() => {
                   interrupts.push(interrupt);
                 }),
+              ...(nativeStop === undefined
+                ? {}
+                : {
+                    stopSubagent: ({ nativeTaskId }: { readonly nativeTaskId: string }) =>
+                      nativeStop === "nonretryable"
+                        ? Effect.fail(
+                            new ProviderAdapterProtocolError({
+                              driver,
+                              detail: "Native task is not active.",
+                            }),
+                          )
+                        : Effect.sync(() => {
+                            stoppedTasks.push(nativeTaskId);
+                          }),
+                  }),
               respondToRuntimeRequest: () => Effect.die("unused"),
               readThreadSnapshot: () => Effect.die("unused"),
               rollbackThread: () => Effect.die("unused"),
@@ -190,6 +217,379 @@ const stopEarlierBackgroundWork = ({
         const codexTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
         const devServerId = TurnItemId.make("turn-item:dev-server");
         const now = yield* DateTime.now;
+        if (nativeStop !== undefined) {
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const run = before.runs[0]!;
+          const ownerRoot = before.nodes.find((node) => node.id === run.rootNodeId)!;
+          const ownerThread = before.providerThreads.find(
+            (thread) => thread.id === first.providerThread.id,
+          )!;
+          const childThreadId = ThreadId.make("thread:released-native-child");
+          const siblingThreadId = ThreadId.make("thread:released-native-sibling");
+          const taskId = NodeId.make("node:released-native-child");
+          const siblingId = NodeId.make("node:released-native-sibling");
+          const childRootId = NodeId.make("node:released-native-child-root");
+          const siblingRootId = NodeId.make("node:released-native-sibling-root");
+          const task: OrchestrationV2Subagent = {
+            id: taskId,
+            threadId,
+            runId: run.id,
+            parentNodeId: ownerRoot.id,
+            origin: "provider_native",
+            createdBy: "agent",
+            driver,
+            providerInstanceId: instanceId,
+            providerThreadId: null,
+            childThreadId,
+            nativeTaskRef: { driver, nativeId: "released-native-task", strength: "strong" },
+            prompt: "Keep working",
+            title: null,
+            model: modelSelection.model,
+            status: "running",
+            result: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+          };
+          const fixtureEvents: OrchestrationV2DomainEvent[] = [];
+          for (const [nativeTask, childRoot] of [
+            [task, childRootId],
+            [
+              {
+                ...task,
+                id: siblingId,
+                childThreadId: siblingThreadId,
+                nativeTaskRef: { driver, nativeId: "sibling-native-task", strength: "strong" },
+              },
+              siblingRootId,
+            ],
+          ] as const) {
+            const childId = nativeTask.childThreadId!;
+            const nativeNode = {
+              ...ownerRoot,
+              id: nativeTask.id,
+              kind: "subagent" as const,
+              countsForRun: false,
+              parentNodeId: ownerRoot.id,
+              providerTurnId: codexTurn.id,
+              nativeItemRef: nativeTask.nativeTaskRef,
+            };
+            fixtureEvents.push(
+              {
+                id: EventId.make(`fixture:task:${nativeTask.id}`),
+                type: "subagent.updated",
+                threadId,
+                runId: run.id,
+                nodeId: nativeTask.id,
+                occurredAt: now,
+                payload: nativeTask,
+              },
+              {
+                id: EventId.make(`fixture:node:${nativeTask.id}`),
+                type: "node.updated",
+                threadId,
+                runId: run.id,
+                nodeId: nativeTask.id,
+                occurredAt: now,
+                payload: nativeNode,
+              },
+              {
+                id: EventId.make(`fixture:item:${nativeTask.id}`),
+                type: "turn-item.updated",
+                threadId,
+                runId: run.id,
+                nodeId: nativeTask.id,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`item:${nativeTask.id}`),
+                  type: "subagent",
+                  threadId,
+                  runId: run.id,
+                  nodeId: nativeTask.id,
+                  providerThreadId: ownerThread.id,
+                  providerTurnId: codexTurn.id,
+                  nativeItemRef: nativeTask.nativeTaskRef,
+                  parentItemId: null,
+                  ordinal: nativeTask.id === taskId ? 100 : 101,
+                  status: "running",
+                  title: null,
+                  startedAt: now,
+                  completedAt: null,
+                  updatedAt: now,
+                  subagentId: nativeTask.id,
+                  origin: "provider_native",
+                  driver,
+                  providerInstanceId: instanceId,
+                  childThreadId: childId,
+                  prompt: nativeTask.prompt,
+                  result: null,
+                },
+              },
+              {
+                id: EventId.make(`fixture:thread:${childId}`),
+                type: "thread.created",
+                threadId: childId,
+                occurredAt: now,
+                payload: makeSubagentChildThread({
+                  parentThread: before.thread,
+                  childThreadId: childId,
+                  parentNodeId: nativeTask.id,
+                  activeProviderThreadId: null,
+                  providerInstanceId: instanceId,
+                  modelSelection,
+                  title: "Native child",
+                  now,
+                  createdBy: "agent",
+                  creationSource: "provider",
+                }),
+              },
+              {
+                id: EventId.make(`fixture:child-root:${childRoot}`),
+                type: "node.updated",
+                threadId: childId,
+                nodeId: childRoot,
+                occurredAt: now,
+                payload: {
+                  ...nativeNode,
+                  id: childRoot,
+                  threadId: childId,
+                  runId: null,
+                  rootNodeId: childRoot,
+                  parentNodeId: null,
+                  kind: "root_turn",
+                  providerThreadId: null,
+                  providerTurnId: null,
+                },
+              },
+              {
+                id: EventId.make(`fixture:child-tool:${childRoot}`),
+                type: "turn-item.updated",
+                threadId: childId,
+                nodeId: childRoot,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`item:${childRoot}`),
+                  type: "dynamic_tool",
+                  threadId: childId,
+                  runId: null,
+                  nodeId: childRoot,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 100,
+                  status: "running",
+                  title: null,
+                  startedAt: now,
+                  completedAt: null,
+                  updatedAt: now,
+                  toolName: "synthetic-work",
+                  input: "Keep working",
+                },
+              },
+            );
+          }
+          const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          if (nativeStop === "released") {
+            yield* sessions.release({
+              providerSessionId: ownerThread.providerSessionId!,
+              reason: "runtime_error",
+            });
+            assert.isTrue(Option.isNone(yield* sessions.get(ownerThread.providerSessionId!)));
+            // Restore any missed terminal writes before testing targeted orphan repair.
+            fixtureEvents.push(
+              {
+                id: EventId.make("fixture:restore:run"),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: run,
+              },
+              {
+                id: EventId.make("fixture:restore:attempt"),
+                type: "run-attempt.updated",
+                threadId,
+                occurredAt: now,
+                payload: before.attempts[0]!,
+              },
+              {
+                id: EventId.make("fixture:restore:node"),
+                type: "node.updated",
+                threadId,
+                occurredAt: now,
+                payload: ownerRoot,
+              },
+              {
+                id: EventId.make("fixture:restore:turn"),
+                type: "provider-turn.updated",
+                threadId,
+                occurredAt: now,
+                payload: codexTurn,
+              },
+              {
+                id: EventId.make("fixture:restore:thread"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: ownerThread,
+              },
+            );
+          }
+          yield* sink.write({ events: fixtureEvents });
+          const original = yield* orchestrator.getThreadProjection(threadId);
+          const childOriginal = yield* orchestrator.getThreadProjection(childThreadId);
+          const siblingOriginal = yield* orchestrator.getThreadProjection(siblingThreadId);
+          const settle = {
+            type: "thread.background-work.settle" as const,
+            threadId,
+            providerThreadId: ownerThread.id,
+            providerTurnId: codexTurn.id,
+            subagent: {
+              id: taskId,
+              nativeTaskId: "released-native-task",
+              providerSessionId: ownerThread.providerSessionId!,
+            },
+          };
+          for (const invalid of [
+            { ...settle, subagent: { ...settle.subagent, nativeTaskId: "sibling-native-task" } },
+            { ...settle, subagent: { ...settle.subagent, id: ownerRoot.id } },
+            {
+              ...settle,
+              subagent: {
+                ...settle.subagent,
+                providerSessionId: ProviderSessionId.make("session:wrong-native-owner"),
+              },
+            },
+          ]) {
+            yield* orchestrator.dispatch({
+              ...invalid,
+              commandId: CommandId.make(`invalid:${JSON.stringify(invalid.subagent)}`),
+            });
+            assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), original);
+            assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childOriginal);
+          }
+          if (nativeStop === "released") {
+            const nativeNode = original.nodes.find((node) => node.id === taskId)!;
+            const invalidNodes: OrchestrationV2ThreadProjection["nodes"] = [
+              { ...nativeNode, runId: null },
+              { ...nativeNode, rootNodeId: siblingId },
+              {
+                ...nativeNode,
+                nativeItemRef: { driver, nativeId: "released-native-task", strength: "weak" },
+              },
+              {
+                ...nativeNode,
+                nativeItemRef: { driver, nativeId: "sibling-native-task", strength: "strong" },
+              },
+              { ...nativeNode, providerTurnId: ProviderTurnId.make("turn:wrong-owner") },
+            ];
+            for (const [index, invalidNode] of invalidNodes.entries()) {
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make(`fixture:invalid-node:${index}`),
+                    type: "node.updated",
+                    threadId,
+                    occurredAt: now,
+                    payload: invalidNode,
+                  },
+                ],
+              });
+              const fenced = yield* orchestrator.getThreadProjection(threadId);
+              yield* orchestrator.dispatch({
+                ...settle,
+                commandId: CommandId.make(`frozen-or-wrong-native-owner:${index}`),
+              });
+              assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), fenced);
+              assert.deepEqual(
+                yield* orchestrator.getThreadProjection(childThreadId),
+                childOriginal,
+              );
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make(`fixture:restore-node:${index}`),
+                    type: "node.updated",
+                    threadId,
+                    occurredAt: now,
+                    payload: nativeNode,
+                  },
+                ],
+              });
+            }
+          }
+          yield* orchestrator.dispatch({
+            type: "subagent.stop",
+            commandId: CommandId.make("stop-released-native-child"),
+            threadId,
+            runId: run.id,
+            subagentId: taskId,
+          });
+          yield* worker.drain();
+          const stopped = yield* orchestrator.getThreadProjection(threadId);
+          const childStopped = yield* orchestrator.getThreadProjection(childThreadId);
+          const expectedStatus = nativeStop === "released" ? "interrupted" : "running";
+          assert.equal(
+            stopped.subagents.find((entry) => entry.id === taskId)!.status,
+            expectedStatus,
+          );
+          assert.equal(stopped.nodes.find((entry) => entry.id === taskId)!.status, expectedStatus);
+          assert.equal(
+            stopped.turnItems.find((entry) => entry.nodeId === taskId)!.status,
+            expectedStatus,
+          );
+          assert.equal(
+            childStopped.nodes.find((entry) => entry.id === childRootId)!.status,
+            expectedStatus,
+          );
+          assert.equal(
+            childStopped.turnItems.find((entry) => entry.nodeId === childRootId)!.status,
+            expectedStatus,
+          );
+          assert.deepEqual(stopped.runs, original.runs);
+          assert.deepEqual(stopped.attempts, original.attempts);
+          assert.deepEqual(stopped.providerTurns, original.providerTurns);
+          assert.deepEqual(stopped.providerThreads, original.providerThreads);
+          assert.deepEqual(
+            stopped.nodes.find((entry) => entry.id === ownerRoot.id),
+            original.nodes.find((entry) => entry.id === ownerRoot.id),
+          );
+          assert.deepEqual(
+            stopped.subagents.find((entry) => entry.id === siblingId),
+            original.subagents.find((entry) => entry.id === siblingId),
+          );
+          assert.deepEqual(
+            stopped.nodes.find((entry) => entry.id === siblingId),
+            original.nodes.find((entry) => entry.id === siblingId),
+          );
+          assert.deepEqual(
+            stopped.turnItems.find((entry) => entry.nodeId === siblingId),
+            original.turnItems.find((entry) => entry.nodeId === siblingId),
+          );
+          assert.deepEqual(
+            yield* orchestrator.getThreadProjection(siblingThreadId),
+            siblingOriginal,
+          );
+          assert.deepEqual(stoppedTasks, nativeStop === "live" ? ["released-native-task"] : []);
+          assert.deepEqual(interrupts, []);
+          if (nativeStop === "released") {
+            yield* orchestrator.dispatch({
+              ...settle,
+              commandId: CommandId.make("repeat-released-native-settle"),
+            });
+            yield* orchestrator.dispatch({
+              type: "subagent.stop",
+              commandId: CommandId.make("repeat-released-native-stop"),
+              threadId,
+              runId: run.id,
+              subagentId: taskId,
+            });
+            yield* worker.drain();
+            assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), stopped);
+            assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childStopped);
+          }
+          return;
+        }
         yield* sink.write({
           events: [
             {
@@ -1000,4 +1400,9 @@ it.effect.each([
   "superseded-attempt",
 ] as const)("Stop recovers a stalled run after %s without changing a newer attempt", (stalledRun) =>
   stopEarlierBackgroundWork({ stalledRun }),
+);
+
+it.effect.each(["released", "live", "nonretryable"] as const)(
+  "a native child Stop preserves its parent and siblings after %s provider control",
+  (nativeStop) => stopEarlierBackgroundWork({ nativeStop }),
 );

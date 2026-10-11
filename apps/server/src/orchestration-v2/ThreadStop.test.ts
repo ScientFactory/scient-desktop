@@ -636,6 +636,19 @@ it.effect(
           providerSessionId: ProviderSessionId.make("session:native-child-stop"),
         },
       });
+      yield* projections.apply({
+        id: EventId.make("event:native-child-stop:node"),
+        type: "node.updated",
+        threadId,
+        runId: run.id,
+        nodeId: subagent.id,
+        occurredAt: now,
+        payload: {
+          ...before.nodes.find((node) => node.id === subagent.id)!,
+          providerThreadId: providerThread.id,
+          nativeItemRef: subagent.nativeTaskRef,
+        },
+      });
       const providerTurnId = ProviderTurnId.make("turn:native-child-stop");
       yield* projections.apply({
         id: EventId.make("event:native-child-stop:provider-turn"),

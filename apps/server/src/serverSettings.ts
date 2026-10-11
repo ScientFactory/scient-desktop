@@ -1080,9 +1080,9 @@ const make = Effect.gen(function* () {
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
-    // Copied, not moved: the old entry is removed only after the new file is written. A token
-    // that cannot be read or copied leaves the retired keys in place, so the migration runs again
-    // on the next load instead of dropping it.
+    // Copy every adopted token before retiring any source. Keep the legacy file until cleanup
+    // succeeds so a failed removal or interrupted rewrite retries from the same metadata;
+    // sources already removed on a prior attempt leave their copied destinations untouched.
     const legacySecretsCopied = yield* Effect.forEach(
       settingsFileTrusted
         ? migrateLegacySourceControlSettings(folded, legacySourceControl).secretMoves
@@ -1127,10 +1127,19 @@ const make = Effect.gen(function* () {
       (settingsFileTrusted && legacyProviders !== undefined) ||
       hasLegacySourceControl
     ) {
-      yield* writeSettingsAtomically(migrated);
       for (const move of sourceControlMigration.secretMoves) {
-        yield* secretStore.remove(move.from).pipe(Effect.ignore);
+        yield* secretStore.remove(move.from).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "remove-secret",
+                cause,
+              }),
+          ),
+        );
       }
+      yield* writeSettingsAtomically(migrated);
     }
     return migrated;
   });

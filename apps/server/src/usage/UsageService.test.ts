@@ -42,6 +42,7 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
+import { SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -1469,6 +1470,218 @@ describe("UsageService", () => {
   );
 
   it.live(
+    "imports retained v5 usage into v6 and protects Pi pricing from older cache rewrites",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, home, settings } = yield* setup;
+        yield* TestClock.setTime(CURSOR_NOW);
+        const piDir = NodePath.join(home, "pi", "sessions");
+        const piPath = NodePath.join(piDir, "session.jsonl");
+        const copyPath = NodePath.join(piDir, "copy.jsonl");
+        const piLine = (id: string, output: number, timestamp: string) =>
+          encodeUnknownJsonString({
+            type: "message",
+            id,
+            timestamp,
+            message: {
+              role: "assistant",
+              provider: "custom-provider",
+              model: "requested-model",
+              responseModel: "actual-model",
+              usage: { output },
+            },
+          });
+        const base =
+          encodeUnknownJsonString({ type: "session", id: "pi-session" }) +
+          "\n" +
+          piLine("shared", 3, "2026-08-01T10:00:00Z") +
+          "\n";
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+          await NodeFSP.mkdir(piDir, { recursive: true });
+          await NodeFSP.writeFile(piPath, base + piLine("tail", 5, "2026-08-01T10:30:00Z"));
+          await NodeFSP.writeFile(copyPath, base);
+        });
+
+        yield* Effect.gen(function* () {
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          const priorPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+          const v4Path = NodePath.join(stateDir, "usage-scan-cache.json");
+          const first = yield* UsageService.make;
+          const original = yield* first.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(original), 13);
+          assert.strictEqual(
+            original.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            42,
+          );
+          yield* first.awaitPersisted;
+
+          const { priorText, v4Text } = yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(
+              await NodeFSP.readFile(cachePath, "utf8"),
+            ) as Record<string, unknown>;
+            const priorText = encodeUnknownJsonString({ ...document, version: 5 });
+            // A different older snapshot must not be merged into the v5 import.
+            const v4Text = encodeUnknownJsonString({ ...document, version: 4, files: {} });
+            await NodeFSP.writeFile(priorPath, priorText);
+            await NodeFSP.writeFile(v4Path, v4Text);
+            await NodeFSP.rm(cachePath);
+            await NodeFSP.rm(transcript);
+            await NodeFSP.rm(copyPath);
+            return { priorText, v4Text };
+          });
+
+          const migrated = yield* UsageService.make;
+          assert.deepStrictEqual((yield* migrated.readSummary(WINDOW)).buckets, original.buckets);
+          yield* migrated.awaitPersisted;
+          yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+              version: number;
+            };
+            assert.strictEqual(document.version, 6);
+            assert.strictEqual(await NodeFSP.readFile(priorPath, "utf8"), priorText);
+            assert.strictEqual(await NodeFSP.readFile(v4Path, "utf8"), v4Text);
+          });
+
+          // Resume after a persisted, unterminated tail; count it only once.
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(piPath, "\n" + piLine("new", 7, "2026-08-01T22:00:00Z") + "\n"),
+          );
+          const grown = yield* migrated.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(grown), 20);
+          assert.strictEqual(
+            grown.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            70,
+          );
+          yield* Effect.promise(() => NodeFSP.copyFile(piPath, copyPath));
+          assert.deepStrictEqual((yield* migrated.readSummary(WINDOW)).buckets, grown.buckets);
+          yield* migrated.awaitPersisted;
+
+          const olderRewrite = yield* Effect.promise(async () => {
+            // An older v5 server drops Pi and the optional pricing-model column.
+            const prior = decodeUnknownJsonString(priorText) as {
+              files: Record<string, { p: string; r: unknown[][]; t: unknown[][] }>;
+            };
+            const files = Object.fromEntries(
+              Object.entries(prior.files)
+                .filter(([, file]) => file.p !== "pi")
+                .map(([path, file]) => [
+                  path,
+                  {
+                    ...file,
+                    r: file.r.map((row) => row.slice(0, 11)),
+                    t: file.t.map((row) => row.slice(0, 11)),
+                  },
+                ]),
+            );
+            const text = encodeUnknownJsonString({ ...prior, version: 5, files });
+            await NodeFSP.writeFile(priorPath, text);
+            await NodeFSP.rm(piPath);
+            await NodeFSP.rm(copyPath);
+            return text;
+          });
+
+          const restarted = yield* UsageService.make;
+          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, grown.buckets);
+          const localDay = yield* restarted.readSummary({
+            ...WINDOW,
+            timeZone: "Asia/Tokyo",
+            sinceDay: UsageDay.make("2026-08-02"),
+          });
+          assert.strictEqual(totalOutputTokens(localDay), 7);
+          assert.strictEqual(
+            localDay.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            28,
+          );
+          const hourly = yield* restarted.readSummary({
+            ...WINDOW,
+            resolution: "hour",
+            sinceTime: "2026-08-01T10:00:00Z",
+            untilTime: "2026-08-01T11:00:00Z",
+          });
+          assert.strictEqual(totalOutputTokens(hourly), 13);
+          assert.strictEqual(
+            hourly.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            42,
+          );
+          yield* restarted.awaitPersisted;
+          assert.strictEqual(
+            yield* Effect.promise(() => NodeFSP.readFile(priorPath, "utf8")),
+            olderRewrite,
+          );
+          assert.strictEqual(yield* Effect.promise(() => NodeFSP.readFile(v4Path, "utf8")), v4Text);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-v5-upgrade-test",
+              home,
+              settings,
+              ratesDocument: {
+                "claude-fable-5": { input_cost_per_token: 0, output_cost_per_token: 2 },
+                "actual-model": { input_cost_per_token: 0, output_cost_per_token: 4 },
+                "custom-provider/actual-model": {
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 40,
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("does not roll back to older usage when the current cache version is unsupported", () =>
+    Effect.gen(function* () {
+      const { transcript, home, settings } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+        const priorPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        const v4Path = NodePath.join(stateDir, "usage-scan-cache.json");
+        const first = yield* UsageService.make;
+        assert.strictEqual(totalOutputTokens(yield* first.readSummary(WINDOW)), 5);
+        yield* first.awaitPersisted;
+        const document = yield* Effect.promise(
+          async () =>
+            decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as Record<
+              string,
+              unknown
+            >,
+        );
+        const priorText = encodeUnknownJsonString({ ...document, version: 5 });
+        const v4Text = encodeUnknownJsonString({ ...document, version: 4 });
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(priorPath, priorText);
+          await NodeFSP.writeFile(v4Path, v4Text);
+          await NodeFSP.rm(transcript);
+        });
+        for (const version of [7, "unknown", undefined]) {
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(cachePath, encodeUnknownJsonString({ ...document, version })),
+          );
+          const service = yield* UsageService.make;
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 0);
+          yield* service.awaitPersisted;
+          assert.strictEqual(
+            yield* Effect.promise(() => NodeFSP.readFile(priorPath, "utf8")),
+            priorText,
+          );
+          assert.strictEqual(yield* Effect.promise(() => NodeFSP.readFile(v4Path, "utf8")), v4Text);
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({ prefix: "usage-service-unsupported-cache-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live(
     "upgrades a v4 cache: reprices live Codex tiers, keeps deleted rollouts, leaves v4 intact",
     () =>
       Effect.gen(function* () {
@@ -1506,7 +1719,7 @@ describe("UsageService", () => {
 
         yield* Effect.gen(function* () {
           const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
           const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
           const first = yield* UsageService.make;
           yield* first.readSummary(WINDOW);
@@ -1531,13 +1744,13 @@ describe("UsageService", () => {
 
           // SCIENT-FORK:START — verify the service drains before its state directory closes.
           // Registered before the migrated service: its LIFO shutdown finalizer
-          // must finish the pending v5 write before this check, while v4 still exists.
+          // must finish the pending v6 write before this check, while v4 still exists.
           yield* Effect.addFinalizer(() =>
             Effect.promise(async () => {
               const persisted = decodeUnknownJsonString(
                 await NodeFSP.readFile(cachePath, "utf8"),
               ) as { version: number };
-              assert.strictEqual(persisted.version, 5);
+              assert.strictEqual(persisted.version, 6);
               assert.strictEqual(await NodeFSP.readFile(legacyPath, "utf8"), legacy);
             }),
           );

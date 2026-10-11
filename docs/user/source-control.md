@@ -43,6 +43,13 @@ If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
 over that choice; a host turned off stays off either way.
 
+Older GitHub and Bitbucket settings migrate into the shared host configuration. Existing
+host and token choices, including explicitly cleared tokens, take precedence; missing
+legacy entries are adopted independently. Adopted credentials are copied to their new
+secret-store names before the old copies are retired. If copying or retirement fails,
+the original settings remain available for retry instead of dropping credential recovery
+state. Clearing a migrated token does not leave an adopted legacy copy behind.
+
 ## What you can do
 
 ### Start projects from anywhere

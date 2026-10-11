@@ -190,6 +190,15 @@ expanding citations in new user prompts.
 `ProviderEventIngestor` persists adapter output with run/attempt/node attribution.
 The V1 `ProviderService.sendTurn` path is not the current execution boundary.
 
+Native Claude subagent Stop distinguishes an adapter stop receipt from an absent session.
+A live adapter remains authoritative for terminal task, node and tool-item updates. If the
+captured session has gone, the effect worker requests targeted local settlement under the
+same strong native task/thread, provider instance, owning run/turn and root-node bindings.
+That repair also ends the exact linked runless child root; it does not interrupt the parent,
+settle siblings, admit frozen nodes or assign execution authority to imported history.
+A nonretryable adapter error is not a stop receipt: local repair still requires the
+captured session to be absent.
+
 Adding an ordinary driver requires a native `ProviderAdapterV2`, an instance factory, and registration
 in `BUILT_IN_DRIVERS`. Expose capabilities truthfully; new wire behavior may also require contract
 and client work. Production composition is in
@@ -547,6 +556,14 @@ Passive model/catalog discovery remains `provider/PiProvider.ts`;
 headless-generation ownership. Managed installation is owned by the driver lifecycle actions and
 shared runtime package. Runtime catalogs and platform qualification remain separate from native
 orchestration compatibility.
+
+Usage reads Pi's native JSONL sessions, preserving disjoint input/cache counters and the
+catalog pricing model separately from the displayed provider/model name. The durable scan
+cache writes `usage-scan-cache-v6.json`. It can import the prior v5 file and then the
+unversioned v4 file without rewriting either; retained records for deleted transcripts,
+incremental positions, tails and pricing-model attribution survive an older server's v5
+rewrite. A readable current cache takes precedence over older snapshots, and unsupported
+schema versions are not interpreted as compatible records.
 
 The earlier main-based Pi proposal was selectively adapted, not merged as a second host platform;
 see [the Pi source notice][pi-notice] for provenance. Native tests and replay exercise the V2

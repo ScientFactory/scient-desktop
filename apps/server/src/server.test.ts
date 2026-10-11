@@ -13317,7 +13317,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("preserves the friendly blocked-settlement rejection and native history", () =>
+  it.effect("preserves the blocked-settlement boundary and native history", () =>
     Effect.gen(function* () {
       const fixture = yield* makeNativeArchiveFixture(
         "settle-blocked",
@@ -13346,10 +13346,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const commandId = CommandId.make("native-settle-blocked");
       const error = yield* fixture.dispatch("thread.settle", commandId).pipe(Effect.flip);
       assert.equal(error._tag, "OrchestrationV2DispatchCommandError");
-      assert.equal(
-        error.message,
-        "This thread still needs attention. Resolve or interrupt it first, then try again.",
-      );
       assert.equal(yield* fixture.app.v2.eventSink.latestSequence(), sequence);
       assert.deepEqual(yield* fixture.app.v2.threads.getThreadProjection(fixture.threadId), before);
       assert.deepEqual(yield* fixture.app.v2.outbox.listByCommandId(commandId), []);

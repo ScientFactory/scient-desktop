@@ -66,7 +66,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
-  }) => Effect.Effect<void, ProviderTurnControlError>;
+  }) => Effect.Effect<"adapter-stopped" | "session-absent", ProviderTurnControlError>;
   readonly steer: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -200,7 +200,7 @@ export const layer: Layer.Layer<
         const session = Option.isSome(loaded.session)
           ? loaded.session
           : yield* sessions.get(input.providerSessionId);
-        if (Option.isNone(session)) return;
+        if (Option.isNone(session)) return "session-absent" as const;
         if (input.subagent !== undefined) {
           if (session.value.stopSubagent === undefined) {
             return yield* new ProviderTurnControlError({
@@ -214,7 +214,7 @@ export const layer: Layer.Layer<
             providerThread: loaded.providerThread,
             nativeTaskId: input.subagent.nativeTaskId,
           });
-          return;
+          return "adapter-stopped" as const;
         }
         // A settled turn reaches its adapter too: only the adapter knows
         // whether it still runs work for the thread, and each one either
@@ -245,6 +245,7 @@ export const layer: Layer.Layer<
             yield* Effect.sleep("10 millis");
           }
         }).pipe(Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()));
+        return "adapter-stopped" as const;
       }).pipe(
         Effect.mapError((cause) =>
           isProviderTurnControlError(cause)

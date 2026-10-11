@@ -3266,6 +3266,195 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     },
   );
 
+  it.effect.each([
+    { caseTitle: "before any source is retired", blockSecond: false, removeBeforeFailure: false },
+    { caseTitle: "after one source is retired", blockSecond: true, removeBeforeFailure: false },
+    { caseTitle: "after every source is retired", blockSecond: true, removeBeforeFailure: true },
+  ])(
+    "retries adopted source control secret cleanup $caseTitle without losing credentials",
+    ({ blockSecond, removeBeforeFailure }) => {
+      const bitbucketLegacyName = "bitbucket-access-token";
+      const githubLegacyName = `github-token-${Buffer.from("ghe.acme.test", "utf8").toString("base64url")}`;
+      const bitbucketName = sourceControlHostSecretName({
+        kind: "bitbucket",
+        field: "accessToken",
+        serverHost: null,
+      });
+      const githubName = sourceControlHostSecretName({
+        kind: "github",
+        field: "tokens",
+        serverHost: "ghe.acme.test",
+      });
+      const currentName = sourceControlHostSecretName({
+        kind: "github",
+        field: "tokens",
+        serverHost: "github.com",
+      });
+      const blockedName = blockSecond ? githubLegacyName : bitbucketLegacyName;
+      const cause = new ServerSecretStore.SecretStoreRemoveError({
+        resource: blockedName,
+        cause: new Error("Synthetic secret cleanup interruption."),
+      });
+      const secretLayer = Layer.effect(
+        ServerSecretStore.ServerSecretStore,
+        Effect.map(ServerSecretStore.ServerSecretStore, (store) => ({
+          ...store,
+          remove: (name: string) =>
+            name === blockedName
+              ? (removeBeforeFailure ? store.remove(name) : Effect.void).pipe(
+                  Effect.andThen(Effect.fail(cause)),
+                )
+              : store.remove(name),
+        })),
+      ).pipe(Layer.provide(ServerSecretStore.layer));
+      const layerSettings = ServerSettingsModule.layer.pipe(
+        Layer.provideMerge(secretLayer),
+        Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+        Layer.provideMerge(
+          Layer.fresh(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3code-legacy-secret-cleanup-test-",
+            }),
+          ),
+        ),
+      );
+      const freshSettingsLayer = Layer.fresh(ServerSettingsModule.layer).pipe(
+        Layer.provide(Layer.fresh(ServerSecretStore.layer)),
+      );
+      return Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const bitbucketToken = new TextEncoder().encode("synthetic-bitbucket-token");
+        const githubToken = new TextEncoder().encode("synthetic-enterprise-token");
+        const currentToken = new TextEncoder().encode("synthetic-current-token");
+        const unrelatedToken = new TextEncoder().encode("synthetic-unadopted-token");
+        const unadoptedNames = [
+          `github-token-${Buffer.from("github.com", "utf8").toString("base64url")}`,
+          `github-token-${Buffer.from("cleared.example.test", "utf8").toString("base64url")}`,
+          "synthetic-unrelated-secret",
+        ];
+        yield* secrets.set(bitbucketLegacyName, bitbucketToken);
+        yield* secrets.set(githubLegacyName, githubToken);
+        yield* secrets.set(currentName, currentToken);
+        for (const name of unadoptedNames) yield* secrets.set(name, unrelatedToken);
+        const projectId = ProjectId.make("cleanup-project");
+        const legacy = JSON.stringify({
+          bitbucket: { email: "fixture@example.test", accessToken: "••••••" },
+          sourceControlHosts: {
+            github: {
+              hosts: {
+                " GHE.ACME.TEST ": { account: "current-enterprise", enabled: false },
+              },
+              tokens: { " GitHub.COM ": "••••••", " Cleared.EXAMPLE.TEST ": "" },
+            },
+          },
+          github: {
+            hosts: { "ghe.acme.test": { account: "legacy-enterprise", enabled: true } },
+            tokens: {
+              "ghe.acme.test": "••••••",
+              "github.com": "••••••",
+              "cleared.example.test": "••••••",
+            },
+          },
+          providers: { claudeAgent: { binaryPath: "/synthetic/claude" } },
+          projectAutoPullOverrides: { [projectId]: false },
+          addProjectBaseDirectory: "/synthetic/projects",
+        });
+        yield* fs.writeFileString(config.settingsPath, legacy);
+
+        const error = yield* Effect.flip(service.getSettings);
+        assert.equal(error.operation, "remove-secret");
+        assert.strictEqual(error.cause, cause);
+        assert.equal(yield* fs.readFileString(config.settingsPath), legacy);
+        assert.deepEqual(yield* secrets.get(bitbucketName), Option.some(bitbucketToken));
+        assert.deepEqual(yield* secrets.get(githubName), Option.some(githubToken));
+        assert.equal(
+          Option.isNone(yield* secrets.get(bitbucketLegacyName)),
+          blockSecond || removeBeforeFailure,
+        );
+        assert.equal(
+          Option.isNone(yield* secrets.get(githubLegacyName)),
+          blockSecond && removeBeforeFailure,
+        );
+        assert.deepEqual(yield* secrets.get(currentName), Option.some(currentToken));
+        for (const name of unadoptedNames) {
+          assert.deepEqual(yield* secrets.get(name), Option.some(unrelatedToken));
+        }
+
+        yield* Effect.gen(function* () {
+          const fresh = yield* ServerSettingsModule.ServerSettingsService;
+          const loaded = yield* fresh.getSettings;
+          assert.deepEqual(loaded.sourceControlHosts.bitbucket, {
+            email: "fixture@example.test",
+            accessToken: "synthetic-bitbucket-token",
+          });
+          assert.deepEqual(loaded.sourceControlHosts.github, {
+            hosts: { "ghe.acme.test": { account: "current-enterprise", enabled: false } },
+            tokens: {
+              "github.com": "synthetic-current-token",
+              "cleared.example.test": "",
+              "ghe.acme.test": "synthetic-enterprise-token",
+            },
+          });
+          assert.equal(loaded.addProjectBaseDirectory, "/synthetic/projects");
+          assert.deepEqual(
+            loaded.providerInstances[ProviderInstanceId.make("claudeAgent")]?.config,
+            {
+              binaryPath: "/synthetic/claude",
+            },
+          );
+          assert.deepEqual(loaded.projectSettingsOverrides[projectId], { defaultAutoPull: false });
+          const raw = yield* fs.readFileString(config.settingsPath);
+          const persisted = JSON.parse(raw);
+          assert.isUndefined(persisted.bitbucket);
+          assert.isUndefined(persisted.github);
+          assert.isUndefined(persisted.providers);
+          assert.isTrue(persisted.projectSettingsFolded);
+          assert.equal(persisted.sourceControlHosts.bitbucket.accessToken, "••••••");
+          assert.equal(persisted.sourceControlHosts.github.tokens["ghe.acme.test"], "••••••");
+          for (const token of [bitbucketToken, githubToken, currentToken, unrelatedToken]) {
+            assert.notInclude(raw, new TextDecoder().decode(token));
+          }
+          assert.isTrue(Option.isNone(yield* secrets.get(bitbucketLegacyName)));
+          assert.isTrue(Option.isNone(yield* secrets.get(githubLegacyName)));
+
+          yield* fresh.updateSettings({
+            sourceControlHosts: {
+              ...loaded.sourceControlHosts,
+              bitbucket: { ...loaded.sourceControlHosts.bitbucket, accessToken: "" },
+              github: {
+                ...loaded.sourceControlHosts.github,
+                tokens: {
+                  ...(loaded.sourceControlHosts.github?.tokens as Record<string, string>),
+                  "ghe.acme.test": "",
+                },
+              },
+            },
+          });
+        }).pipe(Effect.provide(freshSettingsLayer));
+
+        for (const name of [bitbucketLegacyName, githubLegacyName, bitbucketName, githubName]) {
+          assert.isTrue(Option.isNone(yield* secrets.get(name)));
+        }
+        assert.deepEqual(yield* secrets.get(currentName), Option.some(currentToken));
+        for (const name of unadoptedNames) {
+          assert.deepEqual(yield* secrets.get(name), Option.some(unrelatedToken));
+        }
+        const reloaded = yield* Effect.gen(function* () {
+          const fresh = yield* ServerSettingsModule.ServerSettingsService;
+          return yield* fresh.getSettings;
+        }).pipe(Effect.provide(freshSettingsLayer));
+        assert.equal(reloaded.sourceControlHosts.bitbucket?.accessToken, "");
+        assert.equal(
+          (reloaded.sourceControlHosts.github?.tokens as Record<string, string>)["ghe.acme.test"],
+          "",
+        );
+      }).pipe(Effect.provide(layerSettings));
+    },
+  );
+
   it.effect("moves the retired bitbucket and github keys and their secrets on load", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

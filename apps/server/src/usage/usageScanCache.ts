@@ -31,17 +31,24 @@ import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptRea
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 stateful entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: Pi records and their separate pricing model must survive older servers
+// that would drop the provider or strip the pricing model on a v5 rewrite.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
+const STATEFUL_COMPATIBLE_SINCE_VERSION = 5;
 
 /**
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * A server imports the newest prior cache once, when its own file is missing,
+ * and never writes the prior files.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
-export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const PRIOR_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v5.json",
+  "usage-scan-cache.json",
+] as const;
 
 /** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
@@ -231,6 +238,7 @@ export function decodeScanCache(
   const version = root.version;
   if (
     typeof version !== "number" ||
+    !Number.isInteger(version) ||
     version < SPEED_COMPATIBLE_SINCE_VERSION ||
     version > USAGE_SCAN_CACHE_VERSION
   ) {
@@ -341,7 +349,7 @@ export function decodeScanCache(
     // all priced as standard. Keep them, because the rollout may be gone, but
     // make a live rollout re-parse whole: no file has size -1, and a zero
     // position cannot resume.
-    const legacy = format.state !== undefined && version < USAGE_SCAN_CACHE_VERSION;
+    const legacy = format.state !== undefined && version < STATEFUL_COMPATIBLE_SINCE_VERSION;
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;

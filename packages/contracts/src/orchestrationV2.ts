@@ -3281,6 +3281,14 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
+    /** A released native session settles only this captured task, never its owner or siblings. */
+    subagent: Schema.optional(
+      Schema.Struct({
+        id: NodeId,
+        nativeTaskId: TrimmedNonEmptyString,
+        providerSessionId: ProviderSessionId,
+      }),
+    ),
   }),
   /**
    * Stop for one thread, whatever it is doing: interrupts its running turn, holds its queue,

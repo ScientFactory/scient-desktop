@@ -97,7 +97,7 @@ function makeExecutorLayer(input: {
         interruptPendingStart:
           input.pendingInterrupt ??
           (() => Effect.die("Pending-start interruption is not used in this fixture.")),
-        interrupt: input.interrupt ?? (() => Effect.void),
+        interrupt: input.interrupt ?? (() => Effect.succeed("adapter-stopped" as const)),
         steer: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
@@ -1063,7 +1063,9 @@ it.effect("a native subagent stop does not settle its owner's background work", 
       events,
       interrupt: (input) => {
         assert.equal(input.subagent?.nativeTaskId, "native-task");
-        return Ref.update(events, (current) => [...current, "stop-child"]);
+        return Ref.update(events, (current) => [...current, "stop-child"]).pipe(
+          Effect.as("adapter-stopped" as const),
+        );
       },
       threads: { dispatch: () => Effect.die("The owner's background work must stay running") },
     });
