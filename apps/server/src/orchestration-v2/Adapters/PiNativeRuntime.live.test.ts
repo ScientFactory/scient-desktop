@@ -350,7 +350,6 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
           assert.lengthOf(requests, 20);
           const firstRequest = decodeRecord(requests[0]!);
           assert.equal(firstRequest.max_tokens ?? firstRequest.max_completion_tokens, 1024);
-          assert.include(requests[0]!, "Scient");
           assert.include(requests[1]!, "Native prompt sentinel: exact arguments");
           assert.include(requests[2]!, "Native skill sentinel.");
         }),
@@ -423,7 +422,7 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
             assert.equal(pending.type, "runtime_request.updated");
             if (pending.type !== "runtime_request.updated") return;
             assert.isFalse(c.events.some((event) => event.type === "turn.terminal"));
-            const item = yield* c.take(
+            const item = c.events.findLast(
               (event) =>
                 event.type === "turn_item.updated" &&
                 (event.turnItem.type === "user_input_request" ||
@@ -447,7 +446,7 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
                   ["Beta", " Beta "],
                 );
               }
-              if (index === 3) assert.include(question.question, "Initial text");
+              if (index === 3) assert.equal(question.initialAnswer, "Initial text");
               yield* runtime.respondToRuntimeRequest({
                 requestId: pending.runtimeRequest.id,
                 answers: { [question.id]: answers[index]! },

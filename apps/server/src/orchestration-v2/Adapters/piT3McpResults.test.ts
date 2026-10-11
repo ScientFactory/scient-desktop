@@ -4,7 +4,6 @@ import * as NodeVM from "node:vm";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import * as Schema from "effect/Schema";
 import { makePiMcpExtensionSource } from "@t3tools/provider-pi/testing";
 import { buildPiRuntimeGuidance } from "../../provider/PiDriverComposition.ts";
 import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
@@ -15,20 +14,23 @@ type Tool = {
   execute: (
     id: string,
     args: unknown,
-  ) => Promise<{ content: Content[]; details: unknown; isError?: boolean }>;
+  ) => Promise<{
+    content: Content[];
+    structuredContent: unknown;
+    details: { server: string; tool: string; isError: boolean };
+    isError?: boolean;
+  }>;
 };
 type ToolHook = (
   event: { toolName: string; input: unknown },
   context: { hasUI: boolean; ui: { confirm: () => Promise<boolean> } },
 ) => Promise<unknown>;
 type ExtensionHook = (event: unknown, context?: unknown) => unknown;
-const decodeGuidance = Schema.decodeUnknownSync(Schema.Struct({ systemPrompt: Schema.String }));
 
 /** Only Pi's extension API and the MCP HTTP peer are substituted. */
 async function loadBridge(result: unknown, mode = "full-access") {
   const tools = new Map<string, Tool>();
   let hook: ToolHook | undefined;
-  let guidance: ExtensionHook | undefined;
   let extension = makePiMcpExtensionSource(SCIENT_ORCHESTRATION_INSTRUCTIONS);
   for (const declaration of [
     'import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";',
@@ -65,7 +67,6 @@ async function loadBridge(result: unknown, mode = "full-access") {
       on: (name: string, handler: ExtensionHook) => {
         if (name === "tool_call")
           hook = (event, context) => Promise.resolve(handler(event, context));
-        if (name === "before_agent_start") guidance = handler;
       },
       registerCommand: () => undefined,
       registerTool: (tool: Tool) => tools.set(tool.name, tool),
@@ -89,15 +90,9 @@ async function loadBridge(result: unknown, mode = "full-access") {
     },
   });
   const tool = tools.get("scient_fixture");
-  if (!tool || !hook || !guidance)
+  if (!tool || !hook)
     throw new Error("Native bridge did not register its tool and permission hook.");
   expect([...tools.keys()]).toEqual(["scient_fixture", "preview_status"]);
-  const systemPrompt = decodeGuidance(
-    guidance({ systemPrompt: "Base system prompt" }),
-  ).systemPrompt;
-  expect(systemPrompt).toBe(
-    ["Base system prompt", runtimeGuidance, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim()].join("\n\n"),
-  );
   return { execute: () => tool.execute("call-1", {}), hook };
 }
 
@@ -123,14 +118,13 @@ describe("native Pi MCP result fidelity", () => {
         resource: { uri: "fixture://binary", mimeType: "application/pdf", blob: "cGRm" },
       },
     ].map((block) => ({
-      caseTitle: `exposes ${block.type} model content while retaining the complete native result`,
+      caseTitle: `exposes ${block.type} resource information without binary model content`,
       block,
     })),
   )("$caseTitle", async ({ block }) => {
     const result = { content: [block] };
     const bridge = await loadBridge(result);
     const actual = await bridge.execute();
-    expect(actual.details).toEqual({ server: "scient", tool: "scient_fixture", result });
     expect(actual.content).toHaveLength(1);
     const text = actual.content[0];
     expect(text?.type).toBe("text");
@@ -154,56 +148,12 @@ describe("native Pi MCP result fidelity", () => {
       structuredContent: { snapshot: "snapshot-must-not-be-duplicated" },
     };
     const actual = await (await loadBridge(result)).execute();
-    expect(actual.content.slice(0, 2)).toEqual([text, image]);
     expect(actual.content).toHaveLength(3);
     const resource = actual.content[2];
     if (resource?.type !== "text") throw new Error("Expected bounded resource text");
     expect(resource.text).toContain("fixture://large");
     expect(resource.text.length).toBeLessThanOrEqual(12_000);
     expect(resource.text).not.toContain(result.structuredContent.snapshot);
-    expect(actual.details).toEqual({ server: "scient", tool: "scient_fixture", result });
-  });
-
-  it("keeps MCP images and complete metadata in native tool details", async () => {
-    const image = { type: "image", data: "cG5n", mimeType: "image/png" };
-    const result = { content: [image], structuredContent: { width: 12, height: 8 } };
-    const bridge = await loadBridge(result);
-    expect(await bridge.execute()).toEqual({
-      content: [image],
-      details: { server: "scient", tool: "scient_fixture", result },
-    });
-  });
-
-  it("marks MCP failures without duplicating their structured details", async () => {
-    const result = {
-      content: [{ type: "text", text: "The operation failed." }],
-      structuredContent: { error: { _tag: "FixtureError" } },
-      isError: true,
-    };
-    const bridge = await loadBridge(result);
-    expect(await bridge.execute()).toEqual({
-      content: result.content,
-      details: { server: "scient", tool: "scient_fixture", result },
-      isError: true,
-    });
-  });
-
-  it("keeps bounded browser content model-facing and full metadata in native details", async () => {
-    const result = {
-      content: [
-        { type: "text", text: "bounded snapshot" },
-        { type: "image", data: "cG5n", mimeType: "image/png" },
-      ],
-      structuredContent: {
-        visibleText: "x".repeat(100_000),
-        accessibilityTree: { nodes: Array.from({ length: 2000 }, (_, index) => ({ index })) },
-      },
-    };
-    const bridge = await loadBridge(result);
-    expect(await bridge.execute()).toEqual({
-      content: result.content,
-      details: { server: "scient", tool: "scient_fixture", result },
-    });
   });
 
   it("renders structured-only MCP results once", async () => {

@@ -27,7 +27,7 @@ session or catalog state. For a new driver, start with [adding a provider](./add
 | `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]                                         |
 | `droid`       | [`Drivers/DroidDriver.ts`][droid]                                               |
 | `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity]                                   |
-| `pi`          | [`Drivers/PiDriver.ts`][pi]                                                     |
+| `pi`          | [`server/driver.ts`][pi]                                                        |
 | `omp`         | [`Drivers/OmpDriver.ts`][omp]                                                   |
 | `scient`      | [`Drivers/ScientAgentDriver.ts`][scient-agent]                                  |
 | `muse`        | [`server/driver.ts`](../../packages/provider-muse/src/server/driver.ts)         |
@@ -534,17 +534,25 @@ The [provider lifecycle architecture](./provider-lifecycle.md) owns the shared m
 
 ### Pi driver
 
-[`PiDriver.ts`][pi] supplies `PiAdapterV2` on the same instance registry and lifecycle surface.
-The native adapter runs Pi's own RPC mode with user extensions, packages, skills, templates,
-configuration and project-trust discovery. It adds a namespaced MCP/permission bridge through
-`piT3McpExtensionSource.ts` and `piT3McpInjection.ts`; it does not use the old V1 `PiScientExtension`
-or `PiContextExtension` as the live turn engine.
+[`PiDriverComposition.ts`](../../apps/server/src/provider/PiDriverComposition.ts) supplies
+Scient's production `PiDriver` and direct-session `makeScientPiAdapterV2` factory. Both
+share the same orchestration instructions, capability-aware guidance and native receipt
+error mapping. Package defaults remain generic; application native and replay harnesses
+use this composition rather than constructing an unconfigured package adapter.
+The [package adapter](../../packages/provider-pi/src/server/adapter.ts) runs Pi's own
+RPC mode with user extensions, packages, skills, templates, configuration and project-trust
+discovery. Its namespaced MCP/permission bridge is in
+[`mcpExtensionSource.ts`](../../packages/provider-pi/src/server/mcpExtensionSource.ts) and
+[`mcpInjection.ts`](../../packages/provider-pi/src/server/mcpInjection.ts).
 
-`Adapters/PiRpc.ts` owns native RPC transport. `PiAdapterV2` maps text, reasoning, tools,
+[`rpc.ts`](../../packages/provider-pi/src/server/rpc.ts) owns native RPC transport. The adapter maps text, reasoning, tools,
 extension questions, compaction and settled lifecycle into V2 provider events. One low-level cycle
 ending is not enough to complete a root turn while queued prompts or compaction remain active.
 Extension dialogs use the existing runtime-request path; unsupported terminal UI is not emulated.
 Native commands retain their own dispatch semantics instead of becoming model prompts.
+Editor prefill is the question's `initialAnswer`, not part of its title. MCP model content
+keeps bounded text, images and resource descriptions separate from the full native script
+`CallToolResult` in `structuredContent`; `details.result` is not its transport contract.
 
 Session files support native resume, rollback snapshots and same-instance provider thread forks.
 Forking through Pi's CLI in the destination directory preserves the correct cwd; generic Scient
@@ -560,12 +568,18 @@ owning process scope closes successfully. Failed cleanup retains the lease. A ca
 releases unpublished or published ownership only after its owned process scope closes successfully;
 a later start can then acquire the file. Repeated opens of
 the same provider session share its runtime and spawn one process.
+Stop and administrative session close remain different operations. Stop interrupts the
+accepted owned run; administrative close fails unfinished accepted work. Both preserve
+native acceptance evidence, cancel the owned pending request and retain the file lease
+until physical close completes.
 
-Passive model/catalog discovery remains `provider/PiProvider.ts`;
-`provider/pi/PiCustomModels.ts` and `textGeneration/PiTextGeneration.ts` retain custom-model and
-headless-generation ownership. Managed installation is owned by the driver lifecycle actions and
-shared runtime package. Runtime catalogs and platform qualification remain separate from native
-orchestration compatibility.
+Passive model/catalog discovery and headless generation belong to
+[`status.ts`](../../packages/provider-pi/src/server/status.ts) and
+[`textGeneration.ts`](../../packages/provider-pi/src/server/textGeneration.ts).
+Scient's custom-model connection and managed-runtime policy enter through
+`PiDriverComposition.ts` and `provider/pi/PiCustomModels.ts`; installation stays owned by
+the driver lifecycle actions and shared runtime package. Runtime catalogs and platform
+qualification remain separate from native orchestration compatibility.
 
 Usage reads Pi's native JSONL sessions, preserving disjoint input/cache counters and the
 catalog pricing model separately from the displayed provider/model name. The durable scan

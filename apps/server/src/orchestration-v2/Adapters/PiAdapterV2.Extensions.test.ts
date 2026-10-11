@@ -450,6 +450,7 @@ describe("PiAdapterV2", () => {
         yield* TestClock.adjust("101 millis");
       }
       assert.equal((yield* answer.pipe(Effect.result))._tag, "Failure");
+      if (timing !== "close") yield* fake.takeRequest("extension_ui_response");
       const responses = fake
         .allRequests()
         .filter((record) => record.type === "extension_ui_response");

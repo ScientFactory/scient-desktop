@@ -23,7 +23,8 @@ import * as ServerConfig from "../../config.ts";
 import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { makePiAdapterV2, type PiAdapterV2Options } from "@t3tools/provider-pi/testing";
+import type { PiAdapterV2Options } from "@t3tools/provider-pi/server";
+import { makeScientPiAdapterV2 } from "../../provider/PiDriverComposition.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 export const binary = process.env.SCIENT_PI_TEST_BINARY;
@@ -69,7 +70,7 @@ export const fixture = Effect.fnUntraced(function* (suffix: string, workspace?: 
       PI_OFFLINE: "1",
     },
   };
-  const adapter = yield* makePiAdapterV2(adapterOptions);
+  const adapter = yield* makeScientPiAdapterV2(adapterOptions);
   const open = (initialNativeThreadId?: string) =>
     adapter.openSession({
       threadId,

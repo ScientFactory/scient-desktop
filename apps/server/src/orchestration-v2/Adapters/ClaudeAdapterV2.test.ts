@@ -82,6 +82,10 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  resolveClaudeModelSlug,
+} from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -8998,6 +9002,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const toolUseId = "toolu-subagent-model";
           const parentModel = "claude-opus-4-6";
           const observedModel = "claude-haiku-4-5-20251001";
+          const requestedModel = "haiku";
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId: harness.threadId,
@@ -9043,7 +9048,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                       subagent_type: "general-purpose",
                       ...(source === "unknown"
                         ? {}
-                        : { model: source === "inherit" ? "inherit" : "haiku" }),
+                        : { model: source === "inherit" ? "inherit" : requestedModel }),
                       prompt: "Solve the puzzle.",
                     },
                   },
@@ -9076,8 +9081,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           yield* Queue.take(harness.terminalReceipts);
           const subagents = harness.events.filter((event) => event.type === "subagent.updated");
-          // Aliases and dated ids are recorded as the catalog slug.
-          const observedSlug = "claude-haiku-4-5";
+          // Provenance determines which model wins; aliases and dated ids use catalog identity.
+          const requestedSlug = resolveClaudeModelSlug(
+            BUNDLED_CLAUDE_MODEL_CATALOG,
+            requestedModel,
+          );
+          const observedSlug = resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, observedModel);
           const initialModel =
             source === "observed-before"
               ? observedSlug
@@ -9085,7 +9094,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 ? parentModel
                 : source === "unknown"
                   ? null
-                  : "claude-haiku-5-5";
+                  : requestedSlug;
           assert.equal(subagents[0]?.subagent.model, initialModel);
           assert.equal(
             subagents.at(-1)?.subagent.model,

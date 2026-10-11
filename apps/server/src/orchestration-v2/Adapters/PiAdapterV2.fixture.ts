@@ -25,8 +25,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { buildPiRuntimeGuidance, mapPiTurnStartError } from "../../provider/PiDriverComposition.ts";
-import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
+import { makeScientPiAdapterV2 } from "../../provider/PiDriverComposition.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterTurnStartError,
@@ -34,7 +33,7 @@ import {
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
-import { makePiAdapterV2, type PiAdapterV2Options } from "@t3tools/provider-pi/testing";
+import type { PiAdapterV2Options } from "@t3tools/provider-pi/server";
 import { makePiRpcConnection, type PiRpcRecord } from "@t3tools/provider-pi/testing";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -405,13 +404,10 @@ const makeAdapter = Effect.fnUntraced(function* (
             ? forkFake.spawner.spawn(command)
             : fake.spawner.spawn(command),
         );
-  return yield* makePiAdapterV2({
+  return yield* makeScientPiAdapterV2({
     instanceId: PI_INSTANCE_ID,
     ...(makeConnection === undefined ? {} : { makeConnection }),
     ...(continuationRequests === undefined ? {} : { continuationRequests }),
-    orchestrationInstructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
-    runtimeGuidance: buildPiRuntimeGuidance,
-    mapTurnStartError: mapPiTurnStartError,
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     environment: {},
   }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner));

@@ -8,7 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Scope from "effect/Scope";
 import { piInstanceStateRoot } from "../../provider/pi/PiSessionFile.ts";
-import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
+import { makeScientPiAdapterV2 } from "../../provider/PiDriverComposition.ts";
 import { makePiRpcConnection, PiRpcError } from "@t3tools/provider-pi/testing";
 import { binary, ensure, fixture, json, layer } from "./PiNativeTestHarness.ts";
 
@@ -71,7 +71,7 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
                   yield* h.fs.remove(target, options);
                 }),
             });
-            const adapter = yield* makePiAdapterV2({
+            const adapter = yield* makeScientPiAdapterV2({
               ...h.adapterOptions,
               settings: {
                 ...h.adapterOptions.settings,
@@ -203,7 +203,7 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
             const before = yield* h.fs.readFileString(nativeFile);
             assert.include(before, '"type":"session"');
             const entered = yield* Deferred.make<string>();
-            const adapter = yield* makePiAdapterV2({
+            const adapter = yield* makeScientPiAdapterV2({
               ...h.adapterOptions,
               settings: {
                 ...h.adapterOptions.settings,

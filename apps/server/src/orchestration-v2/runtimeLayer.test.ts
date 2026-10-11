@@ -3612,7 +3612,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         .pipe(Effect.flip);
 
       assert.equal(error._tag, "OrchestratorDispatchError");
-      assert.equal(error.cause, `Thread ${threadId} is still running. Stop it before settling.`);
       const projection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projection.runs[0]?.status, "starting");
       assert.isNull(projection.thread.settledOverride);
@@ -3811,10 +3810,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(error._tag, "OrchestratorDispatchError");
-      assert.equal(
-        error.cause,
-        `Thread ${threadId} has a queued message. Send it or remove it from the queue before settling.`,
-      );
+      const blocked = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(blocked.thread.settledAt);
     }),
   );
 

@@ -295,6 +295,9 @@ it.effect.each(
       replyData("permission.list", []),
       out("session.form.list", { sessionID: SESSION }),
       replyData("session.form.list", []),
+      // The resumed native session has no title; synchronize it before instructions.
+      out("session.update", { sessionID: SESSION, title: thread.title }),
+      reply("session.update", null),
       out("session.instructions.entry.put", {
         sessionID: SESSION,
         key: "t3-code",
