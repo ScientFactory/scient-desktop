@@ -34,10 +34,10 @@ offline, including saved personal templates with a captured first page.
 
 **Settings > Documents** keeps these choices in one place:
 
-- **LaTeX**: the LaTeX installation on the server (with **Install TinyTeX**
-  when none is found), the available compilers, **Templates** (the default and
-  the full list to arrange, hide, show again, rename, or delete your own), the
-  language and default compiler for new documents, and the view LaTeX files open in.
+- **LaTeX**: a **LaTeX tools** readiness summary, an optional compiler-bundle
+  install, and compiler versions, paths, and availability under **Technical details**.
+  **Templates** includes the default and the full list to arrange, hide, show again,
+  rename, or delete your own. Language, default compiler, and opening view are separate choices.
 - **Markdown**: whether Markdown files open Rich or as Source.
 - **Word**: the Pandoc converter that Word export uses, and its install.
 
@@ -1058,24 +1058,29 @@ override. Included files display the root's choice and offer **Open root**;
 they never receive their own compiler directive through this control. Resolve
 recovery or save conflicts, and finish an active rename, before changing the compiler.
 
+**Compiler: Not checked** in the toolbar means the root document's compiler
+choice has not been read yet; it does not mean a compiler is missing.
+
 **Settings > Documents > Default compiler for new documents** only affects
 new documents. A template's compiler declaration takes precedence over the
 device preference. New Hebrew documents use XeLaTeX unless LuaLaTeX is selected;
 a pdfLaTeX preference cannot put a new Hebrew document onto an incompatible engine.
 Existing documents are not rewritten.
 
-Compiler availability comes from the selected server and its active TeX
-distribution, not the browser's operating system. Missing compilers are unavailable
-in the document menu; failed checks read **Not checked**, disconnected servers
-read **Offline**, and source saves remain separate from compiler availability.
+Compiler availability comes from the selected server and its verified system or
+Scient-managed installations, not the browser's operating system. Missing
+compilers are unavailable in the document menu; failed availability checks read
+**Not checked**, disconnected servers read **Offline**, and source saves remain
+separate from compiler availability.
 
 With latexmk, Automatic uses pdfLaTeX unless unguarded `fontspec` or
 `unicode-math` requires XeLaTeX. An explicit pdfLaTeX directive with those
 packages instead produces compatibility guidance. Tectonic remains a separate
 XeTeX-compatible fallback: it can build XeLaTeX-style Hebrew documents without a
-standalone XeLaTeX installation, but cannot satisfy explicit LuaLaTeX or pdfLaTeX
-requests. The availability display distinguishes that compatibility from an
-installed compiler binary.
+standalone XeLaTeX installation. Tectonic itself cannot satisfy explicit LuaLaTeX
+or pdfLaTeX requests; an already-installed TinyTeX addition can provide those
+compilers without replacing Tectonic as the default. The availability display
+distinguishes compatibility from an installed compiler binary.
 Package declarations can span multiple lines; commented-out loads do not select
 an engine.
 
@@ -1084,24 +1089,49 @@ branch are allowed to build normally.
 
 ## Install a LaTeX distribution
 
-If Scient can't find a LaTeX installation on your computer, it offers to
-install TinyTeX for you — a small distribution, about 70 MB, that lives with
-Scient and needs no administrator access. That install includes the packages
-most documents need, and anything still missing installs automatically the
-first time a document uses it; with your own TeX distribution, the error names
-the package to install. The first build of a document can therefore take a few
-minutes while those packages arrive — Scient says so, and names them, while it
-waits. Later builds of the same document are as fast as any other compile.
-Installing a package needs a network connection: when
-you're offline, or when no package by that name can be found, the build stops
-and the error says which one it was. This one-click install is available on
-Windows (x64), macOS (Intel and Apple Silicon), and Linux (x64). On other
-architectures, install TeX Live, MiKTeX, or Tectonic yourself, and Scient will
-use it — an existing installation always keeps precedence over Scient's own,
-on every platform. If you install one while a document is already open, select
-Update PDF: asking for a build by hand also makes Scient look for an engine
-again, so the one you just installed is picked up without reopening the file
-or restarting.
+**Settings > Documents > LaTeX** offers an optional TinyTeX installation,
+including when Tectonic already builds PDFs. One bundle provides pdfLaTeX,
+XeLaTeX, and LuaLaTeX; these are not three separate downloads. Settings shows
+the base archive size for the selected server. TinyTeX lives with Scient,
+needs no administrator access, and does not modify a system TeX installation.
+Compiler versions, executable paths, and detailed availability are under
+**Technical details**.
+The LaTeX panel separates **Tools** (installation and technical details) from
+**Document preferences** (templates, new-document language and compiler, and
+the opening view), each using standard settings cards.
+
+Opening Settings or choosing **Default compiler for new documents** never
+downloads tools. **Automatic** chooses a compiler for the document; it is not
+permission to install software.
+Installing additional compilers does not replace a working default: Scient keeps
+system latexmk, or Tectonic when latexmk is absent. It uses an installed TinyTeX
+addition only when the document needs a compiler the default cannot provide.
+When no system driver is available, TinyTeX supplies the default.
+
+When an open document declares a compiler its current toolchain cannot run,
+Scient names that compiler and offers **Install LaTeX tools**. Nothing downloads
+until you choose Install. After installation and a successful compiler check,
+Scient saves and rebuilds that document if it is still unchanged and needs no
+recovery decision. Its compiler directive stays intact: Scient does not silently
+substitute another engine. If you edit it during installation, review your work
+and choose **Rebuild PDF** yourself. Installing from Settings does not authorize
+a document build.
+
+Setup also downloads recommended LaTeX packages. Other missing packages can
+install on first use with Scient-managed TinyTeX; a system installation instead
+reports the package to install. Setup and the first build may therefore take a
+few minutes. Scient names the packages while it waits. Package installation
+needs a network connection; if offline or a package cannot be found, the build
+stops with an explanation.
+
+The one-click bundle is available on Windows (x64), macOS (Intel and Apple
+Silicon), and Linux (x64). On other architectures, install TeX Live, MiKTeX,
+or Tectonic yourself. A working system latexmk installation keeps precedence
+unless the explicitly installed TinyTeX bundle adds a missing compiler without
+losing any available system compiler. Tectonic remains a fallback rather than a
+standalone installation of all three compilers. If you install tools yourself,
+choose **Rebuild PDF** to refresh discovery without reopening the file or
+restarting Scient.
 
 Compiling never leaves clutter in your files: build output, logs, and other
 compiler byproducts stay out of your project entirely.

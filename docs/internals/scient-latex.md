@@ -888,10 +888,15 @@ Ownership, wired into `.github/workflows/scient-upstream-provenance.yml`.
   Its `<latexDir>/synctex/<artifact-id>` tree then remains orphaned. Reclaim it
   with the build/evidence collector above rather than adding another hot-path
   global scan to each successful publish.
-- **Selectable LaTeX providers.** Discovery currently prefers an existing
-  system `latexmk`, falls back to Tectonic, and offers the pinned TinyTeX
-  install only when neither is available. A user-facing provider registry and
-  preference (TinyTeX, tex-to-PDF services, or future engines) is deliberately
+- **Selectable LaTeX providers.** Discovery preserves system `latexmk`, then
+  Tectonic, as the default. A verified managed TinyTeX install supplies a compiler
+  absent from that default only when the document requires it; with no system
+  driver it is the fallback. Capability reports include verified additional
+  compilers without changing the default driver. The optional bundle can be
+  installed even when Tectonic already builds PDFs. Availability checks and
+  compiler selection never install it.
+  A user-facing provider registry and preference (TinyTeX, tex-to-PDF services,
+  or future engines) is deliberately
   deferred to a later PR so this lane does not prematurely freeze provider
   vocabulary or send document sources to a network service without a separate
   consent and privacy design.
