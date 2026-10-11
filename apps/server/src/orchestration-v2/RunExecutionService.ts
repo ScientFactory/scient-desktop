@@ -464,7 +464,7 @@ export function routeProviderEvent(
         ownsRun(event.node.runId) ||
         ownsChildThread(event.node.threadId) ||
         // SCIENT-FORK:START — an accepted runless native workflow member's node.
-        isWorkflowMemberNode(event, state.workflowMembers.get(event.node.id));
+        isWorkflowMemberNode(event.node, state.workflowMembers.get(event.node.id), event.driver);
       // SCIENT-FORK:END
       if (!belongs || event.node.providerThreadId === null) {
         return [belongs, state];

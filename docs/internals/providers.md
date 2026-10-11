@@ -194,8 +194,13 @@ Native Claude subagent Stop distinguishes an adapter stop receipt from an absent
 A live adapter remains authoritative for terminal task, node and tool-item updates. If the
 captured session has gone, the effect worker requests targeted local settlement under the
 same strong native task/thread, provider instance, owning run/turn and root-node bindings.
-That repair also ends the exact linked runless child root; it does not interrupt the parent,
-settle siblings, admit frozen nodes or assign execution authority to imported history.
+That repair ends the exact linked runless child roots and proven nested native descendants,
+whether recorded under the task's node or in its child threads. Each descendant retains the
+native identity, parent/root/run/provider/turn and child-lineage fences. A workflow coordinator's
+runless member rows use the same exact coordinator/member/node ownership predicates as native
+event routing; those members do not carry independent native task identities. The repair does
+not interrupt the parent, settle siblings, admit weak native tasks or frozen nodes, stop
+child-owned user runs, or assign execution authority to imported history.
 A nonretryable adapter error is not a stop receipt: local repair still requires the
 captured session to be absent.
 
