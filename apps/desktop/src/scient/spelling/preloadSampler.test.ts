@@ -149,24 +149,6 @@ describe("installSpellingSampler", () => {
     expect(values).toEqual([null, "false"]);
   });
 
-  it("forgets a field once it is closed", async () => {
-    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea>${GERMAN}</textarea>`;
-    const [closed, open] = document.querySelectorAll("textarea");
-    const closedValues = watchSpellcheck(closed!);
-    send.mockResolvedValue("added");
-    focus(closed!);
-    await vi.runAllTimersAsync();
-    edit(closed!);
-    closed!.remove();
-    focus(open!);
-    await vi.runAllTimersAsync();
-    document.body.append(closed!);
-    sampler.dictionaryReady();
-    edit(closed!);
-    await vi.runAllTimersAsync();
-    expect(closedValues).toEqual([null, "false"]);
-  });
-
   it("rechecks every sampled field once a dictionary finishes loading", async () => {
     document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea>${GERMAN}</textarea><textarea>Never focused, so never sampled.</textarea>`;
     const [french, german, untouched] = document.querySelectorAll("textarea");

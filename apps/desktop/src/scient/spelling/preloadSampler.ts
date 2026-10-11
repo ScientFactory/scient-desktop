@@ -121,9 +121,9 @@ export interface SpellingSampler {
  * enable the matching spelling dictionary. Windows and Linux only: macOS
  * detects the language itself.
  *
- * A field whose language was just added is rechecked when the user next
- * types into it: its marks are cleared just ahead of text that is certain to
- * be inserted, which is what makes Chromium check the field again. Clearing
+ * After a dictionary is added or finishes loading, each field already
+ * checked is rechecked when the user next types into it: its marks are
+ * cleared just ahead of text that is certain to be inserted, which is what makes Chromium check the field again. Clearing
  * them before anything that might change nothing (a modifier key, Backspace
  * at the start, a cancelled edit) would hide real typos until the user typed
  * again, so the field simply stays marked until then.
@@ -134,25 +134,20 @@ export function installSpellingSampler(
 ): SpellingSampler {
   let lastSample = "";
   let typingTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Open fields this sampler has looked at. */
-  const sampled = new Set<Element>();
-  /** Fields to recheck when the user next types into them. */
-  const stale = new WeakSet<Element>();
-  // Any of them may hold text in a language whose dictionary just changed, and
-  // marking one costs nothing until the user types into it.
-  const markSampledFieldsStale = () => {
-    for (const field of sampled) {
-      if (field.isConnected) stale.add(field);
-      else sampled.delete(field);
-    }
+  /** Counts dictionary changes: each one may affect any field already checked. */
+  let dictionaries = 0;
+  /** The dictionary count each sampled field was last checked with. */
+  const checkedWith = new WeakMap<Element, number>();
+  const dictionariesChanged = () => {
+    dictionaries += 1;
   };
   const dispatch = (field: EditableField, sample: string) => {
-    sampled.add(field);
+    if (!checkedWith.has(field)) checkedWith.set(field, dictionaries);
     const trimmed = sample.trim();
     if (trimmed.length < MIN_SAMPLE_LENGTH || trimmed === lastSample) return;
     lastSample = trimmed;
     void send(trimmed).then((outcome) => {
-      if (outcome === "added") markSampledFieldsStale();
+      if (outcome === "added") dictionariesChanged();
       else if (outcome === "failed" && lastSample === trimmed) lastSample = "";
     });
   };
@@ -175,15 +170,17 @@ export function installSpellingSampler(
     if (input.inputType !== "insertText" || !input.data || input.isComposing) return;
     if (input.defaultPrevented) return;
     const field = spellcheckedField(event.target);
-    if (field === null || !stale.has(field) || !fits(field, input.data)) return;
-    stale.delete(field);
+    if (field === null || !fits(field, input.data)) return;
+    const checked = checkedWith.get(field);
+    if (checked === undefined || checked === dictionaries) return;
+    checkedWith.set(field, dictionaries);
     clearSpellingMarks(field);
   };
   target.addEventListener("focusin", onFocus, true);
   target.addEventListener("input", onInput, true);
   target.addEventListener("beforeinput", onBeforeInput);
   return {
-    dictionaryReady: markSampledFieldsStale,
+    dictionaryReady: dictionariesChanged,
     uninstall: () => {
       clearTimeout(typingTimer);
       target.removeEventListener("focusin", onFocus, true);
