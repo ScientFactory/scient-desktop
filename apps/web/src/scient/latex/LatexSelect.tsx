@@ -18,7 +18,7 @@ export function LatexSelect(props: {
   disabled?: boolean;
   title?: string | undefined;
   size?: "default" | "compact" | "sm";
-  width?: "default" | "options";
+  width?: "default" | "options" | "fluid";
 }) {
   const ownerId = useId();
   const trigger = (
@@ -27,7 +27,7 @@ export function LatexSelect(props: {
       aria-description={props.title}
       size={props.size ?? "default"}
       variant={props.size === "compact" ? "ghost" : "default"}
-      width={props.width === "options" ? "content" : "default"}
+      width={props.width === "options" ? "content" : (props.width ?? "default")}
     >
       {props.width === "options" ? (
         <span className="grid min-w-0 flex-1 text-left">

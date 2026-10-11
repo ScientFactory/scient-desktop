@@ -88,6 +88,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import type { EditorView } from "@tiptap/pm/view";
 import { LatexInsertMenu, LatexInsertMenuContent, type LatexInsertAction } from "./LatexInsertMenu";
 import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./LatexDocumentSettings";
+import { updateLatexDocumentSettingsSource } from "./latexDocumentSettingsSource";
 import { LatexContextTools } from "./LatexContextTools";
 import { DocumentReaderControls, type ReaderSearch } from "../writing/DocumentReaderControls";
 import { LatexPageThumbnails } from "./LatexPageThumbnails";
@@ -315,7 +316,6 @@ import {
   parseLatexVisualMathSource,
   parseStructuredMathEnvironment,
   projectLatexVisualDocument,
-  updateLatexVisualLayoutSource,
   prepareLatexDocumentTitle,
   projectLatexTitleSourceEdit,
   latexRomanNumber,
@@ -7715,7 +7715,7 @@ function LatexVisualEditorReady(
         const ownRoot = expected.includes("\\begin{document}");
         const settingsSource = ownRoot ? expected : props.rootSource;
         if (!settingsSource || settingsSource !== original) return false;
-        const next = updateLatexVisualLayoutSource(settingsSource, draft);
+        const next = updateLatexDocumentSettingsSource(settingsSource, draft);
         if (next === null) return false;
         if (!ownRoot) return onEdit.current(expected, expected, { expected: settingsSource, next });
         return commitDocumentSource(expected, next);

@@ -1,7 +1,8 @@
-import { latexWithoutComments } from "./latexPackages";
+import { latexPreambleEnd, latexWithoutComments } from "./latexPackages";
 
 export type LatexTextDirection = "ltr" | "rtl";
 export type LatexWritingLanguage = "english" | "hebrew";
+export const DEFAULT_HEBREW_DOCUMENT_FONT = "Times New Roman";
 
 export const LATEX_DIRECTION_MARKS = [
   { command: "textenglish", name: "latexEnglish", direction: "ltr", language: "english" },
@@ -31,8 +32,7 @@ export function latexDirectionMark(name: string) {
 /** Only literal, top-level declarations are settings; macro bodies are not evaluated. */
 function preambleDeclarations(source: string) {
   const withoutComments = latexWithoutComments(source);
-  const begin = withoutComments.indexOf("\\begin{document}");
-  const clean = begin < 0 ? withoutComments : withoutComments.slice(0, begin);
+  const clean = withoutComments.slice(0, latexPreambleEnd(source));
   const depths = new Int32Array(clean.length);
   let depth = 0;
   for (let at = 0; at < clean.length; at++) {
@@ -51,7 +51,7 @@ function preambleDeclarations(source: string) {
 }
 
 export function latexDocumentLanguage(source: string) {
-  const { find, clean } = preambleDeclarations(source);
+  const { find } = preambleDeclarations(source);
   const packages = find(/\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^{}]*)\}/gu);
   const has = (name: string) =>
     packages.some((match) => match[2]!.split(",").some((part) => part.trim() === name));
@@ -136,8 +136,9 @@ export function latexDocumentLanguage(source: string) {
       babelOptions.some((option) => /^bidi\s*=/u.test(option)),
     canConfigure:
       !babel &&
+      latexPreambleEnd(source) < source.length &&
       (main === "english" || main === "hebrew") &&
-      !/\\(?:babelprovide|babelfont|input|include|if[a-zA-Z]*)\b/u.test(clean) &&
+      find(/\\(?:babelprovide|babelfont|input|include|if[a-zA-Z]*)\b/gu).length === 0 &&
       !defaults.some((declaration) => declaration[0].includes("[")),
   };
 }
@@ -214,8 +215,8 @@ export function updateLatexLanguageSource(
   if (!setup.canConfigure || !/^[\p{L}\p{N} ._()+-]+$/u.test(font.trim())) return null;
   const { find } = preambleDeclarations(source);
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
-  const end = latexWithoutComments(source).indexOf("\\begin{document}");
-  if (end < 0) return null;
+  const end = latexPreambleEnd(source);
+  if (end === source.length) return null;
   const declarations = find(/\\set(?:default|main)language\s*(?:\[[^\]]*\])?\s*\{[^{}]+\}/gu);
   const fonts = find(
     /\\newfontfamily\s*(?:\{\\hebrewfont\}|\\hebrewfont\b)\s*(?:\[[^\]]*\])?\s*\{[^{}]+\}/gu,
@@ -225,6 +226,10 @@ export function updateLatexLanguageSource(
   // packages (notably hyperref) rather than loading bidi at an earlier English declaration.
   const deferMain = main === "hebrew" && !setup.languages.has("hebrew");
   const replacements = [
+    // Unicode fonts replace the standard 8-bit setup in existing templates too.
+    ...find(/\\usepackage\s*(?:\[T1\]\{fontenc\}|\[utf8\]\{inputenc\}|\{lmodern\})/gu).map(
+      (match) => ({ from: match.index, to: match.index + match[0].length, text: "" }),
+    ),
     ...declarations
       .slice(-1)
       .filter(() => !deferMain)

@@ -15,7 +15,7 @@ import thesisIntroduction from "./templates/thesis/chapters/introduction.tex?raw
 import thesisMethods from "./templates/thesis/chapters/methods.tex?raw";
 import thesisResults from "./templates/thesis/chapters/results.tex?raw";
 import thesisSource from "./templates/thesis/main.tex?raw";
-import { updateLatexLanguageSource } from "../latex/latexLanguage";
+import { DEFAULT_HEBREW_DOCUMENT_FONT, updateLatexLanguageSource } from "../latex/latexLanguage";
 import { userTemplates } from "./userTemplates";
 
 /**
@@ -160,9 +160,6 @@ export const NEW_DOCUMENT_LANGUAGES: ReadonlyArray<{
   { id: "hebrew", name: "Hebrew" },
 ];
 
-// Present on macOS and Windows, so the PDF and the Visual page use the same face.
-const HEBREW_DOCUMENT_FONT = "Times New Roman";
-
 /** A filename stem from a title: letters and digits in any script, joined by hyphens. */
 export function newDocumentStem(title: string): string {
   return (
@@ -290,7 +287,7 @@ export function createNewDocumentSource(input: {
     /^\\usepackage(?:\[(?:T1|utf8)\]\{(?:fontenc|inputenc)\}|\{lmodern\})\r?\n/gmu,
     "",
   );
-  return updateLatexLanguageSource(unicode, "hebrew", HEBREW_DOCUMENT_FONT) ?? source;
+  return updateLatexLanguageSource(unicode, "hebrew", DEFAULT_HEBREW_DOCUMENT_FONT) ?? source;
 }
 
 /**
