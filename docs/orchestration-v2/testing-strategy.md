@@ -189,6 +189,7 @@ Additional tests should be added only when they protect a new invariant or repro
 - Fixtures should include enough outbound expectations to prove the app sent the correct provider commands.
 - Fixtures should include protocol metadata, provider version, model, cwd policy, and capture timestamp.
 - Fixture playback must be deterministic under Effect `TestClock` and deterministic `Random` layers.
+- When a scenario requires a settled adapter, await its semantic completion receipt or `Deferred` barrier before follow-up commands or `TestClock` advances. Raw transport logs and scheduler yields do not acknowledge adapter settlement; for ACP's settled background-work state, use the prompt-settled barrier rather than a raw `stopReason` frame. Use `TestClock` advances to exercise timers, not as settlement synchronization.
 - When a provider transcript is generated from a real run, keep the original provider frame ordering.
 - Redaction should preserve ids, method names, lifecycle ordering, and correlation structure.
 - Fixture transcripts are test input and diagnostic evidence. They do not imply production stores all raw provider frames in SQLite.

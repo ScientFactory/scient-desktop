@@ -48,6 +48,7 @@ const harness = Effect.fnUntraced(function* (
   failFirstResponse = false,
   canReadThreadSnapshot = false,
   interruptOptions: { readonly breaksSession?: boolean; readonly fail?: boolean } = {},
+  driver: ProviderDriverKind = ProviderDriverKind.make("omp"),
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   let publish: (update: NativeSessionUpdate) => Effect.Effect<void> = () =>
@@ -58,7 +59,7 @@ const harness = Effect.fnUntraced(function* (
   let interrupts = 0;
   const adapter = makeNativeSessionAdapterV2({
     instanceId,
-    driver: ProviderDriverKind.make("omp"),
+    driver,
     idAllocator,
     defaultCwd: "/workspace",
     capabilities: {
@@ -595,6 +596,91 @@ it.layer(TestLayer)("NativeSessionAdapterV2", (it) => {
         assert.isNull(reopened.subagent.completedAt);
       }),
     ).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect(
+    "keeps Scient activity, assignment and result distinct through sparse updates and reopen",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(
+            false,
+            false,
+            true,
+            false,
+            false,
+            {},
+            ProviderDriverKind.make("scient"),
+          );
+          yield* h.start;
+          const prompt = "# Goal\nInspect all inputs.\n\n# Acceptance\nReport evidence.";
+          yield* h.publish({
+            type: "subagent",
+            id: "scient",
+            title: "Inspect inputs",
+            status: "running",
+          });
+          yield* h.publish({
+            type: "subagent",
+            id: "scient",
+            title: "Subagent",
+            status: "running",
+            prompt,
+            progress: "Reading inputs",
+          });
+          yield* h.publish({
+            type: "subagent",
+            id: "scient",
+            title: "Subagent",
+            status: "completed",
+            result: "No malformed inputs observed",
+          });
+          yield* h.publish({
+            type: "subagent",
+            id: "scient",
+            title: "Subagent",
+            status: "completed",
+          });
+          yield* h.publish({ type: "tool", id: "barrier", name: "Barrier", status: "completed" });
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.toolName === "Barrier",
+          );
+          const final = h.recorded.findLast((event) => event.type === "subagent.updated");
+          if (final?.type !== "subagent.updated") return yield* Effect.die("Missing subagent");
+          assert.equal(final.subagent.title, "Inspect inputs");
+          assert.equal(final.subagent.prompt, prompt);
+          assert.equal(final.subagent.progress, "Reading inputs");
+          assert.equal(final.subagent.result, "No malformed inputs observed");
+          const item = h.recorded.findLast(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "subagent",
+          );
+          if (item?.type !== "turn_item.updated" || item.turnItem.type !== "subagent")
+            return yield* Effect.die("Missing subagent item");
+          assert.equal(item.turnItem.prompt, prompt);
+          assert.equal(item.turnItem.progress, "Reading inputs");
+          assert.equal(item.turnItem.result, "No malformed inputs observed");
+          yield* h.publish({
+            type: "subagent",
+            id: "scient",
+            title: "Subagent",
+            status: "running",
+            reopen: true,
+          });
+          const reopened = yield* h.takeUntil(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.presentation?.activationCount === 2,
+          );
+          if (reopened.type !== "subagent.updated") return yield* Effect.die("Missing activation");
+          assert.equal(reopened.subagent.prompt, prompt);
+          assert.equal(reopened.subagent.title, "Inspect inputs");
+          assert.isUndefined(reopened.subagent.progress);
+          assert.isNull(reopened.subagent.result);
+        }),
+      ).pipe(Effect.provide(TestLayer)),
   );
 
   it.effect("retains background task identity and spawning-run ownership across a wake turn", () =>

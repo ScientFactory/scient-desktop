@@ -4391,6 +4391,71 @@ describe("sub-agent rows: what runs, whether it is alive, how it ended", () => {
     }
   });
 
+  it("keeps explicitly opened Scient members visible when the last background child settles", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const members = subagents.map((item) => ({
+      ...item,
+      driver: ProviderDriverKind.make("scient"),
+      status: "running" as const,
+      result: null,
+      completedAt: null,
+      childThreadId: ThreadId.make(`child-${item.subagentId}`),
+    }));
+    const parentSettled = {
+      isWorking: false,
+      runningRunId: null,
+      latestRun: {
+        runId,
+        status: "completed" as const,
+        startedAt: MESSAGE_CREATED_AT,
+        completedAt: at(120),
+      },
+    };
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline {...buildProps()} {...timeline(members)} {...parentSettled} />,
+        );
+      });
+      const group = () =>
+        renderer!.root
+          .findAllByType("button")
+          .find(
+            (row) =>
+              row.props["aria-expanded"] !== undefined &&
+              row
+                .findAll(() => true)
+                .some((node) =>
+                  node.children.some(
+                    (child) => typeof child === "string" && child.includes("2 subagents"),
+                  ),
+                ),
+          )!;
+      await act(() => group().props.onClick());
+      expect(renderer!.root.findAllByProps({ role: "button" })).toHaveLength(2);
+      const completed = members.map((item) => ({
+        ...item,
+        status: "completed" as const,
+        result: "Observed child result",
+        completedAt: DateTime.makeUnsafe(at(125)),
+      }));
+      await act(() => {
+        renderer!.update(
+          <MessagesTimeline {...buildProps()} {...timeline(completed)} {...parentSettled} />,
+        );
+      });
+      expect(renderer!.root.findAllByProps({ role: "button" })).toHaveLength(2);
+      expect(group().props["aria-expanded"]).toBe(true);
+      await act(() => group().props.onClick());
+      expect(renderer!.root.findAllByProps({ role: "button" })).toHaveLength(0);
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
   it("shows what a long-running step waits for and how long it has run", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline {...buildProps()} {...timeline([waiting])} />,

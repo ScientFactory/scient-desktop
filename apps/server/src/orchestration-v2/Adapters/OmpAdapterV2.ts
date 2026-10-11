@@ -633,7 +633,10 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 return onUpdate({
                   type: "subagent",
                   id: update.id,
-                  title: update.title,
+                  title:
+                    target.driverKind === "scient"
+                      ? client.redaction.text(update.title)
+                      : update.title,
                   status:
                     update.status === "inProgress"
                       ? "running"
@@ -643,6 +646,42 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   ...(update.detail === undefined
                     ? {}
                     : { detail: client.redaction.text(update.detail) }),
+                  ...(target.driverKind !== "scient"
+                    ? {}
+                    : {
+                        ...(update.prompt === undefined
+                          ? {}
+                          : { prompt: client.redaction.text(update.prompt) }),
+                        ...(update.progress === undefined
+                          ? {}
+                          : { progress: client.redaction.text(update.progress) }),
+                        ...(update.result === undefined
+                          ? {}
+                          : { result: client.redaction.text(update.result) }),
+                        ...(update.model === undefined
+                          ? {}
+                          : { model: client.redaction.text(update.model) }),
+                        ...(update.presentation === undefined
+                          ? {}
+                          : {
+                              presentation: {
+                                ...update.presentation,
+                                ...(update.presentation.role === undefined
+                                  ? {}
+                                  : { role: client.redaction.text(update.presentation.role) }),
+                                ...(update.presentation.effort === undefined
+                                  ? {}
+                                  : { effort: client.redaction.text(update.presentation.effort) }),
+                                ...(update.presentation.lastToolName === undefined
+                                  ? {}
+                                  : {
+                                      lastToolName: client.redaction.text(
+                                        update.presentation.lastToolName,
+                                      ),
+                                    }),
+                              },
+                            }),
+                      }),
                 });
               case "session-settled":
                 return onUpdate({ type: "background", pending: false });
