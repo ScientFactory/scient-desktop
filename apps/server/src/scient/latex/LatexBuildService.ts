@@ -1433,8 +1433,8 @@ export const make = Effect.gen(function* () {
       if (entry === null || entry.generation !== generation || entry.cancelRequested) return;
       yield* updateOwnEntry(key, generation, (current) => ({ ...current, state: "running" }));
 
-      const toolchain = yield* toolchainProbe.probe(false);
-      if (toolchain.kind === null || toolchain.executable === null) {
+      const defaultToolchain = yield* toolchainProbe.probe(false);
+      if (defaultToolchain.kind === null || defaultToolchain.executable === null) {
         // Without an engine there is nothing to produce, so the binding stays
         // exactly as the last real build left it.
         yield* finishBuild(key, generation, (current) => ({
@@ -1446,8 +1446,6 @@ export const make = Effect.gen(function* () {
         return;
       }
       if (yield* isSuperseded(key, generation)) return;
-      // Keep the narrowing across the cleanup finalizer below.
-      const toolchainExecutable = toolchain.executable;
 
       const workDirectory = path.join(config.latexDir, "builds", workDirectoryName(key));
       yield* fileSystem.makeDirectory(workDirectory, { recursive: true });
@@ -1471,6 +1469,22 @@ export const make = Effect.gen(function* () {
 
       const rootAbsolutePath = path.join(entry.workspaceRoot, entry.rootRelativePath);
       const preamble = yield* readPreambleHeads(rootAbsolutePath);
+      const requiredCompiler = selectLatexBuildEngine(
+        preamble ?? { rootText: "" },
+        defaultToolchain.kind,
+      ).engine;
+      const toolchain = yield* toolchainProbe.probe(false, requiredCompiler);
+      if (toolchain.kind === null || toolchain.executable === null) {
+        yield* recordFailure({
+          key,
+          generation,
+          production,
+          summary: NO_TOOLCHAIN_SUMMARY,
+          diagnostics: [],
+        });
+        return;
+      }
+      const toolchainExecutable = toolchain.executable;
       const compiler = selectLatexBuildEngine(preamble ?? { rootText: "" }, toolchain.kind);
       if (compiler.error !== null) {
         yield* recordFailure({

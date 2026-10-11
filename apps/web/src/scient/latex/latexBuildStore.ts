@@ -43,6 +43,7 @@ export interface LatexBuildTarget {
 const EMPTY_ENTRY: LatexBuildStatus = {
   snapshot: null,
   toolchain: null,
+  toolchainReport: null,
   canInstallManaged: false,
   managedInstall: null,
   installRequesting: false,
@@ -291,6 +292,7 @@ async function pollToolchain(
     updateEntry(key, (current) => ({
       ...current,
       toolchain: report,
+      toolchainReport: report,
       canInstallManaged: report.canInstallManaged,
       managedInstall: managedInstall ?? current.managedInstall,
     }));
@@ -421,6 +423,7 @@ async function runInstallRequest(
   loop: WatchLoop,
 ): Promise<void> {
   if (loop.stopped) return;
+  if (installUnderway(key)) return;
   clearTimer(loop);
   updateEntry(key, (current) => ({ ...current, installRequesting: true, error: null }));
   try {

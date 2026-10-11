@@ -3,7 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { readLatexToolchain, requestLatexToolchainInstall } from "../latex/client";
 import { isActiveLatexInstall } from "../latex/latexToolchainSetupModel";
-import { latexInstallationView, type LatexInstallationView } from "./latexInstallationModel";
+import {
+  canInstallAdditionalLatexTools,
+  latexInstallationView,
+  type LatexInstallationView,
+} from "./latexInstallationModel";
 
 /** As fine as the server republishes download progress. */
 const LATEX_INSTALL_POLL_MS = 1_500;
@@ -29,6 +33,7 @@ export interface LatexInstallationController {
 export function useLatexInstallation(environmentId: EnvironmentId): LatexInstallationController {
   const [report, setReport] = useState<ScientLatexToolchainReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Reads take a number and only the most recently started one may change
@@ -52,6 +57,7 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
         if (!current()) return;
         setReport(next);
         setError(null);
+        setInstallError(null);
       } catch (cause) {
         if (!current()) return;
         setError(errorMessage(cause, "Scient could not check LaTeX on this server."));
@@ -68,6 +74,7 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
       installRef.current = null;
       installsRef.current++;
       setRequesting(false);
+      setInstallError(null);
     };
   }, [read]);
 
@@ -83,11 +90,12 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
       void read(false);
       return;
     }
-    if (requesting || refreshing || active || !report.canInstallManaged) return;
+    if (requesting || refreshing || active || !canInstallAdditionalLatexTools(report)) return;
     const request = ++installsRef.current;
     installRef.current = request;
     setRequesting(true);
     setError(null);
+    setInstallError(null);
     const current = () => installRef.current === request;
     void (async () => {
       try {
@@ -98,7 +106,7 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
       } catch (cause) {
         if (!current()) return;
         staleUpToRef.current = latestReadRef.current;
-        setError(errorMessage(cause, "Scient could not start installing TinyTeX."));
+        setInstallError(errorMessage(cause, "Scient could not start installing TinyTeX."));
       } finally {
         if (current()) {
           installRef.current = null;
@@ -118,8 +126,8 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
   }, [read]);
 
   return {
-    view: latexInstallationView({ report, requesting, error }),
-    report: error === null ? report : null,
+    view: latexInstallationView({ report, requesting, error, installError }),
+    report,
     act,
     refresh,
     refreshing,

@@ -11,7 +11,6 @@ import {
   type EnvironmentId,
   type ScientLatexBuildSnapshot,
   type ScientLatexDiagnostic,
-  type ScientLatexManagedInstallState,
   type ScientLatexSyncUnavailableReason,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -82,6 +81,7 @@ const LatexProjectVisualEditor = lazy(() =>
   })),
 );
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
+import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 import { readLatexBuildStatus, requestLatexForwardSync, requestLatexInverseSync } from "./client";
 import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
 import {
@@ -454,10 +454,6 @@ interface LatexViewerPaneProps {
   readonly viewer: LatexViewerState;
   readonly toolchainMissing: boolean;
   readonly failureLine: string | null;
-  readonly canInstallManaged: boolean;
-  readonly managedInstall: ScientLatexManagedInstallState | null;
-  readonly installRequesting: boolean;
-  readonly onInstall: () => void;
   readonly syncNavigation?: PdfSyncNavigation;
 }
 
@@ -473,10 +469,6 @@ const LatexViewerPane = memo(function LatexViewerPane({
   viewer,
   toolchainMissing,
   failureLine,
-  canInstallManaged,
-  managedInstall,
-  installRequesting,
-  onInstall,
   syncNavigation,
 }: LatexViewerPaneProps) {
   return (
@@ -492,13 +484,9 @@ const LatexViewerPane = memo(function LatexViewerPane({
           />
         </Suspense>
       ) : toolchainMissing ? (
-        <LatexToolchainSetupCard
-          canInstallManaged={canInstallManaged}
-          managedInstall={managedInstall}
-          installRequesting={installRequesting}
-          toolchainMissing={toolchainMissing}
-          onInstall={onInstall}
-        />
+        <div className="scient-latex-placeholder">
+          <p>Install LaTeX tools using the document notice above to create its PDF.</p>
+        </div>
       ) : viewer === "diagnostics" ? (
         <div className="scient-latex-placeholder">
           <CircleAlert className="size-5 text-destructive" aria-hidden="true" />
@@ -738,9 +726,6 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       if (documentWasSaved(before, next) && target !== null) notifyLatexBindingChange(target);
     });
   }, [persistence, target]);
-  const handleInstallToolchain = useCallback(() => {
-    if (target !== null) requestManagedLatexInstall(target);
-  }, [target]);
   // Visual and Source edit one working source, the session's. An edit made on
   // any other text is refused.
   const handleVisualEdit = useCallback(
@@ -1110,6 +1095,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     selectedSource: compilerSource,
     refreshKey: build.toolchain?.probedAtEpochMs ?? null,
     offline: status.offline,
+    report: build.toolchainReport ?? null,
   });
   const selectedCompiler =
     compilerState.source === null ? null : declaredLatexCompiler(compilerState.source);
@@ -1146,6 +1132,105 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     },
     [buildBlocked, compilerUnavailable, prepareDocument, target],
   );
+  const installBuildIntent = useRef<{
+    target: LatexBuildTarget;
+    persistence: typeof persistence;
+    selectedPath: string;
+    selectedSource: string;
+    rootSource: string | null;
+    editVersion: number | null;
+    lastEditAt: number;
+  } | null>(null);
+  const handleInstallToolchain = useCallback(() => {
+    if (
+      target === null ||
+      !build.canInstallManaged ||
+      status.offline ||
+      status.busy ||
+      compilerEditBlocked ||
+      renaming ||
+      buildRequestInFlight.current
+    )
+      return;
+    // Only this explicit document action authorizes a build after installation.
+    installBuildIntent.current = {
+      target,
+      persistence,
+      selectedPath: props.relativePath,
+      selectedSource: compilerSource,
+      rootSource: compilerState.source,
+      editVersion: persistence?.getSnapshot().editVersion ?? null,
+      lastEditAt,
+    };
+    requestManagedLatexInstall(target);
+  }, [
+    target,
+    build.canInstallManaged,
+    status.offline,
+    status.busy,
+    compilerEditBlocked,
+    renaming,
+    persistence,
+    props.relativePath,
+    compilerSource,
+    compilerState.source,
+    lastEditAt,
+  ]);
+  useEffect(() => {
+    const intent = installBuildIntent.current;
+    if (intent === null) return;
+    if (
+      intent.target !== target ||
+      intent.persistence !== persistence ||
+      intent.selectedPath !== props.relativePath
+    ) {
+      installBuildIntent.current = null;
+      return;
+    }
+    if (
+      intent.selectedSource !== compilerSource ||
+      intent.rootSource !== compilerState.source ||
+      intent.editVersion !== (persistence?.getSnapshot().editVersion ?? null) ||
+      intent.lastEditAt !== lastEditAt ||
+      compilerEditBlocked ||
+      renaming
+    ) {
+      installBuildIntent.current = null;
+      setSyncNotice({
+        label: "Rebuild required",
+        message:
+          "The document changed or needs attention. Review it, then choose Rebuild PDF after installation.",
+      });
+      return;
+    }
+    if (build.installRequesting || isActiveLatexInstall(build.managedInstall)) return;
+    if (build.error !== null || build.managedInstall?.state === "failed") {
+      installBuildIntent.current = null;
+      return;
+    }
+    if (build.managedInstall?.state !== "ready" || status.offline || status.busy) return;
+    // Completion is not proof that this document's compiler can run.
+    if (!compilerState.report?.kind || compilerUnavailable) return;
+    installBuildIntent.current = null;
+    void saveAndBuild();
+  }, [
+    target,
+    persistence,
+    props.relativePath,
+    compilerSource,
+    compilerState.source,
+    compilerState.report,
+    compilerUnavailable,
+    lastEditAt,
+    compilerEditBlocked,
+    renaming,
+    build.installRequesting,
+    build.managedInstall,
+    build.error,
+    status.offline,
+    status.busy,
+    saveAndBuild,
+  ]);
   const changeCompiler = async (compiler: LatexCompilerChoice) => {
     if (!target || !persistence || buildRequestInFlight.current || status.busy || status.offline)
       return;
@@ -1730,6 +1815,23 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           )}
         </div>
       </div>
+      {status.toolchainMissing ||
+      compilerUnavailable ||
+      build.installRequesting ||
+      isActiveLatexInstall(build.managedInstall) ? (
+        <LatexToolchainSetupCard
+          canInstallManaged={build.canInstallManaged}
+          managedInstall={build.managedInstall}
+          installRequesting={build.installRequesting}
+          toolchainMissing={status.toolchainMissing}
+          requiredCompiler={compilerUnavailable ? selectedCompiler : null}
+          downloadBytes={compilerState.report?.downloadBytes ?? null}
+          disabled={
+            status.offline || status.busy || compilerEditBlocked || renaming || target === null
+          }
+          onInstall={handleInstallToolchain}
+        />
+      ) : null}
 
       {(diagnostics.length > 0 || status.state === "failed") && diagnosticsOpen ? (
         // Floats over the document: opening it moves nothing underneath.
@@ -1954,10 +2056,6 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                   viewer={status.viewer}
                   toolchainMissing={status.toolchainMissing}
                   failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
-                  canInstallManaged={build.canInstallManaged}
-                  managedInstall={build.managedInstall}
-                  installRequesting={build.installRequesting}
-                  onInstall={handleInstallToolchain}
                   {...(syncNavigation === undefined ? {} : { syncNavigation })}
                 />
               </ReaderBarHostContext>

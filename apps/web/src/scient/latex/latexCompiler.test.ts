@@ -114,4 +114,14 @@ it("keeps Tectonic's XeTeX path usable without claiming standalone compilers are
   expect(isLatexCompilerUnavailable(report, "pdflatex")).toBe(true);
   expect(isLatexCompilerUnavailable(report, "lualatex")).toBe(true);
   expect(isLatexCompilerUnavailable({ ...report, kind: "latexmk" }, "xelatex")).toBe(true);
+  const withAdditionalCompiler = {
+    ...report,
+    compilers: report.compilers.map((compiler) =>
+      compiler.compiler === "lualatex"
+        ? { ...compiler, available: true, executable: "/TinyTeX/bin/lualatex", version: "1.24.0" }
+        : compiler,
+    ),
+  };
+  expect(isLatexCompilerUnavailable(withAdditionalCompiler, "lualatex")).toBe(false);
+  expect(isLatexCompilerUnavailable(withAdditionalCompiler, "pdflatex")).toBe(true);
 });

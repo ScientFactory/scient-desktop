@@ -377,6 +377,32 @@ describe("searchSettings", () => {
     expect(searchSettings("markdown").some((item) => item.id === "documents")).toBe(true);
   });
 
+  it("routes compiler status into technical details and installation into actionable tools", () => {
+    for (const query of [
+      "compiler status",
+      "available compilers",
+      "compiler versions",
+      "executable paths",
+    ]) {
+      expect(searchSettings(query)[0], query).toMatchObject({
+        id: "latex-compilers",
+        to: "/settings/documents",
+        targetId: "latex-compilers",
+      });
+    }
+    for (const query of ["install latex", "additional compilers", "tinytex"]) {
+      expect(searchSettings(query)[0], query).toMatchObject({
+        id: "latex-installation",
+        to: "/settings/documents",
+        targetId: "latex-installation",
+      });
+    }
+    expect(searchSettings("default latex compiler")[0]).toMatchObject({
+      id: "new-document-compiler",
+      targetId: "new-document-compiler",
+    });
+  });
+
   it("routes conditional window capture settings to the stable toggle row", () => {
     const targets = [
       "capture accessibility data",

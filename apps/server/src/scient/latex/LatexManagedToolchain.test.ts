@@ -325,6 +325,52 @@ describe("artifactUrlRejection", () => {
 });
 
 describe("LatexManagedToolchain", () => {
+  it.live("reports host-specific pinned archive sizes without fetching or installing", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const server = yield* startArtifactServer();
+      const fixture = manifestFor({ url: server.handle.url });
+      const asset = fixture.assets["win32-x64"];
+      if (asset === null) throw new Error("The fixture must pin the Windows bundle.");
+      const manifest: TinyTexManifest = {
+        version: VERSION,
+        assets: {
+          ...fixture.assets,
+          "win32-x64": { ...asset, sizeBytes: 73_670_669 },
+          "darwin-x64": { ...asset, sizeBytes: 67_051_368 },
+          "darwin-arm64": { ...asset, sizeBytes: 67_051_368 },
+          "linux-x64": { ...asset, sizeBytes: 53_980_584 },
+        },
+      };
+      for (const [platform, arch, expectedBytes] of [
+        ["win32", "x64", 73_670_669],
+        ["darwin", "x64", 67_051_368],
+        ["darwin", "arm64", 67_051_368],
+        ["linux", "x64", 53_980_584],
+        ["win32", "arm64", null],
+        ["linux", "arm64", null],
+        ["freebsd", "x64", null],
+      ] as const) {
+        const harness = yield* makeHarness({ manifest, platform, arch });
+        yield* Effect.gen(function* () {
+          const managed = yield* LatexManagedToolchain;
+          const toolchain = yield* LatexToolchain;
+          expect(managed.downloadBytes).toBe(expectedBytes);
+          expect(managed.canInstall).toBe(expectedBytes !== null);
+          expect((yield* managed.status).state).toBe("idle");
+          const status = yield* toolchain.probe(false);
+          expect(status.kind).toBeNull();
+          yield* toolchain.probe(true);
+          expect((yield* managed.status).state).toBe("idle");
+          expect(yield* fileSystem.exists(harness.paths.statePath)).toBe(false);
+          expect(yield* Ref.get(harness.packageRequests)).toEqual([]);
+          expect(yield* Ref.get(harness.seen)).toEqual([]);
+          expect(server.handle.requests()).toBe(0);
+        }).pipe(Effect.provide(harness.serviceLayer));
+      }
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("installs the pinned distribution and makes it the toolchain", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -405,6 +451,7 @@ describe("LatexManagedToolchain", () => {
               "collection-latexrecommended",
               "collection-fontsrecommended",
               "collection-xetex",
+              "collection-luatex",
               "fontspec",
               "polyglossia",
               "bidi",
@@ -649,6 +696,7 @@ describe("LatexManagedToolchain", () => {
       yield* Effect.gen(function* () {
         const managed = yield* LatexManagedToolchain;
         expect(managed.canInstall).toBe(false);
+        expect(managed.downloadBytes).toBeNull();
         const refused = yield* managed.install;
 
         expect(refused.state).toBe("failed");
@@ -675,6 +723,7 @@ describe("LatexManagedToolchain", () => {
         yield* Effect.gen(function* () {
           const managed = yield* LatexManagedToolchain;
           expect(managed.canInstall).toBe(false);
+          expect(managed.downloadBytes).toBeNull();
           const refused = yield* managed.install;
 
           expect(refused.state).toBe("failed");

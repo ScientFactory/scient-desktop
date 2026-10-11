@@ -54,6 +54,7 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
         return {
           ...status,
           canInstallManaged: managed.canInstall,
+          downloadBytes: managed.downloadBytes,
           // An install nobody has started yet is not news for the client.
           ...(managedInstall.state === "idle" ? {} : { managedInstall }),
         };

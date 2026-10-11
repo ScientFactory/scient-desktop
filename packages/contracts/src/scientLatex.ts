@@ -98,6 +98,8 @@ export const ScientLatexToolchainReport = Schema.Struct({
   compilers: Schema.Array(ScientLatexCompilerAvailability),
   /** Scient has a pinned distribution it can install on this platform. */
   canInstallManaged: Schema.Boolean,
+  /** Host-specific pinned base archive size, excluding additional packages; older servers omit it. */
+  downloadBytes: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   /** Absent until this server has been asked to install one. */
   managedInstall: Schema.optionalKey(ScientLatexManagedInstallState),
 });

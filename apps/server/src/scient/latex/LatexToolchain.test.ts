@@ -382,13 +382,14 @@ describe("LatexToolchain", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("keeps the system distribution active when a managed installation also exists", () =>
+  it.effect("keeps a fully capable system distribution ahead of an existing managed install", () =>
     Effect.gen(function* () {
-      const { layer } = yield* harness(
+      const { layer, calls } = yield* harness(
         (command) => {
           if (command === "latexmk") return Effect.succeed(output(LATEXMK_BANNER));
           if (command === "pdflatex") return Effect.succeed(output(PDFLATEX_BANNER));
-          if (command === "xelatex" || command === "lualatex") return spawnFailure(command);
+          if (command === "xelatex") return Effect.succeed(output(XELATEX_BANNER));
+          if (command === "lualatex") return Effect.succeed(output(LUALATEX_BANNER));
           return onlyManagedResponds(command);
         },
         { managedInstall: true },
@@ -401,23 +402,62 @@ describe("LatexToolchain", () => {
           executable: "latexmk",
           source: "system",
         });
-        expect(status.compilers).toEqual([
-          { compiler: "pdflatex", available: true, executable: "pdflatex", version: "1.40.28" },
-          { compiler: "xelatex", available: false, executable: null, version: null },
-          { compiler: "lualatex", available: false, executable: null, version: null },
-        ]);
+        expect(status.compilers.every((compiler) => compiler.available)).toBe(true);
+        expect(yield* Ref.get(calls)).toEqual(["latexmk", ...COMPILER_NAMES]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps system Tectonic as the default after optional compilers are installed", () =>
+    Effect.gen(function* () {
+      const { layer, managedExecutable } = yield* harness(
+        (command) => {
+          if (command === "latexmk") return spawnFailure(command);
+          if (command === "tectonic") return Effect.succeed(output(TECTONIC_BANNER));
+          return onlyManagedResponds(command);
+        },
+        { managedInstall: true },
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        const status = yield* toolchain.probe(false);
+        expect(status).toMatchObject({
+          kind: "tectonic",
+          executable: "tectonic",
+          source: "system",
+        });
+        expect(status.compilers).toEqual(
+          COMPILER_NAMES.map((compiler, index) => ({
+            compiler,
+            available: true,
+            executable: managedExecutable.replace(/latexmk\.exe$/u, `${compiler}.exe`),
+            version: ["1.40.28", "0.999997", "1.22.0"][index],
+          })),
+        );
+        expect(yield* toolchain.probe(false, "lualatex")).toMatchObject({
+          kind: "latexmk",
+          executable: managedExecutable,
+          source: "scient-managed",
+        });
+        expect(yield* toolchain.probe(false, "xelatex")).toMatchObject({
+          kind: "tectonic",
+          executable: "tectonic",
+          source: "system",
+        });
+        expect(yield* toolchain.probe(false)).toEqual(status);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect(
-    "prefers system Tectonic over managed latexmk without advertising managed compilers",
+    "keeps partial system TeX as the default and uses TinyTeX only for a missing compiler",
     () =>
       Effect.gen(function* () {
-        const { layer } = yield* harness(
+        const { layer, managedExecutable } = yield* harness(
           (command) => {
-            if (command === "latexmk") return spawnFailure(command);
-            if (command === "tectonic") return Effect.succeed(output(TECTONIC_BANNER));
+            if (command === "latexmk") return Effect.succeed(output(LATEXMK_BANNER));
+            if (command === "pdflatex") return Effect.succeed(output(PDFLATEX_BANNER));
+            if (command === "xelatex" || command === "lualatex") return spawnFailure(command);
             return onlyManagedResponds(command);
           },
           { managedInstall: true },
@@ -426,18 +466,87 @@ describe("LatexToolchain", () => {
           const toolchain = yield* LatexToolchain;
           const status = yield* toolchain.probe(false);
           expect(status).toMatchObject({
-            kind: "tectonic",
-            executable: "tectonic",
+            kind: "latexmk",
+            executable: "latexmk",
             source: "system",
           });
-          expect(status.compilers).toEqual(
-            COMPILER_NAMES.map((compiler) => ({
+          expect(status.compilers).toEqual([
+            { compiler: "pdflatex", available: true, executable: "pdflatex", version: "1.40.28" },
+            ...(["xelatex", "lualatex"] as const).map((compiler, index) => ({
               compiler,
-              available: false,
-              executable: null,
-              version: null,
+              available: true,
+              executable: managedExecutable.replace(/latexmk\.exe$/u, `${compiler}.exe`),
+              version: ["0.999997", "1.22.0"][index],
             })),
-          );
+          ]);
+          expect(yield* toolchain.probe(false, "pdflatex")).toMatchObject({
+            executable: "latexmk",
+            source: "system",
+          });
+          expect(yield* toolchain.probe(false, "lualatex")).toMatchObject({
+            executable: managedExecutable,
+            source: "scient-managed",
+          });
+          expect(yield* toolchain.probe(false)).toEqual(status);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("reports a managed addition without hiding an existing system compiler", () =>
+    Effect.gen(function* () {
+      const { layer, managedExecutable } = yield* harness(
+        (command) => {
+          if (command === "latexmk" || command.endsWith("latexmk.exe")) {
+            return Effect.succeed(output(LATEXMK_BANNER));
+          }
+          if (command === "pdflatex") return Effect.succeed(output(PDFLATEX_BANNER));
+          if (command.endsWith("xelatex.exe")) return Effect.succeed(output(XELATEX_BANNER));
+          return spawnFailure(command);
+        },
+        { managedInstall: true },
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        const status = yield* toolchain.probe(false);
+        expect(status.source).toBe("system");
+        expect(status.compilers).toEqual([
+          { compiler: "pdflatex", available: true, executable: "pdflatex", version: "1.40.28" },
+          {
+            compiler: "xelatex",
+            available: true,
+            executable: managedExecutable.replace(/latexmk\.exe$/u, "xelatex.exe"),
+            version: "0.999997",
+          },
+          { compiler: "lualatex", available: false, executable: null, version: null },
+        ]);
+        expect(yield* toolchain.probe(false, "xelatex")).toMatchObject({
+          executable: managedExecutable,
+          source: "scient-managed",
+        });
+        expect(yield* toolchain.probe(false, "pdflatex")).toMatchObject({
+          executable: "latexmk",
+          source: "system",
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "falls back to system Tectonic when the recorded managed driver fails verification",
+    () =>
+      Effect.gen(function* () {
+        const { layer } = yield* harness(
+          (command) =>
+            command === "tectonic"
+              ? Effect.succeed(output(TECTONIC_BANNER))
+              : spawnFailure(command),
+          { managedInstall: true },
+        );
+        yield* Effect.gen(function* () {
+          const toolchain = yield* LatexToolchain;
+          const status = yield* toolchain.probe(false);
+          expect(status).toMatchObject({ kind: "tectonic", source: "system" });
+          expect(status.compilers.every((compiler) => !compiler.available)).toBe(true);
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

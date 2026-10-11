@@ -215,6 +215,7 @@ function producedPath(request: ExecutionProcessRequest, extension: string): stri
 const makeHarness = (input: {
   readonly compiles: ReadonlyArray<FakeCompile>;
   readonly toolchain?: ScientLatexToolchainStatus;
+  readonly probeToolchain?: LatexToolchain["Service"]["probe"];
   /**
    * Reuse an earlier harness's workspace and state root. A second service over
    * the same two directories is exactly what a server restart looks like from
@@ -436,7 +437,9 @@ const makeHarness = (input: {
         Layer.succeed(
           LatexToolchain,
           LatexToolchain.of({
-            probe: () => Effect.succeed({ ...(input.toolchain ?? LATEXMK), compilers: [] }),
+            probe:
+              input.probeToolchain ??
+              (() => Effect.succeed({ ...(input.toolchain ?? LATEXMK), compilers: [] })),
           }),
         ),
       ),
@@ -2211,6 +2214,34 @@ describe("LatexBuildService", () => {
           finished.diagnostics.some((diagnostic) => diagnostic.message.includes("pdfLaTeX")),
         ).toBe(true);
         expect(yield* Ref.get(harness.startCount)).toBe(0);
+        expect(yield* Ref.get(harness.installCount)).toBe(0);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("publishes a LuaLaTeX document using an installed addition without replacing Tectonic", () =>
+    Effect.gen(function* () {
+      const defaultToolchain = { ...LATEXMK, kind: "tectonic" as const, executable: "tectonic" };
+      const harness = yield* makeHarness({
+        probeToolchain: (_refresh, compiler) =>
+          Effect.succeed({
+            ...(compiler === "lualatex" ? MANAGED_LATEXMK : defaultToolchain),
+            compilers: [],
+          }),
+        files: { "main.tex": `% !TEX program = lualatex\n${SOURCE}` },
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("optional-lualatex") }],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(finished.toolchain).toMatchObject(defaultToolchain);
+        const request = yield* Queue.take(harness.started);
+        expect(request.executable).toBe(MANAGED_LATEXMK.executable);
+        expect(request.args).toContain("-lualatex");
+        expect(request.args).not.toContain("-xelatex");
         expect(yield* Ref.get(harness.installCount)).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

@@ -54,11 +54,12 @@ export function latexCompilerAvailabilityLabel(
   if (report === null) return "Not checked";
   const availability = report.compilers.find((item) => item.compiler === compiler);
   if (availability === undefined) return "Not checked";
+  if (availability.available) return null;
   if (report.kind === "tectonic")
     return compiler === "xelatex"
       ? "Not installed; Tectonic is XeTeX-compatible"
       : "Not available through Tectonic";
-  return availability.available ? null : "Not installed";
+  return "Not installed";
 }
 
 /** Tectonic satisfies XeTeX declarations without claiming a standalone XeLaTeX install. */
@@ -66,6 +67,8 @@ export function isLatexCompilerUnavailable(
   report: ScientLatexToolchainReport | null,
   compiler: LatexCompiler,
 ): boolean {
+  const availability = report?.compilers.find((item) => item.compiler === compiler);
+  if (availability?.available) return false;
   if (report?.kind === "tectonic") return compiler !== "xelatex";
-  return report?.compilers.some((item) => item.compiler === compiler && !item.available) ?? false;
+  return availability?.available === false;
 }

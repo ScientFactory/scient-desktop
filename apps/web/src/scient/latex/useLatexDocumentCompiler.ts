@@ -12,6 +12,7 @@ export function useLatexDocumentCompiler(input: {
   selectedSource: string;
   refreshKey: unknown;
   offline: boolean;
+  report?: ScientLatexToolchainReport | null;
 }) {
   const { target } = input;
   const key =
@@ -76,7 +77,7 @@ export function useLatexDocumentCompiler(input: {
   }, [target, key, input.selectedPath, input.refreshKey]);
 
   useEffect(() => {
-    if (environmentId === null || input.offline) return;
+    if (environmentId === null || input.offline || input.report != null) return;
     let disposed = false;
     void (async () => {
       try {
@@ -97,7 +98,7 @@ export function useLatexDocumentCompiler(input: {
     return () => {
       disposed = true;
     };
-  }, [environmentId, input.offline, input.refreshKey]);
+  }, [environmentId, input.offline, input.refreshKey, input.report]);
 
   const currentRoot = root?.key === key ? root : null;
   const currentCapabilities = capabilities?.environmentId === environmentId ? capabilities : null;
@@ -107,7 +108,7 @@ export function useLatexDocumentCompiler(input: {
         ? input.selectedSource
         : (currentRoot?.source ?? null),
     sourceError: currentRoot?.error ?? null,
-    report: currentCapabilities?.report ?? null,
-    capabilityError: currentCapabilities?.error ?? null,
+    report: input.report ?? currentCapabilities?.report ?? null,
+    capabilityError: input.report != null ? null : (currentCapabilities?.error ?? null),
   };
 }

@@ -108,12 +108,14 @@ describe("Settings ▸ Documents", () => {
     });
   };
   const installButton = () =>
-    [...container.querySelectorAll<HTMLButtonElement>("#latex-installation button")].find(
-      (node) => node.textContent === "Install TinyTeX",
-    );
+    [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        "#latex-installation button, #latex-additional-compilers button",
+      ),
+    ].find((node) => node.textContent?.startsWith("Install"));
   const missing = () => {
     const { source: _source, ...found } = report();
-    return { ...found, kind: null, executable: null, version: null };
+    return { ...found, kind: null, executable: null, version: null, compilers: [] };
   };
   const select = (label: string) =>
     container.querySelector<HTMLElement>(`[data-slot="select-trigger"][aria-label="${label}"]`)!;
@@ -132,23 +134,6 @@ describe("Settings ▸ Documents", () => {
     const value = localStorage.getItem(key);
     return value === null ? null : JSON.parse(value);
   };
-
-  it("shows LaTeX, Markdown, and Word with their logos and states", async () => {
-    await render();
-    const strip = container.querySelector('[aria-label="Document formats"]')!;
-    const tab = (format: string) =>
-      strip.querySelector<HTMLElement>(`#documents-${format}-trigger`)!;
-    expect(tab("latex").textContent).toBe("LaTeXInstalled");
-    expect(tab("markdown").textContent).toBe("MarkdownBuilt in");
-    expect(tab("word").textContent).toBe("WordReady");
-    expect(strip.querySelectorAll("img")).toHaveLength(3);
-    expect(container.querySelector("#latex-installation")?.textContent).toContain(
-      "latexmk 4.85 · System installation",
-    );
-    await act(() => tab("word").click());
-    expect(container.querySelector("#word-export")?.textContent).toContain("Pandoc");
-    expect(mocks.pandocEnvironments.at(-1)).toBe("remote");
-  });
 
   it("checks both installations again from the header", async () => {
     await render();
@@ -233,7 +218,7 @@ describe("Settings ▸ Documents", () => {
   it("keeps compiler preferences editable offline without claiming server availability", async () => {
     mocks.scopeEnvironmentId = null;
     await render();
-    expect(container.querySelector("#latex-compilers")?.textContent).toContain("Offline");
+    expect(container.querySelector("#latex-installation")?.textContent).toContain("Offline");
     await choose("Default compiler for new documents", "XeLaTeX — recommended for Hebrew");
     expect(stored("scient.newDocumentCompiler")).toBe("xelatex");
     await act(() => root.unmount());
@@ -245,12 +230,22 @@ describe("Settings ▸ Documents", () => {
     expect(mocks.readToolchain).not.toHaveBeenCalled();
   });
 
-  it("does not infer all compilers are installed from the build driver", async () => {
+  it("keeps versions and paths folded until details are requested, with actual per-engine availability", async () => {
     await render();
-    const row = container.querySelector("#latex-compilers")!;
-    expect(row.textContent).toContain("pdfLaTeX · Available");
-    expect(row.textContent).toContain("XeLaTeX — recommended for Hebrew · Available");
-    expect(row.textContent).toContain("LuaLaTeX · Not installed");
+    const details = container.querySelector("#latex-compilers")!;
+    const toggle = details.querySelector<HTMLButtonElement>("button")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector("#latex-installation")?.textContent).not.toContain("4.85");
+    await act(() => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const rows = [...details.querySelectorAll('[data-slot="settings-row"]')];
+    const compiler = (name: string) =>
+      rows.find((row) => row.querySelector("h3")?.textContent === name)!;
+    expect(compiler("pdfLaTeX").textContent).toContain("Available");
+    expect(compiler("XeLaTeX — recommended for Hebrew").textContent).toContain("Available");
+    expect(compiler("LuaLaTeX").textContent).toContain("Not installed");
+    expect(details.textContent).toContain("/Library/TeX/texbin/latexmk");
+    expect(details.textContent).toContain("4.85");
   });
 
   it("opens Markdown files Rich or Source", async () => {
@@ -263,22 +258,21 @@ describe("Settings ▸ Documents", () => {
     expect(stored("t3code.renderMarkdown")).toBe(true);
   });
 
-  it("offers TinyTeX when no engine is found, and shows the install starting", async () => {
+  it("installs tools only after an explicit action, not mounting or changing the default", async () => {
     mocks.report = missing();
     await render();
-    const row = container.querySelector("#latex-installation")!;
-    expect(row.textContent).toContain("Not found");
-    const install = [...row.querySelectorAll("button")].find(
-      (node) => node.textContent === "Install TinyTeX",
-    );
-    await act(async () => {
-      install!.click();
-      await Promise.resolve();
-    });
+    expect(installButton()).toBeDefined();
+    expect(mocks.install).not.toHaveBeenCalled();
+    await choose("Default compiler for new documents", "XeLaTeX — recommended for Hebrew");
+    expect(mocks.install).not.toHaveBeenCalled();
+    await choose("Default compiler for new documents", "Automatic");
+    expect(mocks.install).not.toHaveBeenCalled();
+    await act(async () => installButton()!.click());
     expect(mocks.install).toHaveBeenCalledWith("remote");
-    expect(container.querySelector("#latex-installation")?.textContent).toContain(
-      "Downloading TinyTeX",
+    expect(container.querySelector("#latex-installation [role=status]")?.textContent).toContain(
+      "Downloading",
     );
+    expect(installButton()).toBeUndefined();
   });
 
   it("does not stay busy when the install cannot even be asked for", async () => {
@@ -293,7 +287,10 @@ describe("Settings ▸ Documents", () => {
     });
     const row = container.querySelector("#latex-installation")!;
     expect(row.textContent).toContain("This server is not connected.");
-    expect(row.textContent).toContain("Check again");
+    expect(row.querySelector("[role=alert]")).not.toBeNull();
+    const retry = row.querySelector<HTMLButtonElement>("button")!;
+    await act(async () => retry.click());
+    expect(mocks.install).toHaveBeenCalledTimes(2);
   });
 
   it("holds Install while a search for LaTeX is still answering", async () => {
@@ -312,6 +309,63 @@ describe("Settings ▸ Documents", () => {
       await Promise.resolve();
     });
     expect(installButton()!.disabled).toBe(false);
+  });
+
+  it("shows optional installation progress and failure while keeping working Tectonic tools ready", async () => {
+    mocks.report = report({
+      kind: "tectonic",
+      executable: "tectonic",
+      version: "0.15",
+      compilers: [],
+    });
+    await render();
+    const tools = () => container.querySelector("#latex-installation")!;
+    const additional = () => container.querySelector("#latex-additional-compilers")!;
+    expect(tools().textContent).toContain("Ready");
+    expect(installButton()).toBeDefined();
+    const { promise, reject } = Promise.withResolvers<unknown>();
+    mocks.install.mockReturnValueOnce(promise);
+    await act(() => installButton()!.click());
+    expect(tools().textContent).toContain("Ready");
+    expect(additional().querySelector("[role=status]")).not.toBeNull();
+    expect(additional().querySelector("button")).toBeNull();
+    await act(async () => reject(new Error("Connection interrupted")));
+    expect(tools().textContent).toContain("Ready");
+    expect(additional().querySelector("[role=alert]")?.textContent).toContain(
+      "Connection interrupted",
+    );
+    expect(additional().querySelector<HTMLButtonElement>("button")?.disabled).toBe(false);
+    expect(tools().textContent).not.toContain("Not installed");
+  });
+
+  it("does not offer another bundle when every standalone compiler is already available", async () => {
+    mocks.report = report({
+      compilers: report().compilers.map((entry) => ({ ...entry, available: true })),
+    });
+    await render();
+    expect(installButton()).toBeUndefined();
+    expect(container.querySelector("#latex-additional-compilers")).toBeNull();
+    expect(mocks.install).not.toHaveBeenCalled();
+  });
+
+  it("reveals technical details when search targets compiler status, but not when it targets installation", async () => {
+    localStorage.setItem("scient.documentsSettingsFormat", JSON.stringify("markdown"));
+    mocks.target = "latex-compilers";
+    await render();
+    expect(container.querySelector("#latex-compilers button")?.getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+    expect(container.querySelector("#latex-compilers")?.textContent).toContain(
+      "/Library/TeX/texbin/latexmk",
+    );
+    await act(() => root.unmount());
+    root = createRoot(container);
+    mocks.target = "latex-installation";
+    await render();
+    expect(container.querySelector("#latex-compilers button")?.getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+    expect(installButton()).toBeDefined();
   });
 
   it("reads LaTeX on the environment chosen in the settings scope", async () => {

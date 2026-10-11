@@ -4,7 +4,8 @@ import { type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { useSettingsSearchTarget, useSettingsSearchTargetId } from "./settingsLayout";
+import { Button } from "../ui/button";
+import { SettingsRow, useSettingsSearchTarget, useSettingsSearchTargetId } from "./settingsLayout";
 
 /**
  * A grouped settings section that starts closed. The header carries the title,
@@ -23,7 +24,7 @@ export function FoldedSettingsSection({
   readonly title: string;
   readonly summary?: string | null;
   readonly control?: ReactNode;
-  readonly headerPlacement?: "inside" | "outside";
+  readonly headerPlacement?: "inside" | "outside" | "row";
   readonly children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -63,6 +64,42 @@ export function FoldedSettingsSection({
               <SettingsGroup>{children}</SettingsGroup>
             </CollapsiblePanel>
           </div>
+        </Collapsible>
+      </section>
+    );
+  }
+
+  if (headerPlacement === "row") {
+    return (
+      <section id={id} ref={targetRef} tabIndex={-1} className="outline-none">
+        <Collapsible open={open} onOpenChange={setOpen} render={<SettingsGroup divided={false} />}>
+          <SettingsRow
+            title={title}
+            description={summary}
+            control={
+              <>
+                {control}
+                <CollapsibleTrigger
+                  render={<Button size="sm" variant="outline" />}
+                  aria-label={title}
+                >
+                  {open ? "Hide" : "Show"}
+                  <ChevronRightIcon
+                    aria-hidden
+                    className={cn(
+                      "transition-transform duration-150 motion-reduce:transition-none",
+                      open && "rotate-90",
+                    )}
+                  />
+                </CollapsibleTrigger>
+              </>
+            }
+          />
+          <CollapsiblePanel>
+            <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
+              {children}
+            </div>
+          </CollapsiblePanel>
         </Collapsible>
       </section>
     );

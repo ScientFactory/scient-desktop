@@ -63,6 +63,8 @@ export class LatexManagedToolchain extends Context.Service<
   {
     /** Scient has a pinned distribution for this platform. */
     readonly canInstall: boolean;
+    /** Pinned base archive size for this host, excluding additional package downloads. */
+    readonly downloadBytes: number | null;
     /** Starts an install, or reports the one already running. */
     readonly install: Effect.Effect<ScientLatexManagedInstallState>;
     readonly status: Effect.Effect<ScientLatexManagedInstallState>;
@@ -94,14 +96,15 @@ const ENGINE_VALIDATION_TIMEOUT = "30 seconds";
 const ENGINE_VALIDATION_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /**
- * Collections for ordinary papers, plus the Unicode/Hebrew packages needed
- * by XeLaTeX documents. Fetching these during installation avoids stopping
- * the first Hebrew build on a missing language or directionality package.
+ * Collections for ordinary papers and all three compilers, plus the
+ * Unicode/Hebrew packages needed by XeLaTeX documents. Fetching these during
+ * installation avoids stopping the first build on a missing compiler or package.
  */
 const RECOMMENDED_PACKAGES: ReadonlyArray<string> = [
   "collection-latexrecommended",
   "collection-fontsrecommended",
   "collection-xetex",
+  "collection-luatex",
   "fontspec",
   "polyglossia",
   "bidi",
@@ -692,6 +695,7 @@ export const make = Effect.gen(function* () {
 
   return LatexManagedToolchain.of({
     canInstall: asset !== null,
+    downloadBytes: asset?.sizeBytes ?? null,
     install,
     status: Ref.get(stateRef),
   });

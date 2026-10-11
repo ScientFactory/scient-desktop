@@ -4,9 +4,9 @@
  * are normal on a fresh machine. Driver and compiler facts share a cached,
  * single-flight observation so status polling never launches a build.
  *
- * PATH wins. Someone who already runs TeX Live or MiKTeX keeps building with
- * it, exactly as before; the distribution Scient installs is only consulted
- * once PATH has turned up nothing, and says so through `source`.
+ * PATH keeps its original precedence: latexmk, then Tectonic. Managed TinyTeX
+ * is an optional addition for a compiler that the document needs but PATH
+ * cannot provide, or the fallback when no system driver is available.
  */
 import {
   ScientLatexCompiler,
@@ -37,8 +37,11 @@ export type LatexToolchainProbe = ScientLatexToolchainStatus & {
 export class LatexToolchain extends Context.Service<
   LatexToolchain,
   {
-    /** `refresh` forces a new probe; otherwise a result younger than the TTL is reused. */
-    readonly probe: (refresh: boolean) => Effect.Effect<LatexToolchainProbe>;
+    /** Omitting a compiler reports the unchanged default and all verified capabilities. */
+    readonly probe: (
+      refresh: boolean,
+      requiredCompiler?: ScientLatexCompiler,
+    ) => Effect.Effect<LatexToolchainProbe>;
   }
 >()("t3/scient/latex/LatexToolchain") {}
 
@@ -52,12 +55,22 @@ interface ToolchainCandidate {
   readonly args: ReadonlyArray<string>;
 }
 
-// latexmk is tried first: it drives bibtex/biber and reruns to fixpoint, which
-// tectonic only approximates. tectonic is the self-contained fallback.
-const CANDIDATES: ReadonlyArray<ToolchainCandidate> = [
-  { kind: "latexmk", executable: "latexmk", args: ["-v"] },
-  { kind: "tectonic", executable: "tectonic", args: ["--version"] },
-];
+interface ToolchainObservation {
+  readonly primary: LatexToolchainProbe;
+  readonly additional: LatexToolchainProbe | null;
+  readonly report: LatexToolchainProbe;
+}
+
+const SYSTEM_LATEXMK: ToolchainCandidate = {
+  kind: "latexmk",
+  executable: "latexmk",
+  args: ["-v"],
+};
+const SYSTEM_TECTONIC: ToolchainCandidate = {
+  kind: "tectonic",
+  executable: "tectonic",
+  args: ["--version"],
+};
 
 const LATEXMK_VERSION_PATTERN = /Version\s+([0-9][\w.-]*)/iu;
 const TECTONIC_VERSION_PATTERN = /Tectonic\s+([0-9][\w.+-]*)/iu;
@@ -98,7 +111,7 @@ export const make = Effect.gen(function* () {
     FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
   >();
   const findManagedInstall = readManagedLatexInstall().pipe(Effect.provideContext(managedContext));
-  const cacheRef = yield* Ref.make<LatexToolchainProbe | null>(null);
+  const cacheRef = yield* Ref.make<ToolchainObservation | null>(null);
   // Every build and every status poll asks for the toolchain, so a lapsed TTL
   // would otherwise let a burst of pollers each shell out. One probe runs; the
   // rest queue here and read the answer it leaves in the cache.
@@ -197,18 +210,22 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
-  const probeDriver = Effect.gen(function* () {
+  const probeAll = Effect.gen(function* (): Effect.fn.Return<ToolchainObservation> {
     const probedAtEpochMs = yield* Clock.currentTimeMillis;
-    for (const candidate of CANDIDATES) {
-      const found = yield* probeCandidate(candidate, probedAtEpochMs);
-      if (found !== null) return found;
+    const systemStatus =
+      (yield* probeCandidate(SYSTEM_LATEXMK, probedAtEpochMs)) ??
+      (yield* probeCandidate(SYSTEM_TECTONIC, probedAtEpochMs)) ??
+      absent(probedAtEpochMs);
+    const primary = { ...systemStatus, compilers: yield* probeCompilers(systemStatus) };
+    if (primary.compilers.every((compiler) => compiler.available)) {
+      return { primary, additional: null, report: primary };
     }
-    // Nothing on PATH. Scient may have installed a distribution of its own,
-    // which is still probed rather than trusted: a tree that no longer runs is
-    // the same as no engine at all.
+
+    // Discovery only reads the recorded install and runs bounded version probes.
+    // Optional compilers never replace the working default driver.
     const managed = yield* findManagedInstall;
     if (managed !== null) {
-      const found = yield* probeCandidate(
+      const status = yield* probeCandidate(
         { kind: "latexmk", executable: managed.executable, args: ["-v"] },
         probedAtEpochMs,
         "scient-managed",
@@ -219,40 +236,64 @@ export const make = Effect.gen(function* () {
           pathDelimiter,
         }),
       );
-      if (found !== null) return found;
+      if (status !== null) {
+        const additional = { ...status, compilers: yield* probeCompilers(status) };
+        if (primary.kind === null) {
+          return { primary: additional, additional: null, report: additional };
+        }
+        const compilers = primary.compilers.map((compiler) =>
+          compiler.available
+            ? compiler
+            : (additional.compilers.find(
+                (candidate) => candidate.compiler === compiler.compiler && candidate.available,
+              ) ?? compiler),
+        );
+        return { primary, additional, report: { ...primary, compilers } };
+      }
     }
-    return absent(probedAtEpochMs);
+    return { primary, additional: null, report: primary };
   });
 
-  const probeAll = Effect.gen(function* () {
-    const status = yield* probeDriver;
-    return { ...status, compilers: yield* probeCompilers(status) };
+  const isFresh = Effect.fnUntraced(function* (cached: ToolchainObservation | null) {
+    if (cached === null) return false;
+    const now = yield* Clock.currentTimeMillis;
+    return now - cached.primary.probedAtEpochMs < PROBE_CACHE_TTL_MS;
   });
 
-  const isFresh = (cached: ScientLatexToolchainStatus | null) =>
-    Effect.gen(function* () {
-      if (cached === null) return false;
-      const now = yield* Clock.currentTimeMillis;
-      return now - cached.probedAtEpochMs < PROBE_CACHE_TTL_MS;
-    });
+  const select = (observation: ToolchainObservation, compiler?: ScientLatexCompiler) => {
+    if (compiler === undefined) return observation.report;
+    const { primary, additional } = observation;
+    if (
+      (primary.kind === "tectonic" && compiler === "xelatex") ||
+      primary.compilers.some((candidate) => candidate.compiler === compiler && candidate.available)
+    )
+      return primary;
+    return additional?.compilers.some(
+      (candidate) => candidate.compiler === compiler && candidate.available,
+    )
+      ? additional
+      : primary;
+  };
 
-  const probe = (refresh: boolean) =>
-    Effect.gen(function* () {
-      const cached = yield* Ref.get(cacheRef);
-      if (!refresh && (yield* isFresh(cached)) && cached !== null) return cached;
-      return yield* probeGate.withPermits(1)(
-        Effect.gen(function* () {
-          // Re-read behind the gate: whoever held it just refreshed the cache,
-          // and the fibers that queued behind it want that answer, not a
-          // second round of subprocesses.
-          const settled = yield* Ref.get(cacheRef);
-          if (!refresh && (yield* isFresh(settled)) && settled !== null) return settled;
-          const status = yield* probeAll;
-          yield* Ref.set(cacheRef, status);
-          return status;
-        }),
-      );
-    });
+  const probe = Effect.fnUntraced(function* (
+    refresh: boolean,
+    requiredCompiler?: ScientLatexCompiler,
+  ) {
+    const cached = yield* Ref.get(cacheRef);
+    if (!refresh && (yield* isFresh(cached)) && cached !== null)
+      return select(cached, requiredCompiler);
+    return yield* probeGate.withPermits(1)(
+      Effect.gen(function* () {
+        // Re-read behind the gate: queued pollers reuse the observation.
+        const settled = yield* Ref.get(cacheRef);
+        if (!refresh && (yield* isFresh(settled)) && settled !== null)
+          return select(settled, requiredCompiler);
+        const status = yield* probeAll;
+        yield* Ref.set(cacheRef, status);
+        return select(status, requiredCompiler);
+      }),
+    );
+  });
 
   return LatexToolchain.of({ probe });
 });

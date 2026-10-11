@@ -3340,6 +3340,23 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   text-align: center;
 }
 
+/* The installation offer belongs to the document, including Source and Visual. */
+.scient-latex-tools-notice {
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  text-align: left;
+}
+
+.scient-latex-tools-notice p {
+  max-width: none;
+  flex-basis: 100%;
+}
+
 .scient-latex-placeholder h2 {
   color: var(--foreground);
   font-weight: 500;

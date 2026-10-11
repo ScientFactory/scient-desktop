@@ -3,6 +3,7 @@ import type {
   ScientLatexBuildState,
   ScientLatexDiagnostic,
   ScientLatexManagedInstallState,
+  ScientLatexToolchainReport,
   ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
 
@@ -159,6 +160,7 @@ export function latexCompiledFromPath(
 export interface LatexBuildStatus {
   readonly snapshot: ScientLatexBuildSnapshot | null;
   readonly toolchain: ScientLatexToolchainStatus | null;
+  readonly toolchainReport?: ScientLatexToolchainReport | null;
   /** This environment has a LaTeX distribution Scient can install for it. */
   readonly canInstallManaged: boolean;
   /** The managed install this environment is running, or last ran. */

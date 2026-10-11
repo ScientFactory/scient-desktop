@@ -27,6 +27,8 @@ import {
   useSettingsSearchTargetId,
 } from "~/components/settings/settingsLayout";
 import { useOptionalSettingsScope } from "~/components/settings/SettingsScopeContext";
+import { FoldedSettingsSection } from "~/components/settings/FoldedSettingsSection";
+import { SettingsGroup } from "~/components/settings/SettingsGroup";
 import {
   SettingsSourceGroup,
   SettingsSourcePanel,
@@ -50,6 +52,7 @@ import {
   latexCompilerAvailabilityLabel,
   normalizeLatexCompilerChoice,
 } from "../latex/latexCompiler";
+import { formatLatexDownloadSize } from "../latex/latexToolchainSetupModel";
 import { PandocSettingsRow } from "../wordExport/PandocSettingsRow";
 import { pandocToolSummary } from "../wordExport/pandocToolModel";
 import { usePandocTool, type PandocToolController } from "../wordExport/usePandocTool";
@@ -72,6 +75,7 @@ type DocumentFormat = (typeof DOCUMENT_FORMATS)[number];
 /** Rows settings search can jump to, and the tab each lives under. */
 const SEARCH_TARGET_FORMATS: Readonly<Record<string, DocumentFormat>> = {
   "latex-installation": "latex",
+  "latex-additional-compilers": "latex",
   "new-document-template": "latex",
   "new-document-language": "latex",
   "new-document-compiler": "latex",
@@ -125,32 +129,126 @@ function LatexInstallationRow({
 }: {
   readonly installation: LatexInstallationController;
 }) {
-  const { view, act } = installation;
+  const { view, act, report } = installation;
   const problem = view.kind === "failed" || view.kind === "unreadable";
+  const action =
+    view.actionLabel === null ? null : (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={view.busy || installation.refreshing}
+        onClick={act}
+      >
+        {view.actionLabel}
+      </Button>
+    );
+  const download =
+    report?.canInstallManaged && (view.actionLabel !== null || view.busy || problem) ? (
+      <span className="block">
+        {report.downloadBytes == null
+          ? "Base archive size is unavailable."
+          : `Base archive: ${formatLatexDownloadSize(report.downloadBytes)}.`}{" "}
+        Additional LaTeX packages download during setup and on first use.
+      </span>
+    ) : null;
   return (
-    <SettingsRow
-      id="latex-installation"
-      title="Installation"
-      description={
-        <span className={cn(problem && "text-destructive")} role={problem ? "alert" : "status"}>
-          {view.detail}
-        </span>
-      }
-      serverScoped
-      control={
-        view.actionLabel === null ? null : (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={view.busy || installation.refreshing}
-            onClick={act}
-          >
-            {view.actionLabel}
-          </Button>
-        )
-      }
-    />
+    <>
+      <SettingsRow
+        id="latex-installation"
+        title="LaTeX tools"
+        description={
+          <span role={problem && view.additionalDetail === null ? "alert" : "status"}>
+            <span className="block">
+              {view.summary} · {view.detail}
+            </span>
+            {view.actionTarget === "tools" ? download : null}
+          </span>
+        }
+        serverScoped
+        control={view.actionTarget === "tools" ? action : null}
+      />
+      {view.additionalDetail !== null ? (
+        <SettingsRow
+          id="latex-additional-compilers"
+          title="Additional compilers"
+          description={
+            <span className={cn(problem && "text-destructive")} role={problem ? "alert" : "status"}>
+              {view.additionalDetail}
+              {download}
+            </span>
+          }
+          serverScoped
+          control={action}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function LatexTechnicalDetails({
+  installation,
+}: {
+  readonly installation: LatexInstallationController | null;
+}) {
+  const report = installation?.report ?? null;
+  return (
+    <FoldedSettingsSection
+      id="latex-compilers"
+      title="Technical details"
+      summary="Compiler versions and executable paths."
+      headerPlacement="row"
+    >
+      <SettingsRow
+        title="PDF build driver"
+        serverScoped
+        description={
+          report === null ? (
+            installation === null ? (
+              "Offline"
+            ) : (
+              "Not checked"
+            )
+          ) : (
+            <span className="flex flex-col gap-1">
+              <span>
+                {report.kind ?? "Not installed"}
+                {report.version ? ` · ${report.version}` : ""}
+                {report.source
+                  ? ` · ${report.source === "scient-managed" ? "Scient-managed TinyTeX" : "System installation"}`
+                  : ""}
+              </span>
+              {report.executable ? <span className="break-all">{report.executable}</span> : null}
+            </span>
+          )
+        }
+      />
+      {LATEX_COMPILER_CHOICES.map((choice) => {
+        if (choice.id === "automatic") return null;
+        const availability = report?.compilers.find((item) => item.compiler === choice.id);
+        const label = availability?.available
+          ? "Available"
+          : latexCompilerAvailabilityLabel(report, choice.id, installation === null);
+        return (
+          <SettingsRow
+            key={choice.id}
+            title={choice.name}
+            serverScoped
+            description={
+              <span className="flex flex-col gap-1">
+                <span>
+                  {label}
+                  {availability?.version ? ` · ${availability.version}` : ""}
+                </span>
+                {availability?.executable ? (
+                  <span className="break-all">{availability.executable}</span>
+                ) : null}
+              </span>
+            }
+          />
+        );
+      })}
+    </FoldedSettingsSection>
   );
 }
 
@@ -175,85 +273,70 @@ function LatexPanel(props: {
     Schema.String,
   );
   return (
-    <SettingsSourcePanel
+    <div
       id="documents-latex"
       aria-labelledby="documents-latex-trigger"
       hidden={props.hidden}
+      className="space-y-6 pt-4"
     >
-      {props.installation ? (
-        <LatexInstallationRow installation={props.installation} />
-      ) : (
-        <OfflineToolRow id="latex-installation" title="Installation" />
-      )}
-      <SettingsRow
-        id="latex-compilers"
-        title="Available compilers"
-        serverScoped
-        description={
-          <span className="flex flex-col gap-1">
-            {LATEX_COMPILER_CHOICES.map((choice) => {
-              if (choice.id === "automatic") return null;
-              const report = props.installation?.report ?? null;
-              const availability = report?.compilers.find((item) => item.compiler === choice.id);
-              const label = latexCompilerAvailabilityLabel(
-                report,
-                choice.id,
-                props.installation === null,
-              );
-              return (
-                <span key={choice.id}>
-                  {choice.name} ·{" "}
-                  {label ?? `Available${availability?.version ? ` (${availability.version})` : ""}`}
-                </span>
-              );
-            })}
-          </span>
-        }
-      />
-      <TemplatesSettingsRow />
-      <SettingsRow
-        id="new-document-language"
-        title="Language for new documents"
-        control={
-          <OptionSelect
-            label="Language for new documents"
-            value={normalizeNewDocumentLanguage(language)}
-            groups={[NEW_DOCUMENT_LANGUAGES]}
-            onChange={setLanguage}
-          />
-        }
-      />
-      <SettingsRow
-        id="new-document-compiler"
-        title="Default compiler for new documents"
-        description="Template engine declarations take precedence. Hebrew uses XeLaTeX unless LuaLaTeX is selected. Existing documents are unchanged."
-        control={
-          <OptionSelect
-            label="Default compiler for new documents"
-            value={normalizeLatexCompilerChoice(compiler)}
-            groups={[LATEX_COMPILER_CHOICES]}
-            onChange={setCompiler}
-          />
-        }
-      />
-      <SettingsRow
-        id="latex-open-in"
-        title="Open files in"
-        control={
-          <OptionSelect
-            label="Open LaTeX files in"
-            value={normalizeLatexPreviewMode(view)}
-            groups={[
-              LATEX_PREVIEW_MODES.map((mode) => ({
-                id: mode,
-                name: LATEX_PREVIEW_MODE_LABELS[mode],
-              })),
-            ]}
-            onChange={setView}
-          />
-        }
-      />
-    </SettingsSourcePanel>
+      <SettingsSection id="latex-tools" title="Tools" variant="plain">
+        <div className="space-y-3">
+          <SettingsGroup>
+            {props.installation ? (
+              <LatexInstallationRow installation={props.installation} />
+            ) : (
+              <OfflineToolRow id="latex-installation" title="LaTeX tools" />
+            )}
+          </SettingsGroup>
+          <LatexTechnicalDetails installation={props.installation} />
+        </div>
+      </SettingsSection>
+      <SettingsSection id="latex-preferences" title="Document preferences">
+        <TemplatesSettingsRow />
+        <SettingsRow
+          id="new-document-language"
+          title="Language for new documents"
+          control={
+            <OptionSelect
+              label="Language for new documents"
+              value={normalizeNewDocumentLanguage(language)}
+              groups={[NEW_DOCUMENT_LANGUAGES]}
+              onChange={setLanguage}
+            />
+          }
+        />
+        <SettingsRow
+          id="new-document-compiler"
+          title="Default compiler for new documents"
+          description="Automatic chooses by document requirements and does not download software. Template engine declarations take precedence. Hebrew uses XeLaTeX unless LuaLaTeX is selected. Existing documents are unchanged."
+          control={
+            <OptionSelect
+              label="Default compiler for new documents"
+              value={normalizeLatexCompilerChoice(compiler)}
+              groups={[LATEX_COMPILER_CHOICES]}
+              onChange={setCompiler}
+            />
+          }
+        />
+        <SettingsRow
+          id="latex-open-in"
+          title="Open files in"
+          control={
+            <OptionSelect
+              label="Open LaTeX files in"
+              value={normalizeLatexPreviewMode(view)}
+              groups={[
+                LATEX_PREVIEW_MODES.map((mode) => ({
+                  id: mode,
+                  name: LATEX_PREVIEW_MODE_LABELS[mode],
+                })),
+              ]}
+              onChange={setView}
+            />
+          }
+        />
+      </SettingsSection>
+    </div>
   );
 }
 

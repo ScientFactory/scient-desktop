@@ -2,93 +2,101 @@ import type { ScientLatexToolchainReport } from "@t3tools/contracts";
 
 import { isActiveLatexInstall, latexSetupCardModel } from "../latex/latexToolchainSetupModel";
 
-/** The one line Settings ▸ Documents ▸ LaTeX shows about the engine on this server. */
 export interface LatexInstallationView {
   readonly kind: "checking" | "ready" | "missing" | "installing" | "failed" | "unreadable";
-  /** Strip detail under the LaTeX tab. */
   readonly summary: string;
   readonly detail: string;
+  readonly additionalDetail: string | null;
+  readonly actionTarget: "tools" | "additional";
   readonly actionLabel: string | null;
   readonly busy: boolean;
 }
 
-const ENGINE_LABELS = { latexmk: "latexmk", tectonic: "Tectonic" } as const;
+/** The managed bundle adds standalone engines, even when Tectonic already builds PDFs. */
+export function canInstallAdditionalLatexTools(report: ScientLatexToolchainReport): boolean {
+  return (
+    report.canInstallManaged &&
+    !["pdflatex", "xelatex", "lualatex"].every((compiler) =>
+      report.compilers.some((entry) => entry.compiler === compiler && entry.available),
+    )
+  );
+}
 
 export function latexInstallationView(input: {
   readonly report: ScientLatexToolchainReport | null;
   readonly requesting: boolean;
   readonly error: string | null;
+  readonly installError?: string | null;
 }): LatexInstallationView {
-  const { report, requesting, error } = input;
-  if (error !== null) {
+  const { report, requesting, error, installError = null } = input;
+  if (error !== null || report === null) {
     return {
-      kind: "unreadable",
-      summary: "Not checked",
-      detail: error,
-      actionLabel: "Check again",
-      busy: false,
+      kind: error === null ? "checking" : "unreadable",
+      summary: error === null ? "Checking…" : "Not checked",
+      detail: error ?? "Checking LaTeX tools on this server…",
+      additionalDetail: null,
+      actionTarget: "tools",
+      actionLabel: error === null ? null : "Check again",
+      busy: error === null,
     };
   }
-  if (report === null) {
-    return {
-      kind: "checking",
-      summary: "Checking…",
-      detail: "Checking…",
-      actionLabel: null,
-      busy: true,
-    };
-  }
+
+  const ready = report.kind !== null;
+  const hasTools = ready || report.compilers.some((entry) => entry.available);
+  const identity =
+    report.source === "scient-managed"
+      ? "TinyTeX, installed by Scient"
+      : report.kind === "tectonic"
+        ? "Tectonic"
+        : "System TeX";
+  const unicode =
+    report.kind === "tectonic" ||
+    report.compilers.some(
+      (entry) => entry.available && (entry.compiler === "xelatex" || entry.compiler === "lualatex"),
+    );
+  const toolsDetail = hasTools
+    ? `${identity}.${unicode ? " Supports Hebrew and Unicode documents." : ""}${!ready ? " No PDF build driver is available." : ""}`
+    : "No LaTeX tools were found on this server.";
+  const canInstall = canInstallAdditionalLatexTools(report);
   const install = report.managedInstall ?? null;
-  if (report.kind !== null && !requesting && !isActiveLatexInstall(install)) {
-    const engine = [ENGINE_LABELS[report.kind], report.version].filter(Boolean).join(" ");
-    const origin =
-      report.source === "scient-managed" ? "TinyTeX, installed by Scient" : "System installation";
-    return {
-      kind: "ready",
-      summary: "Installed",
-      detail: `${engine} · ${origin}`,
-      actionLabel: null,
-      busy: false,
-    };
-  }
-  const card = latexSetupCardModel({
-    canInstallManaged: report.canInstallManaged,
-    install,
-    requesting,
-    toolchainMissing: report.kind === null,
-  });
-  switch (card.kind) {
-    case "installing":
-      return {
-        kind: "installing",
-        summary: "Installing…",
-        detail: card.body,
-        actionLabel: null,
-        busy: true,
-      };
-    case "failed":
-      return {
-        kind: "failed",
-        summary: "Not installed",
-        detail: card.body,
-        actionLabel: card.actionLabel,
-        busy: false,
-      };
-    case "instructions":
-      return {
-        kind: "missing",
-        summary: "Not installed",
-        detail: "Not found. Install TeX Live, MiKTeX, or Tectonic.",
-        actionLabel: null,
-        busy: false,
-      };
-    case "offer":
-      return {
-        kind: "missing",
-        summary: "Not installed",
-        detail: install?.state === "ready" ? card.title : "Not found",
-        actionLabel: card.actionLabel,
-        busy: false,
-      };
-  }
+  const active = requesting || isActiveLatexInstall(install);
+  const failed = !active && (installError !== null || install?.state === "failed");
+  const incomplete = !["pdflatex", "xelatex", "lualatex"].every((compiler) =>
+    report.compilers.some((entry) => entry.compiler === compiler && entry.available),
+  );
+  const additional = hasTools && (incomplete || active || failed);
+  const offer = report.canInstallManaged
+    ? "TinyTeX adds pdfLaTeX, XeLaTeX, and LuaLaTeX as one bundle."
+    : "Automatic installation is unavailable on this platform. Install TeX Live or MiKTeX manually, then check again.";
+  const card =
+    active || failed
+      ? latexSetupCardModel({
+          canInstallManaged: report.canInstallManaged || active,
+          install,
+          requesting,
+          toolchainMissing: !ready,
+        })
+      : null;
+  const installDetail = active
+    ? card!.body
+    : failed
+      ? `TinyTeX installation failed. ${installError ?? card!.body}${ready ? " Existing PDF tools remain available." : ""}`
+      : offer;
+
+  return {
+    kind: active ? "installing" : failed ? "failed" : ready ? "ready" : "missing",
+    summary: ready ? "Ready" : active ? "Installing…" : "Not installed",
+    detail: hasTools ? toolsDetail : installDetail,
+    additionalDetail: additional ? installDetail : null,
+    actionTarget: additional ? "additional" : "tools",
+    actionLabel:
+      active || !canInstall
+        ? null
+        : failed
+          ? "Try again"
+          : hasTools
+            ? "Install additional compilers…"
+            : "Install LaTeX tools…",
+    busy: active,
+  };
 }
