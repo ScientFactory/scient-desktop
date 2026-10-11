@@ -91,8 +91,11 @@ describe("desktop CLI shortcut actions", () => {
   });
 
   it("keeps both legacy actions disabled until failure-state reconciliation completes", async () => {
-    const refresh = Promise.withResolvers<DesktopCliCommandState>();
-    bridge.getState.mockResolvedValueOnce(state).mockImplementation(() => refresh.promise);
+    let resolveRefresh!: (value: DesktopCliCommandState) => void;
+    const refresh = new Promise<DesktopCliCommandState>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    bridge.getState.mockResolvedValueOnce(state).mockImplementation(() => refresh);
     await act(() => root.render(<CliCommandSettingsRow />));
     await act(() => button("Install scient").click());
 
@@ -101,7 +104,7 @@ describe("desktop CLI shortcut actions", () => {
     await act(() => button("Remove legacy shortcut").click());
     expect(bridge.uninstall).not.toHaveBeenCalled();
 
-    await act(() => refresh.resolve(state));
+    await act(() => resolveRefresh(state));
     expect(button("Install scient").disabled).toBe(false);
     expect(button("Remove legacy shortcut").disabled).toBe(false);
   });
