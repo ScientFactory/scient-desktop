@@ -12,6 +12,7 @@ import type { OmpRpcEvent, OmpRpcState } from "effect-omp-rpc/schema";
 import { isRecord } from "effect-omp-rpc/schema";
 import { encodeOmpModelSlug } from "./OmpModel.ts";
 import { makeOmpAssistantContent, type OmpAssistantContentUpdate } from "./OmpAssistantContent.ts";
+import { parseScientSubagent, type ScientSubagentObservation } from "./OmpScientSubagent.ts";
 
 import {
   compileOmpCommandCatalog,
@@ -93,6 +94,11 @@ export type OmpSessionUpdate =
       readonly title: string;
       readonly status: "inProgress" | "completed" | "failed" | "stopped";
       readonly detail?: string;
+      readonly prompt?: string;
+      readonly progress?: string;
+      readonly result?: string;
+      readonly model?: string;
+      readonly presentation?: ScientSubagentObservation["presentation"];
     }
   | { readonly type: "command-output"; readonly delta: string }
   | {
@@ -422,6 +428,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   const seenUnknownEvents = new Set<string>();
   const questions = new Map<string, OmpPendingQuestion>();
   const subagentStatuses = new Map<string, "inProgress" | "completed" | "failed" | "stopped">();
+  const scientSubagents = new Map<string, ScientSubagentObservation>();
   const cancelledHostTools = new Set<string>();
   const cancelledHostUris = new Set<string>();
   const publish = (update: OmpSessionUpdate) => input.onUpdate(update);
@@ -1136,14 +1143,34 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const previous = subagentStatuses.get(id);
         if (previous && previous !== "inProgress") return;
         subagentStatuses.set(id, status);
-        const detail = subagentDetail(event);
-        yield* publish({
-          type: "subagent",
-          id,
-          title: subagentTitle(event) ?? "Subagent",
-          status,
-          ...(detail ? { detail } : {}),
-        });
+        if (input.target.driverKind === "scient") {
+          const observed = parseScientSubagent(event, status !== "inProgress");
+          const prior = scientSubagents.get(id);
+          const title = prior?.title ?? observed.title;
+          const prompt = observed.prompt ?? prior?.prompt;
+          const observation = {
+            ...observed,
+            ...(title === undefined ? {} : { title }),
+            ...(prompt === undefined ? {} : { prompt }),
+          };
+          scientSubagents.set(id, observation);
+          yield* publish({
+            ...observation,
+            type: "subagent",
+            id,
+            title: title ?? "Subagent",
+            status,
+          });
+        } else {
+          const detail = subagentDetail(event);
+          yield* publish({
+            type: "subagent",
+            id,
+            title: subagentTitle(event) ?? "Subagent",
+            status,
+            ...(detail ? { detail } : {}),
+          });
+        }
         return;
       }
       if (event.type === "subagent_event") return;

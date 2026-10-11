@@ -826,6 +826,18 @@ Scient Agent.
   A later Scient subscription is a third source and uses that same private channel: Scient signs
   the user in, and hands the agent an endpoint and a token. Keep account state in Scient, never in
   the agent's root, and keep the provider id `scient` free for it.
+- Native subagents. Scient-only ingestion separates a stable bounded label from the full
+  assignment and changing activity. The shared OMP RPC decoder retains optional aggregate
+  progress fields; Scient projects observed role, tool, model identity, effort and counters
+  into existing V2 records. `tokens` is the cumulative billing-volume counter, not
+  `contextTokens`; missing observations stay missing, including a missing terminal result.
+  Sparse updates retain known metadata without changing child identity or the original
+  background launch's ownership. Native read-only child conversations project the supplied
+  assignment and terminal result as stable message artifacts. Subscription remains
+  `progress`: this does not ingest a full native tool/thinking transcript. Scient chat groups
+  reuse the shared member presentation with bounded labels and child navigation inside the
+  disclosure, including historical oversized titles and temporarily missing roster entries.
+  Codex, Claude and external Oh My Pi keep their existing behavior.
 - Installation. The driver resolves custom, system, or Scient-managed execution once, and uses
   that executable for sessions, model probes, and text generation. Managed binaries live in
   `<baseDir>/provider-runtimes/scient-agent`; account and session roots remain independent. The

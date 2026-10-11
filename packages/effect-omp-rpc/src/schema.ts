@@ -437,6 +437,25 @@ export const OmpSubagentProgress = Schema.Struct({
   id: Schema.String,
   status: Schema.String,
   description: maybeString,
+  index: Schema.optional(Schema.Finite),
+  agent: maybeString,
+  task: maybeString,
+  assignment: maybeString,
+  lastIntent: maybeString,
+  currentToolIntent: maybeString,
+  currentTool: maybeString,
+  recentTools: maybeUnknown,
+  recentOutput: maybeUnknown,
+  // Optional observations stay tolerant; consumers validate individual counters.
+  toolCount: maybeUnknown,
+  tokens: maybeUnknown,
+  durationMs: maybeUnknown,
+  contextTokens: maybeUnknown,
+  contextWindow: maybeUnknown,
+  resolvedModelIdentity: maybeString,
+  resolvedModel: maybeString,
+  resolvedThinkingLevel: maybeString,
+  retryFailure: maybeUnknown,
 });
 export type OmpSubagentProgress = typeof OmpSubagentProgress.Type;
 
@@ -449,6 +468,14 @@ export const OmpSubagentLifecyclePayload = Schema.Struct({
   index: Schema.optional(Schema.Finite),
   parentToolCallId: maybeString,
   sessionFile: maybeString,
+  task: maybeString,
+  assignment: maybeString,
+  progress: maybeUnknown,
+  output: maybeString,
+  result: maybeUnknown,
+  error: maybeString,
+  abortReason: maybeString,
+  message: maybeString,
 });
 export type OmpSubagentLifecyclePayload = typeof OmpSubagentLifecyclePayload.Type;
 

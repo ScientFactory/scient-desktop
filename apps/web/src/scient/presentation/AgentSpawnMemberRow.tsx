@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from "react";
+import { useState, type ComponentType, type ReactNode } from "react";
 import {
   formatSubagentModelLabel,
   formatSubagentTokenCount,
@@ -9,6 +9,12 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { cn } from "~/lib/utils";
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
+
+/** Saved Scient titles can contain a complete Markdown assignment. */
+export function compactScientAgentLabel(value: string): string {
+  const line = value.replace(/\s+/gu, " ").trim() || "Subagent";
+  return line.length > 80 ? `${line.slice(0, 77)}…` : line;
+}
 
 const AGENT_MEMBER_STATUS_LABEL: Record<RuntimeSubagent["status"], string> = {
   pending: "Working",
@@ -27,12 +33,19 @@ export function AgentSpawnMemberRow({
   WorkingTimer,
   failedToolIconClassName,
   toolCallExpandedBodyClassName,
+  scientDetail,
 }: {
   agent: RuntimeSubagent;
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
   WorkingTimer: ComponentType<{ createdAt: string }>;
   failedToolIconClassName: string;
   toolCallExpandedBodyClassName: string;
+  scientDetail?:
+    | {
+        assignment?: string | undefined;
+        action?: ReactNode;
+      }
+    | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const activeStatus = isActiveSubagentStatus(agent.status);
@@ -45,7 +58,8 @@ export function AgentSpawnMemberRow({
       : null;
   const meta = [
     durationMs !== null && durationMs >= 0 ? formatDuration(durationMs) : null,
-    agent.usage?.totalTokens !== undefined && agent.usage.totalTokens > 0
+    agent.usage?.totalTokens !== undefined &&
+    (scientDetail !== undefined || agent.usage.totalTokens > 0)
       ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
       : null,
   ]
@@ -64,25 +78,37 @@ export function AgentSpawnMemberRow({
       ? agent.role
       : null;
   const firstLine = activity?.split("\n").find((line) => line.trim().length > 0) ?? null;
-  const body = [activity?.trim() || null, formatSubagentModelLabel(agent.model, agent.effort)]
-    .filter(Boolean)
-    .join("\n\n");
+  const label = scientDetail ? compactScientAgentLabel(agent.title) : agent.title;
+  const body = scientDetail
+    ? [
+        scientDetail.assignment?.trim() ? `Assignment\n${scientDetail.assignment}` : null,
+        agent.title !== scientDetail.assignment ? `Title\n${agent.title}` : null,
+        agent.result ? `Result\n${agent.result}` : null,
+        activity && activity !== agent.result ? activity.trim() : null,
+        formatSubagentModelLabel(agent.model, agent.effort),
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+    : [activity?.trim() || null, formatSubagentModelLabel(agent.model, agent.effort)]
+        .filter(Boolean)
+        .join("\n\n");
   const canExpand = body.length > 0;
   const toggleOpen = () => {
     onToggleEntry?.(open);
     setOpen((value) => !value);
   };
 
-  return (
+  const row = (
     <div
       role={canExpand ? "button" : undefined}
       tabIndex={canExpand ? 0 : undefined}
-      aria-label={canExpand ? `${agent.title}, ${statusLabel}` : undefined}
+      aria-label={canExpand ? `${label}, ${statusLabel}` : undefined}
       aria-expanded={canExpand ? open : undefined}
       onClick={canExpand ? toggleOpen : undefined}
       onKeyDown={
         canExpand
           ? (e) => {
+              if (scientDetail && e.target !== e.currentTarget) return;
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 toggleOpen();
@@ -92,11 +118,12 @@ export function AgentSpawnMemberRow({
       }
       className={cn(
         "flex flex-col rounded-md px-1 py-1 transition-colors",
+        scientDetail && "min-w-0",
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
     >
-      <div className="flex select-none items-center gap-1.5">
+      <div className={cn("flex select-none items-center gap-1.5", scientDetail && "flex-wrap")}>
         <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm leading-relaxed">
           <span
             className={cn(
@@ -104,7 +131,7 @@ export function AgentSpawnMemberRow({
               agent.status === "failed" ? failedToolIconClassName : "text-foreground/80",
             )}
           >
-            {agent.title}
+            {label}
           </span>
           {role ? (
             <span className="scient-reading-micro max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-muted-foreground">
@@ -112,7 +139,12 @@ export function AgentSpawnMemberRow({
             </span>
           ) : null}
         </p>
-        <span className="scient-reading-compact shrink-0 font-mono tabular-nums text-muted-foreground">
+        <span
+          className={cn(
+            "scient-reading-compact shrink-0 font-mono tabular-nums text-muted-foreground",
+            scientDetail && "max-w-full truncate",
+          )}
+        >
           {activeStatus && agent.startedAt ? (
             <>
               {`${statusLabel} · `}
@@ -124,7 +156,9 @@ export function AgentSpawnMemberRow({
         </span>
       </div>
       {!open && firstLine ? (
-        <p className="truncate text-xs text-muted-foreground">{firstLine}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {scientDetail ? compactScientAgentLabel(firstLine) : firstLine}
+        </p>
       ) : null}
       {open ? (
         <div
@@ -132,9 +166,24 @@ export function AgentSpawnMemberRow({
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className={toolCallExpandedBodyClassName}>{body}</pre>
+          <pre
+            className={cn(
+              toolCallExpandedBodyClassName,
+              scientDetail && "max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]",
+            )}
+          >
+            {body}
+          </pre>
         </div>
       ) : null}
     </div>
+  );
+  return scientDetail ? (
+    <div className="min-w-0">
+      {row}
+      {scientDetail.action}
+    </div>
+  ) : (
+    row
   );
 }

@@ -754,6 +754,13 @@ handles separate text-generation requests. `OmpManagedRuntimeActions.ts`,
 version-cap ownership. Sharing the RPC implementation does not merge the two
 products' executable identities or state.
 
+Scient's native subagent observations and compact chat disclosure are gated by
+`driverKind === "scient"` (and all-Scient groups in the renderer). Preserve the
+separate assignment/label, observed-only progress/model/usage, sparse terminal
+merging and stable native child artifacts. Optional aggregate wire fields belong
+in the shared RPC decoder, not a second Scient transport. Do not broaden the
+presentation cutover to Codex, Claude or external Oh My Pi during upstream merges.
+
 `scient-omp-seams.json` inventories owned code and the anchored `upstreamMounts`
 and shared `scientMounts`; shared integration points are not wholly OMP-owned.
 Analytics sends OMP as the gateway's existing `other` provider and is not a mount.
