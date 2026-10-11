@@ -138,6 +138,7 @@ export const RELEASE_OPENED_CONVERSATION_FILE_CHANNEL = "scient:conversation-imp
 // SCIENT-FORK:END
 // SCIENT-FORK:START — spelling dictionaries follow the language being written.
 export const NOTE_SPELLING_SAMPLE_CHANNEL = "scient:spelling:note-sample";
+export const SPELLING_DICTIONARY_READY_CHANNEL = "scient:spelling:dictionary-ready";
 // SCIENT-FORK:END
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 

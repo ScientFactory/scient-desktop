@@ -16,6 +16,7 @@ const AVAILABLE = [
   "es-ES",
   "fr",
   "fr-FR",
+  "gl",
   "he",
   "it",
   "it-IT",
@@ -29,6 +30,8 @@ const GERMAN = "Die Ergebnisse zeigen eine deutliche Verbesserung der Genauigkei
 const SPANISH = "Los resultados muestran una mejora significativa en la precisión del modelo.";
 const ITALIAN = "I risultati mostrano un miglioramento significativo della precisione del modello.";
 const ENGLISH = "The results show a significant improvement in the accuracy of the model.";
+const GALICIAN =
+  "Os resultados mostran unha mellora significativa na precisión do modelo e na calidade da investigación.";
 
 function setup(preferredLocales: readonly string[], available: readonly string[] = AVAILABLE) {
   const setSpellCheckerLanguages = vi.fn<(languages: string[]) => void>();
@@ -61,6 +64,29 @@ describe("makeDocumentSpelling", () => {
     const { spelling, setSpellCheckerLanguages } = setup(["en-IL", "he-IL", "ja-JP"]);
     expect(setSpellCheckerLanguages).toHaveBeenCalledExactlyOnceWith(["en-US", "he"]);
     expect(spelling.languages()).toEqual(["en-US", "he"]);
+  });
+
+  it("keeps each regional dictionary the system lists", () => {
+    const { spelling } = setup(["en-GB", "en-US"]);
+    expect(spelling.languages()).toEqual(["en-GB", "en-US"]);
+    expect(spelling.noteSample(ENGLISH)).toBe(false);
+  });
+
+  it("tells Galician from Spanish", () => {
+    const { spelling } = setup(["en-US"]);
+    expect(spelling.noteSample(GALICIAN)).toBe(true);
+    expect(spelling.languages()).toEqual(["en-US", "gl"]);
+  });
+
+  it("records a dictionary only once Electron accepted it, so a failure is retried", () => {
+    const { spelling, setSpellCheckerLanguages } = setup(["en-US"]);
+    setSpellCheckerLanguages.mockImplementationOnce(() => {
+      throw new Error("dictionary unavailable");
+    });
+    expect(() => spelling.noteSample(FRENCH)).toThrow("dictionary unavailable");
+    expect(spelling.languages()).toEqual(["en-US"]);
+    expect(spelling.noteSample(FRENCH)).toBe(true);
+    expect(spelling.languages()).toEqual(["en-US", "fr"]);
   });
 
   it("adds the dictionary for a document written in another language", () => {

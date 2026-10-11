@@ -9,6 +9,7 @@ import { franc } from "franc";
 const DICTIONARY_LANGUAGE_BY_DETECTED: Readonly<Record<string, string>> = {
   afr: "af",
   als: "sq",
+  bos: "sh",
   bul: "bg",
   cat: "ca",
   ces: "cs",
@@ -18,6 +19,7 @@ const DICTIONARY_LANGUAGE_BY_DETECTED: Readonly<Record<string, string>> = {
   ell: "el",
   eng: "en",
   fra: "fr",
+  glg: "gl",
   heb: "he",
   hin: "hi",
   hrv: "hr",
@@ -83,15 +85,7 @@ export function dictionaryFor(
   return available.find((dictionary) => baseOf(dictionary) === base) ?? null;
 }
 
-function uniqueByLanguage(dictionaries: readonly string[]): string[] {
-  const seen = new Set<string>();
-  return dictionaries.filter((dictionary) => {
-    const base = baseOf(dictionary);
-    if (seen.has(base)) return false;
-    seen.add(base);
-    return true;
-  });
-}
+const unique = (dictionaries: readonly string[]): string[] => [...new Set(dictionaries)];
 
 /** What Hunspell needs to check spelling as the user writes. */
 export interface SpellcheckSession {
@@ -115,13 +109,19 @@ export function makeDocumentSpelling(
   preferredLocales: readonly string[],
 ): DocumentSpelling {
   const available = session.availableSpellCheckerLanguages;
-  const system = uniqueByLanguage(
+  // Every regional dictionary the user lists stays enabled, such as both
+  // British and American English.
+  const system = unique(
     preferredLocales.flatMap((locale) => dictionaryFor(locale, available, preferredLocales) ?? []),
   ).slice(0, MAX_SYSTEM_LANGUAGES);
   let detected: string[] = [];
-  const languages = () => uniqueByLanguage([...system, ...detected]);
-  const apply = () => session.setSpellCheckerLanguages([...languages()]);
-  if (system.length > 0) apply();
+  const languages = () => unique([...system, ...detected]);
+  // Only what Electron accepted is recorded, so a failed change is retried.
+  const apply = (next: string[]) => {
+    session.setSpellCheckerLanguages(unique([...system, ...next]));
+    detected = next;
+  };
+  if (system.length > 0) apply([]);
 
   return {
     languages,
@@ -141,8 +141,7 @@ export function makeDocumentSpelling(
       }
       const dictionary = dictionaryFor(language, available, preferredLocales);
       if (dictionary === null) return false;
-      detected = [...detected, dictionary].slice(-MAX_DETECTED_LANGUAGES);
-      apply();
+      apply([...detected, dictionary].slice(-MAX_DETECTED_LANGUAGES));
       return true;
     },
   };

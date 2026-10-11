@@ -1,17 +1,17 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { installSpellingSampler } from "./preloadSampler.ts";
+import { installSpellingSampler, recheckFocusedField } from "./preloadSampler.ts";
 
 const FRENCH = "Les résultats montrent une amélioration significative.";
 const GERMAN = "Die Ergebnisse zeigen eine deutliche Verbesserung.";
 
-let send: ReturnType<typeof vi.fn<(sample: string) => void>>;
+let send: ReturnType<typeof vi.fn<(sample: string) => Promise<boolean>>>;
 let uninstall: () => void;
 
 beforeEach(() => {
   vi.useFakeTimers();
-  send = vi.fn<(sample: string) => void>();
+  send = vi.fn<(sample: string) => Promise<boolean>>().mockResolvedValue(false);
   uninstall = installSpellingSampler(send, window);
 });
 
@@ -30,11 +30,74 @@ function typeInto(element: Element, caretIn: Node) {
   element.dispatchEvent(new InputEvent("input", { bubbles: true }));
 }
 
+/**
+ * The spellcheck value before each change to a field. Passing through "false"
+ * is what makes Chromium check the field again.
+ */
+function watchSpellcheck(element: Element): (string | null)[] {
+  const previousValues: (string | null)[] = [];
+  new MutationObserver((records) => {
+    for (const record of records) previousValues.push(record.oldValue);
+  }).observe(element, { attributeFilter: ["spellcheck"], attributeOldValue: true });
+  return previousValues;
+}
+
 describe("installSpellingSampler", () => {
   it("sends a rich editor's text when it gains focus, without its code", () => {
     document.body.innerHTML = `<div contenteditable="true"><p>${FRENCH}</p><pre spellcheck="false"><code>const value = computeSomething();</code></pre><p>Fin.</p></div>`;
     focus(document.querySelector("p")!);
     expect(send).toHaveBeenCalledExactlyOnceWith(`${FRENCH} Fin.`);
+  });
+
+  it("leaves out parts that are not editable, such as code blocks", () => {
+    document.body.innerHTML = `<div contenteditable="true"><div contenteditable="false"><pre>${GERMAN}</pre></div><p>${FRENCH}</p></div>`;
+    focus(document.querySelector("p")!);
+    expect(send).toHaveBeenCalledExactlyOnceWith(FRENCH);
+  });
+
+  it("does not send a paragraph typed inside a part without spellcheck", () => {
+    document.body.innerHTML = `<div contenteditable="true"><blockquote spellcheck="false"><p>${GERMAN}</p></blockquote></div>`;
+    typeInto(document.querySelector("div")!, document.querySelector("p")!.firstChild!);
+    vi.advanceTimersByTime(1_500);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the field once a dictionary was added, restoring its spellcheck setting", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea spellcheck="true">${GERMAN}</textarea>`;
+    const [plain, explicit] = document.querySelectorAll("textarea");
+    const plainValues = watchSpellcheck(plain!);
+    const explicitValues = watchSpellcheck(explicit!);
+    send.mockResolvedValue(true);
+    focus(plain!);
+    focus(explicit!);
+    await vi.runAllTimersAsync();
+    expect(plainValues).toEqual([null, "false"]);
+    expect(plain!.hasAttribute("spellcheck")).toBe(false);
+    expect(explicitValues).toEqual(["true", "false"]);
+    expect(explicit!.getAttribute("spellcheck")).toBe("true");
+  });
+
+  it("leaves the field alone when no dictionary was added", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea>`;
+    const values = watchSpellcheck(document.querySelector("textarea")!);
+    focus(document.querySelector("textarea")!);
+    await vi.runAllTimersAsync();
+    expect(values).toEqual([]);
+  });
+
+  it("rechecks the focused field when a dictionary becomes ready, and nothing else", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea spellcheck="false">${GERMAN}</textarea>`;
+    const [field, unchecked] = document.querySelectorAll("textarea");
+    const values = watchSpellcheck(field!);
+    const uncheckedValues = watchSpellcheck(unchecked!);
+    recheckFocusedField(document);
+    field!.focus();
+    recheckFocusedField(document);
+    unchecked!.focus();
+    recheckFocusedField(document);
+    await vi.runAllTimersAsync();
+    expect(values).toEqual([null, "false"]);
+    expect(uncheckedValues).toEqual([]);
   });
 
   it("sends the paragraph being typed once typing pauses", () => {

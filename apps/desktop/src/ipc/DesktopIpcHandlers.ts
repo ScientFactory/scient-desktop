@@ -1,5 +1,7 @@
 import { setUnreadAnswerCount } from "../scient/answerAttention/ipc.ts";
+// SCIENT-FORK:START — spelling dictionaries follow the language being written.
 import { noteSpellingSample } from "../scient/spelling/ipc.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — conversation files the OS opened with Scient.
 import {
   cancelOpenedConversationFileUpload,
@@ -101,7 +103,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(setUnreadAnswerCount);
+  // SCIENT-FORK:START — spelling dictionaries follow the language being written.
   yield* ipc.handle(noteSpellingSample);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — conversation files the OS opened with Scient.
   yield* ipc.handle(takeOpenedConversationFiles);
   yield* ipc.handle(uploadOpenedConversationFile);

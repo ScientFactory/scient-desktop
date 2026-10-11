@@ -11,7 +11,7 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { makeDesktopVoiceBridge } from "./scient/voice/preloadBridge.ts";
-import { installSpellingSampler } from "./scient/spelling/preloadSampler.ts";
+import { installSpellingSampler, recheckFocusedField } from "./scient/spelling/preloadSampler.ts";
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -37,9 +37,13 @@ const clientPlatform = process.platform;
 
 // SCIENT-FORK:START — spelling dictionaries follow the language being written.
 if (clientPlatform !== "darwin") {
-  installSpellingSampler((sample) => {
-    ipcRenderer.invoke(IpcChannels.NOTE_SPELLING_SAMPLE_CHANNEL, sample).catch(() => {});
-  });
+  installSpellingSampler((sample) =>
+    ipcRenderer
+      .invoke(IpcChannels.NOTE_SPELLING_SAMPLE_CHANNEL, sample)
+      .then((added) => added === true)
+      .catch(() => false),
+  );
+  ipcRenderer.on(IpcChannels.SPELLING_DICTIONARY_READY_CHANNEL, () => recheckFocusedField());
 }
 // SCIENT-FORK:END
 
