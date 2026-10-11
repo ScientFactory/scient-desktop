@@ -136,6 +136,9 @@ export const CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL =
   "scient:conversation-import:cancel-upload-opened";
 export const RELEASE_OPENED_CONVERSATION_FILE_CHANNEL = "scient:conversation-import:release-opened";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — spelling dictionaries follow the language being written.
+export const NOTE_SPELLING_SAMPLE_CHANNEL = "scient:spelling:note-sample";
+// SCIENT-FORK:END
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
