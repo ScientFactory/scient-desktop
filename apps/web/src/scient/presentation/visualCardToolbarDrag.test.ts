@@ -36,10 +36,15 @@ beforeEach(() => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      observe = vi.fn();
-      disconnect = vi.fn();
-      constructor(callback: () => void) {
-        observers.push({ fire: callback, disconnect: this.disconnect });
+      readonly observed = new Set<Element>();
+      observe = (element: Element) => this.observed.add(element);
+      unobserve = (element: Element) => this.observed.delete(element);
+      disconnect = vi.fn(() => this.observed.clear());
+      constructor(callback: (entries: readonly Pick<ResizeObserverEntry, "target">[]) => void) {
+        observers.push({
+          fire: () => callback(Array.from(this.observed, (target) => ({ target }))),
+          disconnect: this.disconnect,
+        });
       }
     },
   );

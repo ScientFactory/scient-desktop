@@ -2,9 +2,15 @@ import {
   AuthDiagnosticsReadScope,
   AuthEnvironmentMaintainScope,
   AuthFilesystemReadScope,
+  AuthPreviewOperateScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
+  AuthTerminalReadScope,
+  CommandId,
+  ProjectId,
+  ProjectMutationError,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentFilePath,
   type AuthEnvironmentScope,
@@ -155,6 +161,71 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires source control writes to start, retry, or cancel project clones", () => {
+    for (const method of [
+      WS_METHODS.projectCloneStart,
+      WS_METHODS.projectCloneRetry,
+      WS_METHODS.projectCloneCancel,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSourceControlWriteScope);
+    }
+    expect(requiredScopeForRpcMethod(WS_METHODS.subscribeProjectClones)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
+  it("separates viewing pull request file progress from writing it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsFilesViewed)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsSetFilesViewed)).toBe(
+      AuthSourceControlWriteScope,
+    );
+  });
+
+  it("separates preview control from observation", () => {
+    for (const method of [
+      WS_METHODS.previewOpen,
+      WS_METHODS.previewNavigate,
+      WS_METHODS.previewResize,
+      WS_METHODS.previewRefresh,
+      WS_METHODS.previewClose,
+      WS_METHODS.previewReportStatus,
+      WS_METHODS.previewAdjust,
+      WS_METHODS.previewClearProfile,
+      WS_METHODS.previewReportProfiles,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthPreviewOperateScope);
+    }
+    for (const method of [
+      WS_METHODS.previewList,
+      WS_METHODS.subscribePreviewEvents,
+      WS_METHODS.subscribeDiscoveredLocalServers,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
+  it("separates passive terminal observation from operations that can change a shell", () => {
+    for (const method of [
+      WS_METHODS.terminalObserve,
+      WS_METHODS.subscribeTerminalEvents,
+      WS_METHODS.subscribeTerminalMetadata,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
+    }
+    for (const method of [
+      WS_METHODS.terminalAttach,
+      WS_METHODS.terminalOpen,
+      WS_METHODS.terminalWrite,
+      WS_METHODS.terminalResize,
+      WS_METHODS.terminalClear,
+      WS_METHODS.terminalRestart,
+      WS_METHODS.terminalClose,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
+    }
+  });
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(
@@ -494,5 +565,141 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       });
     }
     expect(handled).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("denies manual cleanup before the handler without settings permission", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.serverRunStorageCleanup
+        > => tag !== WS_METHODS.serverRunStorageCleanup,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.serverRunStorageCleanup, () =>
+            Effect.sync(() => {
+              handled = true;
+              return {
+                trigger: "manual" as const,
+                startedAt: "2026-10-09T12:00:00.000Z",
+                finishedAt: "2026-10-09T12:00:00.000Z",
+                entries: [],
+                counts: { removed: 0, kept: 0, failed: 0 },
+                omittedCount: 0,
+                bytesFreed: 0,
+              };
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthSettingsWriteScope,
+    });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("requires filesystem read authority before inspecting host metadata", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.filesystemGetMetadata
+        > => tag !== WS_METHODS.filesystemGetMetadata,
+      ),
+    );
+    const inspected: string[][] = [];
+    const handlers = group.toLayerHandler(WS_METHODS.filesystemGetMetadata, (input) =>
+      Effect.sync(() => {
+        inspected.push([...input.paths]);
+        return { entries: [{ kind: "directory" as const }] };
+      }),
+    );
+    const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.mergeAll(handlers, RpcAuthorization.layer(scopes))),
+      );
+    const operator = yield* clientWith([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+    expect(
+      yield* operator[WS_METHODS.filesystemGetMetadata]({ paths: ["/tmp/metadata-fixture"] }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthFilesystemReadScope });
+    expect(inspected).toEqual([]);
+    const reader = yield* clientWith([AuthFilesystemReadScope]);
+    expect(
+      yield* reader[WS_METHODS.filesystemGetMetadata]({ paths: ["/tmp/metadata-fixture"] }),
+    ).toEqual({ entries: [{ kind: "directory" }] });
+    expect(inspected).toEqual([["/tmp/metadata-fixture"]]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("requires settings authority as well as project authority for script mutations", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.projectsMutate> =>
+          tag !== WS_METHODS.projectsMutate,
+      ),
+    );
+    let handled = 0;
+    const handlers = group.toLayerHandler(WS_METHODS.projectsMutate, (mutation) =>
+      Effect.sync(() => {
+        handled++;
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ProjectMutationError({
+              commandId: mutation.commandId,
+              message: "Synthetic project-store failure after authorization.",
+            }),
+          ),
+        ),
+      ),
+    );
+    const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.mergeAll(handlers, RpcAuthorization.layer(scopes))),
+      );
+    const mutation = {
+      type: "project.update" as const,
+      commandId: CommandId.make("command:script-scope"),
+      projectId: ProjectId.make("project:script-scope"),
+      scripts: [],
+    };
+    const operator = yield* clientWith([AuthOrchestrationOperateScope]);
+    expect(yield* operator[WS_METHODS.projectsMutate](mutation).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthSettingsWriteScope,
+    });
+    const settingsWriter = yield* clientWith([AuthSettingsWriteScope]);
+    expect(
+      yield* settingsWriter[WS_METHODS.projectsMutate](mutation).pipe(Effect.flip),
+    ).toMatchObject({
+      requiredPermission: AuthOrchestrationOperateScope,
+    });
+    expect(handled).toBe(0);
+    const authorized = yield* clientWith([AuthOrchestrationOperateScope, AuthSettingsWriteScope]);
+    expect(yield* authorized[WS_METHODS.projectsMutate](mutation).pipe(Effect.flip)).toMatchObject({
+      _tag: "ProjectMutationError",
+    });
+    expect(handled).toBe(1);
+    const ordinary = { ...mutation, scripts: undefined, title: "Renamed" };
+    expect(yield* operator[WS_METHODS.projectsMutate](ordinary).pipe(Effect.flip)).toMatchObject({
+      _tag: "ProjectMutationError",
+    });
+    expect(handled).toBe(2);
   }).pipe(Effect.scoped),
 );

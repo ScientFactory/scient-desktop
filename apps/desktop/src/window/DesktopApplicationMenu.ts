@@ -58,6 +58,13 @@ const zoomMainWindow = Effect.fn("desktop.menu.zoomMainWindow")(function* (
   yield* desktopWindow.zoomMain(direction);
 });
 
+const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(function* (
+  command: DesktopWindow.MainWindowContentsCommand,
+): Effect.fn.Return<void, DesktopWindow.DesktopWindowError, DesktopWindow.DesktopWindow> {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.runMainContentsCommand(command);
+});
+
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -156,9 +163,8 @@ export const make = Effect.gen(function* () {
     const zoomClick = (direction: DesktopWindow.MainWindowZoomDirection) => () => {
       runMenuEffect(`zoom-${direction}`, zoomMainWindow(direction));
     };
-    const reloadClick = (ignoreCache: boolean) => () => {
-      const action = ignoreCache ? "force-reload-main" : "reload-main";
-      runMenuEffect(action, dispatchMenuAction(action));
+    const mainContentsClick = (command: DesktopWindow.MainWindowContentsCommand) => () => {
+      runMenuEffect(command, runMainContentsCommand(command));
     };
     const template: Electron.MenuItemConstructorOptions[] = [];
 
@@ -241,16 +247,24 @@ export const make = Effect.gen(function* () {
       {
         label: "View",
         submenu: [
-          { label: "Reload", accelerator: "CmdOrCtrl+R", click: reloadClick(false) },
-          { label: "Force Reload", accelerator: "Shift+CmdOrCtrl+R", click: reloadClick(true) },
-          { role: "toggleDevTools" },
-          { type: "separator" },
           /*
-            Not the zoom roles: those act on the focused webContents, so with
-            an embedded preview WebContentsView focused they zoom the guest
-            page and the app UI appears stuck. These always zoom the main
-            window (see DesktopWindow.zoomMain).
+            Not the reload, DevTools or zoom roles: those act on the focused
+            webContents, so with a browser page focused they reload or zoom
+            the guest page and the app UI appears stuck. These always target
+            the main window (see DesktopWindow.zoomMain).
           */
+          { label: "Reload", accelerator: "CmdOrCtrl+R", click: mainContentsClick("reload") },
+          {
+            label: "Force Reload",
+            accelerator: "Shift+CmdOrCtrl+R",
+            click: mainContentsClick("forceReload"),
+          },
+          {
+            label: "Toggle Developer Tools",
+            accelerator: environment.platform === "darwin" ? "Alt+Command+I" : "Ctrl+Shift+I",
+            click: mainContentsClick("toggleDevTools"),
+          },
+          { type: "separator" },
           { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: zoomClick("reset") },
           { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: zoomClick("in") },
           {

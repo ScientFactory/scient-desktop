@@ -5,6 +5,10 @@ import {
   type ScientDocumentHostResponse,
   type ScientDocumentHostStreamEvent,
 } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
@@ -61,8 +65,9 @@ function mount(
     requestsAtom,
     requestHandlerAtom,
     respond,
+    // A stream atom marks every emission as waiting while its stream stays open.
     emit: (value: ScientDocumentHostStreamEvent) =>
-      registry.set(requestsAtom, AsyncResult.success(value)),
+      registry.set(requestsAtom, AsyncResult.success(value, { waiting: true })),
   };
 }
 
@@ -186,6 +191,44 @@ describe("controlled document request consumption", () => {
     finish!();
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(host.respond).not.toHaveBeenCalled();
+  });
+
+  it("consumes requests from an open stream-backed host connection", async () => {
+    let queue: Queue.Queue<ScientDocumentHostStreamEvent, Cause.Done> | undefined;
+    const requestsAtom = Atom.make(
+      Stream.callback<ScientDocumentHostStreamEvent>((opened) =>
+        Effect.sync(() => {
+          queue = opened;
+        }),
+      ),
+    );
+    const handle = vi.fn(async (value: ScientDocumentHostRequest) => value.requestId);
+    const requestHandlerAtom = Atom.make<ScientDocumentRequestHandler>({ handle });
+    const respond = vi.fn(async (_response: ScientDocumentHostResponse) => undefined);
+    const registry = AtomRegistry.make();
+    registries.push(registry);
+    registry.mount(
+      createScientDocumentHostRequestConsumerAtom({
+        requestsAtom,
+        clientId: "client-1",
+        environmentId,
+        requestHandlerAtom,
+        respond,
+      }),
+    );
+    await vi.waitFor(() => expect(queue).toBeDefined());
+    Queue.offerUnsafe(queue!, { type: "connected", connectionId: "connection-1" });
+    await vi.waitFor(() => expect(AsyncResult.isSuccess(registry.get(requestsAtom))).toBe(true));
+    expect(registry.get(requestsAtom).waiting).toBe(true);
+    Queue.offerUnsafe(queue!, event("live-1"));
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1));
+    Queue.offerUnsafe(queue!, event("live-2"));
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(2));
+    expect(registry.get(requestsAtom).waiting).toBe(true);
+    expect(respond.mock.calls.map(([value]) => [value.connectionId, value.requestId])).toEqual([
+      ["connection-1", "live-1"],
+      ["connection-1", "live-2"],
+    ]);
   });
 
   it("returns typed public failures while keeping arbitrary renderer causes private", async () => {

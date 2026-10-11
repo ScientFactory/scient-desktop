@@ -9,7 +9,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
-import { makePiRpcConnection } from "./PiRpc.ts";
+import { makePiRpcConnection } from "@t3tools/provider-pi/testing";
 import { FAKE_PID } from "./PiAdapterV2.fixture.ts";
 
 describe("PiRpc framing", () => {

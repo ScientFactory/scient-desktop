@@ -2,7 +2,7 @@
 // @effect-diagnostics globalDate:off -- test uses process.hrtime for unique temp directories.
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import {
@@ -83,8 +83,8 @@ describe("Python filesystem inventory", () => {
       });
       expect(rows.map((row) => row.executable)).toEqual(["/venv/bin/python", "/system/python"]);
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "darwin"),
-      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, {}),
       Effect.provideService(SpawnExecutableResolution, (command) =>
         command === "python3" || command === "python" || command === "/system/python"
           ? "/system/python"
@@ -126,8 +126,8 @@ describe("Python filesystem inventory", () => {
         },
       ]);
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "darwin"),
-      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, {}),
       Effect.provideService(SpawnExecutableResolution, () => "/managed/python"),
     ),
   );
@@ -168,8 +168,8 @@ describe("Python filesystem inventory", () => {
       available = false;
       expect((yield* adapter.listInstallations!(request))[0]?.problem).toContain("repair");
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "darwin"),
-      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, {}),
       Effect.provideService(SpawnExecutableResolution, (command) =>
         command.startsWith("/") ? command : undefined,
       ),
@@ -196,8 +196,8 @@ describe("Python filesystem inventory", () => {
         { executable: "/usr/bin/python3", source: "path", version: null, problem: null },
       ]);
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "darwin"),
-      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, {}),
       Effect.provideService(SpawnExecutableResolution, (command) =>
         command === "python3" ? "/usr/bin/python3" : undefined,
       ),

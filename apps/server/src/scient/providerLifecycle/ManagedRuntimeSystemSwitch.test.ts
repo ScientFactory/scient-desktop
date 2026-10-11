@@ -13,13 +13,13 @@ import {
 import {
   AntigravitySettings,
   ClaudeSettings,
-  CursorSettings,
   DroidSettings,
-  GrokSettings,
   OmpSettings,
-  PiSettings,
 } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { CursorSettings } from "@t3tools/provider-cursor/settings";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
+import { PiSettings } from "@t3tools/provider-pi/settings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterEach, describe, expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -241,8 +241,8 @@ const planChanged = (provider: ProviderCase) =>
 
 const onDarwinArm = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices>) =>
   effect.pipe(
-    Effect.provideService(HostProcessPlatform, target.platform),
-    Effect.provideService(HostProcessArchitecture, target.arch),
+    Effect.provideService(HostProcess.Platform, target.platform),
+    Effect.provideService(HostProcess.Architecture, target.arch),
     Effect.provide(NodeServices.layer),
   );
 
@@ -560,8 +560,8 @@ describe("switching from a system runtime to the Scient-managed one", () => {
           message: olderSwitch(provider, newer),
         });
       }).pipe(
-        Effect.provideService(HostProcessPlatform, target.platform),
-        Effect.provideService(HostProcessArchitecture, target.arch),
+        Effect.provideService(HostProcess.Platform, target.platform),
+        Effect.provideService(HostProcess.Architecture, target.arch),
         Effect.provide(NodeServices.layer),
       ),
   );
@@ -585,8 +585,8 @@ describe("switching from a system runtime to the Scient-managed one", () => {
         expect(plan.message).toContain(`${runtimeName(provider)} ${managed}`);
         expect(plan.message).toContain(`system installation (${older})`);
       }).pipe(
-        Effect.provideService(HostProcessPlatform, target.platform),
-        Effect.provideService(HostProcessArchitecture, target.arch),
+        Effect.provideService(HostProcess.Platform, target.platform),
+        Effect.provideService(HostProcess.Architecture, target.arch),
         Effect.provide(NodeServices.layer),
       ),
   );
@@ -610,8 +610,8 @@ describe("switching from a system runtime to the Scient-managed one", () => {
       });
       expect(plan.catalogRevision).toMatch(/:system-version-unknown$/u);
     }).pipe(
-      Effect.provideService(HostProcessPlatform, target.platform),
-      Effect.provideService(HostProcessArchitecture, target.arch),
+      Effect.provideService(HostProcess.Platform, target.platform),
+      Effect.provideService(HostProcess.Architecture, target.arch),
       Effect.provide(NodeServices.layer),
     ),
   );

@@ -6,11 +6,7 @@ import * as NodePath from "node:path";
 
 import { ComputeRuntimeError, REQUIRED_COMPUTE_CAPABILITIES } from "@scientfactory/compute";
 import { ExecutionRunId } from "@scientfactory/execution";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -156,7 +152,7 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
   >,
 ) {
   const processes = yield* ExecutionProcess;
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const hostEnvironment = yield* HostProcess.Environment;
   const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
   const runCounter = yield* Ref.make(0);
 
@@ -311,9 +307,9 @@ export const matlabRuntimeBinding: Effect.Effect<
   const preferences = yield* ScientificRuntimePreferences;
   const processes = yield* ExecutionProcess;
   const duplexProcesses = yield* DuplexProcess;
-  const hostEnvironment = yield* HostProcessEnvironment;
-  const platform = yield* HostProcessPlatform;
-  const arch = yield* HostProcessArchitecture;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
+  const arch = yield* HostProcess.Architecture;
   const recipeNetwork = yield* ComputeRecipeNetwork;
   const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
   const helper = yield* Effect.tryPromise({

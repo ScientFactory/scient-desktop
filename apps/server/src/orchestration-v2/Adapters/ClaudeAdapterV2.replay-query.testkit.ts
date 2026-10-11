@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Stream from "effect/Stream";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import {
   type ClaudeQueryOpenFrame,
   type ClaudePromptOfferFrame,

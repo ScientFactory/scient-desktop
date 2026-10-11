@@ -9,7 +9,7 @@ import * as Cause from "effect/Cause";
 import { useCallback } from "react";
 
 import { usePrimaryEnvironment } from "../state/environments";
-import { useEnvironmentQuery } from "../state/query";
+import { useEnvironmentQuery, useEnvironmentSubscription } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -31,7 +31,7 @@ export function useResourceTelemetry(
       ? (primaryEnvironment?.environmentId ?? null)
       : targetEnvironmentId;
   const canReadDiagnostics = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
-  const query = useEnvironmentQuery(
+  const query = useEnvironmentSubscription(
     environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.resourceTelemetry({ environmentId, input: {} }),

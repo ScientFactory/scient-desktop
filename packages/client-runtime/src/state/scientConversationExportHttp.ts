@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import type { ScientConversationExportRequest, ThreadId } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -27,8 +27,7 @@ export const prepareEnvironmentConversationExport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/conversation-export/v1/prepare"),
+    url: (urls) => urls.prepare(),
     timeoutMs: PREPARE_TIMEOUT_MS,
     group: "scientConversationExport",
     request: ({ client, headers }) =>
@@ -49,8 +48,7 @@ export const exportEnvironmentConversation = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/conversation-export/v1/export"),
+    url: (urls) => urls.export(),
     timeoutMs: EXPORT_TIMEOUT_MS,
     group: "scientConversationExport",
     request: ({ client, headers }) => client.export({ headers, payload: input.request }),
@@ -70,8 +68,7 @@ export const prepareEnvironmentConversationWordDiagrams = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/conversation-export/v1/word-diagrams"),
+    url: (urls) => urls.prepareWordDiagrams(),
     timeoutMs: EXPORT_TIMEOUT_MS,
     group: "scientConversationExport",
     request: ({ client, headers }) =>

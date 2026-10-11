@@ -1,0 +1,64 @@
+import type { WorkLogPresentationEntry } from "@t3tools/client-runtime/work-log/presentation";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  groupTraceIconOverride,
+  isScientSkillTool,
+  traceCommandKind,
+  traceIconOverride,
+} from "./traceIcons";
+
+const tool = (fields: Partial<WorkLogPresentationEntry>): WorkLogPresentationEntry => ({
+  id: "entry",
+  createdAt: "2026-10-07T00:00:00.000Z",
+  label: "Tool call",
+  tone: "tool" as const,
+  ...fields,
+});
+
+describe("trace icons", () => {
+  it("reads a command's program", () => {
+    expect(traceCommandKind("ls -la src")).toBe("list");
+    expect(traceCommandKind("cd app && tree -L 2")).toBe("list");
+    expect(traceCommandKind("curl -s https://example.com")).toBe("fetch");
+    expect(traceCommandKind("pnpm test")).toBeNull();
+    expect(traceCommandKind(undefined)).toBeNull();
+  });
+
+  it("recognizes Scient's skill tools in every provider's spelling", () => {
+    for (const name of [
+      "scient_skills_list",
+      "scient_skill_load",
+      "mcp__t3-code__scient_skill_read_resource",
+      "t3-code · scient_skills_list",
+    ]) {
+      expect(isScientSkillTool([name])).toBe(true);
+    }
+    expect(isScientSkillTool(["scient_sources_list", "skill", undefined])).toBe(false);
+  });
+
+  it("picks an icon from what an action did", () => {
+    expect(traceIconOverride(tool({ itemType: "approval_request", tone: "info" }))).toBe("shield");
+    expect(traceIconOverride(tool({ toolData: { toolName: "scient_skill_load" } }))).toBe("skill");
+    expect(traceIconOverride(tool({ viewedImagePath: "plot.png" }))).toBe("image");
+    expect(traceIconOverride(tool({ toolTitle: "glob" }))).toBe("folder");
+    expect(traceIconOverride(tool({ itemType: "command_execution", command: "ls" }))).toBe(
+      "folder",
+    );
+    expect(traceIconOverride(tool({ itemType: "command_execution", command: "wget x" }))).toBe(
+      "globe",
+    );
+    expect(
+      traceIconOverride(tool({ itemType: "command_execution", command: "make" })),
+    ).toBeUndefined();
+  });
+
+  it("gives a group the icon all of its actions share", () => {
+    const approval = tool({ itemType: "approval_request", tone: "info" });
+    expect(groupTraceIconOverride([approval, approval])).toBe("shield");
+    expect(
+      groupTraceIconOverride([approval, tool({ viewedImagePath: "plot.png" })]),
+    ).toBeUndefined();
+    expect(groupTraceIconOverride([])).toBeUndefined();
+  });
+});

@@ -231,9 +231,11 @@ Manual acceptance should exercise these cases in an isolated candidate:
    steer rows using the existing controls.
 5. Stop with multiple messages queued. Visit another task, return, and restart
    the candidate: nothing should send. Send a new ordinary message; the existing
-   queue remains held after that answer. Reorder while idle, then Send the head;
-   only that row is released. Resume the tail and verify automatic FIFO delivery
-   after each successful finalized answer. Check failed delivery/Retry separately. Exercise reload
+   queue is released and follows that message automatically. Stop again with
+   several queued messages, reorder while idle, then Send a later held row;
+   that row starts first and the remaining queue is released in its retained
+   order (automatic completions first). Verify delivery after each successful
+   finalized answer and check failed delivery/Retry separately. Exercise reload
    during editing, another window, and lost responses; inspect for missing or
    duplicated user messages and retained drafts.
 6. Stash and restore an edit through the usual menu. Reload immediately after

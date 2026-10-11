@@ -1,4 +1,4 @@
-// Real SVG/XML decoding and PNG encoding. No visible window, user data or clipboard writes.
+// Real SVG/XML decoding, iframe image copying and PNG encoding. No visible window, user data or clipboard writes.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -354,6 +354,122 @@ async function run() {
       180_000,
       () => `Chromium export smoke test timed out while ${phase}`,
     );
+    phase = "copying real iframe SVG, AVIF and GIF images";
+    const { build } = await import(webRequire.resolve("vite"));
+    const copyModuleDirectory = NodePath.join(state, "image-copy");
+    await build({
+      configFile: false,
+      root: NodeURL.fileURLToPath(new URL("../", import.meta.url)),
+      logLevel: "error",
+      build: {
+        outDir: copyModuleDirectory,
+        emptyOutDir: false,
+        lib: {
+          entry: NodeURL.fileURLToPath(
+            new URL("../src/window/ContextMenuImage.ts", import.meta.url),
+          ),
+          formats: ["cjs"],
+          fileName: () => "copy.cjs",
+        },
+        rollupOptions: { external: ["electron"] },
+      },
+    });
+    const { copyContextMenuImage } = require(NodePath.join(copyModuleDirectory, "copy.cjs"));
+    const { clipboard, nativeImage } = require("electron");
+    const originalWrite = clipboard.write;
+    let copiedItems;
+    clipboard.write = async (items) => {
+      copiedItems = items;
+    };
+    try {
+      await window.webContents.executeJavaScript(`(async () => {
+        const frame = document.createElement("iframe");
+        frame.name = "context-image-smoke";
+        const { promise, resolve, reject } = Promise.withResolvers();
+        frame.onload = () => resolve();
+        frame.onerror = () => reject(new Error("Iframe did not load"));
+        frame.src = "/__svg_export";
+        document.body.append(frame);
+        await promise;
+      })()`);
+      const frame = window.webContents.mainFrame.frames.find(
+        (candidate) => candidate.name === "context-image-smoke",
+      );
+      NodeAssert.ok(frame, "The image context must belong to a real child frame");
+      const origin = server.resolvedUrls.local[0];
+      // Generated lossless 16x16 red AVIF: magick -size 16x16 xc:red red.png;
+      // avifenc --jobs 1 --speed 10 --lossless red.png red.avif. No runtime encoder dependency.
+      const avif = Buffer.from(
+        "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADrbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAAAAAAAOcGl0bQAAAAAAAQAAAB5pbG9jAAAAAEQAAAEAAQAAAAEAAAETAAAAIwAAAChpaW5mAAAAAAABAAAAGmluZmUCAAAAAAEAAGF2MDFDb2xvcgAAAABqaXBycAAAAEtpcGNvAAAAFGlzcGUAAAAAAAAAEAAAABAAAAAQcGl4aQAAAAADCAgIAAAADGF2MUOBIAAAAAAAE2NvbHJuY2x4AAEAAgAAgAAAABdpcG1hAAAAAAAAAAEAAQQBAoMEAAAAK21kYXQSAAoIOAz/2EBAgCQyFRAAADlQuyR31O+6tWc5zGiOWrPXkA==",
+        "base64",
+      );
+      const svg = Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="red"/><image x="15" y="15" href="${origin}__external_image" width="1" height="1"/><script>fetch("${origin}__external_image")</script></svg>`,
+      );
+      const gif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAkQBADs=", "base64");
+      const formats = [];
+      for (const [name, mimeType, bytes, size, pixel] of [
+        ["SVG", "image/svg+xml", svg, 16, [255, 0, 0, 255]],
+        ["AVIF", "image/avif", avif, 16, [255, 0, 0, 255]],
+        ["GIF", "image/gif", gif, 1, [0, 0, 0, 255]],
+      ]) {
+        savedImage = bytes;
+        savedType = mimeType;
+        const srcURL = `${origin}__saved_svg?clipboard=${name}`;
+        await frame.executeJavaScript(`(async () => {
+          const image = new Image();
+          const { promise, resolve, reject } = Promise.withResolvers();
+          image.onload = () => resolve();
+          image.onerror = () => reject(new Error("Source image did not render"));
+          image.src = ${JSON.stringify(srcURL)};
+          document.body.replaceChildren(image);
+          await promise;
+        })()`);
+        copiedItems = undefined;
+        await copyContextMenuImage(window.webContents, { frame, srcURL, x: 0, y: 0 });
+        NodeAssert.equal(copiedItems?.length, 1);
+        const blob = await copiedItems[0].getType("image/png");
+        const png = Buffer.from(await blob.arrayBuffer());
+        NodeAssert.deepEqual(nativeImage.createFromBuffer(png).getSize(), {
+          width: size,
+          height: size,
+        });
+        const rgba = await window.webContents.executeJavaScript(`(async () => {
+          const source = Uint8Array.from(atob("${png.toString("base64")}"), char => char.charCodeAt(0));
+          const bitmap = await createImageBitmap(new Blob([source], { type: "image/png" }));
+          try {
+            const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+            const context = canvas.getContext("2d");
+            context.drawImage(bitmap, 0, 0);
+            return [...context.getImageData(0, 0, 1, 1).data];
+          } finally { bitmap.close(); }
+        })()`);
+        NodeAssert.deepEqual(rgba, pixel, `${name} copy must preserve real decoded pixels`);
+        formats.push(name);
+      }
+      const lastCopy = copiedItems;
+      savedType = "image/svg+xml";
+      savedImage = Buffer.from(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="4096" height="4096"/>',
+      );
+      await NodeAssert.rejects(
+        copyContextMenuImage(window.webContents, {
+          frame,
+          srcURL: `${origin}__saved_svg?clipboard=oversized`,
+          x: 0,
+          y: 0,
+        }),
+        /Image dimensions exceed the size limit/,
+      );
+      NodeAssert.equal(copiedItems, lastCopy, "Rejected SVG must leave the clipboard untouched");
+      results.iframeImageCopy = {
+        formats,
+        exactDimensionsAndPixels: "passed",
+        oversizedSvg: "rejected",
+      };
+    } finally {
+      clipboard.write = originalWrite;
+    }
     NodeAssert.equal(externalRequests, 0, "SVG image fetched external resources");
     console.log(
       JSON.stringify(

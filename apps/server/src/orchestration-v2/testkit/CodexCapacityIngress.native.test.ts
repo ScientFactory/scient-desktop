@@ -20,7 +20,8 @@ import {
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -44,17 +45,21 @@ import { ServerConfig } from "../../config.ts";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { makeCodexAdapterV2 } from "../Adapters/CodexAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import type { CodexAppServerClientFactory } from "../Adapters/CodexAdapterV2.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
-import { ProviderAdapterEventStreamError } from "../ProviderAdapter.ts";
+import { ProviderAdapterEventStreamError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { nativeModelWindowKey } from "../scient-fork/NativeModelContextWindow.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 // SCIENT-FORK:START — failure-only evidence before the synthetic server unwinds.
 import { ScientCapacityFailureObservation } from "./ScientCapacityFailureObservation.test-support.ts";
 // SCIENT-FORK:END
@@ -350,11 +355,7 @@ const makePeer = (autoComplete: boolean, startup: CapacityStartupObservation) =>
     }> = [];
     return {
       opened,
-      open: (
-        input: Parameters<
-          import("../Adapters/CodexAdapterV2.ts").CodexAppServerClientFactoryShape["open"]
-        >[0],
-      ) =>
+      open: (input: Parameters<CodexAppServerClientFactory["Service"]["open"]>[0]) =>
         Effect.gen(function* () {
           assert.isTrue(Object.isFrozen(input.settings));
           assert.isTrue(Object.isFrozen(input.environment));
@@ -586,8 +587,10 @@ it.live(
             const peer = yield* makePeer(autoComplete, startup);
             const allocator = yield* IdAllocatorV2;
             const crypto = yield* Crypto.Crypto;
-            const registry = makeLayer(
-              [instanceId, ProviderInstanceId.make("other-codex")].map((id) =>
+            const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+            const adapters = yield* Effect.forEach(
+              [instanceId, ProviderInstanceId.make("other-codex")],
+              (id) =>
                 makeCodexAdapterV2({
                   crypto,
                   instanceId: id,
@@ -607,8 +610,8 @@ it.live(
                     revision: "synthetic",
                   })),
                 }),
-              ),
             );
+            const registry = makeLayer(adapters);
             const actualDatabase = makeSqlitePersistenceLive(databaseFile).pipe(
               Layer.provide(NodeServices.layer),
             );
@@ -641,11 +644,15 @@ it.live(
                 });
               }),
             ).pipe(Layer.provide(actualDatabase));
-            const layer = makeOrchestratorV2ReplayLayerWithRegistry(
+            const layer = ProviderReplayHarness.layerWithRegistry(
               { name: "first-codex-capacity", runtimePolicyOverride: { cwd } },
               registry,
               {
-                layerDatabase: database,
+                databaseLayer: database,
+                mcpProviderSessionsLayer: Layer.succeed(
+                  McpProviderSessions.McpProviderSessions,
+                  mcpSessions,
+                ),
                 ...(idleTimeoutMs === undefined
                   ? {}
                   : { providerSessionIdleTimeoutMs: idleTimeoutMs }),
@@ -1062,8 +1069,9 @@ it.live(
                 text,
               );
               assert.deepEqual(
-                (yield* (yield* ServerSettings.ServerSettingsService).getSettings).providers,
-                nominal.providers,
+                (yield* (yield* ServerSettings.ServerSettingsService).getSettings)
+                  .providerInstances,
+                nominal.providerInstances,
               );
               yield* (yield* ProviderSessionManagerV2).closeInstance(test.selection.instanceId);
             }
@@ -1336,7 +1344,8 @@ it.live(
             ServerConfig.layerTest(process.cwd(), { prefix: "first-codex-capacity-" }).pipe(
               Layer.provide(NodeServices.layer),
             ),
-            Layer.succeed(HostProcessEnvironment, {}),
+            Layer.succeed(HostProcess.Environment, {}),
+            McpProviderSessions.layer,
           ),
         ),
         Effect.timeout("120 seconds"),

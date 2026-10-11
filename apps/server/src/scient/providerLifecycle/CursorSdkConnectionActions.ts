@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";
-import type { ProviderConnectionActions } from "../../provider/ProviderDriver.ts";
+import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
+import type { ProviderConnectionActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 
 const failure = (message: string) => new ProviderConnectionActionError({ message });

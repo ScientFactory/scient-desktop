@@ -1,4 +1,10 @@
+import { createElement, type SVGProps } from "react";
 import { ProviderDriverKind } from "@t3tools/contracts";
+import type { ProviderIcon } from "@t3tools/provider-core/client";
+import { grokClient } from "@t3tools/provider-grok/client";
+import { museClient } from "@t3tools/provider-muse/client";
+import { openCodeClient } from "@t3tools/provider-opencode/client";
+import { ProviderPackageIcon } from "./ProviderPackageIcon";
 import {
   AntigravityIcon,
   ClaudeAI,
@@ -7,21 +13,26 @@ import {
   PiIcon,
   OhMyPiIcon,
   ScientAgentIcon,
-  GrokIcon,
-  MuseIcon,
-  Icon,
   OpenAI,
-  OpenCodeIcon,
 } from "../Icons";
+import type { Icon } from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
+
+function iconFromPackage(icon: ProviderIcon): Icon {
+  return (props: SVGProps<SVGSVGElement>) => createElement(ProviderPackageIcon, { icon, ...props });
+}
+
+const GrokPackageIcon = iconFromPackage(grokClient.icon);
+const MusePackageIcon = iconFromPackage(museClient.icon);
+const OpenCodePackageIcon = iconFromPackage(openCodeClient.icon);
 
 export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
   [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
-  [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
+  [ProviderDriverKind.make("opencode")]: OpenCodePackageIcon,
   [ProviderDriverKind.make("cursor")]: CursorIcon,
-  [ProviderDriverKind.make("grok")]: GrokIcon,
-  [ProviderDriverKind.make("muse")]: MuseIcon,
+  [ProviderDriverKind.make("grok")]: GrokPackageIcon,
+  [ProviderDriverKind.make("muse")]: MusePackageIcon,
   [ProviderDriverKind.make("droid")]: DroidIcon,
   [ProviderDriverKind.make("pi")]: PiIcon,
   [ProviderDriverKind.make("omp")]: OhMyPiIcon,
@@ -74,6 +85,27 @@ export function getDisplayModelName(
 ): string {
   const name = options?.preferShortName && model.shortName ? model.shortName : model.name;
   return stripLeadingQualifier(name, model.subProvider);
+}
+
+/**
+ * The second line of a model row, naming where the model comes from. A
+ * sub-provider whose name reads as its provider plus a qualifier ("OpenCode
+ * Zen" under "OpenCode") stands alone: joining the two shows "OpenCode ·
+ * OpenCode Zen", and OpenCode's own picker shows the sub-provider by itself.
+ */
+export function getProviderRowLabel(
+  providerDisplayName: string,
+  subProvider: string | undefined,
+): string {
+  const provider = providerDisplayName.trim();
+  const sub = subProvider?.trim();
+  if (!sub) {
+    return providerDisplayName;
+  }
+  if (provider && new RegExp(`^${escapeRegExp(provider)}\\s+\\S`, "i").test(sub)) {
+    return sub;
+  }
+  return `${providerDisplayName} · ${sub}`;
 }
 
 export function getTriggerDisplayModelName(model: ModelEsque): string {

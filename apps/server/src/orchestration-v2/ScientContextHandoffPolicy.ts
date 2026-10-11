@@ -12,7 +12,7 @@ import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
   hasScientContextHistory,
-} from "./ContextHandoffBudget.ts";
+} from "./ScientHistoricalContext.ts";
 import {
   handoffTokenCap,
   scientHandoffTokenCapOverride,

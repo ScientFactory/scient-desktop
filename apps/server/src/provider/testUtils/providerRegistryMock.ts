@@ -3,8 +3,8 @@ import type { ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import type { ProviderVoiceTranscriptCorrection } from "../ProviderDriver.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import type { ProviderVoiceTranscriptCorrection } from "../ScientProviderInstanceSeams.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
 export const makeProviderRegistryMock = (
   providers: ReadonlyArray<ServerProvider> = [],

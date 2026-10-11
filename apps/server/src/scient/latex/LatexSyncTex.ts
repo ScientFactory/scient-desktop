@@ -11,7 +11,7 @@ import type {
   ScientLatexSyncUnavailable,
   ScientLatexSyncUnavailableReason,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -125,7 +125,7 @@ export const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const runner = yield* ProcessRunner.ProcessRunner;
   const runtime = yield* SyncTexRuntime.SyncTexRuntime;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
   const crypto = yield* Crypto.Crypto;
   const authority = ArtifactAuthority.make(yield* environment.getEnvironmentId);
 

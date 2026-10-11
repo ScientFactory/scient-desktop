@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentFilePath } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -111,7 +111,7 @@ describe("EnvironmentFileOpen", () => {
 
   // Needs mkfifo; Windows has no FIFOs. Opening one for reading would block
   // until a writer appears, so the type must be checked before opening.
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "rejects a FIFO as not a file without blocking on open",
     () =>
       Effect.gen(function* () {

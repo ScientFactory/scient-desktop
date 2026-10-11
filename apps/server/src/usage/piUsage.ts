@@ -4,7 +4,7 @@ import * as NodeReadline from "node:readline";
 
 import type { PiUsageRow, UsageDay, UsageTokenTotals } from "@t3tools/contracts";
 
-import { EMPTY_TOTALS } from "./usageTranscripts.ts";
+import { EMPTY_TOTALS } from "@t3tools/provider-core/server/usage";
 import { listTranscriptFiles } from "./usageTranscriptReader.ts";
 
 function addTotals(a: UsageTokenTotals, b: UsageTokenTotals): UsageTokenTotals {
@@ -189,7 +189,7 @@ export async function scanPiUsage(input: {
   readonly untilDay: string;
 }): Promise<readonly PiUsageRow[]> {
   const reducer = makePiUsageReducer(input);
-  const files = await listTranscriptFiles(input.root, input.sinceMs);
+  const { files } = await listTranscriptFiles(input.root, input.sinceMs);
   for (const file of files) {
     await new Promise<void>((resolve) => {
       const stream = NodeFS.createReadStream(file.path, { encoding: "utf8" });

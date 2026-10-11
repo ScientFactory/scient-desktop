@@ -7,7 +7,7 @@ import {
 import { ProviderReplayEntry, type ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 
 export const CLAUDE_AGENT_SDK_REPLAY_PROTOCOL = "claude-agent-sdk.query" as const;
 

@@ -17,7 +17,7 @@ import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegis
 import type { ServerSettingsService } from "../../serverSettings.ts";
 import { customModelsTestMethods } from "../../serverSettings.ts";
 import { makeVoiceTranscriptCorrection } from "./VoiceTranscriptCorrection.ts";
-import type { ProviderVoiceTranscriptCorrection } from "../../provider/ProviderDriver.ts";
+import type { ProviderVoiceTranscriptCorrection } from "../../provider/ScientProviderInstanceSeams.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");

@@ -11,7 +11,7 @@ import {
   type CodexAppServerConnection,
   openCodexAppServerConnection,
 } from "../../provider/CodexProvider.ts";
-import { type ProviderConnectionActions } from "../../provider/ProviderDriver.ts";
+import { type ProviderConnectionActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 
 const LOGIN_ACCOUNT_VERIFY_TIMEOUT = Duration.seconds(20);

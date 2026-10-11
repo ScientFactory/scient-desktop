@@ -14,9 +14,9 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
-import type { ProviderAdapterV2OpenSessionInput } from "../orchestration-v2/ProviderAdapter.ts";
-import { AcpProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/AcpAdapterV2.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderAdapterV2OpenSessionInput } from "@t3tools/provider-core/server/ProviderAdapter";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
@@ -26,7 +26,7 @@ import {
   type AnyProviderDriver,
   type ProviderDriverCreateInput,
   type ProviderInstance,
-} from "./ProviderDriver.ts";
+} from "@t3tools/provider-core/server/driver";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 
 const kind = ProviderDriverKind.make("native-lifetime-test");

@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
@@ -250,7 +251,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
           );
           yield* resumed.close;
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+        ),
+      ),
     180_000,
   );
 });

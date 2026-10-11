@@ -7,7 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -26,25 +26,28 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelManifest from "../ModelManifest.ts";
 import {
   createProviderVersionAdvisory,
-  ProviderVersionCache,
   resolveLatestProviderVersion,
-} from "../providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import { CodexDriver } from "./CodexDriver.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
+import * as ProviderHostLive from "../ProviderHostLive.ts";
 
-const layerTest = ServerConfig.layerTest(process.cwd(), {
+const layerDeps = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-codex-driver-maintenance-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
   Layer.provideMerge(
     Layer.mock(CodexAdapterV2.CodexAppServerClientFactory)({
       open: () => Effect.die("Maintenance resolution must not open a Codex session"),
@@ -75,6 +78,7 @@ const layerTest = ServerConfig.layerTest(process.cwd(), {
       ProviderEventLoggers.NoOpProviderEventLoggers,
     ),
   ),
+  Layer.provideMerge(ProviderLatestVersions.layer),
   Layer.provideMerge(
     Layer.succeed(
       HttpClient.HttpClient,
@@ -82,9 +86,10 @@ const layerTest = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
 );
+const layerTest = ProviderHostLive.layer.pipe(Layer.provideMerge(layerDeps));
 
 // The `#!/bin/sh` stub below cannot be resolved as an executable on Windows.
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("Disabled Codex must not spawn a process"),
@@ -158,13 +163,27 @@ it.layer(layerTest)("CodexDriver", (it) => {
           const serverConfig = yield* ServerConfig.ServerConfig;
           const sharedHome = NodePath.join(serverConfig.stateDir, "shared-codex-home");
           const launches: Array<
-            Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
+            Parameters<CodexAdapterV2.CodexAppServerClientFactory["Service"]["open"]>[0]
           > = [];
+          // Interrupt both startup account checks while they resolve the runtime.
+          // A subsequent explicit refresh and disconnect must still update the account.
+          let interruptedChecks = 0;
+          const startupChecksInterrupted = yield* Deferred.make<void>();
+          const acquire = () =>
+            Effect.suspend(() => {
+              if (interruptedChecks === 2) return Effect.succeed(executable);
+              interruptedChecks += 1;
+              return (
+                interruptedChecks === 2
+                  ? Deferred.succeed(startupChecksInterrupted, undefined)
+                  : Effect.void
+              ).pipe(Effect.andThen(Effect.interrupt));
+            });
           const instance = yield* makeManagedCodexProvider({
             instanceId,
             displayName: "Restored account",
             enabled: true,
-            environment: [],
+            environment: [{ name: "OPENAI_API_KEY", value: "ambient-key", sensitive: true }],
             config: { ...CodexDriver.defaultConfig(), setupMode: "managed", homePath: sharedHome },
           }).pipe(
             Effect.provideService(
@@ -182,7 +201,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
                 ...installation,
                 managedDirectory: "unused-managed-installation",
                 resolve: () => Effect.succeed(executable),
-                acquire: () => Effect.succeed(executable),
+                acquire,
               }),
             ),
             Effect.provideService(
@@ -209,6 +228,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
             Stream.runHead,
             Effect.forkScoped,
           );
+          yield* Deferred.await(startupChecksInterrupted);
           const restored = yield* instance.snapshot.refresh;
           expect(restored.auth.email).toBe("account@example.test");
           expect(restored.runtimePaths?.homePath).toBe(sharedHome);
@@ -223,7 +243,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
               threadId,
               providerSessionId: ProviderSessionId.make("managed-account-session"),
               modelSelection: { instanceId, model: "gpt-5.4" },
-              runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
                 runtimeMode: "full-access",
                 interactionMode: "default",
                 cwd: serverConfig.stateDir,
@@ -566,11 +586,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, metadataSpawner));
         const capabilities = yield* instance.snapshot.resolveMaintenance();
         const latestVersion = yield* resolveLatestProviderVersion(capabilities).pipe(
-          Effect.provideService(
-            ProviderVersionCache,
-            new Map([
-              ["@openai/codex", { expiresAt: Number.MAX_SAFE_INTEGER, version: "0.153.4" }],
-            ]),
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([["@openai/codex", "0.153.4"]]),
           ),
         );
         expect(probes).toEqual([]);

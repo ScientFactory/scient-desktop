@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { ProjectId, ThreadId, type VcsStatusResult } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -48,7 +49,7 @@ vi.mock("../state/pullRequests", async (importOriginal) => {
     Atom.make(() => {
       state.queries.push(`pr:${number}`);
       return AsyncResult.success({
-        provider: "github" as const,
+        provider: SourceControlProviderKind.make("github"),
         projectId: ProjectId.make("project-test"),
         repository: "example/repo",
         number,

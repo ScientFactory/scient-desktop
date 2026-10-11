@@ -2,7 +2,6 @@
 import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,6 +16,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const layerProject = WorkspaceFileSystem.layer.pipe(
@@ -59,6 +59,115 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 });
 
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
+  describe("getMetadata", () => {
+    it.effect("expands home-relative paths on the server", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const home = yield* makeTempDir;
+        yield* writeTextFile(home, "file", "hello");
+        expect(
+          (yield* service
+            .getMetadata({ paths: ["~/file"] })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home))).entries,
+        ).toEqual([{ kind: "file", byteLength: 5 }]);
+      }),
+    );
+
+    it.effect(
+      "reports actual kinds for extensionless files, dotfiles, and dotted directories",
+      () =>
+        Effect.gen(function* () {
+          const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "custom-name", "hello");
+          yield* writeTextFile(cwd, ".npmrc", "registry=test");
+          yield* fs.makeDirectory(path.join(cwd, "folder.ts"));
+          const file = path.join(cwd, "custom-name");
+          const result = yield* service.getMetadata({
+            paths: [
+              file,
+              path.join(cwd, ".npmrc"),
+              path.join(cwd, "folder.ts"),
+              file,
+              path.join(cwd, "missing"),
+              "relative-path",
+            ],
+          });
+          expect(result.entries).toEqual([
+            { kind: "file", byteLength: 5 },
+            { kind: "file", byteLength: 13 },
+            { kind: "directory" },
+            { kind: "file", byteLength: 5 },
+            null,
+            null,
+          ]);
+        }),
+    );
+
+    it.effect("detects an extensionless script and image without returning their contents", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const script = "#!/usr/bin/env python3\nprint('hello')\n";
+        yield* writeTextFile(cwd, "run", script);
+        const image = path.join(cwd, "image");
+        yield* fs.writeFile(
+          image,
+          new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        );
+        expect(
+          (yield* service.getMetadata({ paths: [path.join(cwd, "run"), image] })).entries,
+        ).toEqual([
+          { kind: "file", byteLength: script.length, mimeType: "text/x-python" },
+          { kind: "file", byteLength: 8, mimeType: "image/png" },
+        ]);
+      }),
+    );
+
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "keeps metadata for whitespace-distinct filenames separate",
+      () =>
+        Effect.gen(function* () {
+          const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(cwd, "report", "plain");
+          yield* writeTextFile(cwd, "report ", "trailing whitespace");
+          expect(
+            (yield* service.getMetadata({
+              paths: [path.join(cwd, "report"), path.join(cwd, "report ")],
+            })).entries,
+          ).toEqual([
+            { kind: "file", byteLength: 5 },
+            { kind: "file", byteLength: 19 },
+          ]);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("follows file and directory symlinks", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "target", "text");
+        yield* fs.makeDirectory(path.join(cwd, "directory"));
+        const fileLink = path.join(cwd, "file-link");
+        const directoryLink = path.join(cwd, "directory-link");
+        yield* fs.symlink(path.join(cwd, "target"), fileLink);
+        yield* fs.symlink(path.join(cwd, "directory"), directoryLink);
+        expect((yield* service.getMetadata({ paths: [fileLink, directoryLink] })).entries).toEqual([
+          { kind: "file", byteLength: 4 },
+          { kind: "directory" },
+        ]);
+      }),
+    );
+  });
+
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
@@ -82,7 +191,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Windows cannot hold a file name that ends in a space.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "reads the file a path names when a sibling differs only by a trailing space",
       () =>
         Effect.gen(function* () {
@@ -142,7 +251,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Needs mkfifo; Windows has no FIFOs to reject.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "rejects a FIFO without blocking on open",
       () =>
         Effect.gen(function* () {
@@ -165,6 +274,9 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             .pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
+          expect((yield* workspaceFileSystem.getMetadata({ paths: [fifoPath] })).entries).toEqual([
+            { kind: "other" },
+          ]);
         }),
     );
 
@@ -427,7 +539,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Windows cannot hold a file name that ends in a space.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "watches the file a path names, not a sibling without its trailing space",
       () =>
         Effect.gen(function* () {
@@ -674,7 +786,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("rejects new-file writes through a symlinked parent outside the workspace", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -725,7 +837,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Windows cannot hold a file name that ends in a space.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "saves and renames the file a path names, trailing space included",
       () =>
         Effect.gen(function* () {
@@ -954,7 +1066,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents,
           expectedRevision: opened.revision,
         });
-        if ((yield* HostProcessPlatform) !== "win32") {
+        if ((yield* HostProcess.Platform) !== "win32") {
           yield* fileSystem.chmod(absolutePath, 0o751);
         }
         yield* fileSystem.utimes(absolutePath, 1_000_000, 1_000_000);
@@ -1145,7 +1257,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("preserves executable permissions when atomically replacing a source file", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1168,7 +1280,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("preserves in-project symlinks when conditionally saving their target", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1200,7 +1312,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       })),
     )("$caseTitle", ({ aliasKind }) =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1268,7 +1380,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("rejects a rename onto the same canonical file through an alias", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;

@@ -26,11 +26,30 @@ import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskServ
 import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
+import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
+import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as PreviewManager from "../../../preview/Manager.ts";
+import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
+import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { DeviceToolkit } from "../device/tools.ts";
 import { scientOperationCatalog } from "../../ScientOperationCatalog.ts";
+import * as ComputeMcpGateway from "../compute/ComputeMcpGateway.ts";
+import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
+import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
+import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
+import * as LegacyV1ThreadImporter from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
+import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
+import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
+import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
+
+const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)(
+  {},
+);
 
 const StubServicesLive = Layer.mergeAll(
   Layer.mock(PreviewBrowser.PreviewBrowser)({}),
@@ -61,6 +80,23 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+  Layer.mock(PreviewManager.PreviewManager)({}),
+  Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+  layerRepositories,
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(ThreadSearch.ThreadSearch)({}),
+  // Discovery captures static services but must never invoke their operations.
+  // Layer.mock defects on every unspecified operation.
+  Layer.mock(ComputeMcpGateway.ComputeMcpGateway)({}),
+  Layer.mock(DocumentHostBroker.DocumentHostBroker)({}),
+  Layer.mock(GeneratedDocumentStore.GeneratedDocumentStore)({}),
+  Layer.mock(LatexBuildService.LatexBuildService)({}),
+  Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
+  ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),
+  Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
+  WorkspacePaths.layer.pipe(Layer.provide(NodeServices.layer)),
 );
 
 const ToolsListPayload = Schema.fromJsonString(

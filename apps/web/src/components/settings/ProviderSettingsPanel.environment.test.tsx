@@ -1,9 +1,10 @@
-import type { ReactElement } from "react";
+import { isValidElement, type ReactElement } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
@@ -11,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { visitElements } from "../../test/reactElementTree";
 import { reactHookHarness as hooks } from "../../test/reactHookHarness";
+import { DRIVER_OPTIONS } from "./providerDriverMeta";
 
 const atoms = vi.hoisted(() => ({
   providers: null as ReadonlyArray<ServerProvider> | null,
@@ -238,6 +240,25 @@ function isAddProviderButton(element: ReactElement<Record<string, unknown>>): bo
   return element.props["aria-label"] === "Add provider";
 }
 
+function collectElements(
+  node: unknown,
+  visitor: (element: ReactElement<Record<string, unknown>>) => boolean,
+): ReactElement<Record<string, unknown>>[] {
+  if (Array.isArray(node)) return node.flatMap((child) => collectElements(child, visitor));
+  if (!isValidElement<Record<string, unknown>>(node)) return [];
+  return [
+    ...(visitor(node) ? [node] : []),
+    ...Object.values(node.props).flatMap((value) => collectElements(value, visitor)),
+  ];
+}
+
+function renderedProviderRowIds(panel: unknown): string[] {
+  return collectElements(
+    panel,
+    (element) => element.props.mode === "list" && typeof element.props.instanceId === "string",
+  ).map((element) => String(element.props.instanceId));
+}
+
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -268,17 +289,134 @@ describe("EnvironmentProviderSettings routing", () => {
       .mockResolvedValue({ _tag: "Success", value: { accepted: true } });
   });
 
-  it("keeps supported provider settings visible even when their default instance is disabled", () => {
-    atoms.providers = [
-      {
-        ...provider(),
-        instanceId: ProviderInstanceId.make("cursor"),
-        driver: ProviderDriverKind.make("cursor"),
-        enabled: false,
+  it.each(["loading", "empty", "partial"])(
+    "shows built-in default slots with fresh settings and %s provider snapshots without writes",
+    (snapshotState) => {
+      settingsState.value = { ...DEFAULT_UNIFIED_SETTINGS, providerInstances: {} };
+      atoms.providers =
+        snapshotState === "loading" ? null : snapshotState === "empty" ? [] : [provider()];
+      const panel = renderPanel();
+      const drivers = [
+        "codex",
+        "claudeAgent",
+        "antigravity",
+        "scient",
+        "cursor",
+        "grok",
+        "droid",
+        "pi",
+        "omp",
+        "opencode",
+        "muse",
+      ];
+      for (const driver of drivers) {
+        const instance = { driver: ProviderDriverKind.make(driver) };
+        const row = visitElements(
+          panel,
+          (element) => element.props.instanceId === driver && element.props.mode === "list",
+        );
+        expect(row, driver).not.toBeNull();
+        expect(row?.props.instance).toEqual(instance);
+        if (["cursor", "grok", "pi", "opencode", "muse"].includes(driver)) {
+          expect(resolveProviderInstanceEnabled(instance), driver).toBe(false);
+        }
+      }
+      expect(renderedProviderRowIds(panel)).toEqual(
+        DRIVER_OPTIONS.filter((definition) => definition.hasDefaultInstance !== false).map(
+          (definition) => String(definition.value),
+        ),
+      );
+      expect(
+        visitElements(
+          panel,
+          (element) => element.props.instanceId === "acpRegistry" && element.props.mode === "list",
+        ),
+      ).toBeNull();
+      expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
+      expect(settingsState.value.providerInstances).toEqual({});
+      expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
+      expect(settingsState.updateSettings).not.toHaveBeenCalled();
+      expect(commands.updateProvider).not.toHaveBeenCalled();
+    },
+  );
+
+  it("renders default provider rows in canonical order with custom instances grouped after their driver", () => {
+    const scientWorkId = ProviderInstanceId.make("scient_research");
+    const codexWorkId = ProviderInstanceId.make("codex_work");
+    const acpAgentId = ProviderInstanceId.make("acpRegistry_devin");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [scientWorkId]: {
+          driver: ProviderDriverKind.make("scient"),
+          enabled: true,
+          displayName: "Research",
+        },
+        [codexWorkId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          displayName: "Work",
+        },
+        [acpAgentId]: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          enabled: true,
+          config: { agentId: "devin" },
+        },
       },
-    ];
+    };
+    atoms.providers = [];
+
     const panel = renderPanel();
-    for (const driver of [
+
+    expect(renderedProviderRowIds(panel)).toEqual([
+      "scient",
+      "scient_research",
+      "codex",
+      "codex_work",
+      "claudeAgent",
+      "antigravity",
+      "opencode",
+      "droid",
+      "pi",
+      "omp",
+      "cursor",
+      "grok",
+      "acpRegistry_devin",
+      "muse",
+    ]);
+    expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+    expect(commands.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it("renders Add provider choices in canonical order without changing provider settings", () => {
+    hooks.beginRender();
+    const dialog = AddProviderInstanceDialog({
+      open: true,
+      environmentId,
+      environmentLabel: "Remote device",
+      onOpenChange: vi.fn(),
+    });
+    const expectedDrivers = DRIVER_OPTIONS.filter(
+      (definition) => definition.value !== ProviderDriverKind.make("acpRegistry"),
+    ).map((definition) => String(definition.value));
+    const renderedDrivers = collectElements(
+      dialog,
+      (element) =>
+        typeof element.props.value === "string" &&
+        expectedDrivers.includes(element.props.value) &&
+        typeof element.props.className === "string" &&
+        element.props.className.includes("relative flex cursor-pointer"),
+    ).map((element) => String(element.props.value));
+
+    expect(renderedDrivers).toEqual(expectedDrivers);
+    expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+    expect(commands.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicitly configured provider slots visible when disabled", () => {
+    const drivers = [
       "codex",
       "claudeAgent",
       "antigravity",
@@ -289,7 +427,26 @@ describe("EnvironmentProviderSettings routing", () => {
       "pi",
       "omp",
       "opencode",
-    ] as const) {
+    ] as const;
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: Object.fromEntries(
+        drivers.map((driver) => [
+          ProviderInstanceId.make(driver),
+          { driver: ProviderDriverKind.make(driver), enabled: false },
+        ]),
+      ),
+    };
+    atoms.providers = [
+      {
+        ...provider(),
+        instanceId: ProviderInstanceId.make("cursor"),
+        driver: ProviderDriverKind.make("cursor"),
+        enabled: false,
+      },
+    ];
+    const panel = renderPanel();
+    for (const driver of drivers) {
       expect(
         visitElements(
           panel,
@@ -301,28 +458,34 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
-  it("opens and enables an untouched disabled provider through its exact environment instance", async () => {
-    let panel = renderPanel();
+  it("opens and enables an explicitly disabled instance through its exact environment", async () => {
+    const droidId = ProviderInstanceId.make("droid");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [droidId]: { driver: ProviderDriverKind.make("droid"), enabled: false },
+      },
+    };
+    let panel = renderPanel({ targetInstanceId: droidId });
     const row = visitElements(
       panel,
       (element) => element.props.instanceId === "droid" && element.props.mode === "list",
     );
     if (!row) throw new Error("Disabled Droid settings row was not rendered");
     (row.props.onSelect as () => void)();
-    panel = renderPanel();
+    panel = renderPanel({ targetInstanceId: droidId });
     const editor = visitElements(
       panel,
       (element) => element.props.instanceId === "droid" && element.props.mode === "editor",
     );
     if (!editor) throw new Error("Droid settings editor was not rendered");
     expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
-    const { enabled: _enabled, ...config } = DEFAULT_UNIFIED_SETTINGS.providers.droid;
-    const next = { driver: ProviderDriverKind.make("droid"), enabled: true, config };
+    const next = { driver: ProviderDriverKind.make("droid"), enabled: true };
     (editor.props.onUpdate as (instance: typeof next) => void)(next);
     await flushPromises();
     expect(settingsState.mutateProviderInstance).toHaveBeenCalledExactlyOnceWith(
-      { operation: "upsert", instanceId: ProviderInstanceId.make("droid"), instance: next },
-      { providers: DEFAULT_UNIFIED_SETTINGS.providers },
+      { operation: "upsert", instanceId: droidId, instance: next },
+      {},
     );
     expect(settingsState.mutationEnvironmentIds).toEqual([environmentId, environmentId]);
   });
@@ -344,15 +507,16 @@ describe("EnvironmentProviderSettings routing", () => {
     ).not.toBeNull();
   });
 
-  it("keeps legacy provider configuration visible when disabled", () => {
+  it("keeps a configured provider instance visible when disabled", () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
-      providers: {
-        ...DEFAULT_UNIFIED_SETTINGS.providers,
-        grok: {
-          ...DEFAULT_UNIFIED_SETTINGS.providers.grok,
+      providerInstances: {
+        [ProviderInstanceId.make("grok")]: {
+          driver: ProviderDriverKind.make("grok"),
           enabled: false,
-          binaryPath: "/custom/grok",
+          config: {
+            binaryPath: "/custom/grok",
+          },
         },
       },
     };
@@ -454,7 +618,7 @@ describe("EnvironmentProviderSettings routing", () => {
     "opens a missing provider with only the requested action (%s)",
     (action) => {
       atoms.providers = [missingAntigravityProvider()];
-      let panel = renderPanel();
+      let panel = renderPanel({ targetInstanceId: antigravityId });
       const providerRow = visitElements(
         panel,
         (element) => element.props.instanceId === antigravityId && element.props.mode === "list",
@@ -462,7 +626,7 @@ describe("EnvironmentProviderSettings routing", () => {
       expect(providerRow).not.toBeNull();
       (providerRow?.props.onSelect as (() => void) | undefined)?.();
 
-      panel = renderPanel();
+      panel = renderPanel({ targetInstanceId: antigravityId });
       const providerCard = visitElements(
         panel,
         (element) =>
@@ -603,6 +767,15 @@ describe("EnvironmentProviderSettings routing", () => {
         }),
     );
     atoms.providers = [provider(), missingAntigravityProvider()];
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [antigravityId]: {
+          driver: ProviderDriverKind.make("antigravity"),
+          enabled: false,
+        },
+      },
+    };
     let panel = renderPanel({ targetInstanceId: codexId });
     const initialEditor = visitElements(panel, (element) => element.props.mode === "editor");
     (initialEditor?.props.onRunUpdate as () => void)();
@@ -760,9 +933,8 @@ describe("EnvironmentProviderSettings routing", () => {
 
     const [resetMutation, resetPatch] = settingsState.mutateProviderInstance.mock.lastCall ?? [];
     expect(resetMutation).toEqual({ operation: "remove", instanceId: codexId });
-    expect(Object.keys(resetPatch ?? {}).sort()).toEqual(["providers"]);
-    expect(resetPatch).not.toHaveProperty("favorites");
-    expect(resetPatch).not.toHaveProperty("providerModelPreferences");
+    // Removing the instance is the whole reset; shared preferences stay untouched.
+    expect(resetPatch ?? {}).toEqual({});
   });
 
   it("updates one provider instance without sending a stale whole map", async () => {

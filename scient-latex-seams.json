@@ -39,14 +39,14 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "src/scient/latex/LatexBuildService.test.ts",
+      "purpose": "Record CI durations for LaTeX behavioral tests in the shared server shard profile; scheduling changes retain every test and assertion (weightedShardSequencer.test.ts and the full current-file assignment check)."
+    },
+    {
       "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
       "anchor": "latexDir: path.join(stateDir, \"latex\")",
       "purpose": "Give native Codex replay qualification an isolated server-owned LaTeX state directory."
-    },
-    {
-      "path": "apps/server/src/orchestration-v2/Adapters/CursorAdapterV2.testkit.ts",
-      "anchor": "latexDir: path.join(stateDir, \"latex\")",
-      "purpose": "Give native Cursor replay qualification an isolated server-owned LaTeX state directory."
     },
     {
       "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.ts",

@@ -7,10 +7,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { type ProviderAdapterV2Event } from "../ProviderAdapter.ts";
-import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   DEFAULT_CLAUDE_SETTINGS,
   CLAUDE_TEST_MODEL_SELECTION,
@@ -203,7 +203,11 @@ const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void
 const makeWakeHarnessWithOptions = (options?: {
   readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
   readonly interrupt?: Effect.Effect<void>;
+  readonly stopTask?: (taskId: string) => Effect.Effect<void>;
+  readonly settings?: typeof DEFAULT_CLAUDE_SETTINGS;
   readonly environment?: NodeJS.ProcessEnv;
+  // A reopened CLI process must not inherit the exited process's message queue.
+  readonly freshQueueOnReopen?: boolean;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -212,6 +216,7 @@ const makeWakeHarnessWithOptions = (options?: {
       prefix: "t3-claude-v2-wake-",
     });
     const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+    const processQueues: Array<Queue.Queue<SDKMessage>> = [];
     const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
     const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
       const processed = yield* Deferred.make<void>();
@@ -224,14 +229,16 @@ const makeWakeHarnessWithOptions = (options?: {
       ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"]
     > = [];
     const continuationRequests: Array<ProviderContinuationRequest> = [];
+    const subagentReceipts =
+      yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "subagent.updated" }>>();
     const terminalReceipts =
       yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
     const systemNoticeReceipts =
       yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }>>();
     let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
-    const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_CLAUDE_SETTINGS,
+      settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
       environment: options?.environment ?? {},
       attachmentsDir,
       fileSystem,
@@ -247,8 +254,24 @@ const makeWakeHarnessWithOptions = (options?: {
       queryRunner: {
         allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
         open: (input) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             openedOptions = input.options;
+            if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
+              const processMessages = yield* Queue.unbounded<SDKMessage>();
+              processQueues.push(processMessages);
+              return {
+                messages: Stream.fromQueue(processMessages),
+                offer: (message: SDKUserMessage) =>
+                  Effect.sync(() => {
+                    offeredMessages.push(message);
+                  }),
+                setModel: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                interrupt: Effect.void,
+                close: Queue.shutdown(processMessages),
+              };
+            }
+            processQueues.push(sdkMessages);
             return {
               messages: Stream.fromQueue(sdkMessages).pipe(
                 Stream.flatMap((message) =>
@@ -278,6 +301,7 @@ const makeWakeHarnessWithOptions = (options?: {
                   if (mode !== input.options.permissionMode)
                     throw new Error("Wake fixture may only restore its captured permission mode.");
                 }),
+              ...(options?.stopTask === undefined ? {} : { stopTask: options.stopTask }),
               interrupt: options?.interrupt ?? Effect.void,
               close: options?.close?.(sdkMessages) ?? Effect.void,
             };
@@ -304,6 +328,7 @@ const makeWakeHarnessWithOptions = (options?: {
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           events.push(event);
+          if (event.type === "subagent.updated") yield* Queue.offer(subagentReceipts, event);
           if (event.type === "turn.terminal") {
             yield* Queue.offer(terminalReceipts, event);
           }
@@ -328,6 +353,7 @@ const makeWakeHarnessWithOptions = (options?: {
       providerThread,
       threadId,
       sdkMessages,
+      processQueues,
       offerAndWait,
       offeredMessages,
       promptUuid: (index: number) => {
@@ -340,6 +366,7 @@ const makeWakeHarnessWithOptions = (options?: {
       continuationRequests,
       events,
       terminalReceipts,
+      subagentReceipts,
       systemNoticeReceipts,
       getOpenedOptions: () => openedOptions,
       terminalEvents,

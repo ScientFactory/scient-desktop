@@ -11,11 +11,7 @@ import {
   REQUIRED_COMPUTE_CAPABILITIES,
 } from "@scientfactory/compute";
 import { ExecutionRunId, type ExecutionProcessPort } from "@scientfactory/execution";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -316,9 +312,9 @@ export const pythonRuntimeBinding: Effect.Effect<
   const duplexProcesses = yield* DuplexProcess;
   const ownedLocalEndpoints = yield* OwnedLocalEndpointRegistry;
   const config = yield* ServerConfig;
-  const hostEnvironment = yield* HostProcessEnvironment;
-  const hostPlatform = yield* HostProcessPlatform;
-  const hostArchitecture = yield* HostProcessArchitecture;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const hostPlatform = yield* HostProcess.Platform;
+  const hostArchitecture = yield* HostProcess.Architecture;
   const recipeNetwork = yield* ComputeRecipeNetwork;
   const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
   const spawnProbe = yield* makeSpawnProbe(processes, {
