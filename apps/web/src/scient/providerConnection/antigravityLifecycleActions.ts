@@ -21,18 +21,6 @@ export async function startAntigravitySignIn(
   );
 }
 
-export async function startAntigravitySignInAndOpenAuthorizationPage(
-  controller: ProviderLifecycleController,
-  currentProvider?: ServerProvider,
-): Promise<ServerProvider> {
-  const provider = await startAntigravitySignIn(controller, currentProvider);
-  const operation = provider.connection?.operation;
-  if (operation?.authorizationUrl && operation.authorizationUrlKind === "primary") {
-    await controller.openAuthorizationPage(operation.authorizationUrl);
-  }
-  return provider;
-}
-
 export async function cancelAntigravitySignIn(
   controller: ProviderLifecycleController,
   operationId: string,

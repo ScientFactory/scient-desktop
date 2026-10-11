@@ -94,6 +94,16 @@ Legacy `agy` remains a separate compatibility path for existing conversations,
 explicit legacy executables, and hosts without an official ACP artifact. See
 [the provider architecture](./providers.md#antigravity-ownership-and-protocol) for these boundaries.
 
+Its explicit auth controller owns one five-minute deadline, including helper
+preparation, native startup, link capture, and verification. The bridge waits
+for a browser link or terminal auth state without a separate startup cutoff;
+closing the attempt scope cancels the owned flow. Pre-browser errors expose
+only fixed, allowlisted helper-preparation, runtime-startup, or link-capture
+messages; unknown causes remain generic. Browser-opening errors in the compact
+desktop/web view belong to the provider instance, operation, and opening
+invocation. They are visible only while waiting for browser authorization,
+not after verification begins.
+
 ## Independent lifecycle state
 
 The UI derives a provider's next action from several independent facts:
