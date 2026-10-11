@@ -1,6 +1,6 @@
 import { latexLengthInches } from "./latexVisualLayout";
 import { latexWithoutComments } from "./latexPackages";
-import { latexDirectionOpening } from "./latexLanguage";
+import { latexDirectionOpening, type LatexLanguageSetup } from "./latexLanguage";
 
 /** Balanced layout arguments retain source offsets; no TeX is evaluated. */
 function argument(source: string, at: number, open = "{", close = "}") {
@@ -53,9 +53,20 @@ export function latexMinipageSeparator(source: string): { end: number; gap: stri
   return { end: at, gap };
 }
 
-export function latexPageLayoutOpening(source: string) {
-  const direction = latexDirectionOpening(source);
+export function latexPageLayoutOpening(source: string, setup?: LatexLanguageSetup) {
+  const direction = latexDirectionOpening(source, setup);
   if (direction) return direction;
+  const aligned = /^\\begin\{(flushleft|flushright|center)\}/u.exec(source);
+  if (aligned)
+    return {
+      environment: aligned[1]!,
+      from: aligned[0].length,
+      layout: {
+        kind: "alignment",
+        alignment:
+          aligned[1] === "flushleft" ? "start" : aligned[1] === "flushright" ? "end" : "center",
+      },
+    };
   const opening = /^\\begin\{(multicols|minipage)\}/u.exec(source);
   if (!opening) return null;
   const environment = opening[1]!;

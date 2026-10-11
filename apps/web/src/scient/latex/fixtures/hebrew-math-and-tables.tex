@@ -1,0 +1,173 @@
+% !TEX program = lualatex
+% UTF-8 source. Requires LuaLaTeX and Arial (with Hebrew glyphs).
+% Compile two or three times for contents, references, and longtable widths.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=23mm]{geometry}
+\usepackage{fontspec}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs,tabularx,longtable}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue,urlcolor=blue]{hyperref}
+% Babel's LuaTeX bidi processor preserves mixed text and digit order.
+\usepackage[english,bidi=basic,layout=lists.tabular]{babel}
+\babelprovide[import,main]{hebrew}
+\babelprovide[import]{english}
+\babeltags{hebrew=hebrew,english=english}
+\babelfont{rm}{Latin Modern Roman}
+\babelfont{tt}{Latin Modern Mono}
+% Arial's installed italic face lacks Hebrew glyphs. Slant the regular/bold
+% Hebrew faces instead so emphasis and theorem text keep every character.
+\babelfont[hebrew]{rm}[Script=Hebrew,
+  ItalicFont=Arial,ItalicFeatures={FakeSlant=0.2},
+  BoldItalicFont=Arial Bold,BoldItalicFeatures={FakeSlant=0.2}]{Arial}
+\babelfont[hebrew]{sf}[Script=Hebrew,
+  ItalicFont=Arial,ItalicFeatures={FakeSlant=0.2},
+  BoldItalicFont=Arial Bold,BoldItalicFeatures={FakeSlant=0.2}]{Arial}
+\babelfont[hebrew]{tt}[Script=Hebrew,
+  ItalicFont=Arial,ItalicFeatures={FakeSlant=0.2},
+  BoldItalicFont=Arial Bold,BoldItalicFeatures={FakeSlant=0.2}]{Arial}
+\newtheorem{theorem}{משפט}[section]
+\newcommand{\sampleRow}[1]{#1 & רשומה לדוגמה & \(x_{#1}\) & בבדיקה\\}
+\title{תבנית בדיקה בעברית: מתמטיקה, טבלאות ורכיבים נוספים}
+\author{מחבר לדוגמה}
+\date{אוקטובר 2026}
+\setlength{\parindent}{1.5em}
+\setlength{\parskip}{0pt plus 1pt}
+\begin{document}
+\maketitle
+\begin{abstract}
+מסמך זה מיועד לבדיקת תצוגה ועריכה של מסמכי לטקס בעברית.
+הוא משלב כתיבה מימין לשמאל, אנגלית, נוסחאות, טבלאות, רשימות וקישורים.
+כל הנתונים הם נתוני דוגמה ואינם תוצאות של ניסוי.
+\end{abstract}
+\tableofcontents
+
+\section{טקסט בעברית וטקסט מעורב}\label{sec:hebrew}
+זו פסקה בעברית. אפשר לשנות מילה ולבדוק את הקשר בין המקור לתצוגה.
+זהו \textbf{טקסט מודגש}, וזהו \emph{טקסט נטוי}.
+בדיקת ניקוד: שָׁלוֹם, מַתֵּמָטִיקָה.
+
+בתוך המשפט מופיע הביטוי \textenglish{Mixed Hebrew and English},
+ואחריו מספרים: 123, 2026, וכן הנוסחה \(a^2+b^2=c^2\).
+סימני פיסוק: סוגריים (דוגמה), נקודתיים: ופסיק, בסוף משפט.
+הערת שוליים לדוגמה\footnote{הערה בעברית ובה ביטוי באנגלית: \textenglish{footnote test}.}.
+
+\subsection{רשימות}
+\begin{itemize}
+  \item פריט ראשון בעברית.
+  \item פריט עם נוסחה: \(\alpha+\beta=\gamma\).
+  \item פריט עם רשימה פנימית:
+    \begin{enumerate}
+      \item בדיקת כיוון המספור.
+      \item בדיקת הזחה וגלישת שורה כאשר הטקסט ארוך יותר ומכיל כמה מילים נוספות.
+    \end{enumerate}
+\end{itemize}
+\begin{description}
+  \item[קלט] קובץ מקור בעברית.
+  \item[פלט] מסמך עם טקסט, טבלאות ונוסחאות.
+\end{description}
+
+\clearpage
+\section{נוסחאות ומשפטים}\label{sec:math}
+הטקסט נכתב מימין לשמאל, ואילו הסימון המתמטי מוצג בכיוון המקובל.
+נוסחה בתוך שורה: \(f(x)=x^2+2x+1\).
+\begin{equation}\label{eq:sum-hebrew}
+  \sum_{k=1}^{n} k=\frac{n(n+1)}{2}.
+\end{equation}
+\begin{align}
+  (x+y)^2 &= x^2+2xy+y^2,\\
+  (x-y)^2 &= x^2-2xy+y^2.
+\end{align}
+\[
+  A=\begin{pmatrix}1&2\\3&4\end{pmatrix},
+  \qquad |x|=\begin{cases}x & x\geq0,\\-x & x<0.\end{cases}
+\]
+\[
+  \int_0^1x^2\,\mathrm{d}x=\frac13,\qquad\underbrace{1+\cdots+1}_{\text{\texthebrew{מספר האיברים הוא}}\ n}=n.
+\]
+\begin{theorem}\label{thm:positive}
+לכל \(x\in\mathbb{R}\), מתקיים \(1+x^2\geq1\).
+\end{theorem}
+\begin{proof}[הוכחה]
+ריבוע של מספר ממשי אינו שלילי. הוספת אחד לשני האגפים נותנת את התוצאה.
+\end{proof}
+ראו נוסחה~\eqref{eq:sum-hebrew} ומשפט~\ref{thm:positive}.
+
+\section{טבלאות ותרשים}\label{sec:tables}
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+שם הדוגמה & \(n\) & \(n^2\) & \(n(n+1)/2\)\\\midrule
+ראשונה & 1 & 1 & 1\\
+שנייה & 2 & 4 & 3\\
+שלישית & 3 & 9 & 6\\
+רביעית & 4 & 16 & 10\\\bottomrule
+\end{tabular}
+\caption{טבלה בעברית עם מספרים ונוסחאות.}\label{tab:numbers-hebrew}
+\end{table}
+\begin{table}[htbp]
+\centering
+\begin{tabularx}{\linewidth}{lXr}
+\toprule רכיב & תיאור & כמות\\\midrule
+טקסט & תיאור ארוך בעברית שנועד לבדוק גלישת שורות בתוך תא בטבלה ואת כיוון הכתיבה של הפסקה. & 12\\
+נוסחה & טקסט מעורב: \textenglish{Mean value} והממוצע \(\bar{x}\). & 3\\
+\multicolumn{2}{r}{סך הכול} & 15\\\bottomrule
+\end{tabularx}
+\caption{תאים גמישים, תא מאוחד ושילוב אנגלית.}\label{tab:wrap-hebrew}
+\end{table}
+\begin{figure}[htbp]
+\centering
+\fbox{\parbox{0.78\linewidth}{\centering
+\textbf{שלבי בדיקה}\par\medskip
+קובץ מקור \(\longleftarrow\) עיבוד \(\longleftarrow\) תצוגה
+\par\medskip
+תרשים פשוט ללא קובץ תמונה חיצוני.}}
+\caption{מסגרת, כיתוב בעברית וחצים.}\label{fig:hebrew}
+\end{figure}
+ראו טבלה~\ref{tab:numbers-hebrew}, טבלה~\ref{tab:wrap-hebrew}
+ואיור~\ref{fig:hebrew}.
+
+\clearpage
+\section{טבלה ארוכה}
+הטבלה הבאה בודקת כותרות חוזרות וכיוון עמודות בעת מעבר בין עמודים.
+\begin{longtable}{rllr}
+\caption{רשומות סינתטיות לבדיקת טבלה ארוכה.}\label{tab:long-hebrew}\\
+\toprule מספר & תיאור & משתנה & מצב\\\midrule
+\endfirsthead
+\multicolumn{4}{r}{טבלה \thetable{} — המשך}\\
+\toprule מספר & תיאור & משתנה & מצב\\\midrule
+\endhead
+\midrule\multicolumn{4}{r}{המשך בעמוד הבא}\\
+\endfoot
+\bottomrule
+\endlastfoot
+\sampleRow{1}\sampleRow{2}\sampleRow{3}\sampleRow{4}\sampleRow{5}
+\sampleRow{6}\sampleRow{7}\sampleRow{8}\sampleRow{9}\sampleRow{10}
+\sampleRow{11}\sampleRow{12}\sampleRow{13}\sampleRow{14}\sampleRow{15}
+\sampleRow{16}\sampleRow{17}\sampleRow{18}\sampleRow{19}\sampleRow{20}
+\sampleRow{21}\sampleRow{22}\sampleRow{23}\sampleRow{24}\sampleRow{25}
+\sampleRow{26}\sampleRow{27}\sampleRow{28}\sampleRow{29}\sampleRow{30}
+\sampleRow{31}\sampleRow{32}\sampleRow{33}\sampleRow{34}\sampleRow{35}
+\sampleRow{36}\sampleRow{37}\sampleRow{38}\sampleRow{39}\sampleRow{40}
+\sampleRow{41}\sampleRow{42}\sampleRow{43}\sampleRow{44}\sampleRow{45}
+\sampleRow{46}\sampleRow{47}\sampleRow{48}\sampleRow{49}\sampleRow{50}
+\end{longtable}
+
+\section{קישורים וקוד}
+קישור פנימי לסעיף~\ref{sec:hebrew}, לסעיף~\ref{sec:math}
+ולטבלה~\ref{tab:long-hebrew}; הפניה לעמוד~\pageref{sec:math}.
+קישור חיצוני: \href{https://www.latex-project.org/}{\textenglish{LaTeX Project}}.
+הכתובת הבאה מוצגת משמאל לימין:
+\textenglish{\url{https://example.org/test?language=hebrew}}.
+
+בלוק קוד באנגלית בתוך מסמך עברי:
+\begin{english}
+\begin{flushleft}
+\begin{verbatim}
+def square(x):
+    return x * x
+\end{verbatim}
+\end{flushleft}
+\end{english}
+\end{document}

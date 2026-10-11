@@ -1,4 +1,5 @@
 import type { JSONContent } from "@tiptap/core";
+import hebrewTemplate from "./fixtures/hebrew-math-and-tables.tex?raw";
 import { describe, expect, it } from "vite-plus/test";
 import {
   adoptLatexVisualContent,
@@ -11,6 +12,7 @@ import {
   latexVisualMathSource,
   parseLatexVisualMathSource,
   parseStructuredMathEnvironment,
+  serializeLatexVisualBlock,
   projectLatexVisualDocument,
   updateLatexVisualLayoutSource,
 } from "./latexVisualDocument";
@@ -29,6 +31,97 @@ const edit = (source: string, content: JSONContent[]) =>
   });
 
 describe("source-derived writing projection", () => {
+  it("renders every block of the imported Hebrew template and preserves its complete source", () => {
+    const projection = projectLatexVisualDocument(hebrewTemplate);
+    expect(projection.blocks).toHaveLength(32);
+    expect(projection.rawBlocks).toBe(0);
+    const wrappingTable = projection.blocks.find(
+      (block) => block.node.attrs?.tableKind === "stretch",
+    )!;
+    const tableLayout = wrappingTable.node.attrs?.sourceMeta.tableLayout;
+    expect(tableLayout[0][1]).toMatchObject({
+      topRule: "toprule",
+      bottomRule: "midrule",
+      justified: true,
+    });
+    expect(tableLayout[3][0]).toMatchObject({
+      colSpan: 2,
+      alignment: "right",
+      bottomRule: "bottomrule",
+      justified: false,
+    });
+    const longTable = projection.blocks.find((block) => block.node.attrs?.tableKind === "long")!;
+    expect(longTable.node.attrs?.rows).toHaveLength(51);
+    expect(longTable.node.attrs?.rows.at(-1)[0]).toBe("50");
+    expect(
+      applyLatexVisualDocumentChange(hebrewTemplate, projection, projection.content)?.source,
+    ).toBe(hebrewTemplate);
+    const code = projection.blocks.at(-1)!;
+    expect(serializeLatexVisualBlock(code.node)).toBe(code.source);
+  });
+  it("edits and reopens rich framed figures without flattening their math or wrappers", () => {
+    const source = document(String.raw`\begin{figure}[htbp]
+\centering
+\fbox{\parbox{0.78\linewidth}{\centering
+\textbf{שלבי בדיקה}\par\medskip
+קובץ מקור \(\longleftarrow\) עיבוד \(\longleftarrow\) תצוגה
+\par\medskip
+תרשים פשוט ללא קובץ תמונה חיצוני.}}
+\caption{מסגרת, כיתוב בעברית וחצים.}\label{fig:hebrew}
+\end{figure}`);
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.rawBlocks).toBe(0);
+    expect(projection.content.content![0]!.attrs?.layout.kind).toBe("framedFigure");
+    expect(applyLatexVisualDocumentChange(source, projection, projection.content)?.source).toBe(
+      source,
+    );
+    const content = structuredClone(projection.content);
+    content.content![0]!.content![0]!.content![0]!.content![0]!.text = "שלבים חדשים";
+    content.content![0]!.attrs!.caption = "כיתוב חדש";
+    const changed = applyLatexVisualDocumentChange(source, projection, content)!;
+    expect(changed.source).toBe(
+      source
+        .replace("שלבי בדיקה", "שלבים חדשים")
+        .replace("מסגרת, כיתוב בעברית וחצים.", "כיתוב חדש"),
+    );
+    const reopened = projectLatexVisualDocument(changed.source);
+    expect(reopened.rawBlocks).toBe(0);
+    expect(
+      applyLatexVisualDocumentChange(changed.source, reopened, projection.content)?.source,
+    ).toBe(source);
+  });
+  it("composes English and alignment wrappers around editable literal code", () => {
+    const source = document(String.raw`\begin{english}
+\begin{flushleft}
+\begin{verbatim}
+def square(x):
+    return x * x
+\end{verbatim}
+\end{flushleft}
+\end{english}`);
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.rawBlocks).toBe(0);
+    const content = structuredClone(projection.content);
+    const code = content.content![0]!.content![0]!.content![0]!;
+    expect(code.attrs?.kind).toBe("simple");
+    code.attrs!.body = String(code.attrs!.body).replace("x * x", "x ** 2");
+    const changed = applyLatexVisualDocumentChange(source, projection, content);
+    expect(changed?.source).toBe(source.replace("x * x", "x ** 2"));
+    expect(projectLatexVisualDocument(changed!.source).rawBlocks).toBe(0);
+  });
+  it("explains why unsupported structures stay in source", () => {
+    const projection = projectLatexVisualDocument(
+      document(String.raw`\begin{unknown}body\end{unknown}`),
+    );
+    expect(projection.content.content![0]!.attrs?.reason).toContain("unknown structure");
+    expect(
+      applyLatexVisualDocumentChange(
+        document(String.raw`\begin{unknown}body\end{unknown}`),
+        projection,
+        projection.content,
+      )?.source,
+    ).toBe(document(String.raw`\begin{unknown}body\end{unknown}`));
+  });
   it.each([String.raw`\ref{sec:one}`, String.raw`\protect \ref{sec:one}`, "$x+y$"])(
     "preserves authored wrappers during compound edits around an unchanged atom: %s",
     (atom) => {

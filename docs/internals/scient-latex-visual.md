@@ -895,13 +895,29 @@ shortcut hints, including user overrides and disabled shortcuts.
 
 `latexLanguage.ts` reads literal root language/font declarations and maps supported
 English/Hebrew and LTR/RTL wrappers to blocks and inline marks.
-`LatexLanguageContext` shares root-derived labels with node views.
+Modern Babel's `\babelprovide[main]` takes precedence over its package language
+list. Literal `\babelfont` declarations supply the main and passage fonts,
+including language-specific overrides. `LatexLanguageContext` shares these
+language labels with node views.
+Literal Babel tags (and `otherlanguage*`) change passage language and text
+direction while preserving paragraph placement; full language/direction
+environments also switch paragraph direction. Alignment follows that paragraph
+direction, with literal code glyphs isolated LTR.
+Unresolved includes/conditionals and unsupported languages produce a visible
+notice; the paper uses automatic direction without claiming a resolved language.
 `latexDirection.css` isolates mixed-language passages and keeps math/source flow
 left-to-right. `latexVisualDocument.ts` preserves an entire bilingual phrase as
 one source wrapper across styled runs and math. Package insertion precedes
 `bidi`, `xepersian` and declarations enabling Hebrew, retaining dependency order.
 This source-derived support is independent of the removed configuration/direction
 menu additions; unsupported setups remain source-owned.
+Source-only blocks explain the unsupported structure or dynamic TeX definition
+that caused fallback. Their exact source remains available for editing and PDF
+compilation. Ordinary framed paragraph figures and alignment environments can
+contain supported rich text, math and literal code without flattening their
+source wrappers. Math's `\texthebrew` and `\textenglish` arguments use isolated
+language/font spans in passive and editable rendering; screen adapters serialize
+back to the authored language command.
 
 The Math menu separates placement, equation layout, and insertion. Its seven
 entries are Inline math, Display math, Aligned equations, Brackets, Matrix, Cases,
@@ -1073,6 +1089,12 @@ fixed paragraph columns retain their declared widths. Uniform generated X tables
 keep equal columns. Caption and float spacing use the natural standard-class
 dimensions, with booktabs rule spacing approximated in CSS. Custom caption styles
 and TeX float placement still need the compiled PDF.
+Cell alignment follows the table's inherited direction: source l/r columns and
+multicolumn alignment use logical start/end, including the position of their
+intrinsic-width editors. Default X/p/m/b paragraph columns justify their text;
+explicit ragged/centered modifiers and multicolumn formats keep their own alignment.
+Spanned tables retain the source rule kind so top/bottom booktabs rules stay
+heavier than midrules, with rule spacing preserved alongside spans and colors.
 
 The table adapter also projects bounded literal multicolumn/multirow cells,
 basic named xcolor row mixes, hline and cline rules in ordinary l/c/r tabulars.

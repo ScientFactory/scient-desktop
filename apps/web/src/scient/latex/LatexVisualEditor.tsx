@@ -252,7 +252,7 @@ import { LatexLayoutControls } from "./LatexLayoutControls";
 import { LatexCodeControls } from "./LatexCodeControls";
 import { LatexListControls } from "./LatexListControls";
 import { renameLatexLabel } from "./latexLabelAuthoring";
-import { editLatexTable } from "./latexTableAuthoring";
+import { editLatexTable, latexTableRulePresentation } from "./latexTableAuthoring";
 import {
   LatexAuthoringContext,
   LatexDocumentAuthoring,
@@ -2158,6 +2158,9 @@ function LatexRawBlockView({ node, editor, getPos }: NodeViewProps) {
           </Button>
         </span>
       </div>
+      <p className="scient-latex-visual-raw-reason">
+        {String(node.attrs.reason ?? "This block needs LaTeX source editing.")}
+      </p>
       {active ? (
         <textarea
           ref={sourceField}
@@ -4053,6 +4056,13 @@ function LatexRichPreviewView({
                           return null;
                         const format = tableFormatting[rowIndex]?.[cellIndex];
                         const columnKind = tableColumnKinds[cellIndex] ?? "natural";
+                        const topRule = latexTableRulePresentation(layout?.topRule);
+                        const bottomRule = latexTableRulePresentation(layout?.bottomRule);
+                        const justified =
+                          !node.attrs.tableCanonical &&
+                          (layout
+                            ? layout.justified
+                            : tablePresentation.columnJustified[cellIndex]);
                         const cellStyle: CSSProperties & {
                           "--scient-latex-table-cell-background"?: string;
                         } = {
@@ -4069,18 +4079,20 @@ function LatexRichPreviewView({
                           ...(layout
                             ? {
                                 borderTop: layout.top
-                                  ? `0.5px solid ${layout.topColor ?? "currentColor"}`
+                                  ? `${topRule.width} solid ${layout.topColor ?? "currentColor"}`
                                   : "0",
                                 borderBottom: layout.bottom
-                                  ? `0.5px solid ${layout.bottomColor ?? "currentColor"}`
+                                  ? `${bottomRule.width} solid ${layout.bottomColor ?? "currentColor"}`
                                   : "0",
-                                borderLeft: layout.left
+                                borderInlineStart: layout.left
                                   ? `0.5px solid ${layout.ruleColor ?? "currentColor"}`
                                   : "0",
-                                borderRight: layout.right
+                                borderInlineEnd: layout.right
                                   ? `0.5px solid ${layout.ruleColor ?? "currentColor"}`
                                   : "0",
                                 verticalAlign: layout.rowSpan > 1 ? "middle" : "top",
+                                paddingTop: layout.top ? (topRule.after ?? "0") : "0",
+                                paddingBottom: layout.bottom ? (bottomRule.before ?? "0") : "0",
                                 "--scient-latex-table-cell-background":
                                   layout.background ?? "transparent",
                               }
@@ -4138,6 +4150,7 @@ function LatexRichPreviewView({
                         );
                         return node.attrs.hasHeader === true && rowIndex === 0 ? (
                           <th
+                            data-paragraph-column={justified || undefined}
                             colSpan={layout?.colSpan}
                             rowSpan={layout?.rowSpan}
                             style={cellStyle}
@@ -4164,6 +4177,7 @@ function LatexRichPreviewView({
                           </th>
                         ) : (
                           <td
+                            data-paragraph-column={justified || undefined}
                             colSpan={layout?.colSpan}
                             rowSpan={layout?.rowSpan}
                             style={cellStyle}
@@ -4345,6 +4359,7 @@ const LatexRawBlock = Node.create({
     return {
       raw: { default: "" },
       label: { default: "Raw LaTeX" },
+      reason: { default: "This block needs LaTeX source editing.", rendered: false },
       sourceId: { default: null, rendered: false },
     };
   },
@@ -4464,7 +4479,17 @@ function fieldSourceId(
 function LatexScientificView(props: NodeViewProps) {
   const { node, editor, selected, getPos, updateAttributes, deleteNode } = props;
   const root = useRef<HTMLDivElement | null>(null);
-  const languageLabels = latexLanguageLabels(useContext(LatexLanguageContext));
+  const inheritedLanguage = useContext(LatexLanguageContext);
+  const languageLabels = latexLanguageLabels(inheritedLanguage);
+  const figurePresentation = useEditorState({
+    editor,
+    selector: ({ editor: current }) => {
+      const at = getPos();
+      return typeof at === "number"
+        ? latexEquationReferencesKey.getState(current.state)?.figures.get(at)
+        : undefined;
+    },
+  });
   const documentEditing = useContext(LatexMathEditingContext);
   const editable = useEditorEditable(editor);
   const environment = String(node.attrs.environment);
@@ -4525,15 +4550,19 @@ function LatexScientificView(props: NodeViewProps) {
     return (
       <NodeViewWrapper
         className="scient-latex-basic-box"
-        style={{
-          background: layout.background
-            ? (latexColorCss(layout.background) ?? undefined)
-            : undefined,
-          borderColor: latexColorCss(layout.color) ?? undefined,
-          borderWidth: layout.borderWidth,
-          padding: layout.padding,
-          width: layout.width ?? "fit-content",
-        }}
+        style={
+          {
+            background: layout.background
+              ? (latexColorCss(layout.background) ?? undefined)
+              : undefined,
+            borderColor: latexColorCss(layout.color) ?? undefined,
+            borderWidth: layout.borderWidth,
+            padding: layout.padding,
+            width: layout.width ?? "fit-content",
+            textAlign: layout.alignment,
+            "--scient-latex-text-align": layout.alignment,
+          } as CSSProperties
+        }
       >
         <NodeViewContent aria-label="Framed text" />
       </NodeViewWrapper>
@@ -4546,14 +4575,103 @@ function LatexScientificView(props: NodeViewProps) {
         className="scient-latex-direction-block"
         dir={node.attrs.layout.direction}
         lang={language === "hebrew" ? "he" : language === "english" ? "en" : undefined}
+        style={
+          {
+            "--scient-latex-text-direction": node.attrs.layout.direction,
+            "--scient-latex-math-text-font":
+              language === "hebrew"
+                ? "var(--scient-latex-hebrew-font)"
+                : language === "english"
+                  ? "var(--scient-latex-english-font)"
+                  : undefined,
+            ...(node.attrs.layout.paragraphDirection === "inherit"
+              ? {}
+              : { "--scient-latex-paragraph-direction": node.attrs.layout.direction }),
+          } as CSSProperties
+        }
       >
-        <NodeViewContent
-          className="scient-latex-direction-body"
-          aria-label={language ? `${language} text` : `${node.attrs.layout.direction} text`}
-        />
+        <LatexLanguageContext value={language || inheritedLanguage}>
+          <NodeViewContent
+            className="scient-latex-direction-body"
+            aria-label={language ? `${language} text` : `${node.attrs.layout.direction} text`}
+          />
+        </LatexLanguageContext>
       </NodeViewWrapper>
     );
   }
+  if (node.attrs.layout?.kind === "alignment")
+    return (
+      <NodeViewWrapper
+        className="scient-latex-alignment-block"
+        data-alignment={node.attrs.layout.alignment}
+        style={
+          {
+            textAlign: node.attrs.layout.alignment,
+            "--scient-latex-text-align": node.attrs.layout.alignment,
+          } as CSSProperties
+        }
+      >
+        <NodeViewContent aria-label="Aligned content" />
+      </NodeViewWrapper>
+    );
+  if (node.attrs.layout?.kind === "framedFigure")
+    return (
+      <NodeViewWrapper
+        className="scient-latex-rich-preview scient-latex-figure-preview scient-latex-figure-layout scient-latex-framed-figure"
+        ref={root}
+      >
+        <figure>
+          <NodeViewContent aria-label="Figure content" />
+          {node.attrs.layout.captioned && (
+            <figcaption className="scient-latex-figure-numbered-caption" contentEditable={false}>
+              {figurePresentation?.number && (
+                <span>
+                  {languageLabels.figure} {figurePresentation.number}:{" "}
+                </span>
+              )}
+              <LatexTextField
+                aria-label="Figure caption"
+                disabled={!editable}
+                rows={1}
+                value={String(node.attrs.caption ?? "")}
+                onValueChange={(caption) => updateAttributes({ caption })}
+              />
+            </figcaption>
+          )}
+        </figure>
+        {node.attrs.layout.captioned && (
+          <LatexObjectToolbar
+            editor={editor}
+            root={root}
+            selected={selected}
+            label="Figure tools"
+            position="Figure"
+            inline
+          >
+            <button
+              type="button"
+              className={dockButtonClass()}
+              disabled={!editable}
+              onClick={() =>
+                root.current
+                  ?.querySelector<HTMLTextAreaElement>('[aria-label="Figure caption"]')
+                  ?.focus()
+              }
+            >
+              Caption
+            </button>
+            {node.attrs.label && (
+              <LatexFooterLabel
+                label="Figure reference label"
+                value={node.attrs.label}
+                disabled={!editable}
+                onCommit={(label) => updateAttributes({ label })}
+              />
+            )}
+          </LatexObjectToolbar>
+        )}
+      </NodeViewWrapper>
+    );
   if (node.attrs.layout) {
     const layout = node.attrs.layout as {
       kind: string;
@@ -4850,6 +4968,8 @@ const LatexScientific = Node.create({
       environment: { default: "theorem" },
       title: { default: "" },
       titleSource: { default: null, rendered: false },
+      caption: { default: null, rendered: false },
+      label: { default: null, rendered: false },
       titleRemoved: { default: false, rendered: false },
       raw: { default: "", rendered: false },
       sourceId: { default: null, rendered: false },
@@ -7731,9 +7851,17 @@ function LatexVisualEditorReady(
       '"David", "Noto Serif Hebrew", serif',
     ),
     "--scient-latex-english-font": latexLanguageFont(
-      documentLanguage.mainFont,
+      documentLanguage.englishFont,
       '"KaTeX_Main", "Cambria", serif',
     ),
+    "--scient-latex-text-direction": documentLanguage.resolved ? documentLanguage.direction : "ltr",
+    "--scient-latex-paragraph-direction": documentLanguage.resolved
+      ? documentLanguage.direction
+      : "ltr",
+    "--scient-latex-math-text-font":
+      documentLanguage.main === "hebrew"
+        ? "var(--scient-latex-hebrew-font)"
+        : "var(--scient-latex-english-font)",
     "--scient-latex-text-align": layout.textAlign,
     "--scient-latex-column-gap": texPixels(layout.columnGapPt),
     "--scient-latex-column-rule": texPixels(layout.columnRulePt),
@@ -8849,6 +8977,17 @@ function LatexVisualEditorReady(
                             ) : null}
                           </div>
                         )}
+                        {documentLanguage.issues.length > 0 && (
+                          <div className="scient-latex-visual-notice" role="status">
+                            <span>
+                              {documentLanguage.issues.join(" ")} Compare with PDF for the resolved
+                              language and direction.
+                            </span>
+                            <Button size="xs" variant="ghost" onClick={props.onOpenSource}>
+                              Open Source
+                            </Button>
+                          </div>
+                        )}
                         <div
                           className="scient-latex-visual-body"
                           data-navigation={navigationOpen || undefined}
@@ -8955,13 +9094,17 @@ function LatexVisualEditorReady(
                               >
                                 <div
                                   className="scient-latex-visual-paper"
-                                  dir={documentLanguage.direction}
+                                  dir={
+                                    documentLanguage.resolved ? documentLanguage.direction : "auto"
+                                  }
                                   lang={
-                                    documentLanguage.main === "hebrew"
-                                      ? "he"
-                                      : documentLanguage.main === "english"
-                                        ? "en"
-                                        : undefined
+                                    !documentLanguage.resolved
+                                      ? undefined
+                                      : documentLanguage.main === "hebrew"
+                                        ? "he"
+                                        : documentLanguage.main === "english"
+                                          ? "en"
+                                          : undefined
                                   }
                                   data-indent-after-heading={layout.indentAfterHeading}
                                   data-document-class={layout.documentClass}

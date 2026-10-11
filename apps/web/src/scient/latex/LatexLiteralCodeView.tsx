@@ -169,7 +169,7 @@ export function LatexLiteralCodeView(props: {
           } as CSSProperties
         }
       >
-        <div className="scient-latex-listing-highlight" aria-hidden="true">
+        <div className="scient-latex-listing-highlight" aria-hidden="true" dir="ltr">
           {lines.map(({ line, lineIndex, pieces }) => {
             const number = (settings?.firstNumber ?? 1) + lineIndex;
             const numbered =
@@ -210,6 +210,7 @@ export function LatexLiteralCodeView(props: {
         </div>
         <LatexTextField
           className="scient-latex-listing-editor"
+          dir="ltr"
           aria-label={
             ["lstlisting", "tcblisting"].includes(props.environment)
               ? "Code listing"

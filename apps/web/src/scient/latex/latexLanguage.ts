@@ -60,10 +60,14 @@ export function latexDocumentLanguage(source: string) {
     match[2]!.split(",").some((part) => part.trim() === "babel"),
   );
   const babelOptions = (babel?.[1] ?? "").split(",").map((part) => part.trim());
+  const provided = find(/\\babelprovide\s*(?:\[([^\]]*)\])?\s*\{([^{}]+)\}/gu);
+  const providedMain = provided.findLast((match) =>
+    (match[1] ?? "").split(",").some((option) => option.trim() === "main"),
+  );
   const babelMain =
     babelOptions.find((part) => part.startsWith("main="))?.slice(5) ??
     babelOptions.findLast((part) => part.length > 0 && !part.includes("="));
-  const main = defaults.at(-1)?.[1]?.trim() ?? babelMain ?? "english";
+  const main = defaults.at(-1)?.[1]?.trim() ?? providedMain?.[2]?.trim() ?? babelMain ?? "english";
   const languages = new Set<string>([main]);
   defaults.forEach((declaration) => languages.add(declaration[1]!.trim()));
   const otherLanguages = new Set<string>();
@@ -74,13 +78,44 @@ export function latexDocumentLanguage(source: string) {
     });
   if (babel)
     babelOptions
-      .filter((part) => !part.includes("="))
+      .filter((part) => part.length > 0 && !part.includes("="))
       .forEach((language) => languages.add(language));
+  provided.forEach((declaration) => languages.add(declaration[2]!.trim()));
+  const babelFonts = find(
+    /\\babelfont\s*(?:\[([^\]]*)\])?\s*\{(rm|sf|tt)\}\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu,
+  );
+  const babelFont = (language: string, family = "rm") =>
+    babelFonts.findLast(
+      (match) =>
+        match[2] === family && match[1]?.split(",").some((name) => name.trim() === language),
+    )?.[3] ??
+    babelFonts.findLast((match) => match[2] === family && !match[1])?.[3] ??
+    null;
   const hebrewFont =
+    babelFont("hebrew") ??
     find(
       /\\newfontfamily\s*(?:\{\\hebrewfont\}|\\hebrewfont\b)\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu,
-    ).at(-1)?.[1] ?? null;
-  const mainFont = find(/\\setmainfont\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu).at(-1)?.[1] ?? null;
+    ).at(-1)?.[1] ??
+    null;
+  const mainFont =
+    babelFont(main) ?? find(/\\setmainfont\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/gu).at(-1)?.[1] ?? null;
+  const englishFont = babelFont("english") ?? mainFont;
+  const languageTags = new Map<string, LatexWritingLanguage>();
+  for (const declaration of find(/\\babeltags\s*\{([^{}]+)\}/gu)) {
+    for (const tag of declaration[1]!.split(",")) {
+      const pair = /^\s*([A-Za-z]+)\s*=\s*(english|hebrew)\s*$/u.exec(tag);
+      if (pair) languageTags.set(pair[1]!, pair[2] as LatexWritingLanguage);
+    }
+  }
+  const issues: string[] = [];
+  if (!["english", "hebrew"].includes(main))
+    issues.push(`Visual does not yet support the declared main language “${main}”.`);
+  if (find(/\\(?:input|include|if[a-zA-Z]*)\b/gu).length)
+    issues.push(
+      "Language declarations in included files or conditional TeX cannot be resolved by Visual.",
+    );
+  if (babel && !babelMain && !providedMain && !defaults.length)
+    issues.push("Visual could not resolve this Babel document's main language.");
   const polyglossia = has("polyglossia");
   return {
     main,
@@ -90,8 +125,15 @@ export function latexDocumentLanguage(source: string) {
     provider: polyglossia ? ("polyglossia" as const) : babel ? ("babel" as const) : null,
     hebrewFont,
     mainFont,
+    englishFont,
+    languageTags,
+    resolved: issues.length === 0,
+    issues,
     // bidi supplies pure direction switches; language switches also select the language's font.
-    bidi: has("bidi") || (polyglossia && languages.has("hebrew")),
+    bidi:
+      has("bidi") ||
+      (polyglossia && languages.has("hebrew")) ||
+      babelOptions.some((option) => /^bidi\s*=/u.test(option)),
     canConfigure:
       !babel &&
       (main === "english" || main === "hebrew") &&
@@ -109,13 +151,15 @@ export function latexLanguageFont(font: string | null, fallback: string): string
     : fallback;
 }
 
-export function latexDirectionOpening(source: string) {
-  const opening = /^\\begin\{(english|hebrew|LTR|RTL|otherlanguage\*?)\}/u.exec(source);
+export function latexDirectionOpening(source: string, setup?: LatexLanguageSetup) {
+  const opening = /^\\begin\{([A-Za-z]+\*?)\}/u.exec(source);
   if (!opening) return null;
   const environment = opening[1]!;
+  const tagged = setup?.languageTags.get(environment);
+  if (!tagged && !/^(english|hebrew|LTR|RTL|otherlanguage\*?)$/u.test(environment)) return null;
   let from = opening[0].length;
   let language: LatexWritingLanguage | null =
-    environment === "english" || environment === "hebrew" ? environment : null;
+    tagged ?? (environment === "english" || environment === "hebrew" ? environment : null);
   if (environment.startsWith("otherlanguage")) {
     const argument = /^\s*\{(english|hebrew)\}/u.exec(source.slice(from));
     if (!argument) return null;
@@ -126,7 +170,16 @@ export function latexDirectionOpening(source: string) {
   if (/^\s*\[/u.test(source.slice(from))) return null;
   const direction: LatexTextDirection =
     environment === "RTL" || language === "hebrew" ? "rtl" : "ltr";
-  return { environment, from, layout: { kind: "direction", direction, language } };
+  return {
+    environment,
+    from,
+    layout: {
+      kind: "direction",
+      direction,
+      language,
+      paragraphDirection: tagged || environment === "otherlanguage*" ? "inherit" : direction,
+    },
+  };
 }
 
 export function latexLanguageLabels(language: string) {
