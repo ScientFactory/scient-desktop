@@ -169,7 +169,7 @@ an opener; completion is observed through the canonical server provider snapshot
 The additive lifecycle contract is defined in
 [`providerLifecycle.ts`](../../packages/contracts/src/providerLifecycle.ts). A materialized provider
 instance may expose two optional seams through
-[`ProviderDriver.ts`](../../apps/server/src/provider/ProviderDriver.ts):
+[`ScientProviderInstanceSeams.ts`](../../apps/server/src/provider/ScientProviderInstanceSeams.ts):
 
 - `connectionActions` starts and cancels official provider account flows and disconnects when the
   provider can truthfully do so;
