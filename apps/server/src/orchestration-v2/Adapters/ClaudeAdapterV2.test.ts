@@ -8490,7 +8490,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             {
               ...harness.providerThread,
               nativeThreadRef: {
-                driver: "claudeAgent" as const,
+                driver: ProviderDriverKind.make("claudeAgent"),
                 nativeId: "foreign-native-owner",
                 strength: "strong" as const,
               },
@@ -8735,7 +8735,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const foreignNativeThread = {
             ...providerThread,
             nativeThreadRef: {
-              driver: "claudeAgent" as const,
+              driver: ProviderDriverKind.make("claudeAgent"),
               nativeId: "foreign-orphan-owner",
               strength: "strong" as const,
             },
@@ -8947,7 +8947,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const otherNativeThread = {
           ...harness.providerThread,
           nativeThreadRef: {
-            driver: "claudeAgent" as const,
+            driver: ProviderDriverKind.make("claudeAgent"),
             nativeId: "native-thread-ambiguous-other",
             strength: "strong" as const,
           },
