@@ -6,7 +6,7 @@ export function ModelPickerNewChatFooter(props: {
   readonly onFork: () => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-2 border-t border-border/70 px-2 py-1">
+    <div className="mt-auto flex shrink-0 items-center gap-2 border-t border-border/70 px-2 py-1">
       <p className="min-w-0 text-2xs leading-snug text-muted-foreground">Continue in a new chat</p>
       <Button
         type="button"
