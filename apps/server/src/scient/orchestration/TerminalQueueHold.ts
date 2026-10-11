@@ -14,9 +14,9 @@ import * as Stream from "effect/Stream";
 
 import type { CommandReceiptStoreV2 } from "../../orchestration-v2/CommandReceiptStore.ts";
 import type { EventStoreV2 } from "../../orchestration-v2/EventStore.ts";
-import type { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import type { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import type { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
-import { makeProviderFailure } from "../../orchestration-v2/ProviderFailure.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { isAutomaticCompletionRun } from "../../orchestration-v2/QueuedRunOrder.ts";
 
 /** Bind the native terminal reaction once; reads and writes stay lazy under the caller's lock. */

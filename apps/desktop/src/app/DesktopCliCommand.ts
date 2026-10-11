@@ -25,12 +25,6 @@ export class DesktopCliCommandError extends Schema.TaggedError<DesktopCliCommand
   { message: Schema.String },
 ) {}
 
-/** User-writable folders that login shells commonly put on PATH, in preference order. */
-const unixCandidates = (home: string, platform: NodeJS.Platform) =>
-  platform === "darwin"
-    ? ["/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/bin`]
-    : [`${home}/.local/bin`, `${home}/bin`];
-
 const pathEntries = (value: string | undefined, separator: string) =>
   (value ?? "").split(separator).filter((entry) => entry.length > 0);
 
@@ -95,24 +89,12 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  /**
-   * A link to one of the app's launchers, by the marker the launcher carries.
-   * This also finds links made under a previous Scient home, so Remove can clean
-   * them up and Install does not add a second.
-   */
-  const isOurLauncher = (launcher: string) =>
-    Effect.gen(function* () {
-      // The launcher is a few KB; never read a large binary another command links to.
-      const info = yield* fs.stat(launcher);
-      if (info.type !== "File" || Number(info.size) > 16_384) return false;
-      const content = yield* fs.readFileString(launcher);
-      return content.includes(DesktopCliShim.MARKER);
-    }).pipe(Effect.orElseSucceed(() => false));
-  const isOurLink = (link: string) =>
-    fs.readLink(link).pipe(
-      Effect.flatMap(() => isOurLauncher(link)),
-      Effect.orElseSucceed(() => false),
-    );
+  const isOurLauncher = (target: string) => DesktopCliShim.isOwnedLauncher(fs, target);
+  const isOurLink = (link: string) => DesktopCliShim.isOwnedLink(fs, link);
+  const directories = DesktopCliShim.unixCommandDirectories(
+    environment.homeDirectory,
+    environment.platform,
+  );
 
   const powershell = (env: Record<string, string>) =>
     Effect.scoped(
@@ -143,6 +125,17 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => fail("Could not update your PATH.")),
     );
 
+  const recordedWindowsPath = Effect.gen(function* () {
+    const recorded = yield* fs.readFileString(ownedPathMarker).pipe(Effect.option);
+    if (Option.isNone(recorded) || !sameWindowsPath(recorded.value.trim(), binDirectory)) {
+      return Option.none<Array<string>>();
+    }
+    const entries = pathEntries(yield* readUserPath, ";");
+    // A valid record can outlive an external PATH removal. Remove must still
+    // clear it, or a later user-added entry would inherit our stale ownership.
+    return Option.some(entries);
+  });
+
   /** The `scient` a new shell runs, by PATH order, or none. */
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
@@ -152,36 +145,85 @@ export const make = Effect.gen(function* () {
     return Option.none<string>();
   });
 
+  /** The `scient` a new shell runs when it is not this app's, on Unix. */
+  const foreignFirstOnPath = Effect.gen(function* () {
+    if (windows) return Option.none<string>();
+    const first = yield* firstOnPath;
+    if (Option.isNone(first) || (yield* isOurLink(first.value))) return Option.none<string>();
+    return first;
+  });
+
   /** Where this app's command is installed now, if anywhere. */
   const installedAt = Effect.gen(function* () {
-    if (windows) {
-      if (!(yield* exists(ownedPathMarker)) || !(yield* isOurLauncher(launcher))) {
-        return Option.none<string>();
-      }
-      const entries = pathEntries(yield* readUserPath, ";");
-      return entries.some((entry) => sameWindowsPath(entry, binDirectory))
-        ? Option.some(launcher)
-        : Option.none<string>();
-    }
-    for (const directory of unixCandidates(environment.homeDirectory, environment.platform)) {
+    for (const directory of directories) {
       const link = path.join(directory, commandName);
       if (yield* isOurLink(link)) return Option.some(link);
     }
     return Option.none<string>();
   });
 
+  /** Only installations Remove owns count, not an internal or user-added launcher. */
+  const legacyInstalled = Effect.gen(function* () {
+    for (const directory of directories) {
+      if (yield* isOurLink(path.join(directory, "t3"))) return true;
+    }
+    return false;
+  });
+
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
     if (!environment.isPackaged) {
-      return { supported: false, installedPath: null, onPath: false } as const;
+      return {
+        supported: false,
+        installedPath: null,
+        legacyInstalled: false,
+        onPath: false,
+      } as const;
+    }
+    if (windows) {
+      const recorded = yield* recordedWindowsPath;
+      const owned =
+        Option.isSome(recorded) &&
+        recorded.value.some((entry) => sameWindowsPath(entry, binDirectory));
+      const installed = owned && (yield* isOurLauncher(launcher));
+      return {
+        supported: true,
+        installedPath: installed ? launcher : null,
+        legacyInstalled: owned && (yield* isOurLauncher(path.join(binDirectory, "t3.cmd"))),
+        onPath: installed,
+      };
     }
     const installed = yield* installedAt;
-    if (Option.isNone(installed)) return { supported: true, installedPath: null, onPath: false };
+    const legacy = yield* legacyInstalled;
+    const shadowedBy = yield* foreignFirstOnPath;
+    const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
+    if (Option.isNone(installed)) {
+      return {
+        supported: true,
+        installedPath: null,
+        legacyInstalled: legacy,
+        onPath: false,
+        ...shadow,
+      };
+    }
     // On Windows only terminals opened after the change see it. On Unix the
     // first `scient` on PATH must be ours; a `scient` earlier on PATH would shadow it.
     const first = yield* firstOnPath;
-    const onPath = windows || (Option.isSome(first) && (yield* isOurLink(first.value)));
-    return { supported: true, installedPath: installed.value, onPath };
-  }).pipe(Effect.orElseSucceed(() => ({ supported: false, installedPath: null, onPath: false })));
+    const onPath = Option.isSome(first) && (yield* isOurLink(first.value));
+    return {
+      supported: true,
+      installedPath: installed.value,
+      legacyInstalled: legacy,
+      onPath,
+      ...shadow,
+    };
+  }).pipe(
+    Effect.orElseSucceed(() => ({
+      supported: false,
+      installedPath: null,
+      legacyInstalled: false,
+      onPath: false,
+    })),
+  );
 
   /** Writes the launcher if the app has not yet, e.g. when no local backend runs. */
   const ensureLauncher = DesktopCliShim.install.pipe(
@@ -198,9 +240,7 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const install: DesktopCliCommand["Service"]["install"] = Effect.gen(function* () {
-    if (!environment.isPackaged) return yield* fail("The scient command needs an installed app.");
-    yield* ensureLauncher;
+  const installShortcut = Effect.gen(function* () {
     if (windows) {
       const entries = pathEntries(yield* readUserPath, ";");
       if (!entries.some((entry) => sameWindowsPath(entry, binDirectory))) {
@@ -215,13 +255,23 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existing)) {
       const target = yield* fs.readLink(existing.value).pipe(Effect.option);
       if (Option.getOrUndefined(target) === launcher) return yield* state;
-      // A link to a previous Scient home's launcher: point it at this one instead.
-      yield* fs
-        .remove(existing.value)
-        .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
+    }
+    // Installing behind a foreign scient would only hide the problem.
+    const shadowedBy = yield* foreignFirstOnPath;
+    if (Option.isSome(shadowedBy)) {
+      return yield* fail(
+        `Another scient at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
+      );
+    }
+    if (Option.isSome(existing)) {
+      const link = existing.value;
+      yield* DesktopCliShim.replaceOwnedLink(fs, path, link, launcher).pipe(
+        Effect.mapError(() => fail(`Could not replace ${link}.`)),
+      );
+      return yield* state;
     }
     const onPath = pathEntries(process.env.PATH, ":");
-    const candidates = unixCandidates(environment.homeDirectory, environment.platform);
+    const candidates = directories;
     // Prefer a folder already on PATH that the user can write to without admin rights.
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),
@@ -245,20 +295,27 @@ export const make = Effect.gen(function* () {
     return yield* fail(
       `Another scient command is already installed, or no folder on your PATH is writable. Run the launcher directly at ${launcher}.`,
     );
+  }).pipe(DesktopCliShim.pathMutationLock.withPermit);
+
+  const install: DesktopCliCommand["Service"]["install"] = Effect.gen(function* () {
+    if (!environment.isPackaged) return yield* fail("The scient command needs an installed app.");
+    yield* ensureLauncher;
+    return yield* installShortcut;
   }).pipe(Effect.withSpan("desktop.cliCommand.install"));
 
   const uninstall: DesktopCliCommand["Service"]["uninstall"] = Effect.gen(function* () {
     if (!environment.isPackaged) return yield* state;
     if (windows) {
-      if (yield* exists(ownedPathMarker)) {
-        const entries = pathEntries(yield* readUserPath, ";");
+      const owned = yield* recordedWindowsPath;
+      if (Option.isSome(owned)) {
+        const entries = owned.value;
         const kept = entries.filter((entry) => !sameWindowsPath(entry, binDirectory));
         if (kept.length !== entries.length) yield* writeUserPath(kept.join(";"));
         yield* fs.remove(ownedPathMarker).pipe(Effect.ignore);
       }
       return yield* state;
     }
-    for (const directory of unixCandidates(environment.homeDirectory, environment.platform)) {
+    for (const directory of directories) {
       for (const name of [commandName, "t3"]) {
         const link = path.join(directory, name);
         if (yield* isOurLink(link)) {
@@ -267,7 +324,10 @@ export const make = Effect.gen(function* () {
       }
     }
     return yield* state;
-  }).pipe(Effect.withSpan("desktop.cliCommand.uninstall"));
+  }).pipe(
+    DesktopCliShim.pathMutationLock.withPermit,
+    Effect.withSpan("desktop.cliCommand.uninstall"),
+  );
 
   return DesktopCliCommand.of({ state, install, uninstall });
 });

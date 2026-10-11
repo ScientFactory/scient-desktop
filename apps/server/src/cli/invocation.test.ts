@@ -1,185 +1,223 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, expect, it } from "@effect/vitest";
-import {
-  HostProcessArguments,
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import { expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
-  formatCliCommand,
+  resolveCliCommand,
   resolveRootCliCommand,
   resolveServerInstallation,
 } from "./invocation.ts";
 
-it("formats package runner commands from their cache entry paths", () => {
-  for (const [entryPath, expected] of [
-    ["/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs", "npx t3 serve"],
-    [
-      "C:\\Users\\theo\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules\\t3\\dist\\bin.mjs",
-      "npx t3 serve",
-    ],
-    ["/home/theo/.cache/pnpm/dlx/abc/node_modules/t3/dist/bin.mjs", "pnpm dlx t3 serve"],
-    [
-      "/home/theo/.local/share/pnpm/.pnpm/dlx/abc/node_modules/t3/dist/bin.mjs",
-      "pnpm dlx t3 serve",
-    ],
-    [
-      "C:\\Users\\theo\\AppData\\Local\\pnpm-cache\\dlx\\abc\\node_modules\\t3\\dist\\bin.mjs",
-      "pnpm dlx t3 serve",
-    ],
-    ["/home/theo/.bun/install/cache/t3@0.0.31/dist/bin.mjs", "bunx t3 serve"],
-    ["/tmp/bunx-1000-t3@latest/node_modules/t3/dist/bin.mjs", "bunx t3 serve"],
-    [
-      "C:\\Users\\theo\\AppData\\Local\\Temp\\bunx-0-t3@latest\\node_modules\\t3\\dist\\bin.mjs",
-      "bunx t3 serve",
-    ],
-  ] as const) {
-    assert.equal(formatCliCommand({ subcommand: "serve", entryPath, version: "0.0.31" }), expected);
-  }
-});
-
-it("treats stable installs as direct invocations", () => {
-  for (const entryPath of [
-    "/usr/local/lib/node_modules/t3/dist/bin.mjs",
-    "/home/theo/Code/work/t3code/apps/server/dist/bin.mjs",
-    "/home/theo/.t3/runtime/0.0.31/node_modules/t3/dist/bin.mjs",
-    "",
-  ]) {
-    assert.equal(
-      formatCliCommand({ subcommand: "serve", entryPath, version: "0.0.31" }),
-      "t3 serve",
-    );
-  }
-});
-
-it("re-suggests the nightly channel only for nightly builds", () => {
-  for (const [version, expected] of [
-    ["0.0.31-nightly.20260729", "npx t3@nightly serve"],
-    ["0.0.31", "npx t3 serve"],
-  ] as const) {
-    assert.equal(
-      formatCliCommand({
-        subcommand: "serve",
-        entryPath: "/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs",
-        version,
-      }),
-      expected,
-    );
-  }
-});
-
-it("formats serve suggestions to match the launching command", () => {
-  assert.equal(
-    formatCliCommand({
-      subcommand: "serve",
-      entryPath: "/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs",
-      version: "0.0.31-nightly.20260729",
-    }),
-    "npx t3@nightly serve",
-  );
-  assert.equal(
-    formatCliCommand({
-      subcommand: "serve",
-      entryPath: "/tmp/bunx-1000-t3@latest/node_modules/t3/dist/bin.mjs",
-      version: "0.0.31",
-    }),
-    "bunx t3 serve",
-  );
-  assert.equal(
-    formatCliCommand({
-      subcommand: "serve",
-      entryPath: "/usr/local/lib/node_modules/t3/dist/bin.mjs",
-      version: "0.0.31-nightly.20260729",
-    }),
-    "t3 serve",
-  );
-});
-
-it.layer(NodeServices.layer)("root CLI commands", (it) => {
-  /** `sudo t3 browser setup` as this process would render it, with `t3` on PATH or not. */
-  const rootCommand = (input: {
-    readonly node: string;
-    readonly entry: string;
-    readonly path?: string;
-    readonly env?: Record<string, string>;
-    readonly executable?: boolean;
-  }) =>
-    resolveRootCliCommand("browser setup").pipe(
-      Effect.provideService(HostProcessExecutablePath, input.node),
-      Effect.provideService(HostProcessArguments, [input.node, input.entry]),
-      Effect.provideService(HostProcessIsExecutable, input.executable ?? false),
-      Effect.provideService(HostProcessPlatform, "linux"),
-      Effect.provideService(HostProcessEnvironment, { PATH: input.path ?? "", ...input.env }),
-    );
-
-  /** A directory holding an executable `t3`, to stand in for one on PATH. */
-  const pathWithT3 = Effect.gen(function* () {
+it.layer(NodeServices.layer)("operational CLI commands", (it) => {
+  const fixture = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const bin = yield* fs.makeTempDirectoryScoped();
-    yield* fs.writeFileString(path.join(bin, "t3"), "#!/bin/sh\n", { mode: 0o755 });
-    return bin;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const root = yield* fs.makeTempDirectoryScoped();
+    const bin = path.join(root, "tools");
+    const runtime = path.join(root, "private Node's location", "node");
+    yield* fs.makeDirectory(bin);
+    yield* fs.makeDirectory(path.dirname(runtime));
+    yield* fs.symlink(process.execPath, runtime);
+    for (const name of ["scient", "t3", "npx", "npm", "pnpm", "bunx"]) {
+      yield* fs.writeFileString(path.join(bin, name), "#!/bin/sh\nexit 70\n", { mode: 0o755 });
+    }
+    // Emulate sudo's HOME/PATH reset without invoking root or changing a profile.
+    yield* fs.writeFileString(
+      path.join(bin, "sudo"),
+      '#!/bin/sh\nHOME=/synthetic-root\nPATH="$SCIENT_TEST_ROOT_PATH"\nexport HOME PATH\nexec "$@"\n',
+      { mode: 0o755 },
+    );
+    const run = (command: string) =>
+      spawner.string(
+        ChildProcess.make("/bin/sh", ["-c", command], {
+          env: {
+            PATH: bin,
+            HOME: "/synthetic-user",
+            SCIENT_TEST_ROOT_PATH: `${bin}:/usr/bin:/bin`,
+          },
+          extendEnv: false,
+          stdin: "ignore",
+        }),
+      );
+    return { fs, path, root, runtime, run };
   });
 
-  it.effect("keeps a user-installed Node reachable when the command runs under sudo", () =>
-    Effect.gen(function* () {
-      const npx = "/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs";
-      // sudo's secure_path already has a system Node.
-      expect(yield* rootCommand({ node: "/usr/bin/node", entry: npx })).toBe(
-        "sudo scient browser setup",
-      );
-      // nvm, fnm, and tarball installs are dropped by sudo's PATH reset.
-      expect(
-        yield* rootCommand({ node: "/home/theo/.nvm/versions/node/v24/bin/node", entry: npx }),
-      ).toBe('sudo env "PATH=$PATH" scient browser setup');
-      expect(
-        yield* rootCommand({
-          node: "/home/theo/.local/node/bin/node",
-          entry: "/home/theo/.local/lib/node_modules/t3/dist/bin.mjs",
-          path: yield* pathWithT3,
-        }),
-      ).toBe('sudo env "PATH=$PATH" scient browser setup');
-    }).pipe(Effect.scoped),
+  it.effect.skipIf(process.platform === "win32")(
+    "executes the running global or cached package with private Node and no CLI or npm on PATH",
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, root, runtime, run } = yield* fixture;
+        const profile = path.join(root, "Scient profile's data");
+        for (const relative of [
+          "global/lib/node_modules/t3/dist/bin.mjs",
+          "npm/_npx/hash/node_modules/t3/dist/bin.mjs",
+          "pnpm/dlx/hash/node_modules/t3/dist/bin.mjs",
+          ".bun/install/cache/t3/dist/bin.mjs",
+        ]) {
+          const entry = path.join(root, "entry's cache", relative);
+          yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
+          yield* fs.writeFileString(
+            entry,
+            "console.log(JSON.stringify({entry:process.argv[1],args:process.argv.slice(2),execArgv:process.execArgv,home:process.env.HOME}));",
+          );
+          const resolve = (args: ReadonlyArray<string>, asRoot = false) =>
+            (asRoot ? resolveRootCliCommand(args) : resolveCliCommand(args)).pipe(
+              Effect.provideService(HostProcess.ExecutablePath, runtime),
+              Effect.provideService(HostProcess.Arguments, [runtime, entry]),
+              Effect.provideService(HostProcess.Environment, {}),
+              Effect.provideService(HostProcess.IsExecutable, false),
+              Effect.provideService(HostProcess.Platform, "linux"),
+            );
+          const args = ["browser", "setup", "--base-dir", profile];
+          const command = yield* resolve(args, true);
+          expect(JSON.parse(yield* run(command))).toEqual({
+            entry,
+            args,
+            execArgv: [],
+            home: "/synthetic-root",
+          });
+          const userCommand = yield* resolve(["serve", "--base-dir", profile]);
+          expect(JSON.parse(yield* run(userCommand))).toEqual({
+            entry,
+            args: ["serve", "--base-dir", profile],
+            execArgv: [],
+            home: "/synthetic-user",
+          });
+        }
+      }).pipe(Effect.scoped),
   );
 
-  it.effect("names this install's launcher even when another command is on PATH", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped();
-      const shim = path.join(home, ".local bin", "t3");
-      yield* fs.makeDirectory(path.dirname(shim), { recursive: true });
-      yield* fs.writeFileString(shim, "#!/bin/sh\n", { mode: 0o755 });
-      const desktop = {
-        node: "/tmp/.mount_T3abc/t3code",
-        entry: "/tmp/.mount_T3abc/resources/app.asar/apps/server/dist/bin.mjs",
-        env: { T3CODE_CLI_PATH: shim },
-      };
-      // The desktop app's shim, quoted for the shell and run as root as is.
-      expect(yield* rootCommand(desktop)).toBe(`sudo '${shim}' browser setup`);
-      // A different command on PATH must never replace this install's launcher.
-      expect(yield* rootCommand({ ...desktop, path: yield* pathWithT3 })).toBe(
-        `sudo '${shim}' browser setup`,
-      );
-      // A standalone binary names itself.
-      expect(
-        yield* rootCommand({
-          node: "/opt/t3/t3",
-          entry: "/opt/t3/t3",
-          executable: true,
-        }),
-      ).toBe("sudo /opt/t3/t3 browser setup");
-      // A stale shim path, then no launcher at all, fall back to plain `scient`.
-      expect(
-        yield* rootCommand({ ...desktop, env: { T3CODE_CLI_PATH: path.join(home, "gone") } }),
-      ).toBe('sudo env "PATH=$PATH" scient browser setup');
-    }).pipe(Effect.scoped),
+  it.effect.skipIf(process.platform === "win32")(
+    "executes canonical and legacy packaged launchers instead of an unrelated PATH command",
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, root, runtime, run } = yield* fixture;
+        const args = ["browser", "setup", "--base-dir", path.join(root, "profile with spaces")];
+        for (const name of ["scient", "t3"]) {
+          const shim = path.join(root, "packaged app's bin", name);
+          yield* fs.makeDirectory(path.dirname(shim), { recursive: true });
+          yield* fs.writeFileString(shim, '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+          const command = yield* resolveRootCliCommand(args).pipe(
+            Effect.provideService(HostProcess.ExecutablePath, runtime),
+            Effect.provideService(HostProcess.Arguments, [runtime, "/not-the-packaged-entry.mjs"]),
+            Effect.provideService(HostProcess.Environment, { T3CODE_CLI_PATH: shim }),
+            Effect.provideService(HostProcess.IsExecutable, false),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          );
+          expect((yield* run(command)).trim().split("\n")).toEqual(args);
+        }
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(process.platform === "win32")(
+    "falls back from a stale or unusable launcher and restores Electron Node mode under sudo",
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, root, runtime, run } = yield* fixture;
+        const entry = path.join(root, "entry.mjs");
+        yield* fs.writeFileString(
+          entry,
+          "console.log(JSON.stringify({args:process.argv.slice(2),nodeMode:process.env.ELECTRON_RUN_AS_NODE}));",
+        );
+        const nonExecutable = path.join(root, "not-executable");
+        yield* fs.writeFileString(nonExecutable, "not a launcher", { mode: 0o644 });
+        for (const shim of [path.join(root, "gone"), root, nonExecutable, "scient"]) {
+          const command = yield* resolveRootCliCommand(["browser", "setup"]).pipe(
+            Effect.provideService(HostProcess.ExecutablePath, runtime),
+            Effect.provideService(HostProcess.Arguments, [runtime, entry]),
+            Effect.provideService(HostProcess.Environment, {
+              T3CODE_CLI_PATH: shim,
+              ELECTRON_RUN_AS_NODE: "1",
+            }),
+            Effect.provideService(HostProcess.IsExecutable, false),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          );
+          expect(JSON.parse(yield* run(command))).toEqual({
+            args: ["browser", "setup"],
+            nodeMode: "1",
+          });
+        }
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(process.platform === "win32")(
+    "executes a standalone installation's own binary",
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, root, run } = yield* fixture;
+        const executable = path.join(root, "standalone scient");
+        yield* fs.writeFileString(executable, '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+        const command = yield* resolveRootCliCommand(["browser", "setup"]).pipe(
+          Effect.provideService(HostProcess.ExecutablePath, executable),
+          Effect.provideService(HostProcess.Arguments, [executable, "not-an-entry-script"]),
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provideService(HostProcess.IsExecutable, true),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+        expect((yield* run(command)).trim().split("\n")).toEqual(["browser", "setup"]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(process.platform !== "win32")(
+    "executes direct and packaged commands through native PowerShell with quoted profile paths",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const entry = path.join(root, "Scient's cache 終", "entry.mjs");
+        const profile = path.join(root, "Scient's profile 終");
+        yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
+        yield* fs.writeFileString(
+          entry,
+          "console.log(JSON.stringify({args:process.argv.slice(2),nodeMode:process.env.ELECTRON_RUN_AS_NODE}).replaceAll('終', '\\\\u7d42'));",
+        );
+        const shim = path.join(root, "Scient's launcher 終.cmd");
+        yield* fs.writeFileString(
+          shim,
+          [
+            "@echo off",
+            "setlocal EnableExtensions DisableDelayedExpansion",
+            `for /f "tokens=2 delims=:." %%c in ('chcp') do set "original_codepage=%%c"`,
+            "chcp 65001 >nul",
+            `set "ELECTRON_RUN_AS_NODE=1"`,
+            `"${process.execPath}" "${entry}" %*`,
+            `set "result=%ERRORLEVEL%"`,
+            "chcp %original_codepage% >nul",
+            "exit /b %result%",
+            "",
+          ].join("\r\n"),
+        );
+        const args = ["serve", "--base-dir", profile];
+        for (const launcher of [undefined, shim]) {
+          const command = yield* resolveCliCommand(args).pipe(
+            Effect.provideService(HostProcess.ExecutablePath, process.execPath),
+            Effect.provideService(HostProcess.Arguments, [process.execPath, entry]),
+            Effect.provideService(HostProcess.Environment, {
+              ELECTRON_RUN_AS_NODE: "1",
+              ...(launcher ? { T3CODE_CLI_PATH: launcher } : {}),
+            }),
+            Effect.provideService(HostProcess.IsExecutable, false),
+            Effect.provideService(HostProcess.Platform, "win32"),
+          );
+          const output = yield* spawner.string(
+            ChildProcess.make("powershell.exe", [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              command,
+            ]),
+          );
+          expect(JSON.parse(output)).toEqual({ args, nodeMode: "1" });
+        }
+      }).pipe(Effect.scoped),
   );
 });
 
@@ -199,9 +237,9 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
         yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
         yield* fs.writeFileString(entry, "");
         const installation = yield* resolveServerInstallation.pipe(
-          Effect.provideService(HostProcessArguments, ["node", entry]),
-          Effect.provideService(HostProcessExecutablePath, entry),
-          Effect.provideService(HostProcessIsExecutable, entry.endsWith("/t3")),
+          Effect.provideService(HostProcess.Arguments, ["node", entry]),
+          Effect.provideService(HostProcess.ExecutablePath, entry),
+          Effect.provideService(HostProcess.IsExecutable, entry.endsWith("/t3")),
         );
         expect(installation).toEqual({ kind });
       }
@@ -225,9 +263,9 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
         '{"name":"t3","version":"0.0.45","bin":{"t3":"./dist/bin.mjs"}}',
       );
       const resolve = resolveServerInstallation.pipe(
-        Effect.provideService(HostProcessArguments, ["node", entry]),
-        Effect.provideService(HostProcessIsExecutable, false),
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcess.Arguments, ["node", entry]),
+        Effect.provideService(HostProcess.IsExecutable, false),
+        Effect.provideService(HostProcess.Platform, "linux"),
       );
       expect(yield* resolve).toBeNull();
       yield* fs.symlink(entry, globalBin);
@@ -236,7 +274,7 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       yield* fs.remove(globalBin);
       yield* fs.writeFileString(globalBin, "an unrelated t3 command");
       expect(yield* resolve).toBeNull();
-      expect(yield* resolve.pipe(Effect.provideService(HostProcessPlatform, "win32"))).toBeNull();
+      expect(yield* resolve.pipe(Effect.provideService(HostProcess.Platform, "win32"))).toBeNull();
     }),
   );
 
@@ -261,9 +299,9 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       yield* fs.symlink(launcher, path.join(prefix, "bin/t3"));
       const canonicalPrefix = yield* fs.realPath(prefix);
       const resolve = resolveServerInstallation.pipe(
-        Effect.provideService(HostProcessExecutablePath, entry),
-        Effect.provideService(HostProcessIsExecutable, true),
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcess.ExecutablePath, entry),
+        Effect.provideService(HostProcess.IsExecutable, true),
+        Effect.provideService(HostProcess.Platform, "linux"),
       );
       for (const [version, expected] of [
         ["0.0.44", null],
@@ -296,8 +334,8 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
         }
         expect(
           yield* resolveServerInstallation.pipe(
-            Effect.provideService(HostProcessArguments, ["node", entry]),
-            Effect.provideService(HostProcessIsExecutable, false),
+            Effect.provideService(HostProcess.Arguments, ["node", entry]),
+            Effect.provideService(HostProcess.IsExecutable, false),
           ),
         ).toBeNull();
       }

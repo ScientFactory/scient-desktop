@@ -11,9 +11,9 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
@@ -822,6 +822,7 @@ it.effect.each(
       const sink = yield* EventSink.EventSinkV2;
       const allocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const now = yield* DateTime.now;
       const firstThread = ThreadId.make("pooled-workspace-first");
       const secondThread = ThreadId.make("pooled-workspace-second");
@@ -884,12 +885,12 @@ it.effect.each(
           { threadId: firstThread, cwd: firstCwd },
           { threadId: secondThread, cwd: secondCwd },
         ]);
-        assert.isDefined(McpProviderSession.readMcpProviderSession(secondThread));
+        assert.isDefined(yield* mcpSessions.read(secondThread));
       } else {
         assert.equal(result._tag, "Failure");
         if (result._tag === "Failure")
           assert.equal(result.failure._tag, "ProviderSessionOpenError");
-        assert.isUndefined(McpProviderSession.readMcpProviderSession(secondThread));
+        assert.isUndefined(yield* mcpSessions.read(secondThread));
       }
       assert.equal(firstRuntime.providerSession.cwd, firstCwd);
       assert.equal((yield* Ref.get(state)).openCount, 1);

@@ -2,7 +2,6 @@
 import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,6 +16,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const layerProject = WorkspaceFileSystem.layer.pipe(
@@ -82,7 +82,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Windows cannot hold a file name that ends in a space.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "reads the file a path names when a sibling differs only by a trailing space",
       () =>
         Effect.gen(function* () {
@@ -142,7 +142,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Needs mkfifo; Windows has no FIFOs to reject.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "rejects a FIFO without blocking on open",
       () =>
         Effect.gen(function* () {
@@ -427,7 +427,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Windows cannot hold a file name that ends in a space.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "watches the file a path names, not a sibling without its trailing space",
       () =>
         Effect.gen(function* () {
@@ -674,7 +674,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("rejects new-file writes through a symlinked parent outside the workspace", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -725,7 +725,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Windows cannot hold a file name that ends in a space.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "saves and renames the file a path names, trailing space included",
       () =>
         Effect.gen(function* () {
@@ -954,7 +954,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents,
           expectedRevision: opened.revision,
         });
-        if ((yield* HostProcessPlatform) !== "win32") {
+        if ((yield* HostProcess.Platform) !== "win32") {
           yield* fileSystem.chmod(absolutePath, 0o751);
         }
         yield* fileSystem.utimes(absolutePath, 1_000_000, 1_000_000);
@@ -1145,7 +1145,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("preserves executable permissions when atomically replacing a source file", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1168,7 +1168,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("preserves in-project symlinks when conditionally saving their target", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1200,7 +1200,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       })),
     )("$caseTitle", ({ aliasKind }) =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1268,7 +1268,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("rejects a rename onto the same canonical file through an alias", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;

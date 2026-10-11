@@ -13,7 +13,7 @@ import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { EventStoreV2 } from "./EventStore.ts";
 import { OrchestrationEffectWorkerV2, runDaemon } from "./EffectWorker.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import type { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { waitForThread, waitForEffects, withNative } from "./testkit/OmpNativeConjunctions.ts";
 

@@ -11,11 +11,13 @@ interface BranchState {
   readonly status: BranchStatus;
   readonly children: ReadonlySet<string>;
   readonly error: string | null;
+  readonly hasLoadedOnce: boolean;
 }
 
 export interface LazyWorkspaceTreeSnapshot {
   readonly entries: ReadonlyMap<string, ProjectDirectoryEntry>;
   readonly failures: ReadonlyArray<{ readonly relativeDirectory: string; readonly error: string }>;
+  readonly loadingDirectories: ReadonlySet<string>;
   readonly isPending: boolean;
   readonly rootError: string | null;
 }
@@ -31,6 +33,7 @@ interface LazyWorkspaceTreeControllerOptions {
 }
 
 const EMPTY_CHILDREN: ReadonlySet<string> = new Set();
+const MAX_CONCURRENT_DIRECTORY_LOADS = 4;
 
 function treePath(entry: ProjectDirectoryEntry): string {
   return entry.kind === "directory" ? `${entry.relativePath}/` : entry.relativePath;
@@ -58,8 +61,10 @@ export class LazyWorkspaceTreeController {
   readonly #requestVersions = new Map<string, number>();
   readonly #inFlight = new Map<string, Promise<boolean>>();
   readonly #unloadedDirectories = new Set<string>();
+  readonly #directoryLoadWaiters: Array<() => void> = [];
 
   #view: ProjectDirectoryView;
+  #activeDirectoryLoads = 0;
   #generation = 0;
   #refreshVersion = 0;
   #refreshing = false;
@@ -71,7 +76,12 @@ export class LazyWorkspaceTreeController {
     this.#loadDirectory = options.loadDirectory;
     this.#onSnapshot = options.onSnapshot;
     this.#view = options.initialView ?? "ordinary";
-    this.#branches.set("", { status: "idle", children: EMPTY_CHILDREN, error: null });
+    this.#branches.set("", {
+      status: "idle",
+      children: EMPTY_CHILDREN,
+      error: null,
+      hasLoadedOnce: false,
+    });
   }
 
   start(): Promise<boolean> {
@@ -202,12 +212,14 @@ export class LazyWorkspaceTreeController {
       status: "loading",
       children: current?.children ?? EMPTY_CHILDREN,
       error: null,
+      hasLoadedOnce: current?.hasLoadedOnce ?? false,
     });
     this.#emit();
 
-    const request = this.#loadDirectory(relativeDirectory, this.#view)
+    const request = this.#loadDirectoryWithLimit(relativeDirectory, generation, requestVersion)
       .then((result) => {
         if (!this.#isCurrent(relativeDirectory, generation, requestVersion)) return false;
+        if (result === null) return false;
         if (!result.complete) {
           throw new Error("The server returned an incomplete directory listing. Refresh to retry.");
         }
@@ -220,6 +232,7 @@ export class LazyWorkspaceTreeController {
           status: "failed",
           children: this.#branches.get(relativeDirectory)?.children ?? EMPTY_CHILDREN,
           error: errorMessage(error),
+          hasLoadedOnce: this.#branches.get(relativeDirectory)?.hasLoadedOnce ?? false,
         });
         this.#emit();
         return false;
@@ -231,6 +244,46 @@ export class LazyWorkspaceTreeController {
       });
     this.#inFlight.set(relativeDirectory, request);
     return request;
+  }
+
+  #loadDirectoryWithLimit(
+    relativeDirectory: string,
+    generation: number,
+    requestVersion: number,
+  ): Promise<ProjectListDirectoryResult | null> {
+    const permit = this.#acquireDirectoryLoad();
+    const load = (): Promise<ProjectListDirectoryResult | null> => {
+      if (!this.#isCurrent(relativeDirectory, generation, requestVersion)) {
+        this.#releaseDirectoryLoad();
+        return Promise.resolve(null);
+      }
+      try {
+        const result = this.#loadDirectory(relativeDirectory, this.#view);
+        return Promise.resolve(result).finally(() => this.#releaseDirectoryLoad());
+      } catch (error) {
+        this.#releaseDirectoryLoad();
+        return Promise.reject(error);
+      }
+    };
+    if (permit === null) return load();
+    return permit.then(load);
+  }
+
+  #acquireDirectoryLoad(): Promise<void> | null {
+    if (this.#activeDirectoryLoads < MAX_CONCURRENT_DIRECTORY_LOADS) {
+      this.#activeDirectoryLoads += 1;
+      return null;
+    }
+    return new Promise<void>((resolve) => this.#directoryLoadWaiters.push(resolve));
+  }
+
+  #releaseDirectoryLoad(): void {
+    const next = this.#directoryLoadWaiters.shift();
+    if (next) {
+      next();
+      return;
+    }
+    this.#activeDirectoryLoads -= 1;
   }
 
   #isCurrent(relativeDirectory: string, generation: number, requestVersion: number): boolean {
@@ -281,6 +334,7 @@ export class LazyWorkspaceTreeController {
       status: "loaded",
       children: new Set(byPath.keys()),
       error: null,
+      hasLoadedOnce: true,
     });
     this.#emit();
     if (operations.length > 0) this.#model.batch(operations);
@@ -335,6 +389,14 @@ export class LazyWorkspaceTreeController {
     this.#onSnapshot({
       entries: new Map(this.#entries),
       failures,
+      loadingDirectories: new Set(
+        [...this.#branches.entries()]
+          .filter(
+            ([relativeDirectory, branch]) =>
+              relativeDirectory.length > 0 && branch.status === "loading" && !branch.hasLoadedOnce,
+          )
+          .map(([relativeDirectory]) => relativeDirectory),
+      ),
       isPending:
         this.#refreshing ||
         [...this.#branches.values()].some((branch) => branch.status === "loading"),

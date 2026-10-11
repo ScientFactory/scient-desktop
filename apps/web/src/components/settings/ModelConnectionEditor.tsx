@@ -93,7 +93,7 @@ function FieldAction({ children, onClick }: { children: ReactNode; onClick: () =
   return (
     <button
       type="button"
-      className="rounded-sm text-xs font-normal text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+      className="rounded-sm text-xs font-normal text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       onClick={onClick}
     >
       {children}
@@ -637,7 +637,7 @@ export function ModelConnectionEditor({
                   if (open || !limitsInvalid) setAdvancedOpen(open);
                 }}
               >
-                <CollapsibleTrigger className="group inline-flex items-center gap-1 rounded-md py-1 pr-2 text-sm/4 font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
+                <CollapsibleTrigger className="group inline-flex items-center gap-1 rounded-md py-1 pr-2 text-sm/4 font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
                   <ChevronRightIcon className="size-4 text-icon-muted transition-transform duration-200 group-data-panel-open:rotate-90" />
                   Advanced
                 </CollapsibleTrigger>

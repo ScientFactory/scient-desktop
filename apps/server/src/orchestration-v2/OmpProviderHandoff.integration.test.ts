@@ -29,7 +29,7 @@ import { makeOmpRpcClient } from "effect-omp-rpc/client";
 import { OmpRpcProtocolError } from "effect-omp-rpc/errors";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
@@ -40,7 +40,7 @@ import { scientAgentTarget } from "../provider/scient/ScientAgentTarget.ts";
 import { prepareScientSkillTurn } from "../scient/skills/ScientSkillInvocation.ts";
 import { makeOmpAdapterV2 } from "./Adapters/OmpAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -88,6 +88,7 @@ const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
   mcpLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-service-handoff-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -110,6 +111,7 @@ for (const target of [ompTarget, scientAgentTarget]) {
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const mcp = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const firstWorkspace = yield* fs.makeTempDirectoryScoped({
         prefix: "scient-omp-workspace-before-",
       });
@@ -123,7 +125,7 @@ for (const target of [ompTarget, scientAgentTarget]) {
       const nativeRoots: string[] = [];
       let freshOrdinal = 0;
       let processOrdinal = 0;
-      const adapter = makeOmpAdapterV2({
+      const adapter = yield* makeOmpAdapterV2({
         target,
         instanceId,
         settings: { binaryPath: "synthetic-omp" },
@@ -152,9 +154,7 @@ for (const target of [ompTarget, scientAgentTarget]) {
             const bootstrap = yield* decodeBootstrap(
               yield* fs.readFileString(extensionPath.replace(/\.mjs$/, ".bootstrap.json")),
             );
-            const credential = McpProviderSession.readMcpProviderSession(
-              ThreadId.make(`omp-handoff:${transition}`),
-            );
+            const credential = yield* mcpSessions.read(ThreadId.make(`omp-handoff:${transition}`));
             assert.isTrue(credential?.providerInstanceId === instanceId);
             assert.isTrue(bootstrap.authorization === credential?.authorizationHeader);
             if (!bootstrap.authorization?.startsWith("Bearer "))
@@ -263,9 +263,13 @@ for (const target of [ompTarget, scientAgentTarget]) {
         { name: `omp-service-handoff-${transition}` },
         ProviderAdapters.layerFromAdapters([adapter]),
         {
-          layerDatabase: database,
+          databaseLayer: database,
           runtimePolicyLayer: policyLayer.pipe(Layer.orDie),
           configureMcp: true,
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
+          ),
           mcpSessionRegistryLayer: mcpLayer,
         },
       );

@@ -23,7 +23,7 @@
 [data-scient-math-tools] select:focus-visible,
 [data-scient-math-tools] textarea:focus-visible {
   outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .scient-math-palette {
   display: flex;

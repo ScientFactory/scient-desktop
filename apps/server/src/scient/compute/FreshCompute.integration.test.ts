@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- opt-in qualification of an explicitly selected native runtime.
 import * as NodeProcess from "node:process";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ComputeExecutionId,
@@ -193,7 +193,7 @@ describe.runIf(Boolean(PYTHON))("native Run fresh", () => {
         Effect.provide(NodeServices.layer),
         // Qualify both constrained recovery and concurrent isolation independently
         // of runner RAM, without mutating the process environment.
-        Effect.provideService(HostProcessEnvironment, {
+        Effect.provideService(HostProcess.Environment, {
           ...NodeProcess.env,
           SCIENT_COMPUTE_MAX_LIVE_SESSIONS: String(limit),
         }),

@@ -53,14 +53,35 @@ installation. If Settings reports that the installation folder is outside PATH,
 add that folder to your shell's PATH.
 
 Run `scient --help` to see the available commands. With the desktop app already
-running, `scient app /path/to/project` opens a project in it; `scient app` uses
-the current directory. `scient start` and `scient serve` start a backend server,
-so use `scient app` to open a project in the running desktop application.
+running on the same machine:
 
-Existing Scient-installed `t3` shortcuts keep working after an update. Install
-**scient command** to add the canonical name. **Remove** removes Scient-owned
-terminal shortcuts, including the old `t3` shortcut, and leaves unrelated
-commands alone. The internal bundled launchers remain available to the app.
+```bash
+scient app
+scient app ../my-project
+```
+
+The first command opens a new thread for the current directory, adding the
+project if needed; the second opens another directory. A standalone server or
+an SSH session is not enough. If the command cannot reach the app, start or
+update the desktop app and try again. `scient start` and `scient serve` start
+a backend server; use `scient app` to open a project in the running desktop app.
+
+Existing Scient-installed `t3` shortcuts keep working after an update. A
+legacy-only installation offers **Install scient** and **Remove legacy
+shortcut**. **Remove** removes Scient-owned terminal shortcuts, including the
+old `t3` shortcut, and leaves unrelated commands and user-managed PATH entries
+alone. Internal bundled launchers remain available to the app; an update does
+not recreate a removed `t3` terminal shortcut.
+
+If another `scient` command would run first, Settings refuses to overwrite or
+hide it and reports its path. Resolve that conflict yourself or run the
+bundled launcher directly at the path shown. You can still remove an owned
+legacy shortcut when this conflict prevents installation.
+
+Recovery commands printed by Scient may use an absolute launcher or runtime
+instead of the short name. Paste them as shown: they select the installation
+and profile that reported the problem, including Linux browser setup under
+`sudo`. Windows operational snippets use PowerShell.
 
 ## Start using Scient
 
@@ -77,28 +98,6 @@ Scient can use a healthy provider tool already installed on the environment or,
 when supported, install and verify a private Scient-managed copy. See
 [AI providers](./providers.md) for setup and lifecycle details, or
 [Projects](./projects.md) for adding a workspace.
-
-### The desktop command-line tool
-
-The desktop app includes the `t3` command-line tool. To run it from any
-terminal, open **Settings → General → About** and choose **Install** next to
-**t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
-`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If you already have `t3`
-from npm, it stays as it is.
-
-### Open a project from a terminal
-
-With the desktop app already running on the same machine:
-
-```bash
-t3 app
-```
-
-This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
-the desktop app, so a standalone server or an SSH session is not enough. If the
-command cannot reach the app, start or update the desktop app and try again.
 
 ## Providers
 

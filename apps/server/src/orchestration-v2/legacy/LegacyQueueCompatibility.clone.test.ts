@@ -49,7 +49,7 @@ it.effect.each(
         openSession: () => Effect.die("The effect worker is paused for durable effect inspection"),
       },
     ]),
-    { layerDatabase: SqlitePersistenceMemory, runEffectWorker: false },
+    { databaseLayer: SqlitePersistenceMemory, runEffectWorker: false },
   );
   const cloneLayer = ProjectCloneTracker.layer.pipe(
     Layer.provide(

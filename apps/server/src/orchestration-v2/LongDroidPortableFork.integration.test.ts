@@ -14,7 +14,6 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -26,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
+import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
 import { makeDroidAcpRuntime } from "../provider/acp/DroidAcpSupport.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
@@ -33,13 +33,14 @@ import { makeDroidAdapterV2 } from "./Adapters/DroidAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const pendingCodec = Schema.fromJsonString(
@@ -73,13 +74,15 @@ const sourceText = "LONG-DROID-SOURCE-QUESTION: retain the measured dataset.";
 const sourceAnswer = "LONG-DROID-SOURCE-ANSWER: the measured dataset is cobalt.";
 const targetText = "LONG-DROID-TARGET: continue using that dataset.";
 const targetAnswer = "LONG-DROID-COMPLETE: retained cobalt exactly once.";
-const layer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   idAllocatorLayer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "long-droid-portable-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
+const layer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 
 it.layer(layer)("Long Droid portable fork", (it) => {
   it.effect(
@@ -151,22 +154,19 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
           );
           yield* fs.chmod(binaryPath, 0o755);
           const config = yield* ServerConfig.ServerConfig;
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
           const instanceId = ProviderInstanceId.make("long-droid-instance");
           const sourceId = ThreadId.make("long-droid-source");
           const targetId = ThreadId.make("long-droid-target");
           const projectId = ProjectId.make("long-droid-project");
           const selection = { instanceId, model: "custom:scient-fixture" };
-          const adapter = makeDroidAdapterV2({
+          const adapter = yield* makeDroidAdapterV2({
             instanceId,
             settings: yield* decodeDroidSettings({ enabled: true, binaryPath }),
             environment: { PATH: process.env.PATH },
             sensitiveEnvironmentValues: [],
             makeRuntime: makeDroidAcpRuntime,
             childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-            fileSystem: fs,
-            crypto: yield* Crypto.Crypto,
-            serverConfig: config,
-            idAllocator: yield* IdAllocatorV2,
             selfInvocation: yield* resolveSelfInvocation(),
             onAuthenticationRejected: () => Effect.die("No account in controlled peer"),
           });
@@ -201,6 +201,10 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
             makeLayer([adapter]),
             {
               configureMcp: true,
+              mcpProviderSessionsLayer: Layer.succeed(
+                McpProviderSessions.McpProviderSessions,
+                mcpSessions,
+              ),
               runEffectWorker: false,
               layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
             },

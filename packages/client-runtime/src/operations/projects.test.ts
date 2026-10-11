@@ -83,6 +83,13 @@ describe("add project shared logic", () => {
         sshUrl: "ssh://git@forgejo.example.test:2222/owner/repo.git",
       }),
     ).toBe("https://forgejo.example.test:8443/owner/repo.git");
+    expect(
+      getDefaultCloneUrl({
+        provider: "gitcafe",
+        url: "https://gitcafe.com/owner/repo.git",
+        sshUrl: "git@gitcafe.com:owner/repo.git",
+      }),
+    ).toBe("https://gitcafe.com/owner/repo.git");
   });
 
   it("preserves existing clone transport behavior for other providers", () => {
@@ -182,13 +189,13 @@ describe("add project shared logic", () => {
     ).toEqual({ ok: true, path: "/work/next" });
   });
 
-  it("marks authenticated source control providers as ready", () => {
+  it.each(["github", "gitcafe"] as const)("marks authenticated %s as ready", (providerKind) => {
     const discovery: SourceControlDiscoveryResult = {
       versionControlSystems: [],
       sourceControlProviders: [
         {
-          kind: "github",
-          label: "GitHub",
+          kind: providerKind,
+          label: providerKind === "gitcafe" ? "GitCafe" : "GitHub",
           status: "available",
           installHint: "Install gh",
           version: Option.some("1.0.0"),
@@ -196,7 +203,7 @@ describe("add project shared logic", () => {
           auth: {
             status: "authenticated",
             account: Option.some("octo"),
-            host: Option.some("github.com"),
+            host: Option.some(providerKind === "gitcafe" ? "gitcafe.com" : "github.com"),
             detail: Option.none(),
           },
         },
@@ -219,9 +226,9 @@ describe("add project shared logic", () => {
 
     const readiness = buildAddProjectRemoteSourceReadiness(discovery);
     expect(readiness.url.ready).toBe(true);
-    expect(readiness.github.ready).toBe(true);
+    expect(readiness[providerKind].ready).toBe(true);
     expect(readiness.gitlab).toEqual({ ready: false, hint: "Run glab auth login" });
-    expect(sortAddProjectProviderSources(readiness)[0]).toBe("github");
+    expect(sortAddProjectProviderSources(readiness)[0]).toBe(providerKind);
   });
 
   it("disables every remote clone source when Git is unavailable", () => {

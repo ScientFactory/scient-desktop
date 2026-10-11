@@ -29,7 +29,7 @@ import {
 import { emptyProjection } from "../ProjectionStore.ts";
 import { planConversationFork } from "./ConversationForkPlan.ts";
 import { presentInheritedItem } from "./ForkHistory.ts";
-import { historicalMessage } from "../ContextHandoffBudget.ts";
+import { historicalMessage } from "../ScientHistoricalContext.ts";
 
 const now = DateTime.makeUnsafe("2026-10-03T00:00:00.000Z");
 const decodeHistoricalSystemMessage = Schema.decodeUnknownEffect(HistoricalSystemMessage);

@@ -16,6 +16,8 @@ import {
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
+  defaultInstanceIdForDriver,
+  isProviderDriverKind,
   resolveProviderInstanceEnabled,
   type ServerSettings,
   type ServerSettingsError,
@@ -186,30 +188,41 @@ export function makeCustomModelSettingsMethods(
   };
 }
 
-const LAST_RESORT_TEXT_GENERATION_DRIVER = "scient";
+const TEXT_GENERATION_FALLBACK_DRIVERS = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "droid",
+  "grok",
+  "muse",
+  "pi",
+  "opencode",
+  "omp",
+  "antigravity",
+  // Scient Agent is enabled by default, so it is a last resort rather than a
+  // signal that the user opted into a provider.
+  "scient",
+].map((driver) => ProviderDriverKind.make(driver));
 
 export function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  // Same precedence as isModelSelectionProviderEnabled: an explicit provider
-  // instance wins over the legacy providers map, which decodes to defaults
-  // (codex enabled) when the Providers UI has only written providerInstances.
-  const enabledBuiltIns = Object.entries(settings.providers)
-    .filter(([driver, provider]) => {
-      const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
-      return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
-    })
-    .map(([driver]) => ({ instanceId: ProviderInstanceId.make(driver), driver }));
-  // Scient Agent is on by default, so its being enabled is not a choice the
-  // user made and does not say it is installed. It generates text only when
-  // nothing else is enabled.
-  const fallback =
-    enabledBuiltIns.find(({ driver }) => driver !== LAST_RESORT_TEXT_GENERATION_DRIVER) ??
-    enabledNamedInstance(settings) ??
-    enabledBuiltIns[0];
+  const enabledBuiltIns = TEXT_GENERATION_FALLBACK_DRIVERS.filter((driver) => {
+    const instanceId = defaultInstanceIdForDriver(driver);
+    const instance = settings.providerInstances[instanceId] ?? { driver, config: {} };
+    return resolveProviderInstanceEnabled(instance);
+  });
+  const selectedBuiltIn = enabledBuiltIns.find((driver) => driver !== "scient");
+  const lastResort = enabledBuiltIns.find((driver) => driver === "scient");
+  const fallback = selectedBuiltIn
+    ? { instanceId: defaultInstanceIdForDriver(selectedBuiltIn), driver: selectedBuiltIn }
+    : (enabledNamedInstance(settings) ??
+      (lastResort
+        ? { instanceId: defaultInstanceIdForDriver(lastResort), driver: lastResort }
+        : undefined));
   if (!fallback) {
     return settings;
   }
 
-  const driver = ProviderDriverKind.make(fallback.driver);
+  const driver = fallback.driver;
   return {
     ...settings,
     textGenerationModelSelection: {
@@ -230,16 +243,21 @@ export function fallbackTextGenerationProvider(settings: ServerSettings): Server
  */
 function enabledNamedInstance(
   settings: ServerSettings,
-): { readonly instanceId: ProviderInstanceId; readonly driver: string } | undefined {
-  const drivers = Object.keys(settings.providers);
+): { readonly instanceId: ProviderInstanceId; readonly driver: ProviderDriverKind } | undefined {
+  const driverOrder = new Map(
+    TEXT_GENERATION_FALLBACK_DRIVERS.map((driver, index) => [driver, index]),
+  );
   const [first] = Object.entries(settings.providerInstances)
     .filter(
-      ([, instance]) =>
-        drivers.includes(instance.driver) && resolveProviderInstanceEnabled(instance),
+      ([instanceId, instance]) =>
+        instanceId !== defaultInstanceIdForDriver(instance.driver) &&
+        isProviderDriverKind(instance.driver) &&
+        driverOrder.has(instance.driver) &&
+        resolveProviderInstanceEnabled(instance),
     )
     .toSorted(
       ([leftId, left], [rightId, right]) =>
-        drivers.indexOf(left.driver) - drivers.indexOf(right.driver) ||
+        driverOrder.get(left.driver)! - driverOrder.get(right.driver)! ||
         (leftId < rightId ? -1 : leftId > rightId ? 1 : 0),
     );
   return first

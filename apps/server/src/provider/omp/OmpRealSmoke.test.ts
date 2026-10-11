@@ -10,6 +10,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { OmpSettings, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
 import { checkOmpProviderStatus } from "../OmpProvider.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
@@ -102,7 +103,9 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer)),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+      ),
     ),
   );
 
@@ -150,7 +153,9 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
         NodeFS.rmSync(root, { recursive: true, force: true });
       }).pipe(
         Effect.scoped,
-        Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer)),
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer, McpProviderSessions.layer),
+        ),
       ),
     300_000,
   );

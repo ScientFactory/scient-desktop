@@ -6,7 +6,7 @@ import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { EventId, ProviderThreadId, ThreadId } from "@t3tools/contracts";
+import { type ChatAttachment, EventId, ProviderThreadId, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,6 +22,9 @@ import { runMigrations } from "./Migrations.ts";
 import * as Persistence from "./Sqlite.ts";
 
 const THREAD = ThreadId.make("continued-v1");
+const V2_ATTACHMENTS: ReadonlyArray<ChatAttachment> = [
+  { type: "file", id: "v2-file", name: "edited.txt", mimeType: "text/plain", sizeBytes: 32 },
+];
 
 it.effect.each([false, true])(
   "reconciles newer history, preserves conflicting V2 edits, and retries a committed batch (compacted=%s)",
@@ -189,6 +192,11 @@ it.effect.each([false, true])(
           THREAD,
         );
         const question = projection.messages.find((message) => message.id === "question")!;
+        const questionItem = projection.turnItems.find(
+          (item) => item.id === "migration:v1:turn-item:question",
+        );
+        if (questionItem?.type !== "user_message")
+          return assert.fail("Expected imported user question");
         yield* sink.write({
           events: [
             {
@@ -196,7 +204,22 @@ it.effect.each([false, true])(
               type: "message.updated",
               threadId: THREAD,
               occurredAt: question.updatedAt,
-              payload: { ...question, text: "V2 edit during restoration" },
+              payload: {
+                ...question,
+                text: "V2 edit during restoration",
+                attachments: V2_ATTACHMENTS,
+              },
+            },
+            {
+              id: EventId.make("v2-item-edit-before-retry"),
+              type: "turn-item.updated",
+              threadId: THREAD,
+              occurredAt: questionItem.updatedAt,
+              payload: {
+                ...questionItem,
+                text: "V2 edit during restoration",
+                attachments: V2_ATTACHMENTS,
+              },
             },
           ],
         });
@@ -237,6 +260,16 @@ it.effect.each([false, true])(
           restored.messages.find((message) => message.id === "question")?.text,
           "V2 edit during restoration",
         );
+        assert.deepEqual(
+          restored.messages.find((message) => message.id === "question")?.attachments,
+          V2_ATTACHMENTS,
+        );
+        const questionItem = restored.turnItems.find(
+          (item) => item.id === "migration:v1:turn-item:question",
+        );
+        if (questionItem?.type !== "user_message")
+          return assert.fail("Expected preserved user question");
+        assert.deepEqual(questionItem.attachments, V2_ATTACHMENTS);
         assert.equal(
           restored.messages.filter((message) => message.text === "New V1 question").length,
           1,

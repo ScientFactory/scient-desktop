@@ -1,4 +1,9 @@
-import { ProviderInstanceId, ProviderSetupError, type ServerSettings } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSetupError,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -7,20 +12,16 @@ import { CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE } from "@t3tools/shared/scientCo
 export { CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE } from "@t3tools/shared/scientCodexPolicy";
 
 const isSubscriptionSharing = Schema.is(Schema.Struct({ setupMode: Schema.Literal("managed") }));
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
 
 export function newlyRequestedCodexSubscriptionSharing(
   current: ServerSettings,
   next: ServerSettings,
 ) {
-  if (
-    next.providers.codex.setupMode === "managed" &&
-    current.providers.codex.setupMode !== "managed"
-  )
-    return ProviderInstanceId.make("codex");
   for (const [id, instance] of Object.entries(next.providerInstances)) {
-    if (instance.driver === "codex" && isSubscriptionSharing(instance.config)) {
+    if (instance.driver === CODEX_DRIVER && isSubscriptionSharing(instance.config)) {
       const previous = current.providerInstances[ProviderInstanceId.make(id)];
-      if (previous?.driver !== "codex" || !isSubscriptionSharing(previous.config))
+      if (previous?.driver !== CODEX_DRIVER || !isSubscriptionSharing(previous.config))
         return ProviderInstanceId.make(id);
     }
   }

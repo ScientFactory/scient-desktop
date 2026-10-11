@@ -31,7 +31,7 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import { openCode2ReplayRuntime } from "./Adapters/OpenCode2AdapterV2.testkit.ts";
-import type { ProviderAdapterV2TurnInput } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderReplayEntry } from "@t3tools/contracts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 

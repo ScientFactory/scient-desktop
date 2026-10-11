@@ -16,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
+import { refreshLegacyV1Snapshot } from "./refreshLegacyV1Snapshot.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -232,6 +233,27 @@ it.effect("starts fresh without V1 and never imports over existing V2 state", ()
     Effect.provide(
       ServerConfig.layerTest(directory, directory).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("never falls back from development state to a sibling userdata V1 database", () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-v2-isolation-"));
+  const destinationPath = NodePath.join(directory, "scient-next-dev", "statev2.sqlite");
+  const unrelatedSourcePath = NodePath.join(directory, "userdata", "state.sqlite");
+  NodeFS.mkdirSync(NodePath.dirname(unrelatedSourcePath), { recursive: true });
+  // An attempted read would fail; this synthetic other profile is not an import source.
+  NodeFS.writeFileSync(unrelatedSourcePath, "Unrelated profile must not be opened");
+  return Effect.gen(function* () {
+    yield* initializeV2Database(destinationPath);
+    assert.equal(yield* refreshLegacyV1Snapshot(destinationPath), 0);
+    assert.isFalse(NodeFS.existsSync(destinationPath));
+    assert.equal(
+      NodeFS.readFileSync(unrelatedSourcePath, "utf8"),
+      "Unrelated profile must not be opened",
+    );
+  }).pipe(
+    Effect.provide(NodeServices.layer),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
   );
 });

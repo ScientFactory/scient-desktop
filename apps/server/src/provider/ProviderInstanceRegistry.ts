@@ -70,7 +70,8 @@ import * as Stream from "effect/Stream";
 
 import { buildUnavailableProviderSnapshot } from "./unavailableProviderSnapshot.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
-import type { AnyProviderDriver, ProviderInstance } from "./ProviderDriver.ts";
+import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
+import type { ScientProviderInstance } from "./ScientProviderInstance.ts";
 
 // SCIENT-FORK:START — native sessions are owned by both instance and caller scopes.
 import { ownNativeSessionLifetimes } from "./ScientNativeSessionLifetimes.ts";
@@ -84,7 +85,7 @@ export interface ProviderInstanceRegistryShape {
    */
   readonly getInstance: (
     instanceId: ProviderInstanceId,
-  ) => Effect.Effect<ProviderInstance | undefined>;
+  ) => Effect.Effect<ScientProviderInstance | undefined>;
   /**
    * Recreate one configured instance from its unchanged authoritative config.
    *
@@ -99,7 +100,7 @@ export interface ProviderInstanceRegistryShape {
    * Every available (driver-registered, successfully created) instance,
    * in stable settings-author order.
    */
-  readonly listInstances: Effect.Effect<ReadonlyArray<ProviderInstance>>;
+  readonly listInstances: Effect.Effect<ReadonlyArray<ScientProviderInstance>>;
   /**
    * Wire-shape shadow snapshots for instances whose driver is unknown to
    * this build (or whose config failed to decode). Suitable for merging

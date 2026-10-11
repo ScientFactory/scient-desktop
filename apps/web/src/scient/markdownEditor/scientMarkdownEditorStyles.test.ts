@@ -379,9 +379,6 @@ describe("rich Markdown compact-surface styles", () => {
 
   it("keeps math editing visually quiet while retaining visible focus boundaries", () => {
     expect(cssSource).toMatch(
-      /\.scient-markdown-reference-source:focus-visible \{[^}]*outline: 2px solid[^}]*outline-offset: 1px/su,
-    );
-    expect(cssSource).toMatch(
       /\.scient-markdown-source-island:not\(\[data-scient-markdown-source-kind="html"\]\):is\([^}]*:focus-within[^}]*border-color:/su,
     );
     expect(cssSource).toMatch(

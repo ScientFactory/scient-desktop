@@ -51,7 +51,25 @@ describe("chat canvas layout", () => {
 
   it("centers chat in the whole container without a preview", () => {
     expect(resolve(1344, null).chat).toEqual({ left: 288, width: 768, insetStart: 0, insetEnd: 0 });
-    expect(resolve(390, null).chat).toEqual({ left: 20, width: 350, insetStart: 0, insetEnd: 0 });
+    expect(
+      resolveChatCanvasLayout({
+        container: { width: 390, height: 900 },
+        preview: null,
+        padding: 12,
+      }).chat,
+    ).toEqual({ left: 12, width: 366, insetStart: 0, insetEnd: 0 });
+  });
+  it("preserves the comfortable and full-width lanes in an 800px desktop canvas", () => {
+    const container = { width: 800, height: 900 };
+    expect(resolveChatCanvasLayout({ container, preview: null, maxChatWidth: 736 }).chat).toEqual({
+      left: 32,
+      width: 736,
+      insetStart: 0,
+      insetEnd: 0,
+    });
+    expect(
+      resolveChatCanvasLayout({ container, preview: null, maxChatWidth: 10_000 }).chat,
+    ).toEqual({ left: 20, width: 760, insetStart: 0, insetEnd: 0 });
   });
   it("does not move chat when a bottom-right preview fits in its margin", () => {
     const result = resolve(1600);
@@ -277,6 +295,20 @@ describe("workspace card beside chat", () => {
     expect(withCard(1080).chat).toMatchObject({ left: 20, width: 736 });
     expect(withCard(1000).chat).toEqual({ left: 20, width: 656, insetStart: 0, insetEnd: 304 });
     expect(withCard(984).chat).toMatchObject({ left: 20, width: 640 });
+  });
+  it("preserves readable chat and card clearance across compact desktop widths", () => {
+    for (let width = 984; width <= 1440; width++) {
+      const container = { width, height: 900 };
+      const card = resolveThreadDetailsCardLayout({
+        container,
+        lane: { padding: 20, minChatWidth: 640 },
+        frame: null,
+      })!;
+      const chat = withCard(width).chat;
+      expect(chat.left).toBeGreaterThanOrEqual(20);
+      expect(chat.width).toBeGreaterThanOrEqual(640);
+      expect(card.x - chat.left - chat.width).toBeGreaterThanOrEqual(32);
+    }
   });
   it("keeps a full-width chat clear of the card", () => {
     expect(withCard(1147, null, 10_000).chat).toEqual({

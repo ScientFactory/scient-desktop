@@ -1,5 +1,5 @@
 /**
- * `t3 browser setup` - prepares a Linux host for Scient's headless browser, which
+ * `scient browser setup` - prepares a Linux host for Scient's headless browser, which
  * server browser tabs and HTML render previews share. It is the fix every
  * browser host error names, so it does the whole job in one run:
  *
@@ -10,11 +10,8 @@
  * Both need root. Without it, the command prints what it would change and the
  * `sudo` line to run. It is safe to run again; it skips what is already done.
  */
-import {
-  HostProcessEnvironment,
-  HostProcessPlatform,
-  HostProcessUserId,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -57,13 +54,30 @@ const runStep = Effect.fn("browserSetup.runStep")(function* (
 });
 
 /**
- * The T3 home to check. Under `sudo` the process home is root's, so an
- * unspecified home falls back to the invoking user's `~/.t3`.
+ * Keep setup on the invoking user's profile even when sudo changes HOME.
+ * Scient's compatibility home is authoritative; ambient T3 state is not.
  */
-const setupBaseDir = Effect.fn("browserSetup.baseDir")(function* (explicit: Option.Option<string>) {
-  const env = yield* HostProcessEnvironment;
-  const raw = Option.getOrUndefined(explicit) ?? env.T3CODE_HOME;
-  if (raw !== undefined || env.SUDO_USER === undefined) return yield* resolveBaseDir(raw);
+export const resolveBrowserSetupBaseDir = Effect.fn("browserSetup.baseDir")(function* (
+  explicit: Option.Option<string>,
+) {
+  const env = yield* HostProcess.Environment;
+  const raw =
+    Option.getOrUndefined(explicit.pipe(Option.filter((value) => value.trim().length > 0))) ??
+    (env.SCIENT_NEXT_HOME?.trim() || undefined) ??
+    (SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
+      ? undefined
+      : env.T3CODE_HOME?.trim() || undefined);
+  if (raw !== undefined) return yield* resolveBaseDir(raw);
+  if (env.SUDO_USER === undefined) {
+    if ((yield* HostProcess.UserId) === 0) {
+      return yield* new BrowserSetupStepError({
+        step: "resolve the invoking user's profile",
+        detail:
+          "Root setup requires --base-dir or SCIENT_NEXT_HOME; no invoking user is available.",
+      });
+    }
+    return yield* resolveBaseDir(undefined);
+  }
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const entry = yield* spawner
     .string(
@@ -71,8 +85,15 @@ const setupBaseDir = Effect.fn("browserSetup.baseDir")(function* (explicit: Opti
     )
     .pipe(Effect.orElseSucceed(() => ""));
   const home = entry.trim().split(":")[5];
-  const path = yield* Path.Path;
-  return home ? path.join(home, ".t3") : yield* resolveBaseDir(undefined);
+  if (!home) {
+    return yield* new BrowserSetupStepError({
+      step: "resolve the invoking user's profile",
+      detail: `Could not find the home directory for ${env.SUDO_USER}; pass --base-dir explicitly.`,
+    });
+  }
+  return yield* resolveBaseDir(undefined).pipe(
+    Effect.provideService(HostProcess.HomeDirectory, home),
+  );
 });
 
 /** Whether apt has an installable candidate for `name`. */
@@ -85,7 +106,7 @@ const aptOffers = Effect.fn("browserSetup.aptOffers")(function* (name: string) {
   return candidate !== undefined && candidate !== "(none)";
 });
 
-/** The installed browser in this T3 home, if any, to check its libraries. */
+/** The installed browser in this profile, if any, to check its libraries. */
 const installedBrowser = Effect.fn("browserSetup.installedBrowser")(function* (baseDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -109,15 +130,20 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
   ),
   Command.withHandler(({ baseDir }) =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") {
+      if ((yield* HostProcess.Platform) !== "linux") {
         return yield* Console.log("Nothing to set up: Scient's browser runs as is on this system.");
       }
       const fs = yield* FileSystem.FileSystem;
-      const isRoot = (yield* HostProcessUserId) === 0;
-      const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
+      const isRoot = (yield* HostProcess.UserId) === 0;
+      const profile = yield* resolveBrowserSetupBaseDir(baseDir);
+      const setupCommand = yield* resolveRootCliCommand([
+        ...PreviewBrowserHost.SETUP_ARGUMENTS,
+        "--base-dir",
+        profile,
+      ]);
 
       const needsProfile = yield* PreviewBrowserHost.sandboxBlocked;
-      const browser = yield* installedBrowser(yield* setupBaseDir(baseDir));
+      const browser = yield* installedBrowser(profile);
       const missing = Option.isSome(browser)
         ? yield* PreviewBrowserHost.missingLibraries(browser.value)
         : [];

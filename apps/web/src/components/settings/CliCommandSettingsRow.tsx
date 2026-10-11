@@ -43,6 +43,10 @@ export function CliCommandSettingsRow() {
               description: error instanceof Error ? error.message : "Something went wrong.",
             }),
           );
+          return bridge
+            .getState()
+            .then(setState)
+            .catch(() => undefined);
         })
         .finally(() => setPending(false));
     },
@@ -51,25 +55,42 @@ export function CliCommandSettingsRow() {
 
   if (!bridge || !state?.supported) return null;
   const installed = state.installedPath !== null;
-  const description = !installed
-    ? "Run Scient's CLI as `scient` from any terminal."
-    : state.onPath
-      ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
-      : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`scient\`.`;
+  const legacyOnly = !installed && state.legacyInstalled;
+  const description = state.shadowedBy
+    ? `Another CLI at ${state.shadowedBy} runs first in a new terminal. Remove it to use Scient's.`
+    : legacyOnly
+      ? "An existing Scient-owned `t3` shortcut is installed. Add `scient`, or remove the legacy shortcut."
+      : !installed
+        ? "Run Scient's CLI as `scient` from any terminal."
+        : state.onPath
+          ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
+          : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`scient\`.`;
 
   return (
     <SettingsRow
       {...searchableSetting("cli-command")}
       description={description}
       control={
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={pending}
-          onClick={() => change(installed ? "uninstall" : "install")}
-        >
-          {installed ? "Remove" : "Install"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pending}
+            onClick={() => change(installed ? "uninstall" : "install")}
+          >
+            {installed ? "Remove" : "Install scient"}
+          </Button>
+          {legacyOnly ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => change("uninstall")}
+            >
+              Remove legacy shortcut
+            </Button>
+          ) : null}
+        </div>
       }
     />
   );
