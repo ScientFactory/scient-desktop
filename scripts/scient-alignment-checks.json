@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "scope": "Early consumer feedback only; complete final qualification remains required. Unknown paths conservatively select all boundaries; a maintained impact map is not an exhaustive dependency graph.",
+  "globalTriggers": [
+    "packages/contracts/",
+    "packages/shared/",
+    "packages/client-runtime/",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "vite.config.ts",
+    "apps/server/vite.config.ts",
+    "apps/web/vite.config.ts",
+    "apps/server/src/testUtils/",
+    "packages/shared/src/testing/",
+    "AGENTS.md",
+    "scripts/scient-alignment-checks"
+  ],
+  "excludedPrefixes": [".repos/", "docs/internals/", "docs/operations/"],
+  "groups": {
+    "native": {
+      "cwd": "apps/server",
+      "args": ["exec", "vp", "test", "run"],
+      "requiredEnv": "SCIENT_PI_TEST_BINARY"
+    },
+    "server": {
+      "cwd": "apps/server",
+      "args": ["exec", "vp", "test", "run"]
+    },
+    "web-unit": {
+      "cwd": "apps/web",
+      "args": ["exec", "vp", "test", "run", "--project", "unit"]
+    },
+    "web-layout": {
+      "cwd": "apps/web",
+      "args": ["exec", "vp", "test", "run", "--project", "layout"]
+    }
+  },
+  "boundaries": [
+    {
+      "id": "provider",
+      "triggers": [
+        "apps/server/src/provider/",
+        "apps/server/src/mcp/",
+        "apps/server/src/scient/skills/",
+        "apps/server/src/scient/operations/",
+        "apps/server/src/orchestration-v2/ScientV2Skill",
+        "apps/server/src/orchestration-v2/ProviderTurnStartService",
+        "packages/provider-",
+        "packages/scient-skills/",
+        "apps/server/src/orchestration-v2/Adapters/",
+        "apps/server/src/orchestration-v2/ProviderSessionManager",
+        "apps/server/src/orchestration-v2/Orchestrator"
+      ],
+      "consumers": [
+        "builtInDrivers -> PiDriver -> shared Scient adapter options -> native MCP extension before_agent_start -> model system messages",
+        "ProviderTurnStartService -> ScientV2SkillTurn -> scoped MCP publication -> Codex turn/start; native user prompt and attachments remain unchanged"
+      ],
+      "decidingAssertions": [
+        "Pi factory preserves instance-scoped custom models and native error receipt; guidance includes only granted capability blocks and canonical names.",
+        "Selected skills use real Orchestrator/EventSink/ProjectionStore. FullScientSkillInput asserts selected release list/load authority at actual controlled Codex turn/start, rejects unselected release, replaces scope with complete-empty without replacing token.",
+        "Real Pi loopback asserts complete Scient orchestration instructions and capability-scoped guidance in system input, preserves user input; actual MCP invocation retains Unicode/structured failure results."
+      ],
+      "checks": {
+        "server": [
+          "src/provider/PiDriverComposition.test.ts",
+          "src/provider/ScientAwareness.test.ts",
+          "src/orchestration-v2/SelectedScientSkillNames.test.ts",
+          "src/orchestration-v2/OmpNativeConjunctions.integration.test.ts",
+          "src/mcp/McpToolAccess.test.ts",
+          "src/mcp/toolkits/skills/handlers.test.ts",
+          "src/orchestration-v2/FullScientSkillInput.native.integration.test.ts"
+        ],
+        "native": ["src/orchestration-v2/Adapters/PiNativeRuntime.live.test.ts"]
+      },
+      "limits": [
+        "SCIENT_PI_TEST_BINARY must name an explicit installed Pi executable; fresh scoped HOME/profile/models and loopback-only synthetic model, no credentials. Native group is opt-in and reported separately.",
+        "Controlled Codex/OMP peers and extension hook tests do not qualify authenticated model quality or all provider protocols. Pi harness shares production prompt policy but bypasses managed-runtime/custom-model driver resolution."
+      ]
+    },
+    {
+      "id": "stop",
+      "triggers": [
+        "apps/server/src/orchestration-v2/",
+        "apps/server/src/provider/",
+        "packages/provider-",
+        "apps/server/src/mcp/",
+        "apps/web/src/components/chat/ThreadRelationshipsControl",
+        "apps/mobile/src/",
+        "apps/web/src/components/ChatView"
+      ],
+      "consumers": [
+        "Orchestrator/ThreadManagementService -> EventSink exact-owner transaction -> EffectWorker/ProviderTurnControlService -> ProviderSessionManager/adapter -> ProviderEventIngestor",
+        "PendingStartOwner/NativeWorkflowOwnership, restarted descendants, frozen history and unrelated user roots"
+      ],
+      "decidingAssertions": [
+        "ThreadStop targets exact provider turn and holds queues; synthetic execution must acknowledge interruption before child terminalizes.",
+        "BackgroundWorkStop preserves superseded attempts, replacement sessions, parent/peer/user/frozen/wrong-workflow projections; released descendants include resumed coordinators and active children behind settled parents. Live/nonretryable owners remain running.",
+        "EventSink.pendingStart rejects wrong run/attempt/session/native-thread/root/receipt without events/outbox/projection writes; accepted replay emits no second effect.",
+        "NativeStopConjunctions captures exact control request, truthful close-failure owner and real child-process ESRCH after successful shutdown, preserving peer process/queue."
+      ],
+      "checks": {
+        "server": [
+          "src/orchestration-v2/ThreadStop.test.ts",
+          "src/orchestration-v2/BackgroundWorkStop.integration.test.ts",
+          "src/orchestration-v2/RestartContinuation.test.ts",
+          "src/orchestration-v2/EventSink.pendingStart.test.ts",
+          "src/orchestration-v2/NativeStopConjunctions.integration.test.ts",
+          "src/orchestration-v2/RunExecutionService.test.ts"
+        ]
+      },
+      "limits": [
+        "Synthetic Claude SDK child-process traffic proves physical ownership for those fixtures, not authenticated providers, packaged desktop or mobile shutdown.",
+        "No universal exactly-once external execution guarantee; final provider/platform checks remain range-dependent."
+      ]
+    },
+    {
+      "id": "queue",
+      "triggers": [
+        "apps/server/src/orchestration-v2/",
+        "apps/server/src/scient/orchestration/",
+        "apps/server/src/scient/threadQueue/",
+        "apps/server/src/serverRuntimeStartup",
+        "apps/web/src/components/chat/QueuedRunsControl",
+        "apps/mobile/src/",
+        "apps/web/src/components/ChatView"
+      ],
+      "consumers": [
+        "Native Orchestrator admission -> EventSink/outbox -> worker start; TerminalQueueHold -> explicit Resume/selected Send/admitted direct Send",
+        "Legacy readers/cutover retain inert held queue; web/mobile/client-runtime commands consume same contract"
+      ],
+      "decidingAssertions": [
+        "NativeQueueHoldPolicy drains success FIFO once, holds Stop/failure, admits explicit Resume/selected Send/direct Send, refuses active head; continuation/Queue/Steer fallback never release prior held work. Late old terminal/checkpoint cannot re-hold replacement.",
+        "QueuedStartRecovery preserves full message/skills/attachment bytes, modes, root/plan and queue position; explicit Retry creates a distinct attempt, stale start cannot change it.",
+        "Budget/QueuedRunSend bound queued admission. LegacyV1RecoveryAcceptance preserves original source bytes, rebuilds/idempotently imports held rows with no automatic offers; only explicit release starts work."
+      ],
+      "checks": {
+        "server": [
+          "src/orchestration-v2/NativeQueueHoldPolicy.integration.test.ts",
+          "src/orchestration-v2/QueuedStartRecovery.integration.test.ts",
+          "src/orchestration-v2/QueuedMessageBudget.integration.test.ts",
+          "src/orchestration-v2/scient-fork/QueuedRunSend.integration.test.ts",
+          "src/orchestration-v2/legacy/LegacyV1RecoveryAcceptance.integration.test.ts"
+        ]
+      },
+      "limits": [
+        "Legacy compatibility suites qualify recovery/import only, never a second execution authority.",
+        "No native mobile interaction in this early bundle; changed mobile queue UI requires its applicable platform gate."
+      ]
+    },
+    {
+      "id": "settings",
+      "triggers": [
+        "apps/server/src/serverSettings",
+        "apps/server/src/scientServerSettings",
+        "apps/server/src/provider/",
+        "apps/server/src/customModel",
+        "apps/web/src/hooks/useSettings",
+        "apps/web/src/components/settings/",
+        "apps/web/src/model",
+        "apps/web/src/provider",
+        "apps/web/src/scient/providerConnection/",
+        "apps/server/src/orchestration-v2/ProviderSessionManager",
+        "apps/server/src/orchestration-v2/Orchestrator",
+        "apps/server/src/orchestration-v2/ProviderTurnStartService"
+      ],
+      "consumers": [
+        "ServerSettings schema/persistence -> ProviderInstanceRegistry reconciliation -> modelSelection.instanceId -> ProviderSessionManager exact session/MCP reuse",
+        "Selected environment useSettings merge/write -> ProviderSettingsPanel scoped mutation; project settings upgrade"
+      ],
+      "decidingAssertions": [
+        "Server settings retain malformed/legacy configuration handling; registry projects assigned models by instance and reconciles exact scope.",
+        "useSettings asserts server precedence over legacy client settlement values and selected-environment provider instances; real sync hook checks primary/remote exact writes, cold/revoked grants and partial saves.",
+        "ProviderSettingsPanel.environment asserts selected environment/exact instance and atomic upsert. ManagerLifetime rejects reuse in another workspace/instance while preserving original owner/credential."
+      ],
+      "checks": {
+        "server": [
+          "src/serverSettings.test.ts",
+          "src/provider/ProviderInstanceRegistry.test.ts",
+          "src/orchestration-v2/ProjectSettingsUpgrade.integration.test.ts",
+          "src/provider/ProviderInstanceRegistryLive.managerLifetime.test.ts"
+        ],
+        "web-unit": [
+          "src/components/settings/scopedSettings.test.ts",
+          "src/hooks/useSettings.test.ts",
+          "src/hooks/useSettings.sync.test.tsx",
+          "src/providerInstances.test.ts",
+          "src/modelSelection.test.ts",
+          "src/components/settings/ProviderSettingsPanel.environment.test.tsx"
+        ]
+      },
+      "limits": [
+        "No exhaustive fresh/released configuration and reload UI matrix for every provider; range-specific lifecycle tests remain necessary.",
+        "Controlled registry/native peers are not authenticated managed-runtime installation/sign-in qualification."
+      ]
+    },
+    {
+      "id": "persistence",
+      "triggers": [
+        "apps/server/src/persistence/",
+        "apps/server/src/orchestration-v2/",
+        "apps/server/src/scient/storage/",
+        "apps/server/src/scient/conversationImport/",
+        "apps/server/src/scient/threadQueue/"
+      ],
+      "consumers": [
+        "Sqlite startup/reconcileV2PreviewMigration -> immutable T3 migrations; separate scientMigrator ledger -> frozen/native fork history and recovery readers",
+        "EventSink/projection rebuild also affects frozen/native fork history readers and V2 recovery; the migration selection alone does not qualify those consumers."
+      ],
+      "decidingAssertions": [
+        "Migrations.compatibility retains historical ledger IDs/names/timestamps/session errors and repeat-run identity; conflicting recorded slot 41 fails before V2 table creation or ledger rewrite.",
+        "Preview reconciliation tests preserve upgraded V2 rows and reject incompatible preview shapes.",
+        "Scient schema/NativeForkSchemaCompatibility cover fresh/rerun/concurrent install, independent T3/Scient ledgers through Scient 24, reject gaps/name changes/future IDs, preserve bounded former import-17 repair and rollback."
+      ],
+      "checks": {
+        "server": [
+          "src/persistence/Migrations.compatibility.test.ts",
+          "src/persistence/reconcileV2PreviewMigration.test.ts",
+          "src/orchestration-v2/scient-fork/schema.test.ts",
+          "src/orchestration-v2/scient-fork/NativeForkSchemaCompatibility.test.ts"
+        ]
+      },
+      "limits": [
+        "Tests pin identity/order and compatibility fixtures, not migration SQL-content checksums: independently review immutable shipped migration diffs.",
+        "Never run these checks against live profiles. Full legacy importer/recovery and frozen history reader coverage remains applicable when those implementations change.",
+        "Changes to frozen fork history/source reconciliation require ConversationForkBufferedText.native.integration.test.ts and LegacyV1ThreadImporter.test.ts; they are outside this bounded early bundle, whose Stop fixtures only establish frozen-owner protection."
+      ]
+    },
+    {
+      "id": "reader",
+      "triggers": [
+        "apps/web/src/components/chat/",
+        "apps/web/src/components/ChatView",
+        "apps/web/src/components/ChatMarkdown",
+        "apps/web/src/scient/typography/",
+        "apps/web/src/index.css"
+      ],
+      "consumers": [
+        "ChatView -> production MessagesTimeline -> readerScrolling/readingEnd/timelineScrollAnchoring",
+        "useResponseFollow/useQueuedDeliveryFollow + V2 run/receipt/input-intent state + controlled motionClock"
+      ],
+      "decidingAssertions": [
+        "Unit policies assert follow intent and stable anchors; they do not establish geometry.",
+        "Chromium readerScrolling/readingEnd mounts actual timeline and measures scrollTop within one pixel after appends/completion, switch capture/pagehide/history restoration, prompt-top bounds and wheel/scrollbar cancellation.",
+        "responseFollow composes actual controllers/timeline: queued delivery/receipt races, V2 run ownership, same-frame growth, saved positions and follow cancellation."
+      ],
+      "checks": {
+        "web-unit": [
+          "src/components/chat/readerScrollPolicy.test.ts",
+          "src/components/chat/timelineScrollAnchoring.test.tsx"
+        ],
+        "web-layout": [
+          "src/components/chat/readerScrolling.browser.test.tsx",
+          "src/components/chat/responseFollow.browser.test.tsx",
+          "src/components/chat/readingEnd.browser.test.tsx"
+        ]
+      },
+      "limits": [
+        "Chromium layout lane is distinct from ordinary web unit tests; requires the repository Playwright Chromium installation.",
+        "No Electron/native mobile reader or human visual acceptance; document editor Reload/save-departure interactions are outside this chat-reader bundle and require their existing persistence suites when changed."
+      ]
+    }
+  ]
+}

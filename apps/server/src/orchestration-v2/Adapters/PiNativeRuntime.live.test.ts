@@ -4,7 +4,10 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { buildPiRuntimeGuidance } from "../../provider/PiDriverComposition.ts";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 import {
   binary,
   json,
@@ -17,184 +20,209 @@ import {
 } from "./PiNativeTestHarness.ts";
 
 it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
-  it.effect.skipIf(!binary)(
-    "real native Pi discovers and invokes the Scient MCP bridge over SSE with structured errors",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const calls: Array<Record<string, unknown>> = [];
-          const modelRequests: string[] = [];
-          const baseUrl = yield* serve(async (request, response) => {
-            assert.equal(request.method, "POST");
-            let body = "";
-            for await (const chunk of request) body += String(chunk);
-            const parsed = decodeRecord(body);
-            if (request.url === "/mcp") {
-              if (request.headers.authorization !== "Bearer synthetic-only") {
-                response.writeHead(401);
-                response.end();
-                return;
-              }
-              calls.push(parsed);
-              if (parsed.method === "notifications/initialized") {
-                response.writeHead(202);
-                response.end();
-                return;
-              }
-              const result =
-                parsed.method === "initialize"
-                  ? {
-                      protocolVersion: "2025-06-18",
-                      capabilities: { tools: {} },
-                      serverInfo: { name: "synthetic-scient", version: "1" },
-                    }
-                  : parsed.method === "tools/list"
-                    ? {
-                        tools: [
-                          {
-                            name: "scient_test_echo",
-                            description: "Synthetic bridge verification",
-                            inputSchema: {
-                              type: "object",
-                              properties: { value: { type: "string" } },
-                              required: ["value"],
-                            },
-                          },
-                        ],
-                      }
-                    : {
-                        content: [{ type: "text", text: "Bridge: שלום π" }],
-                        structuredContent: {
-                          test: "preserved",
-                          count: calls.filter((call) => call.method === "tools/call").length,
-                        },
-                        isError: calls.filter((call) => call.method === "tools/call").length === 2,
-                      };
-              response.writeHead(200, {
-                "content-type": "text/event-stream",
-                "mcp-session-id": "synthetic-session",
-              });
-              response.write(": heartbeat\r\n\r\n");
-              response.end(
-                `event: message\r\ndata: ${json({ jsonrpc: "2.0", id: parsed.id, result })}\r\n\r\n`,
-              );
-              return;
-            }
-            modelRequests.push(body);
-            const tool = modelRequests.length % 2 === 1;
-            response.writeHead(200, { "content-type": "text/event-stream" });
-            const delta = tool
-              ? {
-                  role: "assistant",
-                  tool_calls: [
-                    {
-                      index: 0,
-                      id: `call-${modelRequests.length}`,
-                      type: "function",
-                      function: {
-                        name: "scient_test_echo",
-                        arguments: json({ value: "synthetic" }),
-                      },
-                    },
-                  ],
+  for (const capabilities of [
+    new Set<string>(),
+    new Set(["preview", "documents:build", "skills:read"]),
+  ]) {
+    it.effect.skipIf(!binary)(
+      `real native Pi discovers and invokes the Scient MCP bridge over SSE with structured errors and ${capabilities.size} grants`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const calls: Array<Record<string, unknown>> = [];
+            const modelRequests: string[] = [];
+            const baseUrl = yield* serve(async (request, response) => {
+              assert.equal(request.method, "POST");
+              let body = "";
+              for await (const chunk of request) body += String(chunk);
+              const parsed = decodeRecord(body);
+              if (request.url === "/mcp") {
+                if (request.headers.authorization !== "Bearer synthetic-only") {
+                  response.writeHead(401);
+                  response.end();
+                  return;
                 }
-              : { role: "assistant", content: "Bridge completed." };
-            response.write(
-              `data: ${json({ id: "bridge-test", object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`,
-            );
-            response.end(
-              `data: ${json({ id: "bridge-test", object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta: {}, finish_reason: tool ? "tool_calls" : "stop" }], usage: { prompt_tokens: 10, completion_tokens: 8, total_tokens: 18 } })}\n\ndata: [DONE]\n\n`,
-            );
-          });
+                calls.push(parsed);
+                if (parsed.method === "notifications/initialized") {
+                  response.writeHead(202);
+                  response.end();
+                  return;
+                }
+                const result =
+                  parsed.method === "initialize"
+                    ? {
+                        protocolVersion: "2025-06-18",
+                        capabilities: { tools: {} },
+                        serverInfo: { name: "synthetic-scient", version: "1" },
+                      }
+                    : parsed.method === "tools/list"
+                      ? {
+                          tools: [
+                            {
+                              name: "scient_test_echo",
+                              description: "Synthetic bridge verification",
+                              inputSchema: {
+                                type: "object",
+                                properties: { value: { type: "string" } },
+                                required: ["value"],
+                              },
+                            },
+                          ],
+                        }
+                      : {
+                          content: [{ type: "text", text: "Bridge: שלום π" }],
+                          structuredContent: {
+                            test: "preserved",
+                            count: calls.filter((call) => call.method === "tools/call").length,
+                          },
+                          isError:
+                            calls.filter((call) => call.method === "tools/call").length === 2,
+                        };
+                response.writeHead(200, {
+                  "content-type": "text/event-stream",
+                  "mcp-session-id": "synthetic-session",
+                });
+                response.write(": heartbeat\r\n\r\n");
+                response.end(
+                  `event: message\r\ndata: ${json({ jsonrpc: "2.0", id: parsed.id, result })}\r\n\r\n`,
+                );
+                return;
+              }
+              modelRequests.push(body);
+              const tool = modelRequests.length % 2 === 1;
+              response.writeHead(200, { "content-type": "text/event-stream" });
+              const delta = tool
+                ? {
+                    role: "assistant",
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: `call-${modelRequests.length}`,
+                        type: "function",
+                        function: {
+                          name: "scient_test_echo",
+                          arguments: json({ value: "synthetic" }),
+                        },
+                      },
+                    ],
+                  }
+                : { role: "assistant", content: "Bridge completed." };
+              response.write(
+                `data: ${json({ id: "bridge-test", object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`,
+              );
+              response.end(
+                `data: ${json({ id: "bridge-test", object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta: {}, finish_reason: tool ? "tool_calls" : "stop" }], usage: { prompt_tokens: 10, completion_tokens: 8, total_tokens: 18 } })}\n\ndata: [DONE]\n\n`,
+              );
+            });
 
-          const h = yield* fixture("bridge");
-          yield* h.models(`${baseUrl}/v1`);
-          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-          yield* Effect.acquireRelease(
-            mcpSessions.set({
-              threadId: h.threadId,
-              providerInstanceId: h.instanceId,
-              environmentId: EnvironmentId.make("pi-real-mcp"),
-              providerSessionId: "synthetic",
-              endpoint: `${baseUrl}/mcp`,
-              authorizationHeader: "Bearer synthetic-only",
-              capabilities: new Set<never>(),
-            }),
-            () => mcpSessions.clear(h.threadId),
-          );
-          const runtime = yield* h.open();
-          const thread = yield* ensure(h, runtime);
-          const c = yield* collect(runtime);
-          for (let turn = 0; turn < 2; turn++) {
-            const offset = c.events.length;
-            yield* h.send(runtime, thread, turn + 1, "Exercise the synthetic Scient tool");
-            const terminal = yield* c.take((event) => event.type === "turn.terminal");
-            assert.equal(
-              terminal.type === "turn.terminal" ? terminal.status : undefined,
-              "completed",
-              json(terminal),
+            const h = yield* fixture(`bridge-${capabilities.size}`);
+            yield* h.models(`${baseUrl}/v1`);
+            const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+            yield* Effect.acquireRelease(
+              mcpSessions.set({
+                threadId: h.threadId,
+                providerInstanceId: h.instanceId,
+                environmentId: EnvironmentId.make("pi-real-mcp"),
+                providerSessionId: "synthetic",
+                endpoint: `${baseUrl}/mcp`,
+                authorizationHeader: "Bearer synthetic-only",
+                capabilities,
+              }),
+              () => mcpSessions.clear(h.threadId),
             );
-            const events = c.events.slice(offset);
-            const tool = events.findLast(
-              (event) =>
-                event.type === "turn_item.updated" &&
-                event.turnItem.type === "dynamic_tool" &&
-                event.turnItem.toolName === "scient_test_echo",
-            );
-            if (tool?.type !== "turn_item.updated" || tool.turnItem.type !== "dynamic_tool")
-              return yield* Effect.die("Missing bridge result");
-            assert.equal(tool.turnItem.status, turn === 1 ? "failed" : "completed");
-            assert.deepEqual(tool.turnItem.output, {
-              content: [{ type: "text", text: "Bridge: שלום π" }],
-              structuredContent: { test: "preserved", count: turn + 1 },
-            });
-            assert.isTrue(
-              events.some(
+            const runtime = yield* h.open();
+            const thread = yield* ensure(h, runtime);
+            const c = yield* collect(runtime);
+            for (let turn = 0; turn < 2; turn++) {
+              const offset = c.events.length;
+              yield* h.send(runtime, thread, turn + 1, "Exercise the synthetic Scient tool");
+              const terminal = yield* c.take((event) => event.type === "turn.terminal");
+              assert.equal(
+                terminal.type === "turn.terminal" ? terminal.status : undefined,
+                "completed",
+                json(terminal),
+              );
+              const events = c.events.slice(offset);
+              const tool = events.findLast(
                 (event) =>
-                  event.type === "provider_turn.updated" &&
-                  event.providerTurn.tokenUsage !== undefined,
-              ),
-            );
-            assert.include(modelRequests.at(-1)!, "Bridge: שלום π");
-            assert.notInclude(modelRequests.at(-1)!, "preserved");
-            const nativeFile = thread.nativeThreadRef?.nativeId;
-            if (nativeFile == null) return yield* Effect.die("Missing native session file");
-            const session = yield* h.fs.readFileString(nativeFile);
-            const records = session
-              .trim()
-              .split("\n")
-              .map((line) => decodeRecord(line));
-            const results = records.flatMap((record) => {
-              const message = record.message;
-              return typeof message === "object" &&
-                message !== null &&
-                "role" in message &&
-                message.role === "toolResult" &&
-                "toolName" in message &&
-                message.toolName === "scient_test_echo"
-                ? [message]
-                : [];
-            });
-            assert.lengthOf(results, turn + 1);
-            assert.deepInclude(decodeRecord(json(results.at(-1))), {
-              isError: turn === 1,
-              details: {
-                server: "scient",
-                tool: "scient_test_echo",
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "dynamic_tool" &&
+                  event.turnItem.toolName === "scient_test_echo",
+              );
+              if (tool?.type !== "turn_item.updated" || tool.turnItem.type !== "dynamic_tool")
+                return yield* Effect.die("Missing bridge result");
+              assert.equal(tool.turnItem.status, turn === 1 ? "failed" : "completed");
+              assert.deepEqual(tool.turnItem.output, {
+                content: [{ type: "text", text: "Bridge: שלום π" }],
+                structuredContent: { test: "preserved", count: turn + 1 },
+              });
+              assert.isTrue(
+                events.some(
+                  (event) =>
+                    event.type === "provider_turn.updated" &&
+                    event.providerTurn.tokenUsage !== undefined,
+                ),
+              );
+              assert.include(modelRequests.at(-1)!, "Bridge: שלום π");
+              assert.notInclude(modelRequests.at(-1)!, "preserved");
+              const nativeFile = thread.nativeThreadRef?.nativeId;
+              if (nativeFile == null) return yield* Effect.die("Missing native session file");
+              const session = yield* h.fs.readFileString(nativeFile);
+              const records = session
+                .trim()
+                .split("\n")
+                .map((line) => decodeRecord(line));
+              const results = records.flatMap((record) => {
+                const message = record.message;
+                return typeof message === "object" &&
+                  message !== null &&
+                  "role" in message &&
+                  message.role === "toolResult" &&
+                  "toolName" in message &&
+                  message.toolName === "scient_test_echo"
+                  ? [message]
+                  : [];
+              });
+              assert.lengthOf(results, turn + 1);
+              assert.deepInclude(decodeRecord(json(results.at(-1))), {
                 isError: turn === 1,
-              },
-            });
-          }
-          assert.lengthOf(
-            calls.filter((call) => call.method === "tools/call"),
-            2,
-          );
-          assert.lengthOf(modelRequests, 4);
-          assert.include(modelRequests[0]!, "scient_test_echo");
-        }),
-      ),
-    30000,
-  );
+                details: {
+                  server: "scient",
+                  tool: "scient_test_echo",
+                  isError: turn === 1,
+                },
+              });
+            }
+            assert.lengthOf(
+              calls.filter((call) => call.method === "tools/call"),
+              2,
+            );
+            assert.lengthOf(modelRequests, 4);
+            assert.include(modelRequests[0]!, "scient_test_echo");
+            const messages = Schema.decodeUnknownSync(
+              Schema.Array(Schema.Struct({ role: Schema.String, content: Schema.Unknown })),
+            )(decodeRecord(modelRequests[0]!).messages);
+            const system = messages.find((message) => message.role === "system")?.content;
+            if (typeof system !== "string") return yield* Effect.die("Missing native system input");
+            assert.include(system, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim());
+            assert.include(system, buildPiRuntimeGuidance(capabilities));
+            assert.deepEqual(messages.find((message) => message.role === "user")?.content, [
+              { type: "text", text: "Exercise the synthetic Scient tool" },
+            ]);
+            for (const [capability, heading] of [
+              ["preview", "## Scient browser"],
+              ["documents:build", "## Scient PDF builds"],
+              ["skills:read", "## Scient skills"],
+              ["device", "## Scient devices"],
+              ["compute:inventory", "## Scient Compute"],
+            ] as const) {
+              assert.equal(system.includes(heading), capabilities.has(capability));
+            }
+          }),
+        ),
+      30000,
+    );
+  }
 
   it.effect.skipIf(!binary)(
     "streams repeated real native turns, templates, skills, failures and concurrent isolated sessions",
