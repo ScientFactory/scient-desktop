@@ -39,9 +39,9 @@ Yaacov's [architecture note](https://github.com/ScientFactory/scient-desktop/blo
 and [editable-content proposal](https://github.com/ScientFactory/scient-desktop/blob/claude/shared-editor-layer-design-20260926/docs/internals/scient-latex-visual-editable-content.md)
 explain the target shared architecture. This file describes the implementation
 on this branch, including shared document-session saving and the existing
-comparison-first LaTeX recovery journal. The broader patch-contract migration,
-recovery-store consolidation and future timed-build scheduler remain integration
-work owned by the maintainers.
+comparison-first LaTeX recovery journal and native source-patch admission.
+Recovery-store consolidation and the future timed-build scheduler remain
+integration work owned by the maintainers.
 
 The [contributor request](https://github.com/ScientFactory/scient-desktop/blob/claude/shared-editor-layer-design-20260926/docs/internals/scient-latex-visual-contributor-request.md)
 separately asks for an operation-by-operation capability table with exact-source
@@ -60,7 +60,7 @@ that every operation preserves every supported LaTeX construct.
 | Math setup                               | `latexDocumentMacros.ts`, `LatexDocumentMathContext.ts`                                                      | Parse bounded literal preamble definitions once, pass the root macro dictionary to every MathLive field, preserve calls in source, and expose setup in Document settings.                                                                                  |
 | Environment declarations                 | `latexEnvironmentDeclarations.ts`                                                                            | Interpret literal theorem names, standard styles, shared/scoped counters and simple quote wrappers; preserve declarations and reject unsupported definitions.                                                                                              |
 | Literal text and code                    | `latexLiteral.ts`, `LatexLiteralCodeView.tsx`                                                                | Bound literal source and listing options, paint supported syntax and presentation, and reuse native fields for body/caption edits.                                                                                                                         |
-| Title conversion                         | `LatexTitleStep.ts`                                                                                          | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                                                                                                                 |
+| Native edit history                      | `LatexSourceStep.ts`                                                                                         | Pair exact native inverse scripts with existing ProseMirror history, including title conversion and same-owner filename renames.                                                                                                                           |
 | Writing chrome                           | `writing/dockChrome.tsx`                                                                                     | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults.                                                                                          |
 | Reading controls                         | `writing/DocumentReaderControls.tsx`, `writing/readerBarHost.ts`                                             | Shared PDF/Visual sidebar, page, zoom and search controls. Format adapters supply navigation and search operations. With a `ReaderBarHost` they are drawn in the host's header row instead of a bar of their own.                                          |
 | Contextual footer                        | `writing/DocumentFooter.tsx`, `LatexContextTools.tsx`, heading/table/object toolbars                         | Shared one-line strip under the document. The selected object's options sit on the left in a stable portal destination that keeps fields mounted inside one nonmodal object inspector at every pane width. Caret position and word count sit on the right. |
@@ -219,11 +219,11 @@ in the footer, not in an extra row or on the document paper.
 
 ### Find and replace
 
-| Control                        | Role and behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Find / match case / whole word | Search supported prose. Search transactions stay out of undo history and the save lane.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Previous / next / close        | Navigate matches or close find; Enter/Shift+Enter and Escape use the same shared interactions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Replace / Replace all          | Offered while the document is editable. A replacement is an ordinary text edit, so it is written to the LaTeX source the same way typing is. The source owner takes one changed text block per update, so Replace all edits one block, writes it, and continues after a paint (`replaceByBlock` in `useLatexVisualSearch.ts`); it stops when a block is refused, during composition, or as soon as the document is anything other than what its previous replacement left (typing, undo, a newer file), and each block is one undo step. Pass the hook a stable `commit` callback, not an inline function. |
+| Control                        | Role and behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Find / match case / whole word | Search supported prose. Search transactions stay out of undo history and the save lane.                                                                                                                                                                                                                                                                                                                                                                                    |
+| Previous / next / close        | Navigate matches or close find; Enter/Shift+Enter and Escape use the same shared interactions.                                                                                                                                                                                                                                                                                                                                                                             |
+| Replace / Replace all          | Offered while editable. Replacements use ordinary native text edits. `replaceByBlock` in `useLatexVisualSearch.ts` commits one text block, continues after a paint, and gives each block one undo step. Accepted position-neutral projection metadata repairs do not interrupt it. It stops on a refused block, composition, user typing/undo, external adoption, or any other semantic document change. Pass the hook a stable `commit` callback, not an inline function. |
 
 ### Contextual footer
 
@@ -627,6 +627,20 @@ existing Tiptap editor stack for native selection, composition, formatting,
 lists and undo. MathLive supplies structured math input; fonts are bundled
 locally, sounds and the optional compute engine are disabled. No web service
 or TeX process participates in a writing transaction.
+
+`latexSourceEditPlan.ts` carries explicit original-coordinate patch scripts and a
+captured `LatexEditorSourceSnapshot`. `rootSource` is the physical root's exact
+native text; `setupSource` is the assembled declaration context, never a write
+destination. Producers do not infer a whole-file change by diffing serialized
+documents. Source IDs, ranges and list trivia are disposable parser facts.
+Persistence owners authorize scripts through stable document identity and working
+`editVersion`, then apply them through the existing `applyEdit` save lane.
+Returning to identical bytes after another working edit does not revive a stale
+snapshot. Revision-only save receipts and same-directory, same-owner filename
+renames preserve edit authority and history; directory/context or owner changes
+do not. `LatexSourceStep` stores exact physical inverses keyed by document identity
+in the existing ProseMirror history. Accepted metadata-only repairs use
+position-neutral steps, not range replacements or a second undo stack.
 
 The transaction guard verifies the exact source generation and validates the
 changed block. Immutable ProseMirror nodes cache their JSON and signatures; plain
@@ -1132,14 +1146,16 @@ Missing files, cycles, unsupported dynamic includes and bounded expansion limits
 block Visual with an explanation while leaving PDF available.
 
 The assembled preamble supplies layout and package inventory. The edit mapper
-separates preamble and body changes, checks span ownership, and patches the owning
-files without flattening includes. Cross-file selections are rejected. The changed
-block's original offset disambiguates insertions at file boundaries. File watchers
-refresh dependencies; optimistic buffers are checked before publication. Each file
-uses the existing shared revision-checked save session, including files open in
-another Source view. Sessions survive view switches and retain pending removed
-dependencies until their saves finish. Build/export wait for saves or save errors.
-These are coordinated file saves, not an atomic filesystem transaction.
+checks each explicit patch against its expansion occurrence and physical owner.
+Each zero-width insertion carries its own `before`/`after` boundary affinity;
+the mapper never chooses a file from a preferred path or a whole-source diff.
+Synthetic include separators cannot be edited. Identical repeated-include
+patches are deduplicated; conflicting alias edits are refused. Any operation
+requiring two physical files is refused before either owner mutates.
+Each file uses the existing shared revision-checked save session, including files
+open in another Source view. Sessions survive view switches and retain pending
+removed dependencies until their saves finish. Build/export wait for saves or
+save errors. These are coordinated file saves, not an atomic filesystem transaction.
 
 Write uses the root's directory for figure paths. Required packages and declarations
 are mapped back to their source files in the preamble; the default table is
@@ -1215,6 +1231,16 @@ object is later moved or removed. A field slot is retired only after its exact
 record has a stored recovery copy; failed transfers keep the original and pause
 editing until the user resolves it. Round-trip signatures are cached for immutable
 nodes. Recovery storage writes happen after painting or on explicit exit.
+
+Recovery JSON omits native source maps. Rebinding proves surviving list-item
+correspondence from authored content rather than trusting cached numeric offsets;
+ambiguous origins remain readable recovery instead of being published. New
+ownerless table seeds can rebuild parser metadata from their retained raw source.
+Once a raw-block edit is accepted, Cancel/Escape must finish its recovery
+checkpoint before retiring the raw copy. A failed checkpoint keeps the source
+field read-only and its recovery intact; retrying completion does not publish
+the edit again.
+
 Pagination waits 220 ms after input and maps existing decorations while waiting;
 measurements and resize-observer refreshes run after painting, not on every input.
 The current-page indicator also defers its initial geometry read until after

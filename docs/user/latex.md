@@ -912,8 +912,11 @@ you to keep the document open until you use or discard it. You can copy it first
 
 Unapplied **Edit LaTeX** text is recovered separately, including incomplete LaTeX.
 **View** and **Copy** let you retrieve it without replacing a whole document.
-Cancel discards only that editing interaction; Apply clears its recovery copy only
-after the accepted source has been stored in the recovery journal.
+Cancel discards only unapplied text from that editing interaction. Once Apply
+accepts an edit, its recovery copy is retained until the accepted source is stored
+in the recovery journal. If that checkpoint fails, the source field stays
+read-only; Apply, Cancel or Escape retry the checkpoint without applying the edit
+again.
 
 ## Configure objects
 
