@@ -27,6 +27,7 @@ const selectTriggerVariants = cva(
       width: {
         default: "",
         content: "w-auto min-w-0 px-2",
+        fluid: "w-full min-w-0",
       },
       size: {
         compact:

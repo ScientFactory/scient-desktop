@@ -949,6 +949,51 @@ Control & 1 \\\\
     );
   });
 
+  it("changes the document language through settings with source preservation and undo/redo", async () => {
+    const body = "Existing \\textbf{bold} prose.\n\n\\textenglish{English passage.}";
+    await mount(body, "\\usepackage[T1]{fontenc}\n\\usepackage{lmodern}\n");
+    const original = current;
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
+    );
+    const settings = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Document settings",
+    )!;
+    await act(() => {
+      settings.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+      settings.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(settings.getAttribute("aria-expanded")).toBe("true"));
+    const popup = document.body.querySelector(
+      '[data-slot="menu-sub-content"][aria-label="Document settings"]',
+    )!;
+    await act(() =>
+      popup.querySelector<HTMLButtonElement>('[aria-label="Document language"]')!.click(),
+    );
+    const hebrew = await vi.waitFor(() => {
+      const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+        (item) => item.textContent?.trim() === "Hebrew",
+      );
+      expect(option).toBeDefined();
+      return option!;
+    });
+    await act(() => hebrew.click());
+    expect(current).toBe(original);
+    await act(() =>
+      [...popup.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.trim() === "Apply")!
+        .click(),
+    );
+    await vi.waitFor(() => expect(current).toContain("\\setdefaultlanguage{hebrew}"));
+    expect(current).toContain(body);
+    expect(current).not.toContain("\\usepackage[T1]{fontenc}");
+    const applied = current;
+    await act(() => editor().commands.undo());
+    await vi.waitFor(() => expect(current).toBe(original));
+    await act(() => editor().commands.redo());
+    await vi.waitFor(() => expect(current).toBe(applied));
+  });
+
   it("moves lower-priority writing groups into More on narrow panes", async () => {
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
       this: HTMLElement,
