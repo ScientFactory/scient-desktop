@@ -29,8 +29,16 @@ function focus(element: Element) {
   element.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
 }
 
-function pressKey(element: Element) {
-  element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "a" }));
+/** The event that precedes the user typing into a field. */
+function edit(element: Element, options: { isComposing?: boolean } = {}) {
+  element.dispatchEvent(
+    new InputEvent("beforeinput", {
+      bubbles: true,
+      inputType: "insertText",
+      data: "a",
+      ...options,
+    }),
+  );
 }
 
 function typeInto(element: Element, caretIn: Node) {
@@ -70,7 +78,7 @@ describe("installSpellingSampler", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("keeps a field's marks until the user's next keystroke in it, then rechecks it once", async () => {
+  it("keeps a field's marks until the user next edits it, then rechecks it once", async () => {
     document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea spellcheck="true">${GERMAN}</textarea>`;
     const [plain, explicit] = document.querySelectorAll("textarea");
     const plainValues = watchSpellcheck(plain!);
@@ -80,9 +88,9 @@ describe("installSpellingSampler", () => {
     focus(explicit!);
     await vi.runAllTimersAsync();
     expect(plainValues).toEqual([]);
-    pressKey(plain!);
-    pressKey(plain!);
-    pressKey(explicit!);
+    edit(plain!);
+    edit(plain!);
+    edit(explicit!);
     await vi.runAllTimersAsync();
     expect(plainValues).toEqual([null, "false"]);
     expect(plain!.hasAttribute("spellcheck")).toBe(false);
@@ -96,29 +104,49 @@ describe("installSpellingSampler", () => {
     const values = watchSpellcheck(field);
     focus(field);
     await vi.runAllTimersAsync();
-    pressKey(field);
+    edit(field);
     sampler.dictionaryReady();
-    pressKey(field);
+    edit(field);
     await vi.runAllTimersAsync();
     expect(values).toEqual([]);
   });
 
-  it("rechecks again after a dictionary finishes loading, only where it was added", async () => {
-    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea>${GERMAN}</textarea>`;
-    const [french, other] = document.querySelectorAll("textarea");
+  it("does not clear marks for keys or compositions that change nothing yet", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea>`;
+    const field = document.querySelector("textarea")!;
+    const values = watchSpellcheck(field);
+    send.mockResolvedValue("added");
+    focus(field);
+    await vi.runAllTimersAsync();
+    field.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Shift" }));
+    edit(field, { isComposing: true });
+    await vi.runAllTimersAsync();
+    expect(values).toEqual([]);
+    edit(field);
+    await vi.runAllTimersAsync();
+    expect(values).toEqual([null, "false"]);
+  });
+
+  it("rechecks every field a dictionary was added for once it finishes loading", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea>${GERMAN}</textarea><textarea>English text that never added a dictionary.</textarea>`;
+    const [french, german, english] = document.querySelectorAll("textarea");
     const frenchValues = watchSpellcheck(french!);
-    const otherValues = watchSpellcheck(other!);
-    send.mockResolvedValueOnce("added");
+    const germanValues = watchSpellcheck(german!);
+    const englishValues = watchSpellcheck(english!);
+    send.mockResolvedValueOnce("added").mockResolvedValueOnce("added");
     focus(french!);
     await vi.runAllTimersAsync();
-    pressKey(french!);
-    focus(other!);
+    edit(french!);
+    focus(german!);
+    await vi.runAllTimersAsync();
+    focus(english!);
+    await vi.runAllTimersAsync();
     sampler.dictionaryReady();
-    pressKey(other!);
-    pressKey(french!);
+    for (const field of [french!, german!, english!]) edit(field);
     await vi.runAllTimersAsync();
     expect(frenchValues).toEqual([null, "false", null, "false"]);
-    expect(otherValues).toEqual([]);
+    expect(germanValues).toEqual([null, "false"]);
+    expect(englishValues).toEqual([]);
   });
 
   it("sends the same text again after the main process failed to use it", async () => {

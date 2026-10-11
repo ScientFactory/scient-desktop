@@ -92,7 +92,7 @@ export type SampleOutcome = "added" | "unchanged" | "failed";
 /**
  * Clears a field's spelling marks. Chromium does not recheck text when
  * dictionaries change, and ignores a script asking it to, but switching a
- * field's spellcheck off and back on makes the user's next keystroke recheck
+ * field's spellcheck off and back on makes the next edit by the user recheck
  * the whole field.
  */
 function clearSpellingMarks(field: Element): void {
@@ -113,8 +113,10 @@ export interface SpellingSampler {
  * enable the matching spelling dictionary. Windows and Linux only: macOS
  * detects the language itself.
  *
- * A field whose language was just added is rechecked on the user's next
- * keystroke in it, never before: clearing its marks earlier would hide real
+ * A field whose language was just added is rechecked when the user next
+ * edits it, never before: its marks are cleared just ahead of that edit,
+ * which is what makes Chromium check the field again. Clearing them at any
+ * other moment, including on a key that changes nothing, would hide real
  * typos until the user typed again.
  */
 export function installSpellingSampler(
@@ -122,9 +124,11 @@ export function installSpellingSampler(
   target: EventTarget = window,
 ): SpellingSampler {
   let lastSample = "";
-  let lastAddedFor: Element | null = null;
   let typingTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Fields to recheck on their next edit. */
   const stale = new WeakSet<Element>();
+  /** Fields a dictionary was added for, rechecked again once it has loaded. */
+  const addedFor = new Set<Element>();
   const dispatch = (field: EditableField, sample: string) => {
     const trimmed = sample.trim();
     if (trimmed.length < MIN_SAMPLE_LENGTH || trimmed === lastSample) return;
@@ -132,7 +136,7 @@ export function installSpellingSampler(
     void send(trimmed).then((outcome) => {
       if (outcome === "added") {
         stale.add(field);
-        lastAddedFor = field;
+        addedFor.add(field);
       } else if (outcome === "failed" && lastSample === trimmed) {
         lastSample = "";
       }
@@ -149,7 +153,9 @@ export function installSpellingSampler(
     // @effect-diagnostics-next-line globalTimers:off - The preload runs plain DOM code, outside any Effect runtime.
     typingTimer = setTimeout(() => dispatch(field, typingSample(field)), TYPING_PAUSE_MS);
   };
-  const onKeyDown = (event: Event) => {
+  const onBeforeInput = (event: Event) => {
+    // Clearing marks in the middle of an input method composition could disturb it.
+    if ((event as InputEvent).isComposing) return;
     const field = spellcheckedField(event.target);
     if (field === null || !stale.has(field)) return;
     stale.delete(field);
@@ -157,16 +163,19 @@ export function installSpellingSampler(
   };
   target.addEventListener("focusin", onFocus, true);
   target.addEventListener("input", onInput, true);
-  target.addEventListener("keydown", onKeyDown, true);
+  target.addEventListener("beforeinput", onBeforeInput, true);
   return {
     dictionaryReady: () => {
-      if (lastAddedFor?.isConnected) stale.add(lastAddedFor);
+      for (const field of addedFor) {
+        if (field.isConnected) stale.add(field);
+        else addedFor.delete(field);
+      }
     },
     uninstall: () => {
       clearTimeout(typingTimer);
       target.removeEventListener("focusin", onFocus, true);
       target.removeEventListener("input", onInput, true);
-      target.removeEventListener("keydown", onKeyDown, true);
+      target.removeEventListener("beforeinput", onBeforeInput, true);
     },
   };
 }
