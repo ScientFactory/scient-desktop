@@ -7,6 +7,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
+  type ProviderDriverKind,
   type ProviderTurnId,
   type ThreadId,
   type TurnItemId,
@@ -20,29 +21,58 @@ import type {
   ProviderEventRoutingState,
 } from "../RunExecutionService.ts";
 
-type NodeUpdatedEvent = Extract<ProviderAdapterV2Event, { readonly type: "node.updated" }>;
 type SubagentUpdatedEvent = Extract<ProviderAdapterV2Event, { readonly type: "subagent.updated" }>;
 
 /** An accepted runless workflow member's own node, exactly as its member row describes it. */
 export function isWorkflowMemberNode(
-  event: NodeUpdatedEvent,
+  node: OrchestrationV2ExecutionNode,
   member: OrchestrationV2Subagent | undefined,
+  driver: ProviderDriverKind,
 ): boolean {
   return (
     member !== undefined &&
-    event.driver === member.driver &&
-    event.node.threadId === member.threadId &&
-    event.node.runId === null &&
-    event.node.parentNodeId === member.parentNodeId &&
-    event.node.rootNodeId === member.parentNodeId &&
-    event.node.status === member.status &&
-    event.node.kind === "subagent" &&
-    !event.node.countsForRun &&
-    event.node.providerThreadId === null &&
-    event.node.providerTurnId === null &&
-    event.node.nativeItemRef === null &&
-    event.node.runtimeRequestId === null &&
-    event.node.checkpointScopeId === null
+    driver === member.driver &&
+    node.threadId === member.threadId &&
+    node.runId === null &&
+    node.parentNodeId === member.parentNodeId &&
+    node.rootNodeId === member.parentNodeId &&
+    node.status === member.status &&
+    node.kind === "subagent" &&
+    !node.countsForRun &&
+    node.providerThreadId === null &&
+    node.providerTurnId === null &&
+    node.nativeItemRef === null &&
+    node.runtimeRequestId === null &&
+    node.checkpointScopeId === null
+  );
+}
+
+/** Runless workflow members belong only to their exact strong native coordinator. */
+export function isWorkflowMemberOwnedBy(
+  task: OrchestrationV2Subagent,
+  coordinator: OrchestrationV2Subagent | undefined,
+  driver: ProviderDriverKind,
+): boolean {
+  return (
+    coordinator !== undefined &&
+    coordinator.presentation?.kind === "workflow" &&
+    coordinator.origin === "provider_native" &&
+    coordinator.nativeTaskRef?.driver === coordinator.driver &&
+    coordinator.nativeTaskRef.strength === "strong" &&
+    task.id !== coordinator.id &&
+    task.parentNodeId === coordinator.id &&
+    task.presentation?.kind === "workflow_agent" &&
+    task.presentation.workflowId === coordinator.id &&
+    task.threadId === coordinator.threadId &&
+    task.runId === null &&
+    task.origin === "provider_native" &&
+    task.driver === coordinator.driver &&
+    driver === coordinator.driver &&
+    task.providerInstanceId === coordinator.providerInstanceId &&
+    task.childThreadId === null &&
+    task.providerThreadId === null &&
+    task.nativeTaskRef === null &&
+    (isOrchestrationV2WorkActive(coordinator.status) || !isOrchestrationV2WorkActive(task.status))
   );
 }
 
@@ -111,22 +141,7 @@ export function routeWorkflowSubagentEvent(
   if (belongs) return [true, state];
   const coordinator =
     task.parentNodeId === null ? undefined : state.workflowCoordinators.get(task.parentNodeId);
-  const memberOwned =
-    coordinator !== undefined &&
-    task.id !== coordinator.id &&
-    task.presentation?.kind === "workflow_agent" &&
-    task.presentation.workflowId === coordinator.id &&
-    task.threadId === coordinator.threadId &&
-    task.runId === null &&
-    task.origin === "provider_native" &&
-    task.driver === coordinator.driver &&
-    event.driver === coordinator.driver &&
-    task.providerInstanceId === coordinator.providerInstanceId &&
-    task.childThreadId === null &&
-    task.providerThreadId === null &&
-    task.nativeTaskRef === null &&
-    // A settled coordinator admits only settled members.
-    (isOrchestrationV2WorkActive(coordinator.status) || !isOrchestrationV2WorkActive(task.status));
+  const memberOwned = isWorkflowMemberOwnedBy(task, coordinator, event.driver);
   return memberOwned
     ? [true, { ...state, workflowMembers: new Map(state.workflowMembers).set(task.id, task) }]
     : [false, state];

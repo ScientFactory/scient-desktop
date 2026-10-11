@@ -92,7 +92,7 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
                       id: `call-${modelRequests.length}`,
                       type: "function",
                       function: {
-                        name: "mcp__t3-code__scient_test_echo",
+                        name: "scient_test_echo",
                         arguments: json({ value: "synthetic" }),
                       },
                     },
@@ -139,12 +139,15 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
               (event) =>
                 event.type === "turn_item.updated" &&
                 event.turnItem.type === "dynamic_tool" &&
-                event.turnItem.toolName === "mcp__t3-code__scient_test_echo",
+                event.turnItem.toolName === "scient_test_echo",
             );
             if (tool?.type !== "turn_item.updated" || tool.turnItem.type !== "dynamic_tool")
               return yield* Effect.die("Missing bridge result");
             assert.equal(tool.turnItem.status, turn === 1 ? "failed" : "completed");
-            assert.equal(tool.turnItem.output, "Bridge: שלום π");
+            assert.deepEqual(tool.turnItem.output, {
+              content: [{ type: "text", text: "Bridge: שלום π" }],
+              structuredContent: { test: "preserved", count: turn + 1 },
+            });
             assert.isTrue(
               events.some(
                 (event) =>
@@ -168,7 +171,7 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
                 "role" in message &&
                 message.role === "toolResult" &&
                 "toolName" in message &&
-                message.toolName === "mcp__t3-code__scient_test_echo"
+                message.toolName === "scient_test_echo"
                 ? [message]
                 : [];
             });
@@ -176,13 +179,9 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
             assert.deepInclude(decodeRecord(json(results.at(-1))), {
               isError: turn === 1,
               details: {
-                server: "t3-code",
+                server: "scient",
                 tool: "scient_test_echo",
-                result: {
-                  content: [{ type: "text", text: "Bridge: שלום π" }],
-                  structuredContent: { test: "preserved", count: turn + 1 },
-                  isError: turn === 1,
-                },
+                isError: turn === 1,
               },
             });
           }
@@ -351,7 +350,6 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
           assert.lengthOf(requests, 20);
           const firstRequest = decodeRecord(requests[0]!);
           assert.equal(firstRequest.max_tokens ?? firstRequest.max_completion_tokens, 1024);
-          assert.include(requests[0]!, "Scient");
           assert.include(requests[1]!, "Native prompt sentinel: exact arguments");
           assert.include(requests[2]!, "Native skill sentinel.");
         }),
@@ -424,7 +422,7 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
             assert.equal(pending.type, "runtime_request.updated");
             if (pending.type !== "runtime_request.updated") return;
             assert.isFalse(c.events.some((event) => event.type === "turn.terminal"));
-            const item = yield* c.take(
+            const item = c.events.findLast(
               (event) =>
                 event.type === "turn_item.updated" &&
                 (event.turnItem.type === "user_input_request" ||
@@ -448,7 +446,7 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
                   ["Beta", " Beta "],
                 );
               }
-              if (index === 3) assert.include(question.question, "Initial text");
+              if (index === 3) assert.equal(question.initialAnswer, "Initial text");
               yield* runtime.respondToRuntimeRequest({
                 requestId: pending.runtimeRequest.id,
                 answers: { [question.id]: answers[index]! },

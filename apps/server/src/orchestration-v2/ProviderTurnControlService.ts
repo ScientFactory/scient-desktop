@@ -1,5 +1,6 @@
 import {
   MessageId,
+  type NodeId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -60,11 +61,12 @@ export interface ProviderTurnControlServiceV2Shape {
   readonly interruptPendingStart: InterruptPendingStart;
   // SCIENT-FORK:END
   readonly interrupt: (input: {
+    readonly subagent?: { readonly id: NodeId; readonly nativeTaskId: string };
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
-  }) => Effect.Effect<void, ProviderTurnControlError>;
+  }) => Effect.Effect<"adapter-stopped" | "session-absent", ProviderTurnControlError>;
   readonly steer: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -198,7 +200,22 @@ export const layer: Layer.Layer<
         const session = Option.isSome(loaded.session)
           ? loaded.session
           : yield* sessions.get(input.providerSessionId);
-        if (Option.isNone(session)) return;
+        if (Option.isNone(session)) return "session-absent" as const;
+        if (input.subagent !== undefined) {
+          if (session.value.stopSubagent === undefined) {
+            return yield* new ProviderTurnControlError({
+              threadId: input.threadId,
+              operation: "interrupt",
+              providerTurnId: input.providerTurnId,
+              cause: "The provider does not support stopping a native subagent.",
+            });
+          }
+          yield* session.value.stopSubagent({
+            providerThread: loaded.providerThread,
+            nativeTaskId: input.subagent.nativeTaskId,
+          });
+          return "adapter-stopped" as const;
+        }
         // A settled turn reaches its adapter too: only the adapter knows
         // whether it still runs work for the thread, and each one either
         // stops it or reports there is nothing left to stop. Background work
@@ -228,6 +245,7 @@ export const layer: Layer.Layer<
             yield* Effect.sleep("10 millis");
           }
         }).pipe(Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()));
+        return "adapter-stopped" as const;
       }).pipe(
         Effect.mapError((cause) =>
           isProviderTurnControlError(cause)

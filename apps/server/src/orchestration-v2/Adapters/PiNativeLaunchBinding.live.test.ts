@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
-import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
+import { makeScientPiAdapterV2 } from "../../provider/PiDriverComposition.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "@t3tools/provider-pi/testing";
 import { binary, ensure, fixture, layer } from "./PiNativeTestHarness.ts";
 
@@ -31,7 +31,7 @@ it.layer(layer, { excludeTestServices: true })("native Pi launch binding", (it) 
             assert.isTrue(yield* h.fs.exists(expectedFile));
             yield* Scope.close(originalScope, Exit.void);
             const requests: PiRpcRecord[] = [];
-            const adapter = yield* makePiAdapterV2({
+            const adapter = yield* makeScientPiAdapterV2({
               ...h.adapterOptions,
               makeConnection: (input) =>
                 makePiRpcConnection(input).pipe(

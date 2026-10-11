@@ -54,7 +54,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
+import { makeScientPiAdapterV2 } from "../../provider/PiDriverComposition.ts";
 import {
   makePiRpcConnection,
   type PiRpcRecord,
@@ -259,7 +259,7 @@ export default function(pi) {
       const registry = makeLayerEffect(
         Effect.gen(function* () {
           const bus = yield* ProviderContinuationRequests;
-          const adapter = yield* makePiAdapterV2({
+          const adapter = yield* makeScientPiAdapterV2({
             ...h.adapterOptions,
             continuationRequests: {
               ...bus,
@@ -839,10 +839,45 @@ export default function(pi) {
           yield* relocate(workspaceB);
           if (scenario === "captured") assert.deepEqual(yield* snapshotB, untouchedB);
           yield* Deferred.succeed(releaseOffer, undefined);
-          const waiting = yield* waitFor(
-            (p) => p.runs.length === 2 && p.runtimeRequests.some((r) => r.status === "pending"),
-          );
-          const nativeRun = waiting.runs[1]!;
+          const waiting = yield* waitFor((p) => {
+            const run = p.runs.find(
+              (run) => run.ordinal === 2 && run.providerThreadId === packet.providerThreadId,
+            );
+            return (
+              run !== undefined &&
+              run.rootNodeId !== null &&
+              run.activeAttemptId !== null &&
+              p.providerThreads.some(
+                (thread) =>
+                  thread.id === run.providerThreadId &&
+                  thread.providerSessionId === packet.initiated!.providerSessionId,
+              ) &&
+              p.providerTurns.some(
+                (turn) =>
+                  turn.nodeId === run.rootNodeId &&
+                  turn.runAttemptId === run.activeAttemptId &&
+                  turn.providerThreadId === run.providerThreadId &&
+                  turn.nativeAcceptance === "accepted" &&
+                  turn.acceptedAt !== undefined,
+              ) &&
+              p.runtimeRequests.some(
+                (request) =>
+                  request.status === "pending" &&
+                  request.responseCapability.type === "live" &&
+                  request.responseCapability.providerSessionId ===
+                    packet.initiated!.providerSessionId,
+              )
+            );
+          });
+          const nativeRun = waiting.runs.find(
+            (run) => run.ordinal === 2 && run.providerThreadId === packet.providerThreadId,
+          )!;
+          const nativeTurn = waiting.providerTurns.find(
+            (turn) =>
+              turn.nodeId === nativeRun.rootNodeId &&
+              turn.runAttemptId === nativeRun.activeAttemptId &&
+              turn.providerThreadId === nativeRun.providerThreadId,
+          )!;
           assert.equal(
             waiting.checkpointScopes.find(
               (s) =>
@@ -911,25 +946,46 @@ export default function(pi) {
               assert.include(Cause.pretty(competing.cause), "already has a live writer");
             assert.equal(opens, 1);
           }
-          const approval = waiting.runtimeRequests.find((r) => r.status === "pending")!;
+          const approval = waiting.runtimeRequests.find(
+            (request) =>
+              request.status === "pending" &&
+              request.responseCapability.type === "live" &&
+              request.responseCapability.providerSessionId === nativeSessionId,
+          )!;
           if (scenario === "stop" || scenario === "close") {
-            yield* orchestrator.dispatch({
-              type: "run.interrupt",
-              commandId: CommandId.make("native:stop"),
-              threadId: h.threadId,
-              runId: nativeRun.id,
-              holdQueue: true,
-            });
-            const stopped = yield* waitFor((p) => p.runs[1]?.status === "interrupted");
-            assert.equal(stopped.providerTurns[1]?.status, "interrupted");
-            assert.equal(stopped.providerTurns[1]?.nativeAcceptance, "accepted");
+            const expectedStatus = scenario === "stop" ? "interrupted" : "failed";
+            if (scenario === "stop") {
+              yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make("native:stop"),
+                threadId: h.threadId,
+                runId: nativeRun.id,
+                holdQueue: true,
+              });
+            } else {
+              yield* manager.close(nativeSessionId);
+            }
+            const stopped = yield* waitFor(
+              (p) =>
+                p.runs.find((run) => run.id === nativeRun.id)?.status === expectedStatus &&
+                p.providerTurns.find((turn) => turn.id === nativeTurn.id)?.status ===
+                  expectedStatus &&
+                p.runtimeRequests.find((request) => request.id === approval.id)?.status ===
+                  "cancelled",
+            );
+            const stoppedTurn = stopped.providerTurns.find((turn) => turn.id === nativeTurn.id)!;
+            assert.equal(stoppedTurn.nativeAcceptance, "accepted");
+            assert.deepEqual(stoppedTurn.acceptedAt, nativeTurn.acceptedAt);
             assert.lengthOf(requests, 1);
             assert.equal(yield* fs.readFileString(`${cwd}/native-answer.txt`), "Initial A\n");
-            yield* manager.close(nativeSessionId);
+            if (scenario === "stop") yield* manager.close(nativeSessionId);
             const closed = yield* waitFor(
               (p) => p.providerSessions.find((r) => r.id === nativeSessionId)?.status === "stopped",
             );
-            assert.equal(closed.runs[1]?.status, "interrupted");
+            assert.equal(
+              closed.runs.find((run) => run.id === nativeRun.id)?.status,
+              expectedStatus,
+            );
             yield* relocate(cwd);
             const file = waiting.providerThreads.find((t) => t.id === nativeRun.providerThreadId)
               ?.nativeThreadRef?.nativeId;
@@ -978,7 +1034,14 @@ export default function(pi) {
             const recovered = yield* waitFor(
               (p) => p.runs.length === 3 && p.runs[2]?.status === "completed",
             );
-            assert.equal(recovered.runs[1]?.status, "interrupted");
+            assert.equal(
+              recovered.runs.find((run) => run.id === nativeRun.id)?.status,
+              expectedStatus,
+            );
+            const retainedTurn = recovered.providerTurns.find((turn) => turn.id === nativeTurn.id)!;
+            assert.equal(retainedTurn.status, expectedStatus);
+            assert.equal(retainedTurn.nativeAcceptance, "accepted");
+            assert.deepEqual(retainedTurn.acceptedAt, nativeTurn.acceptedAt);
             assert.equal(opens, 3);
             assert.lengthOf(
               wire.filter((r) => r.type === "prompt"),

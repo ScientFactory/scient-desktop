@@ -41,6 +41,7 @@ export {
   resolveOneTimeNearFullMainWindowBounds,
 } from "./scientMainWindowSizing.ts";
 // SCIENT-FORK:END
+import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
 const TITLEBAR_HEIGHT = 40;
 // Matches --workspace-topbar-height in apps/web/src/index.css. Native macOS
@@ -634,7 +635,11 @@ export const make = Effect.gen(function* () {
           menuTemplate.push({
             label: "Copy Image",
             click: () => {
-              if (!contents.isDestroyed()) contents.copyImageAt(params.x, params.y);
+              void runPromise(
+                Effect.tryPromise(() => copyContextMenuImage(contents, params)).pipe(
+                  Effect.catch(() => logWindowWarning("failed to copy context-menu image")),
+                ),
+              );
             },
           });
           menuTemplate.push({ type: "separator" });

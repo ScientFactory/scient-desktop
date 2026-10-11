@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
-import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
+import { makeScientPiAdapterV2 } from "../provider/PiDriverComposition.ts";
 import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EventStore from "./EventStore.ts";
@@ -140,7 +140,7 @@ if(r.id)emit({type:'response',id:r.id,command:r.type,success:true,data});
     );
     const registry = makeLayerEffect(
       Effect.gen(function* () {
-        const adapter = yield* makePiAdapterV2({
+        const adapter = yield* makeScientPiAdapterV2({
           instanceId,
           settings: { enabled: true, binaryPath: binary, launchArgs: "", customModels: [] },
           environment: {

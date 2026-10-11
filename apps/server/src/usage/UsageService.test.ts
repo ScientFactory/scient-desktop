@@ -40,8 +40,9 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
-import type { UsageRecord } from "@t3tools/provider-core/server/usage";
+import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
+import { SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -166,6 +167,7 @@ const layerService = (input: {
       Layer.succeed(HostProcess.Environment, {
         HOME: input.home,
         GROK_HOME: NodePath.join(input.home, "grok"),
+        PI_CODING_AGENT_DIR: NodePath.join(input.home, "pi"),
         OPENCODE_DATA_DIR: NodePath.join(input.home, "opencode"),
         ANTIGRAVITY_DATA_DIR: NodePath.join(input.home, "antigravity"),
         XDG_CONFIG_HOME: NodePath.join(input.home, "config"),
@@ -280,6 +282,318 @@ function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
 }
 
 describe("UsageService", () => {
+  it.live(
+    "reads Pi per-model usage and auxiliary costs once across forks and repeated entries",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const dir = NodePath.join(home, "pi", "sessions", "project");
+        const usage = {
+          input: 10,
+          output: 5,
+          cacheRead: 20,
+          cacheWrite: 3,
+          reasoning: 2,
+          totalTokens: 38,
+          cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+        };
+        const parent = {
+          type: "message",
+          id: "a123abcd",
+          parentId: null,
+          timestamp: "2026-08-01T10:00:00Z",
+          message: {
+            role: "assistant",
+            provider: "anthropic",
+            model: "requested-model",
+            responseModel: "actual-model",
+            usage,
+          },
+        };
+        const auxiliary = [
+          {
+            type: "message",
+            id: "tool",
+            message: { role: "toolResult", toolName: "classify", usage },
+          },
+          {
+            type: "message",
+            id: "image",
+            message: {
+              role: "toolResult",
+              toolName: "image",
+              usage: { ...usage, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            },
+          },
+          { type: "compaction", id: "compact", usage },
+          { type: "branch_summary", id: "summary", usage },
+        ].map((entry) => ({ ...entry, timestamp: "2026-08-01T11:00:00Z" }));
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(dir, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(dir, "parent.jsonl"),
+            [
+              { type: "session", id: "parent" },
+              parent,
+              ...auxiliary,
+              {
+                type: "usage",
+                id: "warm",
+                timestamp: "2026-08-01T12:00:00Z",
+                kind: "cache_warm",
+                provider: "openai",
+                model: "actual-model",
+                usage: { ...usage, cost: { ...usage.cost, total: 0 } },
+              },
+            ]
+              .map((line) => encodeUnknownJsonString(line))
+              .join("\n") + "\n",
+          );
+          await NodeFSP.writeFile(
+            NodePath.join(dir, "fork.jsonl"),
+            [
+              { type: "session", id: "fork", parentSession: NodePath.join(dir, "parent.jsonl") },
+              { ...parent, parentId: "relinked" },
+              parent,
+              ...auxiliary,
+              {
+                ...parent,
+                timestamp: "2026-08-01T13:00:00Z",
+                message: { ...parent.message, provider: "openai", responseModel: "another-model" },
+              },
+              { type: "get_session_stats", usage: { ...usage, cost: { total: 1000 } } },
+            ]
+              .map((line) => encodeUnknownJsonString(line))
+              .join("\n") + "\n",
+          );
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const first = yield* service.readSummary(WINDOW);
+          const pi = first.buckets.filter((bucket) => bucket.provider === "pi");
+          assert.strictEqual(
+            pi.reduce((total, bucket) => total + bucket.costUsd, 0),
+            44,
+          );
+          assert.strictEqual(
+            pi.reduce((total, bucket) => total + totalTokens(bucket.totals), 0),
+            228,
+          );
+          assert.deepStrictEqual(pi.map((bucket) => bucket.model).sort(), [
+            "Tools/summaries",
+            "anthropic/actual-model",
+            "openai/actual-model",
+            "openai/another-model",
+          ]);
+          const assistant = pi.find((bucket) => bucket.model === "anthropic/actual-model");
+          assert.deepStrictEqual(assistant?.totals, {
+            uncachedInputTokens: 10,
+            outputTokens: 5,
+            cachedInputTokens: 20,
+            cacheCreationTokens: 3,
+            reasoningTokens: 2,
+          });
+          assert.strictEqual(assistant?.costSource, "providerReported");
+          assert.approximately(assistant?.categoryCostUsd?.input ?? NaN, 10 / 38, 1e-6);
+          assert.approximately(assistant?.categoryCostUsd?.cacheRead ?? NaN, 2 / 38, 1e-6);
+          assert.approximately(assistant?.categoryCostUsd?.cacheWrite ?? NaN, 6 / 38, 1e-6);
+          assert.approximately(assistant?.categoryCostUsd?.output ?? NaN, 20 / 38, 1e-6);
+          assert.strictEqual(assistant?.cacheSavingsUsd, 18);
+          const warm = pi.find((bucket) => bucket.model === "openai/actual-model");
+          assert.strictEqual(warm?.costSource, "modelPriced");
+          assert.strictEqual(warm?.costUsd, 38);
+          assert.deepStrictEqual(warm?.categoryCostUsd, {
+            input: 10,
+            cacheRead: 2,
+            cacheWrite: 6,
+            output: 20,
+          });
+          assert.strictEqual(warm?.cacheSavingsUsd, 18);
+          assert.strictEqual(
+            first.sources.filter((source) => source.fingerprint.provider === "pi").length,
+            1,
+          );
+          // Warm scans retain header state and only charge appended entries.
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              NodePath.join(dir, "fork.jsonl"),
+              encodeUnknownJsonString({
+                ...parent,
+                id: "new",
+                timestamp: "2026-08-01T14:00:00Z",
+                message: { ...parent.message, responseModel: "latest-model" },
+              }) + "\n",
+            ),
+          );
+          const grown = yield* service.readSummary(WINDOW);
+          assert.strictEqual(
+            grown.buckets
+              .filter((bucket) => bucket.provider === "pi")
+              .reduce((total, bucket) => total + bucket.costUsd, 0),
+            45,
+          );
+          yield* service.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, grown.buckets);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-pi-fork",
+              home,
+              ratesDocument: {
+                "actual-model": {
+                  input_cost_per_token: 1,
+                  output_cost_per_token: 4,
+                  cache_read_input_token_cost: 0.1,
+                  cache_creation_input_token_cost: 2,
+                },
+              },
+              settings: {
+                ...settings,
+                providerInstances: {
+                  ...settings.providerInstances,
+                  [ProviderInstanceId.make("pi-extra")]: {
+                    driver: ProviderDriverKind.make("pi"),
+                    enabled: false,
+                    environment: [
+                      {
+                        name: "PI_CODING_AGENT_DIR",
+                        value: NodePath.join(home, "pi"),
+                        sensitive: false,
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("reports missing Pi history and skips malformed records without losing valid usage", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const missing = yield* service.readSummary(WINDOW);
+        assert.strictEqual(
+          missing.sources.find((source) => source.fingerprint.provider === "pi")?.status,
+          "missing",
+        );
+        const dir = NodePath.join(home, "pi", "sessions");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(dir, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(dir, "session.jsonl"),
+            [
+              "{broken",
+              "null",
+              encodeUnknownJsonString({ type: "session", id: "valid" }),
+              encodeUnknownJsonString({
+                type: "message",
+                id: "bad",
+                timestamp: "invalid",
+                message: {
+                  role: "assistant",
+                  provider: "openai",
+                  model: "model",
+                  usage: { input: 100 },
+                },
+              }),
+              encodeUnknownJsonString({
+                type: "message",
+                id: "valid",
+                timestamp: "2026-08-01T10:00:00Z",
+                message: {
+                  role: "assistant",
+                  provider: "openai",
+                  model: "model",
+                  usage: {
+                    input: -1,
+                    cacheRead: "100",
+                    output: 7,
+                    reasoning: 50,
+                    cost: { total: -1 },
+                  },
+                },
+              }),
+            ].join("\n") + "\n",
+          );
+        });
+        const summary = yield* service.readSummary(WINDOW);
+        const pi = summary.buckets.filter((bucket) => bucket.provider === "pi");
+        assert.strictEqual(pi.length, 1);
+        assert.strictEqual(pi[0] && totalTokens(pi[0].totals), 7);
+        assert.strictEqual(pi[0]?.totals.reasoningTokens, 7);
+        assert.strictEqual(pi[0]?.costSource, "unpriced");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix: "usage-pi-malformed", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("discovers Pi history in its default home and directory overrides", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      for (const [agentDir, sessionDir, relativeDir] of [
+        [undefined, undefined, ".pi/agent/sessions"],
+        ["~/custom-pi", undefined, "custom-pi/sessions"],
+        ["~/ignored-pi", "~/custom-sessions", "custom-sessions"],
+        ["~/ignored-pi", NodePath.join(home, "absolute-sessions"), "absolute-sessions"],
+      ] as const) {
+        const dir = NodePath.join(home, relativeDir);
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(dir, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(dir, "session.jsonl"),
+            [
+              { type: "session", id: relativeDir },
+              {
+                type: "usage",
+                id: "warm",
+                timestamp: "2026-08-01T10:00:00Z",
+                provider: "openai",
+                model: "model",
+                usage: { input: 7 },
+              },
+            ]
+              .map((line) => encodeUnknownJsonString(line))
+              .join("\n") + "\n",
+          );
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const summary = yield* service.readSummary(WINDOW);
+          const pi = summary.buckets.filter((bucket) => bucket.provider === "pi");
+          assert.strictEqual(pi.length, 1);
+          assert.strictEqual(pi[0]?.totals.uncachedInputTokens, 7);
+          assert.strictEqual(
+            summary.sources.find((source) => source.fingerprint.provider === "pi")?.fingerprint
+              .resolvedHomePath,
+            dir,
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-pi-" + relativeDir.replaceAll("/", "-"),
+              home,
+              settings,
+              environment: {
+                PI_CODING_AGENT_DIR: agentDir,
+                PI_CODING_AGENT_SESSION_DIR: sessionDir,
+              },
+            }),
+          ),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+        );
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reads shared managed default and disabled extra account history once", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
@@ -1156,6 +1470,218 @@ describe("UsageService", () => {
   );
 
   it.live(
+    "imports retained v5 usage into v6 and protects Pi pricing from older cache rewrites",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, home, settings } = yield* setup;
+        yield* TestClock.setTime(CURSOR_NOW);
+        const piDir = NodePath.join(home, "pi", "sessions");
+        const piPath = NodePath.join(piDir, "session.jsonl");
+        const copyPath = NodePath.join(piDir, "copy.jsonl");
+        const piLine = (id: string, output: number, timestamp: string) =>
+          encodeUnknownJsonString({
+            type: "message",
+            id,
+            timestamp,
+            message: {
+              role: "assistant",
+              provider: "custom-provider",
+              model: "requested-model",
+              responseModel: "actual-model",
+              usage: { output },
+            },
+          });
+        const base =
+          encodeUnknownJsonString({ type: "session", id: "pi-session" }) +
+          "\n" +
+          piLine("shared", 3, "2026-08-01T10:00:00Z") +
+          "\n";
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+          await NodeFSP.mkdir(piDir, { recursive: true });
+          await NodeFSP.writeFile(piPath, base + piLine("tail", 5, "2026-08-01T10:30:00Z"));
+          await NodeFSP.writeFile(copyPath, base);
+        });
+
+        yield* Effect.gen(function* () {
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          const priorPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+          const v4Path = NodePath.join(stateDir, "usage-scan-cache.json");
+          const first = yield* UsageService.make;
+          const original = yield* first.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(original), 13);
+          assert.strictEqual(
+            original.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            42,
+          );
+          yield* first.awaitPersisted;
+
+          const { priorText, v4Text } = yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(
+              await NodeFSP.readFile(cachePath, "utf8"),
+            ) as Record<string, unknown>;
+            const priorText = encodeUnknownJsonString({ ...document, version: 5 });
+            // A different older snapshot must not be merged into the v5 import.
+            const v4Text = encodeUnknownJsonString({ ...document, version: 4, files: {} });
+            await NodeFSP.writeFile(priorPath, priorText);
+            await NodeFSP.writeFile(v4Path, v4Text);
+            await NodeFSP.rm(cachePath);
+            await NodeFSP.rm(transcript);
+            await NodeFSP.rm(copyPath);
+            return { priorText, v4Text };
+          });
+
+          const migrated = yield* UsageService.make;
+          assert.deepStrictEqual((yield* migrated.readSummary(WINDOW)).buckets, original.buckets);
+          yield* migrated.awaitPersisted;
+          yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+              version: number;
+            };
+            assert.strictEqual(document.version, 6);
+            assert.strictEqual(await NodeFSP.readFile(priorPath, "utf8"), priorText);
+            assert.strictEqual(await NodeFSP.readFile(v4Path, "utf8"), v4Text);
+          });
+
+          // Resume after a persisted, unterminated tail; count it only once.
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(piPath, "\n" + piLine("new", 7, "2026-08-01T22:00:00Z") + "\n"),
+          );
+          const grown = yield* migrated.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(grown), 20);
+          assert.strictEqual(
+            grown.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            70,
+          );
+          yield* Effect.promise(() => NodeFSP.copyFile(piPath, copyPath));
+          assert.deepStrictEqual((yield* migrated.readSummary(WINDOW)).buckets, grown.buckets);
+          yield* migrated.awaitPersisted;
+
+          const olderRewrite = yield* Effect.promise(async () => {
+            // An older v5 server drops Pi and the optional pricing-model column.
+            const prior = decodeUnknownJsonString(priorText) as {
+              files: Record<string, { p: string; r: unknown[][]; t: unknown[][] }>;
+            };
+            const files = Object.fromEntries(
+              Object.entries(prior.files)
+                .filter(([, file]) => file.p !== "pi")
+                .map(([path, file]) => [
+                  path,
+                  {
+                    ...file,
+                    r: file.r.map((row) => row.slice(0, 11)),
+                    t: file.t.map((row) => row.slice(0, 11)),
+                  },
+                ]),
+            );
+            const text = encodeUnknownJsonString({ ...prior, version: 5, files });
+            await NodeFSP.writeFile(priorPath, text);
+            await NodeFSP.rm(piPath);
+            await NodeFSP.rm(copyPath);
+            return text;
+          });
+
+          const restarted = yield* UsageService.make;
+          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, grown.buckets);
+          const localDay = yield* restarted.readSummary({
+            ...WINDOW,
+            timeZone: "Asia/Tokyo",
+            sinceDay: UsageDay.make("2026-08-02"),
+          });
+          assert.strictEqual(totalOutputTokens(localDay), 7);
+          assert.strictEqual(
+            localDay.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            28,
+          );
+          const hourly = yield* restarted.readSummary({
+            ...WINDOW,
+            resolution: "hour",
+            sinceTime: "2026-08-01T10:00:00Z",
+            untilTime: "2026-08-01T11:00:00Z",
+          });
+          assert.strictEqual(totalOutputTokens(hourly), 13);
+          assert.strictEqual(
+            hourly.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            42,
+          );
+          yield* restarted.awaitPersisted;
+          assert.strictEqual(
+            yield* Effect.promise(() => NodeFSP.readFile(priorPath, "utf8")),
+            olderRewrite,
+          );
+          assert.strictEqual(yield* Effect.promise(() => NodeFSP.readFile(v4Path, "utf8")), v4Text);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-v5-upgrade-test",
+              home,
+              settings,
+              ratesDocument: {
+                "claude-fable-5": { input_cost_per_token: 0, output_cost_per_token: 2 },
+                "actual-model": { input_cost_per_token: 0, output_cost_per_token: 4 },
+                "custom-provider/actual-model": {
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 40,
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("does not roll back to older usage when the current cache version is unsupported", () =>
+    Effect.gen(function* () {
+      const { transcript, home, settings } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+        const priorPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        const v4Path = NodePath.join(stateDir, "usage-scan-cache.json");
+        const first = yield* UsageService.make;
+        assert.strictEqual(totalOutputTokens(yield* first.readSummary(WINDOW)), 5);
+        yield* first.awaitPersisted;
+        const document = yield* Effect.promise(
+          async () =>
+            decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as Record<
+              string,
+              unknown
+            >,
+        );
+        const priorText = encodeUnknownJsonString({ ...document, version: 5 });
+        const v4Text = encodeUnknownJsonString({ ...document, version: 4 });
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(priorPath, priorText);
+          await NodeFSP.writeFile(v4Path, v4Text);
+          await NodeFSP.rm(transcript);
+        });
+        for (const version of [7, "unknown", undefined]) {
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(cachePath, encodeUnknownJsonString({ ...document, version })),
+          );
+          const service = yield* UsageService.make;
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 0);
+          yield* service.awaitPersisted;
+          assert.strictEqual(
+            yield* Effect.promise(() => NodeFSP.readFile(priorPath, "utf8")),
+            priorText,
+          );
+          assert.strictEqual(yield* Effect.promise(() => NodeFSP.readFile(v4Path, "utf8")), v4Text);
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({ prefix: "usage-service-unsupported-cache-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live(
     "upgrades a v4 cache: reprices live Codex tiers, keeps deleted rollouts, leaves v4 intact",
     () =>
       Effect.gen(function* () {
@@ -1193,7 +1719,7 @@ describe("UsageService", () => {
 
         yield* Effect.gen(function* () {
           const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
           const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
           const first = yield* UsageService.make;
           yield* first.readSummary(WINDOW);
@@ -1218,13 +1744,13 @@ describe("UsageService", () => {
 
           // SCIENT-FORK:START — verify the service drains before its state directory closes.
           // Registered before the migrated service: its LIFO shutdown finalizer
-          // must finish the pending v5 write before this check, while v4 still exists.
+          // must finish the pending v6 write before this check, while v4 still exists.
           yield* Effect.addFinalizer(() =>
             Effect.promise(async () => {
               const persisted = decodeUnknownJsonString(
                 await NodeFSP.readFile(cachePath, "utf8"),
               ) as { version: number };
-              assert.strictEqual(persisted.version, 5);
+              assert.strictEqual(persisted.version, 6);
               assert.strictEqual(await NodeFSP.readFile(legacyPath, "utf8"), legacy);
             }),
           );

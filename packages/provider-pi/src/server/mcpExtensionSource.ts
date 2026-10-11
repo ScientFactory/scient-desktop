@@ -49,9 +49,11 @@ const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 type JsonRpcResponse = {
   readonly id?: number | string;
-  readonly result?: unknown;
+  readonly result?: JsonValue;
   readonly error?: { readonly message?: string };
 };
 
@@ -59,6 +61,7 @@ type McpTool = {
   readonly name: string;
   readonly description?: string;
   readonly inputSchema?: Record<string, unknown>;
+  readonly outputSchema?: Record<string, unknown>;
 };
 
 function env(name: string): string | undefined {
@@ -107,35 +110,64 @@ function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   return Type.Object({}, { additionalProperties: true });
 }
 
-function mcpContent(result: unknown): Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> {
+type ModelContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
+function mcpModelContent(result: unknown): ModelContent[] {
   if (result === null || result === undefined) return [];
   if (typeof result !== "object") return [{ type: "text", text: String(result) }];
   const record = result as {
     readonly content?: ReadonlyArray<Record<string, unknown>>;
     readonly structuredContent?: unknown;
   };
-  const content: ReturnType<typeof mcpContent> = [];
+  const content: ModelContent[] = [];
   let resourceTextRemaining = 12_000;
-  for (const part of record.content ?? []) {
-    if (part.type === "text" && typeof part.text === "string") content.push({ type: "text", text: part.text });
-    else if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string")
-      content.push({ type: "image", data: part.data, mimeType: part.mimeType });
-    else if (resourceTextRemaining > 0 && (part.type === "resource_link" || part.type === "resource")) {
-      const resource = part.type === "resource" && typeof part.resource === "object" && part.resource !== null
-        ? part.resource as Record<string, unknown>
-        : part;
-      const text = ["Resource", part.name, resource.uri, part.description, resource.mimeType, resource.text]
-        .filter((value): value is string => typeof value === "string" && value.length > 0)
-        .map((value) => value.slice(0, resourceTextRemaining))
-        .join("\\n")
-        .slice(0, resourceTextRemaining);
-      content.push({ type: "text", text });
-      resourceTextRemaining -= text.length;
+  if (Array.isArray(record.content)) {
+    for (const part of record.content) {
+      if (part?.type === "text" && typeof part.text === "string") {
+        content.push({ type: "text", text: part.text });
+      } else if (part?.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") {
+        content.push({ type: "image", data: part.data, mimeType: part.mimeType });
+      } else if (part && resourceTextRemaining > 0 && (part.type === "resource_link" || part.type === "resource")) {
+        const resource = part.type === "resource" && typeof part.resource === "object" && part.resource !== null
+          ? part.resource as Record<string, unknown>
+          : part;
+        const text = ["Resource", part.name, resource.uri, part.description, resource.mimeType, resource.text]
+          .filter((value): value is string => typeof value === "string" && value.length > 0)
+          .map((value) => value.slice(0, resourceTextRemaining))
+          .join("\\n")
+          .slice(0, resourceTextRemaining);
+        content.push({ type: "text", text });
+        resourceTextRemaining -= text.length;
+      }
     }
   }
-  if (content.length === 0 && record.structuredContent !== undefined)
-    content.push({ type: "text", text: JSON.stringify(record.structuredContent) });
+  // Structured output belongs to scripts. Only use it as model text when
+  // the server supplied no model-facing blocks, matching Pi's native MCP tools.
+  if (content.length === 0) {
+    content.push({ type: "text", text: JSON.stringify(record.structuredContent ?? result) });
+  }
   return content;
+}
+
+function mcpScriptResult(result: JsonValue | undefined) {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) return result;
+  const { _meta: _ignored, ...scriptResult } = result;
+  return scriptResult;
+}
+
+function mcpOutputSchema(tool: McpTool) {
+  return jsonSchemaToTypebox({
+    type: "object",
+    properties: {
+      content: { type: "array", items: { type: "object" } },
+      ...(tool.outputSchema === undefined ? {} : { structuredContent: tool.outputSchema }),
+      isError: { type: "boolean" },
+      _meta: { type: "object" },
+    },
+    required: ["content"],
+  });
 }
 
 function isMcpToolError(result: unknown): boolean {
@@ -309,6 +341,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const approved = await ctx.ui.confirm(
       \`Allow \${event.toolName}?\`,
       toolInputSummary(event.input),
+      { signal: ctx.signal },
     );
     if (!approved) {
       return { block: true, reason: \`\${event.toolName} was declined in Scient.\` };
@@ -356,7 +389,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (!registeredToolNames.has(event.toolName)) return;
     const details = event.details;
     if (typeof details === "object" && details !== null &&
-        "result" in details && isMcpToolError(details.result)) return { isError: true };
+        "isError" in details && details.isError === true) return { isError: true };
   });
   let started: Promise<void> | undefined;
 
@@ -372,6 +405,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         label: name,
         description: tool.description ?? name,
         parameters: jsonSchemaToTypebox(tool.inputSchema),
+        ...(supportsExposure ? { outputSchema: mcpOutputSchema(tool) } : {}),
         ...(supportsExposure ? { exposure } : {}),
         async execute(_toolCallId, params, signal) {
           const result = await client.callTool(
@@ -379,9 +413,14 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
             (params ?? {}) as Record<string, unknown>,
             signal,
           );
+          const content = mcpModelContent(result);
+          if (isMcpToolError(result) && !content.some((part) => part.type === "text" && part.text.length > 0)) {
+            content.push({ type: "text", text: "MCP tool scient/" + name + " returned an error" });
+          }
           return {
-            content: mcpContent(result),
-            details: { server: "scient", tool: tool.name, result },
+            content,
+            structuredContent: mcpScriptResult(result),
+            details: { server: "scient", tool: tool.name, isError: isMcpToolError(result) },
             ...(isMcpToolError(result) ? { isError: true } : {}),
           };
         },

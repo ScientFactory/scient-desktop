@@ -17,6 +17,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { PiSettings } from "../settings.ts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { piUsageReader } from "./usage.ts";
 import { makePiTextGeneration } from "./textGeneration.ts";
 import {
   makePiAdapterV2,
@@ -120,7 +121,7 @@ export interface PiDriverOptions<Requirements = never, Extension extends object 
 export interface PiDriverFactory<
   Requirements = never,
   Extension extends object = {},
-> extends ProviderDriver<PiSettings, PiDriverEnv | Requirements> {
+> extends ProviderDriver<PiSettings, PiDriverEnv | Requirements, Path.Path> {
   readonly create: (
     input: ProviderDriverCreateInput<PiSettings>,
   ) => Effect.Effect<
@@ -136,6 +137,7 @@ export function makePiDriver<Requirements = never, Extension extends object = {}
   return {
     driverKind: DRIVER_KIND,
     metadata: { displayName: "Pi", supportsMultipleInstances: true },
+    usage: piUsageReader,
     configSchema: PiSettings,
     defaultConfig: (): PiSettings => decodePiSettings({}),
     create: (input) =>

@@ -49,10 +49,11 @@ It is a correctness limit to remove, not a behavior to rely on.
 
 Owner decision (2026-10-01): a paired or remote device may open as much as the
 host can read. There is no locality-based read restriction, and none should be
-added. What bounds a viewer is the same for every client: the session scope
-(`orchestration:read` covers reading, watching, preparing, link repair, and
-asset URLs), the signed asset capability, the formats a client can render, and
-the HTML document-root rules below.
+added. What bounds a viewer is the same for every client: the session permissions
+(`filesystem:read` covers file reading, watching, preparing, link repair, and
+metadata; asset-URL RPCs separately authorize their requested resource), the
+signed asset capability, the formats a client can render, and the HTML
+document-root rules below.
 
 Because the host's own applications are out of reach for a viewer on another
 machine, anything Scient cannot render can be taken to the viewing device:
@@ -65,6 +66,23 @@ Classification prefers content signatures for PDF and common images, then
 uses decoded text plus the extension. UTF-8 and BOM-marked UTF-16 are supported.
 Text and Markdown transport is range-bounded to 2 MiB and decoding preserves a
 valid prefix if the range ends within a multibyte character.
+
+## File metadata hints
+
+`filesystem.getMetadata` inspects host paths under `filesystem:read`; it does
+not introduce a project-root or locality restriction. Each RPC accepts at most
+64 paths, inspects distinct paths with concurrency eight, and restores the
+original response order, including duplicates. Missing or unreadable paths
+return `null`; directories and other filesystem entries require no content
+read. Extensionless regular files read at most 512 header bytes for a MIME
+hint. `~/` and `~\` use the environment host's home directory.
+
+A metadata chip names a literal file, not a positioned Markdown link. POSIX
+trailing spaces, backslashes, and colon-number suffixes remain part of its
+identity; Windows aliases retain their existing normalization. Successful
+writes and renames invalidate old, requested, and returned metadata paths.
+The shared exact-file watcher also invalidates metadata on external changes
+and watcher readiness, including scientific document consumers.
 
 ## Presentation adapters
 

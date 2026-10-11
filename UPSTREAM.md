@@ -273,7 +273,7 @@ frozen history, managed runtime, privacy and publication boundaries remain.
 The receipt separates complete local qualification with exact affected-scope reuse,
 independent review and bounded stress from hosted CI and the user's visual acceptance.
 
-The current locally qualified alignment through `bd2346eda2e2c380d1844869c7fd16c279d2190f`
+The previous locally qualified alignment through `bd2346eda2e2c380d1844869c7fd16c279d2190f`
 is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009-ec80933ac8.md)
 ([Scient PR #498](https://github.com/ScientFactory/scient-desktop/pull/498)).
 It receives 160 official first-parent commits: the original 43 plus the
@@ -294,6 +294,22 @@ bounded 2026-10-10 exception, documented with paired Scient comments at its
 application seams. No publication authority or general extraction-line waiver
 is added. The development candidate is held stopped until requested for app
 acceptance; hosted CI qualifies the pushed revision separately.
+
+The current locally qualified alignment through `74dfbb697235b0db87355d3f8575dc2ba45dddf7`
+is recorded in [the 2026-10-11 receipt](docs/internals/t3-upstream-sync-20261011-74dfbb6972.md)
+([Scient PR #513](https://github.com/ScientFactory/scient-desktop/pull/513)).
+It receives all 54 official first-parent commits after the previous boundary.
+Literal merge `274000eb4a28df36ba2af097075bf5c215641e7f` has the exact PR #498
+head `298c0c03053d71eeec72a37943196c877f3b326b` as its first parent and the
+official target as its second parent. The source-control host migration,
+Claude/Pi/OpenCode lifecycle and credential changes, authorization, bounded
+queue/history, attachment metadata and preview/layout changes compose with
+Scient's owned policies and scientific surfaces. No publication boundary is
+activated. The receipt separates complete local tests, real native stress,
+independent source review and final isolated desktop visual/interaction checks
+from hosted CI, optional platform/account skips and the user's approval.
+The isolated review candidate remains open for user acceptance; the layer
+requires separate merge approval and does not alter its parent PR's policy.
 
 ## Receiving T3 updates
 

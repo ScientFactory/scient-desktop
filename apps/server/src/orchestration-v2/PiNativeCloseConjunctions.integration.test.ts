@@ -23,7 +23,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as Config from "../config.ts";
-import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
+import { makeScientPiAdapterV2 } from "../provider/PiDriverComposition.ts";
 import { EventStoreV2 } from "./EventStore.ts";
 import { layer as idAllocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
@@ -201,7 +201,7 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
         ),
       );
       const config = yield* Config.ServerConfig;
-      const adapter = yield* makePiAdapterV2({
+      const adapter = yield* makeScientPiAdapterV2({
         instanceId,
         settings: { enabled: true, binaryPath, launchArgs: "", customModels: [] },
         environment: {

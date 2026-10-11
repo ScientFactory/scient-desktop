@@ -36,6 +36,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { makeScientPiAdapterV2 } from "../../provider/PiDriverComposition.ts";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -43,7 +46,7 @@ import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
 } from "../testkit/ProviderReplayHarness.ts";
-import { PI_PROVIDER, PiAdapterV2Driver } from "@t3tools/provider-pi/server";
+import { PI_PROVIDER } from "@t3tools/provider-pi/server";
 import { piInstanceStateRoot } from "@t3tools/provider-pi/testing";
 import {
   PiReplaySessionBinding,
@@ -476,17 +479,32 @@ export function layer<E, R>(input: {
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [PiAdapterV2Driver],
-    configMap: {
-      [PI_PROVIDER]: {
-        driver: PI_PROVIDER,
-        enabled: true,
-        config: { binaryPath: input.binaryPath, launchArgs: input.launchArgs },
-        ...(input.environment === undefined ? {} : { environment: input.environment }),
-      },
-    },
-  }).pipe(
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    Effect.gen(function* () {
+      const hostEnvironment = yield* HostProcess.Environment;
+      const adapter = yield* makeScientPiAdapterV2({
+        instanceId: ProviderInstanceId.make(PI_PROVIDER),
+        settings: {
+          enabled: true,
+          binaryPath: input.binaryPath,
+          launchArgs: input.launchArgs,
+          customModels: [],
+        },
+        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+      });
+      return [adapter];
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterDriverCreateError({
+            driver: PI_PROVIDER,
+            instanceId: ProviderInstanceId.make(PI_PROVIDER),
+            detail: "Failed to create Pi adapter.",
+            cause,
+          }),
+      ),
+    ),
+  ).pipe(
     Layer.provide(input.spawner),
     Layer.provide(
       Layer.mergeAll(

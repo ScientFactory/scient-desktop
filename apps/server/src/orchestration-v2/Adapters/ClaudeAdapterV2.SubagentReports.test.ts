@@ -9,6 +9,10 @@ import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/Provi
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  resolveClaudeModelSlug,
+} from "../../provider/ClaudeModelCatalog.ts";
+import {
   makeWakeHarness,
   makeSubagentAssistantFrames,
   makeSubagentToolResultFrame,
@@ -129,6 +133,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const toolUseId = "toolu-subagent-model";
           const parentModel = "claude-opus-4-6";
           const observedModel = "claude-haiku-4-5-20251001";
+          const requestedModel = "haiku";
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId: harness.threadId,
@@ -174,7 +179,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                       subagent_type: "general-purpose",
                       ...(source === "unknown"
                         ? {}
-                        : { model: source === "inherit" ? "inherit" : "haiku" }),
+                        : { model: source === "inherit" ? "inherit" : requestedModel }),
                       prompt: "Solve the puzzle.",
                     },
                   },
@@ -207,18 +212,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           yield* Queue.take(harness.terminalReceipts);
           const subagents = harness.events.filter((event) => event.type === "subagent.updated");
+          // Provenance determines which model wins; aliases and dated ids use catalog identity.
+          const requestedSlug = resolveClaudeModelSlug(
+            BUNDLED_CLAUDE_MODEL_CATALOG,
+            requestedModel,
+          );
+          const observedSlug = resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, observedModel);
           const initialModel =
             source === "observed-before"
-              ? observedModel
+              ? observedSlug
               : source === "inherit"
                 ? parentModel
                 : source === "unknown"
                   ? null
-                  : "haiku";
+                  : requestedSlug;
           assert.equal(subagents[0]?.subagent.model, initialModel);
           assert.equal(
             subagents.at(-1)?.subagent.model,
-            source.startsWith("observed") ? observedModel : initialModel,
+            source.startsWith("observed") ? observedSlug : initialModel,
           );
           const child = harness.events.find((event) => event.type === "app_thread.created");
           assert.equal(child?.appThread.modelSelection?.model, initialModel ?? parentModel);

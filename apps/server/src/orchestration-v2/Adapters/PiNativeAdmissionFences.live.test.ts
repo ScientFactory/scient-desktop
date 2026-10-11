@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { makePiAdapterV2 } from "@t3tools/provider-pi/testing";
+import { makeScientPiAdapterV2 } from "../../provider/PiDriverComposition.ts";
 import { makePiRpcConnection } from "@t3tools/provider-pi/testing";
 import { binary, fixture, layer, serve, json, collect, ensure } from "./PiNativeTestHarness.ts";
 
@@ -63,7 +63,7 @@ it.layer(layer, { excludeTestServices: true })("actual Pi native admission fence
           yield* h.models(`${base}/v1`);
           let heldStats = false;
           let heldState = false;
-          const adapter = yield* makePiAdapterV2({
+          const adapter = yield* makeScientPiAdapterV2({
             ...h.adapterOptions,
             makeConnection: (input) =>
               makePiRpcConnection(input).pipe(
@@ -202,7 +202,7 @@ it.layer(layer, { excludeTestServices: true })("actual Pi native admission fence
             );
           });
           yield* h.models(`${base}/v1`);
-          const adapter = yield* makePiAdapterV2({
+          const adapter = yield* makeScientPiAdapterV2({
             ...h.adapterOptions,
             continuationRequests: {
               offer: (packet) => Deferred.succeed(offered, packet).pipe(Effect.asVoid),
@@ -328,7 +328,7 @@ it.layer(layer, { excludeTestServices: true })("actual Pi native admission fence
           const release = yield* Deferred.make<void>();
           let selectionStarted = false;
           let held = false;
-          const adapter = yield* makePiAdapterV2({
+          const adapter = yield* makeScientPiAdapterV2({
             ...h.adapterOptions,
             makeConnection: (input) =>
               Effect.sync(() => opens++).pipe(

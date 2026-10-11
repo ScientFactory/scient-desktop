@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -555,7 +556,7 @@ it.effect("shared V2 deletion stops a real pending clone only after deletion com
             (cause) =>
               new SourceControlRepositoryError({
                 operation: "discard-clone",
-                provider: "github",
+                provider: SourceControlProviderKind.make("github"),
                 detail: "Fixture checkout cleanup failed.",
                 cause,
               }),
@@ -709,7 +710,7 @@ it.effect.each(
             (cause) =>
               new SourceControlRepositoryError({
                 operation: "discard-clone",
-                provider: "github",
+                provider: SourceControlProviderKind.make("github"),
                 detail: "Fixture checkout cleanup failed.",
                 cause,
               }),

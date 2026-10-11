@@ -13,6 +13,9 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makePiDriver,
+  makePiAdapterV2,
+  type PiAdapterV2Options,
+  piContinuationRequestsIfProvided,
   type PiDriverEnv,
   type PiRuntimeResolution,
   type PiRuntimeResolverInput,
@@ -20,6 +23,7 @@ import {
 import type { PiSettings } from "@t3tools/provider-pi/settings";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as Path from "effect/Path";
 
 import { customModelDiscoverySnapshot } from "../customModelCapabilities.ts";
 import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
@@ -65,6 +69,26 @@ export const mapPiTurnStartError = (
   },
   cause: unknown,
 ): ProviderAdapterTurnStartError => turnStartErrorKeepingReceipt(PI_DRIVER, input)(cause);
+
+const scientPiAdapterOptions = {
+  runtimeGuidance: buildPiRuntimeGuidance,
+  orchestrationInstructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
+  // Omit toolNameMap: Pi's MCP extension defaults to each canonical tool name.
+  mapTurnStartError: mapPiTurnStartError,
+} satisfies NonNullable<PiRuntimeResolution["adapterOptions"]>;
+
+/** Native sessions use the same application policy as the production driver. */
+export const makeScientPiAdapterV2 = Effect.fn("makeScientPiAdapterV2")(function* (
+  options: Omit<PiAdapterV2Options, keyof typeof scientPiAdapterOptions>,
+) {
+  const continuationRequests =
+    options.continuationRequests ?? (yield* piContinuationRequestsIfProvided);
+  return yield* makePiAdapterV2({
+    ...options,
+    ...scientPiAdapterOptions,
+    ...(continuationRequests === undefined ? {} : { continuationRequests }),
+  });
+});
 
 const resolvePiRuntime = (
   input: PiRuntimeResolverInput,
@@ -131,12 +155,7 @@ const resolvePiRuntime = (
       makeConnection,
       customModelSnapshot: (settings: ServerSettingsData) =>
         piCustomModelSnapshot(settings, input.instanceId),
-      adapterOptions: {
-        runtimeGuidance: buildPiRuntimeGuidance,
-        orchestrationInstructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
-        // Omit toolNameMap: Pi's MCP extension defaults to each canonical tool name.
-        mapTurnStartError: mapPiTurnStartError,
-      },
+      adapterOptions: scientPiAdapterOptions,
       decorateSnapshot: (snapshot: ServerProvider) => ({
         ...snapshot,
         connection: {
@@ -155,7 +174,7 @@ const resolvePiRuntime = (
   });
 
 /** Production Pi driver with Scient-owned runtime, model and prompt policy. */
-export const PiDriver: ScientProviderDriver<PiSettings, PiCompositionRequirements> = makePiDriver<
-  PiCompositionRequirements,
-  PiCompositionExtension
->({ resolveRuntime: resolvePiRuntime });
+export const PiDriver: ScientProviderDriver<PiSettings, PiCompositionRequirements, Path.Path> =
+  makePiDriver<PiCompositionRequirements, PiCompositionExtension>({
+    resolveRuntime: resolvePiRuntime,
+  });

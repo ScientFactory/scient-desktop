@@ -203,6 +203,8 @@ const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void
 const makeWakeHarnessWithOptions = (options?: {
   readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
   readonly interrupt?: Effect.Effect<void>;
+  readonly stopTask?: (taskId: string) => Effect.Effect<void>;
+  readonly settings?: typeof DEFAULT_CLAUDE_SETTINGS;
   readonly environment?: NodeJS.ProcessEnv;
   // A reopened CLI process must not inherit the exited process's message queue.
   readonly freshQueueOnReopen?: boolean;
@@ -227,6 +229,8 @@ const makeWakeHarnessWithOptions = (options?: {
       ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"]
     > = [];
     const continuationRequests: Array<ProviderContinuationRequest> = [];
+    const subagentReceipts =
+      yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "subagent.updated" }>>();
     const terminalReceipts =
       yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
     const systemNoticeReceipts =
@@ -234,7 +238,7 @@ const makeWakeHarnessWithOptions = (options?: {
     let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_CLAUDE_SETTINGS,
+      settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
       environment: options?.environment ?? {},
       attachmentsDir,
       fileSystem,
@@ -297,6 +301,7 @@ const makeWakeHarnessWithOptions = (options?: {
                   if (mode !== input.options.permissionMode)
                     throw new Error("Wake fixture may only restore its captured permission mode.");
                 }),
+              ...(options?.stopTask === undefined ? {} : { stopTask: options.stopTask }),
               interrupt: options?.interrupt ?? Effect.void,
               close: options?.close?.(sdkMessages) ?? Effect.void,
             };
@@ -323,6 +328,7 @@ const makeWakeHarnessWithOptions = (options?: {
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           events.push(event);
+          if (event.type === "subagent.updated") yield* Queue.offer(subagentReceipts, event);
           if (event.type === "turn.terminal") {
             yield* Queue.offer(terminalReceipts, event);
           }
@@ -360,6 +366,7 @@ const makeWakeHarnessWithOptions = (options?: {
       continuationRequests,
       events,
       terminalReceipts,
+      subagentReceipts,
       systemNoticeReceipts,
       getOpenedOptions: () => openedOptions,
       terminalEvents,

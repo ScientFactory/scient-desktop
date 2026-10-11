@@ -59,7 +59,7 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 }
 
 describe("scan cache round trip", () => {
-  it("restores records unchanged", () => {
+  it("restores current and v5 records, pricing models, tails and reducer positions unchanged", () => {
     const original = cacheWith([
       [
         "/a.jsonl",
@@ -98,17 +98,50 @@ describe("scan cache round trip", () => {
         },
       }),
     });
+    original.set("/pi.jsonl", {
+      size: 160,
+      mtimeMs: 500,
+      provider: "pi",
+      records: [
+        record({
+          provider: "pi",
+          model: "custom/actual-model",
+          rateModel: "actual-model",
+          sessionId: "session-pi",
+        }),
+      ],
+      tailRecords: [
+        record({
+          provider: "pi",
+          model: "custom/actual-model",
+          rateModel: "actual-model",
+          sessionId: "session-pi",
+          dedupeKey: "tail",
+        }),
+      ],
+      position: position({ state: { sessionId: "session-pi" } }),
+    });
 
-    const restored = decodeScanCache(
-      JSON.parse(JSON.stringify(encodeScanCache(original))),
-      TEST_FORMAT_MAP,
-    );
+    const encoded = encodeScanCache(original);
+    for (const version of [encoded.version, 5]) {
+      // Earlier v5 writers omitted the optional pricing-model column.
+      const files = Object.fromEntries(
+        Object.entries(encoded.files).map(([path, file]) => [
+          path,
+          {
+            ...file,
+            r: file.r.map((row) => (row[11] == null ? row.slice(0, 11) : row)),
+            t: file.t.map((row) => (row[11] == null ? row.slice(0, 11) : row)),
+          },
+        ]),
+      );
+      const restored = decodeScanCache(
+        JSON.parse(JSON.stringify({ ...encoded, version, files })),
+        TEST_FORMAT_MAP,
+      );
 
-    expect(restored.size).toBe(4);
-    expect(restored.get("/a.jsonl")).toEqual(original.get("/a.jsonl"));
-    expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
-    expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
-    expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
+      expect(restored).toEqual(original);
+    }
   });
 
   it("drops an entry whose persisted parse state is corrupt", () => {
@@ -194,9 +227,10 @@ describe("scan cache round trip", () => {
     // A bad cache should cost one cold scan, never a broken page.
     expect(decodeScanCache(null, TEST_FORMAT_MAP).size).toBe(0);
     expect(decodeScanCache("nonsense", TEST_FORMAT_MAP).size).toBe(0);
-    expect(
-      decodeScanCache({ version: 999, models: [], sessions: [], files: {} }, TEST_FORMAT_MAP).size,
-    ).toBe(0);
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    for (const version of [undefined, "6", 4.5, NaN, Infinity, 7, 999]) {
+      expect(decodeScanCache({ ...encoded, version }, TEST_FORMAT_MAP).size).toBe(0);
+    }
   });
 
   it("skips malformed file entries but keeps good ones", () => {
