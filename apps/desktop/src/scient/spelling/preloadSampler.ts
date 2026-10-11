@@ -86,43 +86,56 @@ function typingSample(field: EditableField): string {
   return isCheckedWithin(block, field) ? checkedText(block, SAMPLE_LENGTH) : "";
 }
 
+/** What the main process did with a sample. */
+export type SampleOutcome = "added" | "unchanged" | "failed";
+
 /**
- * Clears a field's spelling marks so that Chromium checks it again, with the
- * dictionaries now enabled, on the user's next keystroke. Chromium does not
- * recheck text by itself when dictionaries change, and ignores a script asking
- * it to; switching the field's spellcheck off and back on is what resets it.
+ * Clears a field's spelling marks. Chromium does not recheck text when
+ * dictionaries change, and ignores a script asking it to, but switching a
+ * field's spellcheck off and back on makes the user's next keystroke recheck
+ * the whole field.
  */
-export function recheckSpelling(field: Element | null): void {
-  if (field === null || !field.isConnected) return;
+function clearSpellingMarks(field: Element): void {
   const previous = field.getAttribute("spellcheck");
   field.setAttribute("spellcheck", "false");
   if (previous === null) field.removeAttribute("spellcheck");
   else field.setAttribute("spellcheck", previous);
 }
 
-/** Rechecks the field being edited, if any. */
-export function recheckFocusedField(doc: Document = document): void {
-  recheckSpelling(spellcheckedField(doc.activeElement));
+export interface SpellingSampler {
+  /** A dictionary finished loading, for example after its first download. */
+  readonly dictionaryReady: () => void;
+  readonly uninstall: () => void;
 }
 
 /**
  * Sends the main process a sample of the text being edited, so that it can
- * enable the matching spelling dictionary, and rechecks the field when it
- * does. `send` resolves true when a dictionary was added. Windows and Linux
- * only: macOS detects the language itself.
+ * enable the matching spelling dictionary. Windows and Linux only: macOS
+ * detects the language itself.
+ *
+ * A field whose language was just added is rechecked on the user's next
+ * keystroke in it, never before: clearing its marks earlier would hide real
+ * typos until the user typed again.
  */
 export function installSpellingSampler(
-  send: (sample: string) => Promise<boolean>,
+  send: (sample: string) => Promise<SampleOutcome>,
   target: EventTarget = window,
-): () => void {
+): SpellingSampler {
   let lastSample = "";
+  let lastAddedFor: Element | null = null;
   let typingTimer: ReturnType<typeof setTimeout> | undefined;
+  const stale = new WeakSet<Element>();
   const dispatch = (field: EditableField, sample: string) => {
     const trimmed = sample.trim();
     if (trimmed.length < MIN_SAMPLE_LENGTH || trimmed === lastSample) return;
     lastSample = trimmed;
-    void send(trimmed).then((added) => {
-      if (added) recheckSpelling(field);
+    void send(trimmed).then((outcome) => {
+      if (outcome === "added") {
+        stale.add(field);
+        lastAddedFor = field;
+      } else if (outcome === "failed" && lastSample === trimmed) {
+        lastSample = "";
+      }
     });
   };
   const onFocus = (event: Event) => {
@@ -136,11 +149,24 @@ export function installSpellingSampler(
     // @effect-diagnostics-next-line globalTimers:off - The preload runs plain DOM code, outside any Effect runtime.
     typingTimer = setTimeout(() => dispatch(field, typingSample(field)), TYPING_PAUSE_MS);
   };
+  const onKeyDown = (event: Event) => {
+    const field = spellcheckedField(event.target);
+    if (field === null || !stale.has(field)) return;
+    stale.delete(field);
+    clearSpellingMarks(field);
+  };
   target.addEventListener("focusin", onFocus, true);
   target.addEventListener("input", onInput, true);
-  return () => {
-    clearTimeout(typingTimer);
-    target.removeEventListener("focusin", onFocus, true);
-    target.removeEventListener("input", onInput, true);
+  target.addEventListener("keydown", onKeyDown, true);
+  return {
+    dictionaryReady: () => {
+      if (lastAddedFor?.isConnected) stale.add(lastAddedFor);
+    },
+    uninstall: () => {
+      clearTimeout(typingTimer);
+      target.removeEventListener("focusin", onFocus, true);
+      target.removeEventListener("input", onInput, true);
+      target.removeEventListener("keydown", onKeyDown, true);
+    },
   };
 }

@@ -29,8 +29,8 @@ export const configureSpelling = Effect.fn("scient.spelling.configure")(function
 ) {
   if (platform === "darwin") return;
   documentSpelling = yield* orLogged("Could not enable the system spelling languages", null, () => {
-    // A dictionary used for the first time is downloaded, so it can arrive
-    // after the field was rechecked; the window rechecks again once it is ready.
+    // A dictionary used for the first time is downloaded and can arrive after
+    // the user's next keystroke, so the window rechecks once more when it is ready.
     session.defaultSession.on("spellcheck-dictionary-initialized", () => {
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send(SPELLING_DICTIONARY_READY_CHANNEL);
@@ -43,14 +43,17 @@ export const configureSpelling = Effect.fn("scient.spelling.configure")(function
 export const noteSpellingSample = makeIpcMethod({
   channel: NOTE_SPELLING_SAMPLE_CHANNEL,
   payload: Schema.String.check(Schema.isMaxLength(4_000)),
-  result: Schema.Boolean,
+  result: Schema.Literals(["added", "unchanged", "failed"]),
   handler: Effect.fn("scient.spelling.noteSample")(function* (sample, event) {
     const windows = yield* ElectronWindow;
     const main = yield* windows.main;
     // Only the app's own window describes what the user is writing.
-    if (Option.isNone(main) || main.value.webContents.id !== event?.sender.id) return false;
-    return yield* orLogged("Could not enable a document's spelling language", false, () =>
-      documentSpelling === null ? false : documentSpelling.noteSample(sample),
+    if (Option.isNone(main) || main.value.webContents.id !== event?.sender.id) return "unchanged";
+    // A failure is reported so that the window sends the same text again later.
+    return yield* orLogged(
+      "Could not enable a document's spelling language",
+      "failed" as const,
+      (): "added" | "unchanged" => (documentSpelling?.noteSample(sample) ? "added" : "unchanged"),
     );
   }),
 });

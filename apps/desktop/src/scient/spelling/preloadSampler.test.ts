@@ -1,28 +1,36 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { installSpellingSampler, recheckFocusedField } from "./preloadSampler.ts";
+import {
+  installSpellingSampler,
+  type SampleOutcome,
+  type SpellingSampler,
+} from "./preloadSampler.ts";
 
 const FRENCH = "Les résultats montrent une amélioration significative.";
 const GERMAN = "Die Ergebnisse zeigen eine deutliche Verbesserung.";
 
-let send: ReturnType<typeof vi.fn<(sample: string) => Promise<boolean>>>;
-let uninstall: () => void;
+let send: ReturnType<typeof vi.fn<(sample: string) => Promise<SampleOutcome>>>;
+let sampler: SpellingSampler;
 
 beforeEach(() => {
   vi.useFakeTimers();
-  send = vi.fn<(sample: string) => Promise<boolean>>().mockResolvedValue(false);
-  uninstall = installSpellingSampler(send, window);
+  send = vi.fn<(sample: string) => Promise<SampleOutcome>>().mockResolvedValue("unchanged");
+  sampler = installSpellingSampler(send, window);
 });
 
 afterEach(() => {
-  uninstall();
+  sampler.uninstall();
   document.body.innerHTML = "";
   vi.useRealTimers();
 });
 
 function focus(element: Element) {
   element.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+}
+
+function pressKey(element: Element) {
+  element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "a" }));
 }
 
 function typeInto(element: Element, caretIn: Node) {
@@ -62,14 +70,19 @@ describe("installSpellingSampler", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("rechecks the field once a dictionary was added, restoring its spellcheck setting", async () => {
+  it("keeps a field's marks until the user's next keystroke in it, then rechecks it once", async () => {
     document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea spellcheck="true">${GERMAN}</textarea>`;
     const [plain, explicit] = document.querySelectorAll("textarea");
     const plainValues = watchSpellcheck(plain!);
     const explicitValues = watchSpellcheck(explicit!);
-    send.mockResolvedValue(true);
+    send.mockResolvedValue("added");
     focus(plain!);
     focus(explicit!);
+    await vi.runAllTimersAsync();
+    expect(plainValues).toEqual([]);
+    pressKey(plain!);
+    pressKey(plain!);
+    pressKey(explicit!);
     await vi.runAllTimersAsync();
     expect(plainValues).toEqual([null, "false"]);
     expect(plain!.hasAttribute("spellcheck")).toBe(false);
@@ -77,27 +90,48 @@ describe("installSpellingSampler", () => {
     expect(explicit!.getAttribute("spellcheck")).toBe("true");
   });
 
-  it("leaves the field alone when no dictionary was added", async () => {
+  it("leaves a field alone when no dictionary was added for it", async () => {
     document.body.innerHTML = `<textarea>${FRENCH}</textarea>`;
-    const values = watchSpellcheck(document.querySelector("textarea")!);
-    focus(document.querySelector("textarea")!);
+    const field = document.querySelector("textarea")!;
+    const values = watchSpellcheck(field);
+    focus(field);
+    await vi.runAllTimersAsync();
+    pressKey(field);
+    sampler.dictionaryReady();
+    pressKey(field);
     await vi.runAllTimersAsync();
     expect(values).toEqual([]);
   });
 
-  it("rechecks the focused field when a dictionary becomes ready, and nothing else", async () => {
-    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea spellcheck="false">${GERMAN}</textarea>`;
-    const [field, unchecked] = document.querySelectorAll("textarea");
-    const values = watchSpellcheck(field!);
-    const uncheckedValues = watchSpellcheck(unchecked!);
-    recheckFocusedField(document);
-    field!.focus();
-    recheckFocusedField(document);
-    unchecked!.focus();
-    recheckFocusedField(document);
+  it("rechecks again after a dictionary finishes loading, only where it was added", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea>${GERMAN}</textarea>`;
+    const [french, other] = document.querySelectorAll("textarea");
+    const frenchValues = watchSpellcheck(french!);
+    const otherValues = watchSpellcheck(other!);
+    send.mockResolvedValueOnce("added");
+    focus(french!);
     await vi.runAllTimersAsync();
-    expect(values).toEqual([null, "false"]);
-    expect(uncheckedValues).toEqual([]);
+    pressKey(french!);
+    focus(other!);
+    sampler.dictionaryReady();
+    pressKey(other!);
+    pressKey(french!);
+    await vi.runAllTimersAsync();
+    expect(frenchValues).toEqual([null, "false", null, "false"]);
+    expect(otherValues).toEqual([]);
+  });
+
+  it("sends the same text again after the main process failed to use it", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea>`;
+    const field = document.querySelector("textarea")!;
+    send.mockResolvedValueOnce("failed");
+    focus(field);
+    await vi.runAllTimersAsync();
+    focus(field);
+    await vi.runAllTimersAsync();
+    focus(field);
+    await vi.runAllTimersAsync();
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("sends the paragraph being typed once typing pauses", () => {
@@ -126,7 +160,7 @@ describe("installSpellingSampler", () => {
   });
 
   it("stops listening once uninstalled", () => {
-    uninstall();
+    sampler.uninstall();
     document.body.innerHTML = `<textarea>${FRENCH}</textarea>`;
     focus(document.querySelector("textarea")!);
     expect(send).not.toHaveBeenCalled();
