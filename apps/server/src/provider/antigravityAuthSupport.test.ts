@@ -460,6 +460,28 @@ describe("Antigravity stdout compatibility", () => {
       });
     }),
   );
+
+  it.effect("rejects an oversized stdout sign-in marker without retaining its URL", () =>
+    Effect.gen(function* () {
+      const sensitive = `${authorizationUrl}&secret-code=${"x".repeat(17_000)}`;
+      const result = yield* makeAntigravityStdoutTransform({
+        onAuthorizationUrl: () => Effect.die("An invalid marker must not reach its owner."),
+      })(
+        Stream.make(
+          encode(ANTIGRAVITY_AUTH_STDOUT_PREFIX.slice(0, 12)),
+          encode(`${ANTIGRAVITY_AUTH_STDOUT_PREFIX.slice(12)}${sensitive}\n`),
+        ),
+      ).pipe(Stream.runDrain, Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isSuccess(result)) return;
+      expect(result.failure).toMatchObject({
+        _tag: "AcpTransportError",
+        detail: "Antigravity returned an invalid Google sign-in URL.",
+      });
+      expect(encodeUnknownJson(result.failure)).not.toContain("secret-code");
+      expect(encodeUnknownJson(result.failure)).not.toContain("test-opaque-state");
+    }),
+  );
 });
 
 describe("Antigravity stderr compatibility", () => {
@@ -536,25 +558,86 @@ describe("Antigravity stderr compatibility", () => {
     }),
   );
 
-  it.effect("ignores malformed and similar browser-helper messages", () =>
+  it.effect("ignores unrelated stderr and similar unrecognized markers", () =>
     Effect.gen(function* () {
       const urls: string[] = [];
       const handleStderr = makeAntigravityStderrHandler({
         onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
       });
-
       yield* handleStderr(
         ` ${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(authorizationUrl)}\n`,
       );
-      yield* handleStderr(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}${authorizationUrl}\n`);
-      yield* handleStderr(
-        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson("https://example.com")}\n`,
-      );
-      yield* handleStderr(`${ANTIGRAVITY_AUTH_STDOUT_PREFIX}https://example.com\n`);
       yield* handleStderr(` ${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`);
-
+      yield* handleStderr(`native log ${authorizationUrl}\n`);
       expect(urls).toEqual([]);
     }),
+  );
+
+  it.effect("rejects malformed explicit markers without exposing their native contents", () =>
+    Effect.gen(function* () {
+      const invalidLines = [
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${authorizationUrl}\n`,
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson("https://example.com/secret-code")}\n`,
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}{"secret-code":"not a URL"}\n`,
+        `${ANTIGRAVITY_AUTH_STDOUT_PREFIX}https://example.com/secret-code\n`,
+      ];
+      for (const line of invalidLines) {
+        const handleStderr = makeAntigravityStderrHandler({
+          onAuthorizationUrl: () => Effect.die("An invalid marker must not reach its owner."),
+        });
+        const result = yield* handleStderr(line).pipe(Effect.result);
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isSuccess(result)) continue;
+        expect(result.failure._tag).toBe("AcpTransportError");
+        expect(encodeUnknownJson(result.failure)).not.toContain("secret-code");
+        expect(encodeUnknownJson(result.failure)).not.toContain("test-opaque-state");
+      }
+    }),
+  );
+
+  it.effect("rejects oversized recognized markers with and without a terminating newline", () =>
+    Effect.gen(function* () {
+      const sensitive = `${authorizationUrl}&secret-code=${"x".repeat(17_000)}`;
+      for (const prefix of [ANTIGRAVITY_AUTH_BROWSER_MARKER, ANTIGRAVITY_AUTH_STDOUT_PREFIX]) {
+        for (const newline of ["", "\n"]) {
+          const handleStderr = makeAntigravityStderrHandler({
+            onAuthorizationUrl: () => Effect.die("An oversized marker must not reach its owner."),
+          });
+          yield* handleStderr(prefix.slice(0, 12));
+          const result = yield* handleStderr(`${prefix.slice(12)}${sensitive}${newline}`).pipe(
+            Effect.result,
+          );
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isSuccess(result)) continue;
+          expect(result.failure).toMatchObject({
+            _tag: "AcpTransportError",
+            detail: "Antigravity sent a Google sign-in marker that is too large.",
+          });
+          expect(encodeUnknownJson(result.failure)).not.toContain("secret-code");
+          expect(encodeUnknownJson(result.failure)).not.toContain("test-opaque-state");
+        }
+      }
+    }),
+  );
+
+  it.effect(
+    "discards oversized unrelated lines through their newline, then captures the next link",
+    () =>
+      Effect.gen(function* () {
+        const urls: string[] = [];
+        const handleStderr = makeAntigravityStderrHandler({
+          onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
+        });
+        yield* handleStderr("native-log".repeat(2_000));
+        yield* handleStderr(
+          `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(authorizationUrl)}\n`,
+        );
+        expect(urls).toEqual([]);
+        yield* handleStderr(
+          `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(authorizationUrl)}\n`,
+        );
+        expect(urls).toEqual([authorizationUrl]);
+      }),
   );
 });
 

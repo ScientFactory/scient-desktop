@@ -137,6 +137,33 @@ it.effect(
     }),
 );
 
+it.effect("fails when the auth controller closes before providing the initial browser link", () =>
+  Effect.gen(function* () {
+    const cancelled: string[] = [];
+    const controller: ProviderAuthController = {
+      start: () => Effect.succeed(authState("starting", { flowId: "closed-flow" })),
+      complete: () => Effect.die("Closed auth must not receive a callback."),
+      cancel: (_owner, flowId) =>
+        Effect.sync(() => {
+          cancelled.push(flowId);
+          return authState("cancelled", { flowId });
+        }),
+      logout: () => Effect.succeed(authState("idle")),
+      subscribe: () => Stream.empty,
+    };
+    const actions = makeAntigravityConnectionActionsFromController({
+      instanceId,
+      authMethod: "oauth-personal",
+      controller,
+      stopSessions: Effect.void,
+      randomOwnerId: Effect.succeed("closed-owner"),
+    });
+    const result = yield* actions.start("antigravity_google").pipe(Effect.scoped, Effect.result);
+    expect(result._tag).toBe("Failure");
+    expect(cancelled).toEqual(["closed-flow"]);
+  }),
+);
+
 function installState(
   phase: ProviderInstallState["phase"],
   overrides: Partial<ProviderInstallState> = {},

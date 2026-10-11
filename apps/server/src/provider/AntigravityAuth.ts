@@ -21,6 +21,7 @@ import * as AcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
+  antigravityAuthStageFailure,
   parseAntigravityAuthorizationUrl,
   type AntigravityAuthorizationUrl,
 } from "./antigravityAuthSupport.ts";
@@ -47,6 +48,7 @@ interface AuthFlow {
   state: ProviderAuthState;
   pending: AntigravityAuthorizationUrl | undefined;
   callbackSent: boolean;
+  authorizationUrlReceived: boolean;
   fiber: Fiber.Fiber<void> | undefined;
   forwarding: Fiber.Fiber<void, ProviderSetupError> | undefined;
 }
@@ -104,12 +106,15 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
   };
 }
 
-function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): string {
+function safeAuthFailure(
+  cause: Cause.Cause<unknown>,
+  usesBrowser: boolean,
+  beforeAuthorizationUrl: boolean,
+): string {
   const error = Cause.findErrorOption(cause);
   if (Option.isSome(error)) {
-    if (isSetupError(error.value)) {
-      return error.value.detail;
-    }
+    const stageFailure = antigravityAuthStageFailure(error.value, beforeAuthorizationUrl);
+    if (stageFailure !== undefined) return stageFailure;
     if (isAcpRequestError(error.value)) {
       if (error.value.errorMessage.includes("SUBSCRIPTION_REQUIRED")) {
         return "Google requires an eligible Antigravity subscription for this account.";
@@ -235,7 +240,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             ? usesBrowser
               ? "Signed in with Google."
               : "Connected to Antigravity."
-            : safeAuthFailure(result.cause, usesBrowser),
+            : safeAuthFailure(result.cause, usesBrowser, !flow.authorizationUrlReceived),
         });
       }),
     );
@@ -254,6 +259,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               });
             }
             flow.pending = authorization;
+            flow.authorizationUrlReceived = true;
             yield* publishFlow(flow, {
               ...flow.state,
               phase: "waiting",
@@ -371,6 +377,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               state,
               pending: undefined,
               callbackSent: false,
+              authorizationUrlReceived: false,
               fiber: undefined,
               forwarding: undefined,
             };
