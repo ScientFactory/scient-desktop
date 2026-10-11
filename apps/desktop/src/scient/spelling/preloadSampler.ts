@@ -86,14 +86,12 @@ function typingSample(field: EditableField): string {
   return isCheckedWithin(block, field) ? checkedText(block, SAMPLE_LENGTH) : "";
 }
 
-/** A text field at its maximum length refuses typed text unless some is selected. */
-function isFull(field: EditableField): boolean {
-  return (
-    (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) &&
-    field.maxLength >= 0 &&
-    field.value.length >= field.maxLength &&
-    field.selectionStart === field.selectionEnd
-  );
+/** A text field with a maximum length cuts or refuses typed text that does not fit. */
+function fits(field: EditableField, text: string): boolean {
+  if (!(field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement)) return true;
+  if (field.maxLength < 0) return true;
+  const selected = (field.selectionEnd ?? 0) - (field.selectionStart ?? 0);
+  return field.value.length - selected + text.length <= field.maxLength;
 }
 
 /** What the main process did with a sample. */
@@ -136,25 +134,26 @@ export function installSpellingSampler(
 ): SpellingSampler {
   let lastSample = "";
   let typingTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Fields to recheck on their next edit. */
+  /** Open fields this sampler has looked at. */
+  const sampled = new Set<Element>();
+  /** Fields to recheck when the user next types into them. */
   const stale = new WeakSet<Element>();
-  /** Fields a dictionary was added for, rechecked again once it has loaded. */
-  const addedFor = new Set<Element>();
-  const forgetClosedFields = () => {
-    for (const field of addedFor) if (!field.isConnected) addedFor.delete(field);
+  // Any of them may hold text in a language whose dictionary just changed, and
+  // marking one costs nothing until the user types into it.
+  const markSampledFieldsStale = () => {
+    for (const field of sampled) {
+      if (field.isConnected) stale.add(field);
+      else sampled.delete(field);
+    }
   };
   const dispatch = (field: EditableField, sample: string) => {
+    sampled.add(field);
     const trimmed = sample.trim();
     if (trimmed.length < MIN_SAMPLE_LENGTH || trimmed === lastSample) return;
     lastSample = trimmed;
     void send(trimmed).then((outcome) => {
-      if (outcome === "added" && field.isConnected) {
-        forgetClosedFields();
-        stale.add(field);
-        addedFor.add(field);
-      } else if (outcome === "failed" && lastSample === trimmed) {
-        lastSample = "";
-      }
+      if (outcome === "added") markSampledFieldsStale();
+      else if (outcome === "failed" && lastSample === trimmed) lastSample = "";
     });
   };
   const onFocus = (event: Event) => {
@@ -172,11 +171,11 @@ export function installSpellingSampler(
   const onBeforeInput = (event: Event) => {
     const input = event as InputEvent;
     // Typed text always changes the field, unless cancelled, still being
-    // composed by an input method, or refused by a full field.
+    // composed by an input method, or too long for the field.
     if (input.inputType !== "insertText" || !input.data || input.isComposing) return;
     if (input.defaultPrevented) return;
     const field = spellcheckedField(event.target);
-    if (field === null || !stale.has(field) || isFull(field)) return;
+    if (field === null || !stale.has(field) || !fits(field, input.data)) return;
     stale.delete(field);
     clearSpellingMarks(field);
   };
@@ -184,10 +183,7 @@ export function installSpellingSampler(
   target.addEventListener("input", onInput, true);
   target.addEventListener("beforeinput", onBeforeInput);
   return {
-    dictionaryReady: () => {
-      forgetClosedFields();
-      for (const field of addedFor) stale.add(field);
-    },
+    dictionaryReady: markSampledFieldsStale,
     uninstall: () => {
       clearTimeout(typingTimer);
       target.removeEventListener("focusin", onFocus, true);

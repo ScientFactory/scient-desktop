@@ -99,14 +99,12 @@ describe("installSpellingSampler", () => {
     expect(explicit!.getAttribute("spellcheck")).toBe("true");
   });
 
-  it("leaves a field alone when no dictionary was added for it", async () => {
+  it("leaves fields alone while no dictionary changes", async () => {
     document.body.innerHTML = `<textarea>${FRENCH}</textarea>`;
     const field = document.querySelector("textarea")!;
     const values = watchSpellcheck(field);
     focus(field);
     await vi.runAllTimersAsync();
-    edit(field);
-    sampler.dictionaryReady();
     edit(field);
     await vi.runAllTimersAsync();
     expect(values).toEqual([]);
@@ -169,26 +167,57 @@ describe("installSpellingSampler", () => {
     expect(closedValues).toEqual([null, "false"]);
   });
 
-  it("rechecks every field a dictionary was added for once it finishes loading", async () => {
-    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea>${GERMAN}</textarea><textarea>English text that never added a dictionary.</textarea>`;
-    const [french, german, english] = document.querySelectorAll("textarea");
+  it("rechecks every sampled field once a dictionary finishes loading", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea>${GERMAN}</textarea><textarea>Never focused, so never sampled.</textarea>`;
+    const [french, german, untouched] = document.querySelectorAll("textarea");
     const frenchValues = watchSpellcheck(french!);
     const germanValues = watchSpellcheck(german!);
-    const englishValues = watchSpellcheck(english!);
-    send.mockResolvedValueOnce("added").mockResolvedValueOnce("added");
+    const untouchedValues = watchSpellcheck(untouched!);
+    send.mockResolvedValueOnce("added");
     focus(french!);
     await vi.runAllTimersAsync();
     edit(french!);
     focus(german!);
     await vi.runAllTimersAsync();
-    focus(english!);
-    await vi.runAllTimersAsync();
     sampler.dictionaryReady();
-    for (const field of [french!, german!, english!]) edit(field);
+    for (const field of [french!, german!, untouched!]) edit(field);
     await vi.runAllTimersAsync();
     expect(frenchValues).toEqual([null, "false", null, "false"]);
     expect(germanValues).toEqual([null, "false"]);
-    expect(englishValues).toEqual([]);
+    expect(untouchedValues).toEqual([]);
+  });
+
+  it("rechecks a field whose language another field added first", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea>${FRENCH} Encore.</textarea>`;
+    const [pasted, other] = document.querySelectorAll("textarea");
+    const pastedValues = watchSpellcheck(pasted!);
+    let answer: (outcome: SampleOutcome) => void = () => {};
+    send.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    send.mockResolvedValueOnce("added");
+    focus(pasted!);
+    focus(other!);
+    await vi.runAllTimersAsync();
+    answer("unchanged");
+    await vi.runAllTimersAsync();
+    edit(pasted!);
+    await vi.runAllTimersAsync();
+    expect(pastedValues).toEqual([null, "false"]);
+  });
+
+  it("does not clear marks for typed text too long for the field", async () => {
+    document.body.innerHTML = `<input type="text" maxlength="${FRENCH.length + 1}" value="${FRENCH}">`;
+    const field = document.querySelector("input")!;
+    const values = watchSpellcheck(field);
+    send.mockResolvedValue("added");
+    focus(field);
+    await vi.runAllTimersAsync();
+    field.setSelectionRange(FRENCH.length, FRENCH.length);
+    edit(field, { data: "😀" });
+    await vi.runAllTimersAsync();
+    expect(values).toEqual([]);
+    edit(field, { data: "a" });
+    await vi.runAllTimersAsync();
+    expect(values).toEqual([null, "false"]);
   });
 
   it("sends the same text again after the main process failed to use it", async () => {
