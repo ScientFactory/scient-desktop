@@ -110,8 +110,10 @@ export function AssistantCitationChip({
     ? {
         contextElement: activeSourceAnchor.source,
         getBoundingClientRect: () => {
-          const rects = activeSourceAnchor.range.getClientRects();
-          return rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          const rects = activeSourceAnchor.resolveRects?.() ?? [
+            ...activeSourceAnchor.range.getClientRects(),
+          ];
+          return rects.at(-1) ?? activeSourceAnchor.range.getBoundingClientRect();
         },
       }
     : undefined;
@@ -215,6 +217,7 @@ export function AssistantCitationChip({
           {commentEditor.open ? (
             <PopoverPopup
               {...composerFloatingLayerProps}
+              data-writing-menu-owner={activeSourceAnchor?.selectionOwnerId}
               side={activeSourceAnchor ? "bottom" : "top"}
               align="end"
               anchor={popupAnchor}

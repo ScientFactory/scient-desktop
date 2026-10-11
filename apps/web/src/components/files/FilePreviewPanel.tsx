@@ -1,4 +1,5 @@
 import type { EditorSelection } from "@pierre/diffs/edit";
+import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
 // SCIENT-FORK:START
 import {
   FILE_ACTIVE_RANGE_ATTRIBUTE,
@@ -789,6 +790,11 @@ function useEditableAfterHighlight(file: FileContents) {
 }
 
 interface EditableFileSurfaceProps {
+  threadRef?: ScopedThreadRef | undefined;
+  onCite?: MarkdownCiteHandler | undefined;
+  citationReveal?: FileCitation | undefined;
+  citationBaseline?: string | undefined;
+  citationRootRelativePath?: string | undefined;
   environmentId: EnvironmentId;
   cwd: string;
   relativePath: string;
@@ -853,6 +859,11 @@ export function MarkdownSourceSurface({
 }
 
 function EditableFileEditor({
+  threadRef,
+  onCite,
+  citationReveal,
+  citationBaseline,
+  citationRootRelativePath,
   environmentId,
   cwd,
   relativePath,
@@ -1085,6 +1096,25 @@ function EditableFileEditor({
     onEditorSelectionChange,
     onRunShortcut,
   });
+  const readCitationBaseline = useCallback(
+    () =>
+      externalBindings.current.externalPersistence?.getSnapshot().baselineSource ??
+      citationBaseline ??
+      contents,
+    [citationBaseline, contents],
+  );
+  const citationReady = useCallback(() => {
+    const current = editorRef.current;
+    const lease = externalBindings.current.externalPersistence;
+    return Boolean(
+      current &&
+      !restorationBlocked &&
+      (!lease ||
+        (projectionReady.current &&
+          lease.getSnapshot().draftSource === current.getText() &&
+          lease.getPendingInput() === null)),
+    );
+  }, [restorationBlocked]);
 
   const removeAnnotationEntry = useCallback(
     (entryId: string) => {
@@ -1251,6 +1281,23 @@ function EditableFileEditor({
         onCompositionEnd={onCompositionEnd}
         onKeyDownCapture={onKeyDownCapture}
       >
+        {threadRef ? (
+          <SourceCitationActions
+            editor={editor}
+            viewport={surfaceRef.current}
+            target={{
+              ...threadRef,
+              cwd,
+              path: relativePath,
+              latexRootRelativePath: citationRootRelativePath,
+            }}
+            baseline={readCitationBaseline}
+            ready={citationReady}
+            onCite={onCite}
+            reveal={citationReveal}
+            revealId={revealRequestId}
+          />
+        ) : null}
         {/* SCIENT-FORK:START — Explain source refusal without discarding retained edits. */}
         {restorationBlocked ? (
           <div role="alert" className="p-2 text-xs text-muted-foreground">
@@ -1584,6 +1631,7 @@ export default function FilePreviewPanel({
     fileCitation !== undefined && dismissedCitationReveal !== revealRequestId;
   const renderMarkdown =
     isMarkdownDocument &&
+    !(citationRevealActive && fileCitation?.sourceSelection) &&
     resolveMarkdownRenderedState(renderMarkdownPreferred, citationRevealActive, revealHandled);
   const requestedHtmlMode =
     htmlPresentationRequest?.id === revealRequestId ? htmlPresentationRequest.mode : null;
@@ -1594,7 +1642,11 @@ export default function FilePreviewPanel({
   const rendered = isMarkdownDocument ? renderMarkdown : isHtml ? renderBrowserFile : false;
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
-  const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
+  const renderTable =
+    tableDelimiter !== null &&
+    renderTablePreferred &&
+    revealHandled &&
+    !(citationRevealActive && fileCitation?.sourceSelection);
   const renderedMode = isMarkdownDocument
     ? ("markdown" as const)
     : tableDelimiter
@@ -2200,6 +2252,10 @@ export default function FilePreviewPanel({
                 // SCIENT-FORK:START
                 <StaticTextFileSurface
                   key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
+                  threadRef={threadRef}
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
+                  revealRequestId={revealRequestId}
                   cwd={cwd}
                   relativePath={relativePath}
                   contents={file.data.contents}
@@ -2226,6 +2282,9 @@ export default function FilePreviewPanel({
                   revealLine={revealLine}
                   revealRequestId={revealRequestId}
                   latexPresentationRequest={latexPresentationRequest}
+                  threadRef={threadRef}
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
                   wordWrap={wordWrap}
                   onPostRender={onFilePostRender}
                   onOpenFileSource={onOpenFileSource}
@@ -2235,6 +2294,9 @@ export default function FilePreviewPanel({
             ) : computeSourceLanguage !== null && !file.data.truncated ? (
               <ScientSurfaceSuspense>
                 <ScientComputeFileSurface
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
+                  citationBaseline={file.authoritativeData?.contents}
                   key={`${computeContextId}:${resolvedTheme}`}
                   language={computeSourceLanguage}
                   environmentId={environmentId}
@@ -2282,6 +2344,9 @@ export default function FilePreviewPanel({
               </ScientSurfaceSuspense>
             ) : markdownLease ? (
               <MarkdownSourceSurface
+                threadRef={threadRef}
+                onCite={onCiteFile}
+                citationReveal={citationRevealActive ? fileCitation : undefined}
                 key={documentSurfaceKey}
                 persistence={markdownLease}
                 environmentId={environmentId}
@@ -2321,6 +2386,10 @@ export default function FilePreviewPanel({
               // SCIENT-FORK:START
               <StaticTextFileSurface
                 key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
+                threadRef={threadRef}
+                onCite={onCiteFile}
+                citationReveal={citationRevealActive ? fileCitation : undefined}
+                revealRequestId={revealRequestId}
                 cwd={cwd}
                 relativePath={relativePath}
                 contents={file.data.contents}
@@ -2330,14 +2399,24 @@ export default function FilePreviewPanel({
               />
             ) : // SCIENT-FORK:END
             isHostFile || !canWriteFiles ? (
-              <SourceFilePreview
-                name={relativePath}
-                text={file.data.contents}
-                cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
+              <StaticTextFileSurface
+                threadRef={threadRef}
+                onCite={onCiteFile}
+                citationReveal={citationRevealActive ? fileCitation : undefined}
+                revealRequestId={revealRequestId}
+                cwd={cwd}
+                relativePath={relativePath}
+                contents={file.data.contents}
+                resolvedTheme={resolvedTheme}
+                wordWrap={wordWrap}
                 onPostRender={onFilePostRender}
               />
             ) : (
               <EditableFileSurface
+                threadRef={threadRef}
+                onCite={onCiteFile}
+                citationReveal={citationRevealActive ? fileCitation : undefined}
+                citationBaseline={file.authoritativeData?.contents}
                 key={`${relativePath}:${resolvedTheme}`}
                 environmentId={environmentId}
                 cwd={cwd}
