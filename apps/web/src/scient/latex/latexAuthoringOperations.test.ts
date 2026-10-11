@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
+import { applyDocumentSourcePatches } from "@scientfactory/scient-document";
+import { invertLatexSourcePatches } from "./latexSourceEditPlan";
 import { editLatexTable, type LatexTableAction } from "./latexTableAuthoring";
 import {
   setLatexEnvironmentOption,
@@ -243,6 +245,28 @@ describe("document labels and colors", () => {
     expect(next).toContain("\\hyperref[sec:b]");
     expect(next).toContain("\\verb|\\ref{sec:a}|");
     expect(latexLabelInventory(next).targets[0]?.uses).toBe(2);
+  });
+  it("renames comma-separated references without changing their trivia, opaque source or exact undo bytes", () => {
+    const source = doc(
+      "\\label{sec:a}\r\n\\cref{ sec:a , other,sec:a }\r\n\\begin{verbatim}\r\n\\label{sec:a}\\ref{sec:a}\r\n\\end{verbatim}\r\n% \\ref{sec:a}\r\n😀",
+    );
+    const result = renameLatexLabel(source, "sec:a", "sec:b");
+    expect(result).not.toHaveProperty("error");
+    if ("error" in result) throw new Error(result.error);
+    expect(result.source).toBe(
+      source
+        .replace("\\label{sec:a}", "\\label{sec:b}")
+        .replace("{ sec:a , other,sec:a }", "{ sec:b , other,sec:b }"),
+    );
+    expect(applyDocumentSourcePatches(source, result.edit.patches)).toBe(result.source);
+    expect(
+      applyDocumentSourcePatches(
+        result.source,
+        invertLatexSourcePatches(source, result.edit.patches),
+      ),
+    ).toBe(source);
+    expect(renameLatexLabel(source, "sec:a", "bad label")).toHaveProperty("error");
+    expect(renameLatexLabel(source + "\\input{another}", "sec:a", "sec:b")).toHaveProperty("error");
   });
   it("reads colors after boolean declarations without executing conditionals", () => {
     expect(

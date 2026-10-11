@@ -1,5 +1,5 @@
 import type { JSONContent } from "@tiptap/core";
-import type { LatexVisualDocument, applyLatexVisualDocumentChange } from "./latexVisualDocument";
+import type { LatexVisualDocument, LatexVisualDocumentChange } from "./latexVisualDocument";
 import type { LatexReferenceChoice } from "./latexAuthoringModel";
 
 export type VisualProcessingInput =
@@ -7,6 +7,8 @@ export type VisualProcessingInput =
   | {
       kind: "change";
       source: string;
+      snapshotId: string;
+      setupSource: string;
       projection: LatexVisualDocument;
       content: JSONContent;
       rootSource: string | null;
@@ -19,7 +21,8 @@ export type VisualProcessingOutput =
   | { kind: "project"; projection: LatexVisualDocument }
   | {
       kind: "change";
-      change: ReturnType<typeof applyLatexVisualDocumentChange>;
+      snapshotId: string;
+      change: LatexVisualDocumentChange | null;
       notices: string[];
     }
   | { kind: "references"; choices: LatexReferenceChoice[] }
@@ -29,6 +32,8 @@ export type VisualChangeInput = Extract<VisualProcessingInput, { kind: "change" 
 export type VisualChangeDelta = {
   kind: "change-delta";
   base: number;
+  snapshotId: string;
+  setupSource: string;
   prefix: number;
   suffix: number;
   content: JSONContent;

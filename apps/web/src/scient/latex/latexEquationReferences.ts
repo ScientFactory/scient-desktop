@@ -8,7 +8,7 @@ import {
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { latexCounterLabel } from "./latexDocumentStructure";
 import { projectMathNumbering } from "./latexMathNumbering";
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments, latexDocumentBoundary } from "./latexSourceSyntax";
 import {
   latexRomanNumber,
   latexVisualFloatHasCaption,
@@ -260,7 +260,7 @@ function equationReferences(
   compiled: CompiledBibliographyItem[] | null,
 ): EquationReferences {
   const clean = latexWithoutComments(activeLatexSource(source));
-  const begin = clean.indexOf("\\begin{document}");
+  const begin = latexDocumentBoundary(clean)?.from ?? -1;
   const preamble = begin < 0 ? "" : clean.slice(0, begin);
   const documentClass = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/u.exec(preamble)?.[1];
   const scopeCommands = [...preamble.matchAll(/\\numberwithin\s*\{equation\}\s*\{([^{}]+)\}/gu)];

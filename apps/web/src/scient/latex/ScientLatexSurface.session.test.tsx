@@ -6,6 +6,12 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { act, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  latexOwnedSourcePatch,
+  type LatexEditorSourceSnapshot,
+  type LatexVisualEditOutcome,
+  type LatexVisualEditRequest,
+} from "./latexSourceEditPlan";
 
 const {
   notifyLatexBindingChange,
@@ -36,7 +42,8 @@ const {
   },
   visual: {
     props: null as null | {
-      onEdit: (expected: string, next: string) => boolean;
+      onEdit: (request: LatexVisualEditRequest) => LatexVisualEditOutcome;
+      sourceSnapshot: LatexEditorSourceSnapshot;
       selectedPending: boolean;
       disabled: boolean;
       source: string;
@@ -203,6 +210,19 @@ const revisionOf = (source: string) =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("")}`;
 const BASE = "\\documentclass{article}\n\\begin{document}\nBase.\n\\end{document}\n";
+
+/** This fixture owns one complete native file, not an assembled project. */
+function editVisualSource(
+  expected: string,
+  next: string,
+  snapshot = visual.props!.sourceSnapshot,
+): boolean {
+  const patch = latexOwnedSourcePatch(expected, 0, expected.length, next);
+  return visual.props!.onEdit({
+    snapshot,
+    edit: { source: expected, patches: patch ? [patch] : [] },
+  }).accepted;
+}
 
 describe("the LaTeX surface on a document session", () => {
   let container: HTMLDivElement;
@@ -602,12 +622,12 @@ describe("the LaTeX surface on a document session", () => {
     });
     let accepted = true;
     await act(async () => {
-      accepted = visual.props!.onEdit(BASE, typed("Visual."));
+      accepted = editVisualSource(BASE, typed("Visual."));
     });
     expect(accepted).toBe(false);
     expect(lease.getSnapshot().draftSource).toBe(typed("Source."));
     await act(async () => {
-      accepted = visual.props!.onEdit(typed("Source."), typed("Visual."));
+      accepted = editVisualSource(typed("Source."), typed("Visual."));
     });
     expect(accepted).toBe(true);
     expect(lease.getSnapshot()).toMatchObject({ draftSource: typed("Visual."), pending: true });
@@ -619,10 +639,29 @@ describe("the LaTeX surface on a document session", () => {
     expect(visual.props!.selectedPending).toBe(false);
   });
 
+  it("rejects an earlier Visual snapshot after Source changes away and back to identical bytes", async () => {
+    await mount("visual");
+    const stale = visual.props!.sourceSnapshot;
+    await act(async () => {
+      lease.change(typed("Temporary."), lease.getSnapshot().editVersion);
+      lease.change(BASE, lease.getSnapshot().editVersion);
+    });
+    await act(async () => {
+      expect(editVisualSource(BASE, typed("Stale."), stale)).toBe(false);
+    });
+    expect(lease.getSnapshot().draftSource).toBe(BASE);
+    expect(disk.source).toBe(BASE);
+    await act(async () => {
+      expect(editVisualSource(BASE, typed("Current."))).toBe(true);
+      expect(await lease.flushNow()).toBe(true);
+    });
+    expect(disk.source).toBe(typed("Current."));
+  });
+
   it("keeps a Visual edit's recovery copy until the save lands", async () => {
     await mount("visual");
     await act(async () => {
-      visual.props!.onEdit(BASE, typed("Visual."));
+      editVisualSource(BASE, typed("Visual."));
     });
     expect(stored()).toEqual({ source: typed("Visual."), baseRevision: revisionOf(BASE) });
     // Text typed in Source over the unsaved Visual edit belongs to the same copy.
@@ -642,7 +681,7 @@ describe("the LaTeX surface on a document session", () => {
   it("pauses Visual edits during a conflict and retains the accepted draft without overwriting the newer file", async () => {
     await mount("visual");
     await act(async () => {
-      visual.props!.onEdit(BASE, typed("Mine."));
+      editVisualSource(BASE, typed("Mine."));
     });
     disk = { source: typed("Agent."), revision: revisionOf(typed("Agent.")) };
     await act(async () => {
@@ -652,7 +691,7 @@ describe("the LaTeX surface on a document session", () => {
     expect(visual.props!.disabled).toBe(true);
     let accepted = false;
     await act(async () => {
-      accepted = visual.props!.onEdit(typed("Mine."), typed("Mine again."));
+      accepted = editVisualSource(typed("Mine."), typed("Mine again."));
     });
     expect(accepted).toBe(false);
     await act(async () => {
@@ -669,7 +708,7 @@ describe("the LaTeX surface on a document session", () => {
   it("drops the recovery copy of edits the writer gave up for the version on disk", async () => {
     await mount("visual");
     await act(async () => {
-      visual.props!.onEdit(BASE, typed("Mine."));
+      editVisualSource(BASE, typed("Mine."));
     });
     disk = { source: typed("Agent."), revision: revisionOf(typed("Agent.")) };
     await act(async () => {
@@ -688,7 +727,7 @@ describe("the LaTeX surface on a document session", () => {
   it("drops it too when the file changed again before the writer chose the disk", async () => {
     await mount("visual");
     await act(async () => {
-      visual.props!.onEdit(BASE, typed("Mine."));
+      editVisualSource(BASE, typed("Mine."));
     });
     disk = { source: typed("Agent."), revision: revisionOf(typed("Agent.")) };
     await act(async () => {
@@ -711,7 +750,7 @@ describe("the LaTeX surface on a document session", () => {
     for (const agent of ["Agent.", "Agent, again."]) {
       const current = lease.getSnapshot().draftSource;
       await act(async () => {
-        expect(visual.props!.onEdit(current, typed("Mine."))).toBe(true);
+        expect(editVisualSource(current, typed("Mine."))).toBe(true);
       });
       disk = { source: typed(agent), revision: revisionOf(typed(agent)) };
       await act(async () => {
@@ -729,7 +768,7 @@ describe("the LaTeX surface on a document session", () => {
   it("keeps a recovery copy again for edits the writer takes back", async () => {
     await mount("visual");
     await act(async () => {
-      visual.props!.onEdit(BASE, typed("Mine."));
+      editVisualSource(BASE, typed("Mine."));
     });
     disk = { source: typed("Agent."), revision: revisionOf(typed("Agent.")) };
     await act(async () => {
@@ -757,7 +796,7 @@ describe("the LaTeX surface on a document session", () => {
   it("keeps the recovery copy when the writer keeps their edits, until they are saved", async () => {
     await mount("visual");
     await act(async () => {
-      visual.props!.onEdit(BASE, typed("Mine."));
+      editVisualSource(BASE, typed("Mine."));
     });
     disk = { source: typed("Agent."), revision: revisionOf(typed("Agent.")) };
     await act(async () => {

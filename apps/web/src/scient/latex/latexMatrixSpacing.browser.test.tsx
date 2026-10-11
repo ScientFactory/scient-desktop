@@ -17,6 +17,7 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 
 let root: Root | undefined;
@@ -242,22 +243,25 @@ Before.
   let finish: (() => boolean) | null = null;
   function Harness() {
     const [source, setSource] = useState(published);
+    const owner = useLatexVisualTestOwner(source);
     return (
       <LatexVisualEditor
         draftKey={draftKey}
         fileRevision="synthetic-r1"
         source={source}
+        sourceSnapshot={owner.snapshot}
         disabled={false}
         onEditingChange={() => {}}
         registerFinishEditing={(callback) => {
           finish = callback;
         }}
         onOpenSource={() => {}}
-        onEdit={(expected, next) => {
-          if (expected !== published) return false;
-          published = next;
-          setSource(next);
-          return true;
+        onEdit={(request) => {
+          const outcome = owner.edit(request, request.edit.source === published);
+          if (!outcome.accepted) return outcome;
+          published = outcome.snapshot.source;
+          setSource(published);
+          return outcome;
         }}
       />
     );

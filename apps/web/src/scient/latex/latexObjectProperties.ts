@@ -4,7 +4,7 @@ import {
   patchLatexSource,
 } from "./latexSourceSyntax";
 import { latexLayoutLength, latexMinipageSeparator } from "./latexPageLayouts";
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments } from "./latexSourceSyntax";
 
 /** Replace one literal key, retaining all other options and the body verbatim. */
 export function setLatexEnvironmentOption(

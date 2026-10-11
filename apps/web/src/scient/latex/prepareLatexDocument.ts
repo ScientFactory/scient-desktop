@@ -10,7 +10,7 @@ import {
 } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import { createMarkdownPersistenceTransport } from "../markdownEditor/persistence/markdownPersistenceTransport";
 import { assembleVisualProject, type VisualProjectFile } from "./latexProjectVisual";
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments } from "./latexSourceSyntax";
 import { latexDocumentInputs, type LatexDocumentInputs } from "./latexDocumentInputs";
 
 interface PreparationOptions {

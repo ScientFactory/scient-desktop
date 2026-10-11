@@ -13,6 +13,7 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import {
   createLatexParagraphTextWalker,
@@ -57,19 +58,22 @@ async function open(source = original, expectedPreviews = 2) {
   current = source;
   function Harness() {
     const [source, setSource] = useState(current);
+    const owner = useLatexVisualTestOwner(source);
     return (
       <LatexVisualEditor
         draftKey={key}
         fileRevision="r1"
         source={source}
+        sourceSnapshot={owner.snapshot}
         disabled={false}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
-        onEdit={(expected, next) => {
-          if (expected !== current) return false;
-          current = next;
-          setSource(next);
-          return true;
+        onEdit={(request) => {
+          const outcome = owner.edit(request, request.edit.source === current);
+          if (!outcome.accepted) return outcome;
+          current = outcome.snapshot.source;
+          setSource(current);
+          return outcome;
         }}
       />
     );

@@ -1,4 +1,5 @@
-import { latexCommands, latexPackageInventory } from "./latexPackages";
+import { latexPackageInventory } from "./latexPackages";
+import { latexCommands } from "./latexSourceSyntax";
 import { MATH_SYMBOLS } from "./mathSymbols";
 import { mathLiveFontDeclarations } from "./mathLiveFontDeclarations";
 

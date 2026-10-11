@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
-import { bibliographyChangePublished, mergeBibliographyChange } from "./latexBibliographyModel";
+import { bibliographyChangePublished, mergeBibliographySourceEdit } from "./latexBibliographyModel";
+import { applyDocumentSourcePatches } from "@scientfactory/scient-document";
+import { invertLatexSourcePatches } from "./latexSourceEditPlan";
 
 describe("bibliography publication confirmation", () => {
   const bib = (key: string, title: string) => `@misc{${key},\n  title = {${title}},\n}`;
@@ -39,13 +41,14 @@ describe("bibliography publication confirmation", () => {
     const unrelated = "\n" + bib("other", "First") + "\n" + bib("other", "Second");
     const before = bib("known", "Original") + unrelated,
       next = bib("known", "Entry A") + unrelated;
-    expect(mergeBibliographyChange(before, next, before, "bibtex")).toBe(next);
+    expect(mergeBibliographySourceEdit(before, next, before, "bibtex")?.source).toBe(next);
     expect(bibliographyChangePublished(before, next, next, "bibtex")).toBe(true);
     expect(bibliographyChangePublished(before, unrelated, unrelated, "bibtex")).toBe(true);
     const repaired = bib("known", "Entry A") + "\n" + bib("other", "Second");
     expect(bibliographyChangePublished(before, next, repaired, "bibtex")).toBe(true);
     expect(
-      mergeBibliographyChange(before, next, repaired.replace("Entry A", "Original"), "bibtex"),
+      mergeBibliographySourceEdit(before, next, repaired.replace("Entry A", "Original"), "bibtex")
+        ?.source,
     ).toBe(repaired);
   });
 
@@ -92,12 +95,60 @@ describe("bibliography publication confirmation", () => {
     ).toBe(false);
     expect(bibliographyChangePublished(before, "", "@misc{known,", "bibtex")).toBe(false);
     for (const current of [before + "\n" + before, next + "\n" + next]) {
-      expect(mergeBibliographyChange(before, next, current, "bibtex")).toBeNull();
+      expect(mergeBibliographySourceEdit(before, next, current, "bibtex")).toBeNull();
     }
     const duplicated = before + "\n" + before;
     expect(
-      mergeBibliographyChange(duplicated, next + "\n" + before, duplicated, "bibtex"),
+      mergeBibliographySourceEdit(duplicated, next + "\n" + before, duplicated, "bibtex"),
     ).toBeNull();
-    expect(mergeBibliographyChange(duplicated, before, duplicated, "bibtex")).toBeNull();
+    expect(mergeBibliographySourceEdit(duplicated, before, duplicated, "bibtex")).toBeNull();
   });
+
+  it.each(["bibtex", "bibitem"] as const)(
+    "owns only the changed entry when rebasing %s over unrelated writing",
+    (kind) => {
+      const before = kind === "bibtex" ? bib("known", "Original") : manual("Original");
+      const next = before.replace("Original", "New");
+      const current = "% concurrent author comment 😀\r\n" + before;
+      const merged = mergeBibliographySourceEdit(before, next, current, kind)!;
+      expect(merged.source).toBe(current.replace("Original", "New"));
+      expect(applyDocumentSourcePatches(current, merged.edit.patches)).toBe(merged.source);
+      expect(merged.edit.patches).toEqual([
+        {
+          start: current.indexOf("Original"),
+          end: current.indexOf("Original") + "Original".length,
+          expected: "Original",
+          replacement: "New",
+        },
+      ]);
+      expect(
+        applyDocumentSourcePatches(
+          merged.source,
+          invertLatexSourcePatches(current, merged.edit.patches),
+        ),
+      ).toBe(current);
+      expect(
+        mergeBibliographySourceEdit(before, next, current.replace("Original", "Other"), kind),
+      ).toBeNull();
+    },
+  );
+
+  it.each(["bibtex", "bibitem"] as const)(
+    "uses the explicit append/container boundary for a new %s entry",
+    (kind) => {
+      const before = kind === "bibtex" ? bib("known", "Existing") : manual("Existing");
+      const addition =
+        kind === "bibtex" ? "\n\n" + bib("new", "Added") + "\n" : "\\bibitem{new} Added.\n";
+      const next =
+        kind === "bibtex"
+          ? before + addition
+          : before.replace("\\end{thebibliography}", addition + "\\end{thebibliography}");
+      const merged = mergeBibliographySourceEdit(before, next, before, kind)!;
+      expect(applyDocumentSourcePatches(before, merged.edit.patches)).toBe(next);
+      expect(merged.edit.patches.every((patch) => patch.start === patch.end)).toBe(true);
+      expect(
+        applyDocumentSourcePatches(next, invertLatexSourcePatches(before, merged.edit.patches)),
+      ).toBe(before);
+    },
+  );
 });

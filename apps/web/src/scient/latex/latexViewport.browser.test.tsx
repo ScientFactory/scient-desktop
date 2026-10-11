@@ -16,6 +16,7 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import {
   latexViewportContext,
@@ -73,19 +74,22 @@ async function open(input = source) {
   current = input;
   function Harness() {
     const [value, setValue] = useState(current);
+    const owner = useLatexVisualTestOwner(value);
     return (
       <LatexVisualEditor
         draftKey={key}
         fileRevision="r1"
         source={value}
+        sourceSnapshot={owner.snapshot}
         disabled={false}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
-        onEdit={(expected, next) => {
-          if (expected !== current) return false;
-          current = next;
-          setValue(next);
-          return true;
+        onEdit={(request) => {
+          const outcome = owner.edit(request, request.edit.source === current);
+          if (!outcome.accepted) return outcome;
+          current = outcome.snapshot.source;
+          setValue(current);
+          return outcome;
         }}
       />
     );

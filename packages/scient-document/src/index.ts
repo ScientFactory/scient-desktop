@@ -15,6 +15,7 @@ export {
 } from "./session.ts";
 export {
   applyDocumentSourcePatches,
+  validateDocumentSourcePatches,
   DocumentSourcePatchError,
   type DocumentSourceEdit,
   type DocumentSourceEditOutcome,

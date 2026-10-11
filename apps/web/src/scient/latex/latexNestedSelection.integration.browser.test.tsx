@@ -13,6 +13,7 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { mathEditingScopes } from "./mathLiveSelection";
 import { clearVisualDraft } from "./visualDrafts";
 import "./scient-latex.css";
@@ -51,20 +52,23 @@ async function mount(body: string) {
   root = createRoot(host);
   function Harness() {
     const [text, setText] = useState(source);
+    const owner = useLatexVisualTestOwner(text);
     return (
       <LatexVisualEditor
         draftKey={draftKey}
         fileRevision="synthetic-r1"
         source={text}
+        sourceSnapshot={owner.snapshot}
         disabled={false}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
-        onEdit={(expected, next) => {
-          if (expected !== source) return false;
+        onEdit={(request) => {
+          const outcome = owner.edit(request, request.edit.source === source);
+          if (!outcome.accepted) return outcome;
           edits++;
-          source = next;
-          setText(next);
-          return true;
+          source = outcome.snapshot.source;
+          setText(source);
+          return outcome;
         }}
       />
     );

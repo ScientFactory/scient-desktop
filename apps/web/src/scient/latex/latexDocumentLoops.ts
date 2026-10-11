@@ -1,5 +1,5 @@
 import { inlineLatexLiteral } from "./latexLiteral";
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments, latexDocumentBoundary } from "./latexSourceSyntax";
 import type { DocumentMathMacro } from "./latexDocumentMacros";
 
 export interface DocumentLoopExpansion {
@@ -14,9 +14,10 @@ export function expandLatexDocumentLoop(
   source: string,
   macros: Readonly<Record<string, DocumentMathMacro>>,
 ): DocumentLoopExpansion | null {
-  const begin = source.indexOf("\\begin{document}");
-  if (begin < 0 || source.length > 1000000) return null;
-  const bodyFrom = begin + "\\begin{document}".length;
+  const boundary = latexDocumentBoundary(source);
+  if (!boundary || source.length > 1000000) return null;
+  const begin = boundary.from,
+    bodyFrom = boundary.bodyFrom;
   if ([...latexWithoutComments(source.slice(bodyFrom)).matchAll(/\\loop\b/gu)].length !== 1)
     return null;
   const preamble = latexWithoutComments(source.slice(0, begin));

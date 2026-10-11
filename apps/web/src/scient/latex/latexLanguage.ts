@@ -1,4 +1,4 @@
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments, latexDocumentBoundary } from "./latexSourceSyntax";
 
 export type LatexTextDirection = "ltr" | "rtl";
 export type LatexWritingLanguage = "english" | "hebrew";
@@ -31,7 +31,7 @@ export function latexDirectionMark(name: string) {
 /** Only literal, top-level declarations are settings; macro bodies are not evaluated. */
 function preambleDeclarations(source: string) {
   const withoutComments = latexWithoutComments(source);
-  const begin = withoutComments.indexOf("\\begin{document}");
+  const begin = latexDocumentBoundary(source)?.from ?? -1;
   const clean = begin < 0 ? withoutComments : withoutComments.slice(0, begin);
   const depths = new Int32Array(clean.length);
   let depth = 0;
@@ -161,7 +161,7 @@ export function updateLatexLanguageSource(
   if (!setup.canConfigure || !/^[\p{L}\p{N} ._()+-]+$/u.test(font.trim())) return null;
   const { find } = preambleDeclarations(source);
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
-  const end = latexWithoutComments(source).indexOf("\\begin{document}");
+  const end = latexDocumentBoundary(source)?.from ?? -1;
   if (end < 0) return null;
   const declarations = find(/\\set(?:default|main)language\s*(?:\[[^\]]*\])?\s*\{[^{}]+\}/gu);
   const fonts = find(

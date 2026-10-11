@@ -1,4 +1,4 @@
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments } from "./latexSourceSyntax";
 import { latexColorCss, latexDocumentColors, latexColorBoxOpening } from "./latexColorBoxes";
 
 /** Literal contents never enter the prose, structure or package-command grammar. */

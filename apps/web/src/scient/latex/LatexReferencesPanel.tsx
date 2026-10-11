@@ -21,7 +21,7 @@ import {
   bibliographyChangePublished,
   bibtexEntries,
   manualBibliography,
-  mergeBibliographyChange,
+  mergeBibliographySourceEdit,
   normalizedBibliographyEntryText,
   replaceBibliographyEntry,
   validBibliographyKey,
@@ -95,10 +95,15 @@ function BibliographyFile(props: {
     async (expected: string, next: string) => {
       if (lease === null) return false;
       const current = lease.getSnapshot();
-      if (current.editingBlocked) return false;
-      const merged = mergeBibliographyChange(expected, next, current.draftSource, "bibtex");
+      if (current.editingBlocked || current.error !== null || current.conflict !== null)
+        return false;
+      const merged = mergeBibliographySourceEdit(expected, next, current.draftSource, "bibtex");
       if (merged === null) return false;
-      if (current.draftSource !== merged && !lease.change(merged, current.editVersion))
+      if (
+        current.draftSource !== merged.source &&
+        !lease.applyEdit({ basedOnVersion: current.editVersion, patches: merged.edit.patches })
+          .accepted
+      )
         return false;
       return (
         (await lease.flushNow()) &&

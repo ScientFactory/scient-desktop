@@ -67,6 +67,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "~/compon
 import { ReaderButton, IfRowHidden, ReaderRowContext } from "../writing/DocumentReaderControls";
 import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
 import type { DocumentDownloadActions } from "../documentExport/DocumentDownloadMenu";
+import { planVisualProjectEdit } from "./latexProjectVisual";
+import {
+  createLatexEditorSourceSnapshot,
+  invertLatexSourcePatches,
+  type LatexEditorSourceSnapshot,
+  type LatexVisualEditOutcome,
+  type LatexVisualEditRequest,
+} from "./latexSourceEditPlan";
 import { ReaderBarHostContext, type ReaderBarHost } from "../writing/readerBarHost";
 const LatexProjectVisualEditor = lazy(() =>
   import("./LatexProjectVisualEditor").then((module) => ({
@@ -638,6 +646,28 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     [],
   );
   const { persistence } = props;
+  const workingSnapshot = useSyncExternalStore(
+    persistence?.subscribe ?? noSubscription,
+    () => persistence?.getSnapshot() ?? null,
+  );
+  const sourceBinding = useRef<{
+    documentId: string | null;
+    editVersion: number;
+    snapshot: LatexEditorSourceSnapshot;
+  } | null>(null);
+  const workingSource = workingSnapshot?.draftSource ?? props.contents;
+  if (
+    sourceBinding.current === null ||
+    sourceBinding.current.documentId !== documentId ||
+    sourceBinding.current.editVersion !== (workingSnapshot?.editVersion ?? -1) ||
+    sourceBinding.current.snapshot.source !== workingSource
+  )
+    sourceBinding.current = {
+      documentId,
+      editVersion: workingSnapshot?.editVersion ?? -1,
+      snapshot: createLatexEditorSourceSnapshot(workingSource),
+    };
+  const editorSourceSnapshot = sourceBinding.current.snapshot;
   const sourceRecovery = useLatexSourceRecovery(persistence, visualDraftKey, preferredMode);
   // Unsaved, saving, or waiting on a conflict or a failed save.
   const sourcePending = useSyncExternalStore(
@@ -714,15 +744,70 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // Visual and Source edit one working source, the session's. An edit made on
   // any other text is refused.
   const handleVisualEdit = useCallback(
-    (expected: string, next: string) => {
-      if (persistence === null) return false;
-      const snapshot = persistence.getSnapshot();
-      if (snapshot.editingBlocked || snapshot.error !== null || snapshot.conflict !== null)
-        return false;
-      if (snapshot.draftSource !== expected) return false;
-      if (expected === next) return true;
-      if (sourceRecovery.blocked) return false;
-      return persistence.change(next, snapshot.editVersion);
+    (request: LatexVisualEditRequest): LatexVisualEditOutcome => {
+      const refuse = (reason: string): LatexVisualEditOutcome => ({ accepted: false, reason });
+      if (persistence === null) return refuse("The source session is unavailable.");
+      const bound = sourceBinding.current;
+      const current = persistence.getSnapshot();
+      if (bound === null) return refuse("The source snapshot is unavailable.");
+      if (
+        current.editingBlocked ||
+        current.error !== null ||
+        current.conflict !== null ||
+        sourceRecovery.blocked
+      )
+        return refuse("The source session is waiting for recovery or another operation.");
+      if (
+        request.snapshot.id !== bound.snapshot.id ||
+        bound.documentId !== persistence.documentId ||
+        bound.editVersion !== current.editVersion ||
+        bound.snapshot.source !== current.draftSource
+      )
+        return refuse("The source changed while this edit was being prepared.");
+      const path = persistence.target.relativePath;
+      const file = {
+        contents: current.draftSource,
+        revision: current.baselineRevision,
+        truncated: false,
+        owner: { documentId: persistence.documentId, editVersion: bound.editVersion },
+      };
+      const plan = planVisualProjectEdit(
+        {
+          source: bound.snapshot.source,
+          spans: [{ from: 0, to: file.contents.length, path, sourceFrom: 0, occurrence: 1 }],
+          paths: [path],
+          missing: [],
+          errors: [],
+        },
+        request.edit,
+        new Map([[path, file]]),
+        path,
+      );
+      if (plan.error) return refuse(plan.error);
+      const edit = plan.edits.get(path);
+      if (!edit)
+        return {
+          accepted: true,
+          snapshot: bound.snapshot,
+          inverseEdit: { source: bound.snapshot.source, patches: [] },
+        };
+      const outcome = persistence.applyEdit(edit);
+      if (!outcome.accepted) return refuse(`The source edit was refused (${outcome.reason}).`);
+      const accepted = persistence.getSnapshot();
+      const nextSnapshot = createLatexEditorSourceSnapshot(accepted.draftSource);
+      sourceBinding.current = {
+        documentId: persistence.documentId,
+        editVersion: accepted.editVersion,
+        snapshot: nextSnapshot,
+      };
+      return {
+        accepted: true,
+        snapshot: nextSnapshot,
+        inverseEdit: {
+          source: accepted.draftSource,
+          patches: invertLatexSourcePatches(file.contents, edit.patches),
+        },
+      };
     },
     [persistence, sourceRecovery.blocked],
   );
@@ -1810,10 +1895,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                       // this editor, while its drafts move with `draftKey`.
                       key={documentId ?? visualDraftKey}
                       {...(documentId === null ? {} : { editorInstanceKey: documentId })}
-                      source={props.contents}
+                      source={workingSource}
+                      sourceSnapshot={editorSourceSnapshot}
                       onLocalDraftChange={reportLocalVisualDraft}
                       draftKey={visualDraftKey}
-                      fileRevision={props.revision}
+                      fileRevision={workingSnapshot?.baselineRevision ?? props.revision}
                       environmentId={props.environmentId}
                       cwd={props.cwd}
                       relativePath={props.relativePath}

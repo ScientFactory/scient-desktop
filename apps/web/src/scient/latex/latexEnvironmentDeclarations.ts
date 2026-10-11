@@ -1,4 +1,5 @@
-import { latexCommands, latexPackageInventory, latexWithoutComments } from "./latexPackages";
+import { latexPackageInventory } from "./latexPackages";
+import { latexCommands, latexWithoutComments } from "./latexSourceSyntax";
 
 export interface LatexEnvironmentDeclaration {
   name: string;

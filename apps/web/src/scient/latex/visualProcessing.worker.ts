@@ -31,8 +31,10 @@ self.addEventListener("message", (event: MessageEvent<VisualProcessingRequest>) 
       const notices: string[] = [];
       reply.output = {
         kind: "change",
+        snapshotId: input.snapshotId,
         change: applyLatexVisualDocumentChange(input.source, input.projection, input.content, {
           rootSource: input.rootSource,
+          setupSource: input.setupSource,
           allowRootUpdates: input.allowRootUpdates,
           onMissingRequirement: (notice) => notices.push(notice),
         }),

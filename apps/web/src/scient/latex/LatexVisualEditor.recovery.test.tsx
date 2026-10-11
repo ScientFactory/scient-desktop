@@ -21,6 +21,7 @@ import { AsyncResult } from "effect/reactivity";
 import { FileSaveCoordinator } from "~/components/files/fileSaveCoordinator";
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import {
   checkpointVisualDraft,
   clearVisualDraft,
@@ -131,6 +132,7 @@ describe("recovering unsaved work", () => {
     });
     function Harness() {
       const [value, setValue] = useState(shown);
+      const owner = useLatexVisualTestOwner(value.source);
       useEffect(() => {
         show = (next) => {
           shown = next;
@@ -143,16 +145,19 @@ describe("recovering unsaved work", () => {
             draftKey={KEY}
             fileRevision={`r${value.revision}`}
             source={value.source}
+            sourceSnapshot={owner.snapshot}
             disabled={false}
             singleFileDocument={singleFileDocument}
             onEditingChange={() => {}}
             onOpenSource={() => {}}
-            onEdit={(expected, next) => {
-              if (shown.source !== expected) return false;
-              writes(expected, next);
+            onEdit={(request) => {
+              const outcome = owner.edit(request, shown.source === request.edit.source);
+              if (!outcome.accepted) return outcome;
+              const next = outcome.snapshot.source;
+              writes(request.edit.source, next);
               show({ source: next, revision: shown.revision });
               coordinator.change(next);
-              return true;
+              return outcome;
             }}
           />
           <AfterEditorRender />
@@ -339,6 +344,38 @@ describe("recovering unsaved work", () => {
     await reopen();
     expect(message()).toBe("Unsaved changes");
     expect(parked()?.source).toBe(next);
+  });
+
+  it("retains an accepted raw fragment until checkpoint transfer succeeds without republishing it", async () => {
+    save = "waits";
+    const base = tex("\\unsupported{Original}");
+    const draft = "\\unsupported{Changed}";
+    const next = base.replace("\\unsupported{Original}", draft);
+    await mount(base, 1);
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label="Edit this block’s LaTeX"]')!.click(),
+    );
+    const field = container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Block LaTeX source"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(
+        field,
+        draft,
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    noRoomFor(SOURCE_SLOT);
+    await click("Apply LaTeX");
+    expect(shown.source).toBe(next);
+    expect(writes).toHaveBeenCalledExactlyOnceWith(base, next);
+    expect(parked()?.text).toBe(draft);
+    expect(checkpoint()).toBeNull();
+    storageLimit?.mockRestore();
+    await click("Apply LaTeX");
+    expect(writes).toHaveBeenCalledExactlyOnceWith(base, next);
+    expect(parked()).toBeNull();
+    expect(checkpoint()).toEqual({ source: next, baseRevision: "r1" });
   });
 
   it("sits in the footer as one line with plain actions", async () => {

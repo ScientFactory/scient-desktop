@@ -97,6 +97,14 @@ function pump() {
               return;
             }
             const output = event.data.output;
+            if (
+              active.input.kind === "change" &&
+              output?.kind === "change" &&
+              output.snapshotId !== active.input.snapshotId
+            ) {
+              finish(null);
+              return;
+            }
             const projection =
               output?.kind === "project"
                 ? output.projection

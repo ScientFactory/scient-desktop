@@ -13,6 +13,7 @@ import {
   parseTypingDraft,
   readTypingDraft,
   typingDraftIdentity,
+  rebindVisualTypingContent,
 } from "./visualTyping";
 
 type TypingDraft = NonNullable<ReturnType<typeof readTypingDraft>>;
@@ -227,12 +228,11 @@ function park(key: string, entry: ParkedEntry): boolean {
 function typingEntry(draft: TypingDraft, snapshot: string): ParkedEntry {
   let source: string | null = null;
   try {
-    source =
-      applyLatexVisualDocumentChange(
-        draft.baseSource,
-        projectLatexVisualDocument(draft.baseSource),
-        draft.content,
-      )?.source ?? null;
+    const projection = projectLatexVisualDocument(draft.baseSource);
+    const content = rebindVisualTypingContent(draft.content, projection.content);
+    if (content)
+      source =
+        applyLatexVisualDocumentChange(draft.baseSource, projection, content)?.source ?? null;
   } catch {
     source = null;
   }

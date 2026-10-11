@@ -63,6 +63,7 @@ describe("References bibliography session", () => {
   const onClose = vi.fn();
   const onDraftChange = vi.fn();
   const write = vi.fn();
+  const unchangedFailure = new Error("Synthetic refusal without a native publication");
   let sequence = 0;
 
   beforeEach(() => {
@@ -90,6 +91,7 @@ describe("References bibliography session", () => {
         });
       },
       classifyFailure: () => "terminal",
+      describeOutcome: (error) => (error === unchangedFailure ? "unchanged" : null),
       subscribe: () => () => {},
       project: () => {},
     });
@@ -402,7 +404,7 @@ describe("References bibliography session", () => {
     },
   );
 
-  it("keeps a failed save's form draft, shows the session notice and writes no recovery record", async () => {
+  it("retains failed input across remount without checkpointing or replaying an unknown result", async () => {
     await mount();
     await type("Keep this draft");
     await save();
@@ -411,10 +413,7 @@ describe("References bibliography session", () => {
       expect(await tab.flushNow()).toBe(false);
     });
     expect(field()?.value).toBe("Keep this draft");
-    expect(host.textContent).toContain("Your entry draft is retained");
-    expect(host.textContent).toContain("Keep this document open and retry");
     expect(onSaved).not.toHaveBeenCalled();
-    expect(host.textContent).not.toContain("Reference saved.");
     expect(readPersistedVisualDraft(draftKey)).toBeNull();
     expect(readStoredRecovery(draftKey)).toBeNull();
     // Unmount used to flush the unoffered bibliography checkpoint to storage.
@@ -431,17 +430,13 @@ describe("References bibliography session", () => {
       genericPendingIds: new Set(),
     });
     expect([...guards.attentionSurfaceIds]).toEqual(["refsA.bib"]);
-    // A confirmed retry can be acknowledged by Save reference without duplicating the edit.
-    publication = deferred();
     await act(async () => {
-      const retry = tab.retry();
-      publication.resolve({ revision: "r2" });
-      expect(await retry).toBe(true);
+      expect(await tab.retry()).toBe(false);
     });
-    await save();
-    expect(field()).toBeNull();
-    expect(onSaved).toHaveBeenCalledOnce();
-    expect(host.textContent).toContain("Reference saved.");
+    expect(write).toHaveBeenCalledOnce();
+    expect(disk.source).toBe("@article{known,\n  title = {Original},\n}\n");
+    expect(field()?.value).toBe("Keep this draft");
+    expect(onSaved).not.toHaveBeenCalled();
   });
 
   it("keeps entry A when an earlier write and superseding entry B leave a clean lane", async () => {
@@ -501,7 +496,7 @@ describe("References bibliography session", () => {
   });
 
   it.each(["LF", "CRLF"])(
-    "can confirm a retained new entry after %s retry without adding it twice",
+    "can confirm a retained new entry after reviewing a known unchanged %s refusal without adding it twice",
     async (endings) => {
       if (endings === "CRLF") {
         await act(async () => {
@@ -521,16 +516,19 @@ describe("References bibliography session", () => {
       await type("New entry");
       await save();
       await act(async () => {
-        publication.reject(new Error("Synthetic write failed"));
+        publication.reject(unchangedFailure);
         expect(await tab.flushNow()).toBe(false);
       });
       expect(field()?.value).toBe("New entry");
       expect(onSaved).not.toHaveBeenCalled();
+      await act(async () => {
+        expect(await tab.reviewUnchangedRefusal(disk.revision)).toBe(true);
+      });
       publication = deferred();
       await act(async () => {
-        const retry = tab.retry();
+        const saveLocal = tab.resolveWithLocal(disk.revision);
         publication.resolve({ revision: "r2" });
-        expect(await retry).toBe(true);
+        expect(await saveLocal).toBe(true);
       });
       await save();
       expect(field()).toBeNull();

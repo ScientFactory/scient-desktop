@@ -29,6 +29,8 @@ class ProcessingWorker {
 }
 
 beforeEach(() => {
+  // The client owns a module-level worker/queue. Each case imports it only
+  // after resetting that singleton and installing this case's worker host.
   vi.resetModules();
   vi.useFakeTimers();
   ProcessingWorker.instances = [];
@@ -52,7 +54,16 @@ describe("visual processing ownership and scheduling", () => {
       ],
     };
     processVisualDocument(
-      { kind: "change", source, projection, content, rootSource: null, allowRootUpdates: false },
+      {
+        kind: "change",
+        source,
+        snapshotId: "first",
+        setupSource: source,
+        projection,
+        content,
+        rootSource: null,
+        allowRootUpdates: false,
+      },
       () => {},
     );
     const worker = ProcessingWorker.instances[0]!;
@@ -63,13 +74,15 @@ describe("visual processing ownership and scheduling", () => {
     expect(cloned.projection.content.content![0]).not.toBe(content.content[0]);
     worker.emit({
       id: worker.requests[0]!.id,
-      output: { kind: "change", change: cloned, notices: [] },
+      output: { kind: "change", snapshotId: "first", change: cloned, notices: [] },
       contentMatchesInput: true,
     });
     processVisualDocument(
       {
         kind: "change",
         source: cloned.source,
+        snapshotId: "second",
+        setupSource: cloned.source,
         projection: cloned.projection,
         content: {
           ...content,
@@ -95,6 +108,8 @@ describe("visual processing ownership and scheduling", () => {
       {
         kind: "change",
         source,
+        snapshotId: "current",
+        setupSource: source,
         projection,
         content: projection.content,
         rootSource: null,
@@ -152,6 +167,8 @@ describe("visual processing ownership and scheduling", () => {
       {
         kind: "change",
         source,
+        snapshotId: "current",
+        setupSource: source,
         projection,
         content: {
           ...projection.content,
@@ -168,6 +185,42 @@ describe("visual processing ownership and scheduling", () => {
     expect(worker.requests[2]!.input.kind).toBe("change");
     expect(complete).not.toHaveBeenCalled();
     worker.emit({ id: request.id, output: null });
+    expect(complete).toHaveBeenCalledExactlyOnceWith(null);
+  });
+
+  it("rejects an obsolete snapshot reply even when the native bytes match again", async () => {
+    const { processVisualDocument } = await import("./visualProcessing");
+    const source = "Before.";
+    const projection = projectLatexVisualDocument(source);
+    const content = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Local." }] }],
+    };
+    const complete = vi.fn();
+    processVisualDocument(
+      {
+        kind: "change",
+        source,
+        snapshotId: "A-after-B",
+        setupSource: source,
+        projection,
+        content,
+        rootSource: null,
+        allowRootUpdates: false,
+      },
+      complete,
+    );
+    const worker = ProcessingWorker.instances[0]!;
+    worker.emit({ ready: true });
+    worker.emit({
+      id: worker.requests[0]!.id,
+      output: {
+        kind: "change",
+        snapshotId: "A-before-B",
+        change: applyLatexVisualDocumentChange(source, projection, content),
+        notices: [],
+      },
+    });
     expect(complete).toHaveBeenCalledExactlyOnceWith(null);
   });
 
