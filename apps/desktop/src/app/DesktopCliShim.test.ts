@@ -3,10 +3,13 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { type CliShimTarget, renderCliShim } from "./DesktopCliShim.ts";
+
+const nativePlatform = HostProcess.Platform.defaultValue();
 
 const directories: Array<string> = [];
 afterEach(() => {
@@ -26,9 +29,9 @@ const writeExecutable = (path: string, content: string) => {
   NodeFS.writeFileSync(path, content, { mode: 0o755 });
 };
 
-/** Writes the launcher for `target` at `<root>/bin/t3`, with `<root>/home` as its T3 home. */
+/** Writes a canonical launcher with a fixture profile, never the user's profile. */
 const writeShim = (root: string, target: CliShimTarget) => {
-  const shim = NodePath.join(root, "bin", "t3");
+  const shim = NodePath.join(root, "bin", "scient");
   writeExecutable(shim, renderCliShim({ target, shimPath: shim, t3Home: `${root}/home` }));
   return shim;
 };
@@ -71,7 +74,7 @@ const fakeAppImage = (canMount = true) => {
   return { root, image, appImage, shim };
 };
 
-describe("renderCliShim", () => {
+describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () => {
   it("runs the AppImage's bundled CLI with every argument and unmounts after", () => {
     const { root, image, shim } = fakeAppImage();
     const result = run(shim, ["browser", "setup", "a b"]);
@@ -116,7 +119,11 @@ describe("renderCliShim", () => {
     // Ambient T3 state cannot redirect the Scient bundled launcher.
     expect(run(shim, [], { T3CODE_HOME: "/t3-profile" }).stdout).toContain(`home=${root}/home`);
     // Run by a relative path, it still names itself absolutely.
-    const relative = NodeChildProcess.spawnSync("./bin/t3", [], { cwd: root, encoding: "utf8" });
+    const relative = NodeChildProcess.spawnSync("./bin/scient", [], {
+      cwd: root,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+    });
     expect(relative.stdout).toContain(`cli=${shim}`);
   });
 
@@ -148,42 +155,79 @@ describe("renderCliShim", () => {
     expect(result.status).toBe(127);
     expect(result.stderr).toContain("Open the app once to update this command.");
   });
+});
 
-  it("writes a Windows launcher that keeps cmd from reinterpreting paths", () => {
-    const executable = "C:\\Apps\\R&whoami&X 100%\\!CHANNEL!\\T3 Code.exe";
-    const script = renderCliShim({
-      target: { kind: "windows", executable, entry: "C:\\Apps\\server.asar\\bin.mjs" },
-      shimPath: "C:\\Users\\José\\.t3\\bin\\t3.cmd",
-      t3Home: "C:\\Users\\José\\.t3",
-    });
-    const lines = script.split("\r\n");
-    expect(lines).toContain("setlocal EnableExtensions DisableDelayedExpansion");
-    expect(lines).toContain("chcp 65001 >nul");
-    expect(lines).toContain(
-      'if exist "C:\\Apps\\R&whoami&X 100%%\\!CHANNEL!\\T3 Code.exe" goto run',
+describe.skipIf(nativePlatform !== "win32")("renderCliShim Windows execution", () => {
+  const runWindows = (shim: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv = {}) => {
+    const quoted = args.map((argument) => `"${argument.replaceAll('"', '\\"')}"`).join(" ");
+    return NodeChildProcess.spawnSync(
+      process.env.ComSpec ?? `${process.env.SystemRoot}\\System32\\cmd.exe`,
+      ["/d", "/s", "/c", `""${shim}" ${quoted}"`],
+      {
+        encoding: "utf8",
+        windowsVerbatimArguments: true,
+        env: {
+          PATH: process.env.PATH,
+          SystemRoot: process.env.SystemRoot,
+          WINDIR: process.env.WINDIR,
+          ...env,
+        },
+      },
     );
-    // Paths only ever appear quoted or inside `set "..."`, never bare where `&` would split them.
-    const bare = lines.filter(
-      (line) => line.includes("whoami") && !/"[^"]*whoami[^"]*"/.test(line),
+  };
+
+  it("runs canonical and legacy batch commands with exact quoted arguments and Scient profiles", () => {
+    const root = tempRoot();
+    const home = NodePath.join(root, "Scient José's profile");
+    const entry = NodePath.join(root, "App (x86) & 100% !keep!", "José's entry.mjs");
+    NodeFS.mkdirSync(NodePath.dirname(entry), { recursive: true });
+    NodeFS.writeFileSync(
+      entry,
+      "console.log(JSON.stringify({node:process.env.ELECTRON_RUN_AS_NODE,cli:process.env.T3CODE_CLI_PATH,home:process.env.SCIENT_NEXT_HOME,args:process.argv.slice(2)}));process.exitCode=3;",
     );
-    expect(bare).toEqual([]);
-    expect(lines).toContain('set "T3CODE_CLI_PATH=C:\\Users\\José\\.t3\\bin\\t3.cmd"');
-    // SCIENT-FORK: The generated Windows launcher must target Scient state.
-    expect(lines).toContain(
-      'if not defined SCIENT_NEXT_HOME set "SCIENT_NEXT_HOME=C:\\Users\\José\\.t3"',
-    );
-    expect(script).not.toContain('set "T3CODE_HOME=');
-    // SCIENT-FORK-END
+    const args = ["app", "space argument", 'single \' and "double" quotes', "", "José"];
+    for (const name of ["scient.cmd", "t3.cmd"]) {
+      const shim = NodePath.join(home, "bin", name);
+      writeExecutable(
+        shim,
+        renderCliShim({
+          target: { kind: "windows", executable: process.execPath, entry },
+          shimPath: shim,
+          t3Home: home,
+        }),
+      );
+      const result = runWindows(shim, args, { T3CODE_HOME: "C:\\unrelated-t3" });
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(3);
+      expect(JSON.parse(result.stdout.trim())).toEqual({ node: "1", cli: shim, home, args });
+      const override = NodePath.join(root, "explicit Scient profile");
+      const overridden = runWindows(shim, args, { SCIENT_NEXT_HOME: override });
+      expect(overridden.status, overridden.stderr).toBe(3);
+      expect(JSON.parse(overridden.stdout.trim())).toEqual({
+        node: "1",
+        cli: shim,
+        home: override,
+        args,
+      });
+    }
   });
 
-  it("switches the Windows console to UTF-8 only when a path needs it", () => {
-    const ascii = renderCliShim({
-      target: { kind: "windows", executable: "C:\\T3\\T3 Code.exe", entry: "C:\\T3\\bin.mjs" },
-      shimPath: "C:\\Users\\me\\.t3\\bin\\t3.cmd",
-      t3Home: "C:\\Users\\me\\.t3",
-    });
-    // A Ctrl-C that ends the batch would leave the console switched.
-    expect(ascii).not.toContain("chcp");
-    expect(ascii.split("\r\n")).toContain("exit /b %t3_exit%");
+  it("returns 127 when the installed Windows executable is gone", () => {
+    const root = tempRoot();
+    const shim = NodePath.join(root, "scient.cmd");
+    writeExecutable(
+      shim,
+      renderCliShim({
+        target: {
+          kind: "windows",
+          executable: NodePath.join(root, "missing Scient.exe"),
+          entry: NodePath.join(root, "missing entry.mjs"),
+        },
+        shimPath: shim,
+        t3Home: NodePath.join(root, "profile"),
+      }),
+    );
+    const result = runWindows(shim, ["--version"]);
+    expect(result.status, result.stderr).toBe(127);
   });
 });

@@ -51,7 +51,7 @@ Diagnosis grounded in source beats guessing.
 First establish the shape of the install, because the same symptom points at
 different code depending on it:
 
-- How is Scient running on this machine: `npx t3 serve` in a terminal, the
+- How is Scient running on this machine: `scient serve` in a terminal, the
   background service, or the desktop app?
 - Which surface is the user connecting from: the local web app opened by the
   CLI, the desktop app against a local server, or the desktop app against a

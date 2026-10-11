@@ -118,6 +118,29 @@ divergence.
 - Bootstrap evidence: [Scient Next D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md)
 - Authoritative migration policy: `Scient/docs/planning/t3-foundation-migration-plan.md`
 
+Scient's public desktop CLI command is `scient`: Settings, the PATH installer,
+root CLI help/version output, and public parser recovery instructions use this
+name. `SCIENT_DESKTOP_IDENTITY.cliCommandName` owns the executable name.
+Operational recovery commands instead bind to this installation's absolute
+launcher or running executable and entry script, with its resolved profile;
+they never guess an npm package or dispatch an unrelated PATH command. Linux
+elevation preserves the profile through `--base-dir`, and direct Electron
+invocations explicitly preserve Node mode. Windows snippets use PowerShell.
+
+Scient-written `t3` launchers and existing owned PATH shortcuts are refreshed
+atomically for compatibility, including previous-profile shortcuts; new
+installs and startup never add a `t3` PATH shortcut. Settings reports canonical
+`installedPath` separately from removable `legacyInstalled` state, so a blocked
+canonical installation does not hide legacy removal. Foreign commands, broken
+foreign links, and user-managed Windows PATH entries remain untouched. Failed
+replacement preparation leaves the previous executable usable.
+
+Preserve the old launcher ownership marker, internal package names, environment
+variables, and `scient-next` state paths. Scient profile selection ignores
+ambient `T3CODE_HOME` inside the safety envelope, including browser setup and
+triage. This product rename does not enable the inherited standalone
+install/update/service lifecycle or Connect.
+
 The D4 bootstrap integration base was
 `a2ca89aa10f13a2222e08afd98c66285121d5ba2`, selected from freshly fetched
 official `main` only after its untouched baseline passed. That historical
@@ -753,6 +776,13 @@ handles separate text-generation requests. `OmpManagedRuntimeActions.ts`,
 `managedOmpRuntime.ts` and `ompManifest.ts` retain Oh My Pi's managed-runtime and
 version-cap ownership. Sharing the RPC implementation does not merge the two
 products' executable identities or state.
+
+Scient's native subagent observations and compact chat disclosure are gated by
+`driverKind === "scient"` (and all-Scient groups in the renderer). Preserve the
+separate assignment/label, observed-only progress/model/usage, sparse terminal
+merging and stable native child artifacts. Optional aggregate wire fields belong
+in the shared RPC decoder, not a second Scient transport. Do not broaden the
+presentation cutover to Codex, Claude or external Oh My Pi during upstream merges.
 
 `scient-omp-seams.json` inventories owned code and the anchored `upstreamMounts`
 and shared `scientMounts`; shared integration points are not wholly OMP-owned.

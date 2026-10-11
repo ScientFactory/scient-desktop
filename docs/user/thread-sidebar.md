@@ -394,6 +394,17 @@ Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
 thread asks for it.
 
+Scient Agent groups show only their summary while collapsed. Expand a group for
+compact member rows, then expand a member to inspect its full assignment and any
+supplied result. **Open child thread** navigates to that member's child, separately
+from its detail disclosure. An explicitly opened group stays visible as its
+background children finish.
+
+Native Scient child inspection contains the assignment and result the agent
+actually supplied, not a reconstructed tool or thinking transcript. Missing
+results remain unavailable; the member row and **Agents** panel show observed
+progress, model and usage rather than borrowing those details from the parent.
+
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.

@@ -1,12 +1,14 @@
 import { memo, type ComponentType, type ReactElement, type ReactNode } from "react";
-import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type { OrchestrationV2TurnItem, RunId } from "@t3tools/contracts";
 import {
   isActiveSubagentStatus,
+  projectedSubagentsToRuntime,
   type AgentPanelModel,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { agentSpawnRowLabel, deriveAgentSpawnSummary } from "~/components/chat/agentSpawnSummary";
 import { WorkLogBlock } from "~/components/chat/WorkLog";
-import { AgentSpawnMemberRow } from "./AgentSpawnMemberRow";
+import { AgentSpawnMemberRow, compactScientAgentLabel } from "./AgentSpawnMemberRow";
+import { cn } from "~/lib/utils";
 
 type SubagentItem = Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
 
@@ -21,7 +23,7 @@ export interface AgentSpawn {
 export interface AgentSpawnRowContext {
   readonly agentPanelModel: AgentPanelModel;
   readonly expandedSpawnEntryIds: ReadonlySet<string>;
-  readonly onToggleSpawnRow: (entryId: string, expanded: boolean) => void;
+  readonly onToggleSpawnRow: (entryId: string, expanded: boolean, runId?: RunId) => void;
   readonly onOpenAgents: () => void;
 }
 
@@ -55,11 +57,7 @@ export function subagentGroupRoster(
     : null;
 }
 
-/**
- * A V2 sub-agent group the agent panel knows: one spawn row, then a link to
- * each member's child thread. Called as a function so the group keeps the
- * same element tree it had inline.
- */
+/** A roster-backed group; Scient child actions stay inside disclosure. */
 export function renderSubagentRosterGroup(
   props: {
     rowId: string;
@@ -73,11 +71,17 @@ export function renderSubagentRosterGroup(
   } & AgentSpawnRowRenderers,
 ): ReactElement {
   const { rowId, members, context: ctx } = props;
+  const scientMembers =
+    members.length > 0 && members.every((member) => member.driver === "scient")
+      ? members
+      : undefined;
   return (
     <WorkLogBlock continues={props.continuesWorkLog}>
       <AgentSpawnRow
         entryId={rowId}
         spawn={props.roster}
+        scientMembers={scientMembers}
+        onOpenThread={ctx.onOpenThread}
         onToggleEntry={(wasExpanded) => ctx.onToggleWorkEntry(rowId, wasExpanded)}
         context={ctx}
         LiveActivityRow={props.LiveActivityRow}
@@ -85,22 +89,23 @@ export function renderSubagentRosterGroup(
         failedToolIconClassName={props.failedToolIconClassName}
         toolCallExpandedBodyClassName={props.toolCallExpandedBodyClassName}
       />
-      {members.flatMap((member) => {
-        const childThreadId = member.childThreadId;
-        return childThreadId === null
-          ? []
-          : [
-              <button
-                key={member.id}
-                type="button"
-                aria-label="Open child thread"
-                onClick={() => ctx.onOpenThread(childThreadId)}
-                className="ms-7 mt-1 self-start text-xs text-muted-foreground hover:text-foreground"
-              >
-                Open {member.title ?? "subagent"} thread ›
-              </button>,
-            ];
-      })}
+      {!scientMembers &&
+        members.flatMap((member) => {
+          const childThreadId = member.childThreadId;
+          return childThreadId === null
+            ? []
+            : [
+                <button
+                  key={member.id}
+                  type="button"
+                  aria-label="Open child thread"
+                  onClick={() => ctx.onOpenThread(childThreadId)}
+                  className="ms-7 mt-1 self-start text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Open {member.title ?? "subagent"} thread ›
+                </button>,
+              ];
+        })}
     </WorkLogBlock>
   );
 }
@@ -113,6 +118,8 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
     active?: boolean | undefined;
     onToggleEntry?: ((collapsed: boolean) => void) | undefined;
     context: AgentSpawnRowContext;
+    scientMembers?: ReadonlyArray<SubagentItem> | undefined;
+    onOpenThread?: ((threadId: SubagentItem["threadId"]) => void) | undefined;
   } & AgentSpawnRowRenderers,
 ) {
   const { entryId, spawn, LiveActivityRow, WorkingTimer } = props;
@@ -123,9 +130,28 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
   const workflowGroup = spawn.workflowId
     ? agentPanelModel.workflows.find((group) => group.workflow.id === spawn.workflowId)
     : undefined;
-  const agents = workflowGroup
+  const rosterAgents = workflowGroup
     ? [...workflowGroup.phases.flatMap((phase) => phase.members), ...workflowGroup.unphasedMembers]
     : agentPanelModel.directAgents.filter((agent) => memberIds.has(agent.id));
+  const agents = props.scientMembers
+    ? [
+        ...rosterAgents,
+        ...projectedSubagentsToRuntime(
+          props.scientMembers
+            .filter((member) => !rosterAgents.some((agent) => agent.id === member.subagentId))
+            .map((member) => ({ ...member, id: member.subagentId, model: null })),
+        ),
+      ]
+    : rosterAgents;
+  const scientMembers = props.scientMembers;
+  if (scientMembers && !workflowGroup) {
+    agents.sort(
+      (left, right) =>
+        left.firstSeenAt.localeCompare(right.firstSeenAt) ||
+        scientMembers.findIndex((member) => member.subagentId === left.id) -
+          scientMembers.findIndex((member) => member.subagentId === right.id),
+    );
+  }
   const agentCount = Math.max(
     agents.length,
     Math.max(memberIds.size - (spawn.workflowId ? 1 : 0), 0),
@@ -139,7 +165,8 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
   const failed = summary.tone === "failed";
   const workflowName =
     workflowGroup?.workflow.workflowName ?? workflowGroup?.workflow.title ?? null;
-  const label = agentSpawnRowLabel(summary, workflowName);
+  const rawLabel = agentSpawnRowLabel(summary, workflowName);
+  const label = props.scientMembers ? compactScientAgentLabel(rawLabel) : rawLabel;
   // The longest-running agent still at work: a quiet row keeps counting.
   const workingSince = agents
     .filter((agent) => isActiveSubagentStatus(agent.status) && agent.startedAt !== null)
@@ -147,16 +174,19 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
     .toSorted()[0];
   const toggleExpanded = () => {
     props.onToggleEntry?.(expanded);
-    onToggleSpawnRow(entryId, !expanded);
+    onToggleSpawnRow(entryId, !expanded, props.scientMembers?.[0]?.runId ?? undefined);
   };
 
   return (
-    <div className="flex flex-col">
+    <div className={cn("flex flex-col", props.scientMembers && "min-w-0")}>
       <button
         type="button"
         aria-expanded={expanded}
         onClick={toggleExpanded}
-        className="flex cursor-pointer select-none rounded-md text-left transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className={cn(
+          "flex cursor-pointer select-none rounded-md text-left transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          props.scientMembers && "min-w-0",
+        )}
       >
         <LiveActivityRow
           label={
@@ -178,17 +208,39 @@ const AgentSpawnRow = memo(function AgentSpawnRow(
         />
       </button>
       {expanded ? (
-        <div className="ms-7 mt-0.5 flex flex-col">
-          {agents.map((agent) => (
-            <AgentSpawnMemberRow
-              key={agent.id}
-              agent={agent}
-              onToggleEntry={props.onToggleEntry}
-              WorkingTimer={WorkingTimer}
-              failedToolIconClassName={props.failedToolIconClassName}
-              toolCallExpandedBodyClassName={props.toolCallExpandedBodyClassName}
-            />
-          ))}
+        <div className={cn("ms-7 mt-0.5 flex flex-col", props.scientMembers && "min-w-0")}>
+          {agents.map((agent) => {
+            const member = props.scientMembers?.find((item) => item.subagentId === agent.id);
+            const childThreadId = member?.childThreadId;
+            return (
+              <AgentSpawnMemberRow
+                key={agent.id}
+                agent={agent}
+                scientDetail={
+                  props.scientMembers
+                    ? {
+                        assignment: member?.prompt,
+                        action:
+                          childThreadId && props.onOpenThread ? (
+                            <button
+                              type="button"
+                              aria-label={`Open ${compactScientAgentLabel(agent.title)} thread`}
+                              onClick={() => props.onOpenThread?.(childThreadId)}
+                              className="mb-1 ms-1 max-w-full self-start rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+                            >
+                              Open child thread ›
+                            </button>
+                          ) : null,
+                      }
+                    : undefined
+                }
+                onToggleEntry={props.onToggleEntry}
+                WorkingTimer={WorkingTimer}
+                failedToolIconClassName={props.failedToolIconClassName}
+                toolCallExpandedBodyClassName={props.toolCallExpandedBodyClassName}
+              />
+            );
+          })}
           <button
             type="button"
             onClick={onOpenAgents}

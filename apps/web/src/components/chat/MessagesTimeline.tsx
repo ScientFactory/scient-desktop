@@ -425,7 +425,7 @@ interface TimelineRowSharedState {
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   // SCIENT-FORK:START — agent-spawn rows read their members from the panel model.
-  onToggleSpawnRow: (entryId: string, expanded: boolean) => void;
+  onToggleSpawnRow: (entryId: string, expanded: boolean, runId?: RunId) => void;
   agentPanelModel: AgentPanelModel;
   expandedSpawnEntryIds: ReadonlySet<string>;
   onOpenAgents: () => void;
@@ -807,7 +807,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const expandCitedRun = useCallback((runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   }, []);
-  const onToggleSpawnRow = useCallback((entryId: string, expanded: boolean) => {
+  const onToggleSpawnRow = useCallback((entryId: string, expanded: boolean, runId?: RunId) => {
     setExpandedSpawnEntryIds((current) => {
       if (current.has(entryId) === expanded) return current;
       const next = new Set(current);
@@ -815,6 +815,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       else next.delete(entryId);
       return next;
     });
+    // A reader opening Scient members must not lose them to the parent's fold at settlement.
+    if (expanded && runId !== undefined) {
+      setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
+    }
   }, []);
   // Nested tool state shares the bounded thread-position cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
@@ -3890,7 +3894,11 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
     setExpanded(open);
   };
   // SCIENT-FORK:START — a group the agent panel knows renders as one spawn row.
-  const roster = subagentGroupRoster(ctx.agentPanelModel, members);
+  const roster =
+    subagentGroupRoster(ctx.agentPanelModel, members) ??
+    (members.length > 0 && members.every((member) => member.driver === "scient")
+      ? { workflowId: null, agentTaskIds: members.map((member) => member.subagentId) }
+      : null);
   if (roster) {
     return renderSubagentRosterGroup({
       rowId: row.id,

@@ -330,16 +330,18 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   canRetry: Schema.Boolean,
 });
 
-/** The desktop app's `t3` command on PATH, managed from Settings. */
+/** Scient-owned terminal shortcuts managed from desktop Settings. */
 export const DesktopCliCommandStateSchema = Schema.Struct({
   /** Only installed builds have a launcher to put on PATH. */
   supported: Schema.Boolean,
-  /** The `t3` the app installed, or null when it is not installed. */
+  /** The canonical `scient` shortcut, or null when it is not installed. */
   installedPath: Schema.NullOr(Schema.String),
   /** Whether a new terminal finds it; false when the folder is not on PATH yet. */
   onPath: Schema.Boolean,
+  /** An app-owned legacy PATH installation that Remove can undo. */
+  legacyInstalled: Schema.Boolean,
   /**
-   * Another `t3` a new terminal runs instead, earlier on PATH. Install refuses
+   * Another `scient` a new terminal runs instead, earlier on PATH. Install refuses
    * while it is there, since a link behind it would never run.
    */
   shadowedBy: Schema.optionalKey(Schema.String),
@@ -1291,13 +1293,12 @@ export interface DesktopBridge extends ScientDesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
-  /** Settings → `t3` command. Optional: older desktop builds lack it. */
+  /** Settings → `scient` command. Optional: older desktop builds lack it. */
   cliCommand?: {
     getState: () => Promise<DesktopCliCommandState>;
     install: () => Promise<DesktopCliCommandState>;
     uninstall: () => Promise<DesktopCliCommandState>;
   };
-  /** Present when the desktop shell accepts `t3 app` activation requests. */
   /**
    * Web links the OS opens with T3 Code as the default browser (macOS). The
    * renderer reports when it listens; links queue in the main process until then.
@@ -1306,6 +1307,7 @@ export interface DesktopBridge extends ScientDesktopBridge {
     setReady: (ready: boolean) => Promise<void>;
     onOpen: (listener: (url: string) => void) => () => void;
   };
+  /** Present when the desktop shell accepts `scient app` activation requests. */
   appActivation?: {
     setReady: (ready: boolean) => Promise<void>;
     complete: (response: DesktopAppActivationResponse) => Promise<void>;

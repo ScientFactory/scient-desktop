@@ -519,7 +519,8 @@ const connectLinkCommand = Command.make("link", {
         yield* Console.log("T3 Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
-          const serveCommand = yield* resolveCliCommand("serve");
+          const config = yield* ServerConfig.ServerConfig;
+          const serveCommand = yield* resolveCliCommand(["serve", "--base-dir", config.baseDir]);
           yield* Console.log(
             flags.publishOnly
               ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start T3 to publish agent activity (no managed tunnel).`
@@ -694,7 +695,8 @@ export const connectCommand = Command.make("connect", {
           );
           return;
         }
-        const serveCommand = yield* resolveCliCommand("serve");
+        const config = yield* ServerConfig.ServerConfig;
+        const serveCommand = yield* resolveCliCommand(["serve", "--base-dir", config.baseDir]);
         yield* Console.log(
           `\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
         );

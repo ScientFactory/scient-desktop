@@ -5,6 +5,7 @@ import { SCIENT_DESKTOP_IDENTITY } from "./scientDesktopIdentity.ts";
 describe("Scient desktop identity", () => {
   it("uses the canonical production identity while keeping development and data isolated", () => {
     assert.equal(SCIENT_DESKTOP_IDENTITY.baseName, "Scient");
+    assert.equal(SCIENT_DESKTOP_IDENTITY.cliCommandName, "scient");
     assert.equal(SCIENT_DESKTOP_IDENTITY.developmentName, "Scient (Dev)");
     assert.equal(SCIENT_DESKTOP_IDENTITY.appId, "com.scientfactory.scient");
     assert.equal(SCIENT_DESKTOP_IDENTITY.developmentAppId, "com.scientfactory.scient.next.dev");

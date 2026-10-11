@@ -3220,6 +3220,188 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
+  it.effect(
+    "projects Scient assignment, observations and late result without relabeling the child",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const peer = scriptedOmpRpc({
+            models: [{ provider: "test", id: "selected", input: ["text"] }],
+            initial: { provider: "test", id: "selected" },
+          });
+          peer.state.pendingAsyncWork = true;
+          const h = yield* harness(false, {
+            target: scientAgentTarget,
+            makeProcess: peer.makeProcess,
+          });
+          const prompt =
+            "# Goal\nReview files in full.\n\n# Acceptance\nReport only measured results.";
+          yield* h.runtime.startTurn(h.input);
+          yield* peer.promptDelivered();
+          yield* peer.emit([{ type: "agent_start" }]);
+          yield* peer.emit([
+            {
+              type: "subagent_lifecycle",
+              payload: { id: "scient-child", status: "started", description: "**Review files**" },
+            },
+          ]);
+          const spawned = yield* h.takeUntil((event) => event.type === "subagent.updated");
+          if (spawned.type !== "subagent.updated") return yield* Effect.die("Missing child");
+          assert.equal(spawned.subagent.prompt, "");
+          yield* peer.emit([
+            {
+              type: "subagent_progress",
+              payload: {
+                agent: "reviewer",
+                task: "Review",
+                assignment: prompt,
+                progress: {
+                  id: "scient-child",
+                  status: "running",
+                  lastIntent: "Inspecting behavior",
+                  currentTool: "read",
+                  toolCount: 2,
+                  durationMs: 1400,
+                  tokens: 125,
+                  contextTokens: 20000,
+                  resolvedModelIdentity: "vendor/actual",
+                },
+              },
+            },
+          ]);
+          const observed = yield* h.takeUntil(
+            (event) => event.type === "subagent.updated" && event.subagent.prompt === prompt,
+          );
+          if (observed.type !== "subagent.updated") return yield* Effect.die("Missing observation");
+          assert.equal(observed.subagent.title, "Review files");
+          assert.equal(observed.subagent.model, "vendor/actual");
+          assert.deepEqual(observed.subagent.presentation?.usage, {
+            totalTokens: 125,
+            toolUses: 2,
+            durationMs: 1400,
+          });
+          assert.equal(observed.subagent.presentation?.role, "reviewer");
+          assert.equal(observed.subagent.presentation?.lastToolName, "read");
+          assert.isTrue(
+            h.recorded.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.threadId === spawned.subagent.childThreadId &&
+                event.message.role === "user" &&
+                event.message.text === prompt,
+            ),
+          );
+          yield* peer.finish();
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+          yield* peer.emit([
+            {
+              type: "subagent_progress",
+              payload: { progress: { id: "scient-child", status: "completed" } },
+            },
+            {
+              type: "subagent_lifecycle",
+              payload: { id: "scient-child", status: "completed", output: "Observed two issues." },
+            },
+          ]);
+          const completed = yield* h.takeUntil(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.status === "completed" &&
+              event.subagent.result === "Observed two issues.",
+          );
+          if (completed.type !== "subagent.updated") return yield* Effect.die("Missing completion");
+          assert.equal(completed.subagent.title, "Review files");
+          assert.equal(completed.subagent.prompt, prompt);
+          assert.equal(completed.subagent.progress, "Inspecting behavior");
+          assert.equal(completed.subagent.result, "Observed two issues.");
+          assert.equal(completed.subagent.runId, spawned.subagent.runId);
+          assert.equal(completed.subagent.childThreadId, spawned.subagent.childThreadId);
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "subagent" &&
+              event.turnItem.status === "completed",
+          );
+          const item = h.recorded.findLast(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "subagent",
+          );
+          if (item?.type !== "turn_item.updated" || item.turnItem.type !== "subagent")
+            return yield* Effect.die("Missing terminal item");
+          assert.equal(item.turnItem.prompt, prompt);
+          assert.equal(item.turnItem.progress, "Inspecting behavior");
+          assert.equal(item.turnItem.result, "Observed two issues.");
+          assert.isTrue(
+            h.recorded.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.threadId === spawned.subagent.childThreadId &&
+                event.message.role === "assistant" &&
+                event.message.text === "Observed two issues.",
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.effect(
+    "redacts Scient assignment, activity, label and observed terminal error before projection",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const secret = "synthetic-subagent-credential-abcdefghijk";
+          const peer = scriptedOmpRpc({
+            models: [{ provider: "test", id: "selected", input: ["text"] }],
+            initial: { provider: "test", id: "selected" },
+            environment: { SYNTHETIC_API_KEY: secret },
+          });
+          const h = yield* harness(false, {
+            target: scientAgentTarget,
+            makeProcess: peer.makeProcess,
+          });
+          yield* h.runtime.startTurn(h.input);
+          yield* peer.promptDelivered();
+          yield* peer.emit([
+            {
+              type: "subagent_progress",
+              payload: {
+                agent: `reviewer ${secret}`,
+                assignment: `# Goal\nReview ${secret}`,
+                progress: {
+                  id: "redacted-child",
+                  status: "running",
+                  description: `Review ${secret}`,
+                  currentToolIntent: `Reading ${secret}`,
+                  currentTool: `read ${secret}`,
+                },
+              },
+            },
+            {
+              type: "subagent_progress",
+              payload: { progress: { id: "redacted-child", status: "failed" } },
+            },
+            {
+              type: "subagent_lifecycle",
+              payload: { id: "redacted-child", status: "failed", error: `Failure ${secret}` },
+            },
+          ]);
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.status === "failed" &&
+              event.subagent.result === "Failure [REDACTED]",
+          );
+          const projected = encodeDiagnostic(h.recorded);
+          assert.notInclude(projected, secret);
+          assert.include(projected, "[REDACTED]");
+          const failed = h.recorded.findLast((event) => event.type === "subagent.updated");
+          if (failed?.type !== "subagent.updated") return yield* Effect.die("Missing failure");
+          assert.equal(failed.subagent.result, "Failure [REDACTED]");
+          assert.equal(failed.subagent.progress, "Reading [REDACTED]");
+          assert.equal(failed.subagent.prompt, "# Goal\nReview [REDACTED]");
+        }),
+      ),
+  );
+
   it.effect("refuses an acknowledged model write that did not change native state", () =>
     Effect.scoped(
       Effect.gen(function* () {

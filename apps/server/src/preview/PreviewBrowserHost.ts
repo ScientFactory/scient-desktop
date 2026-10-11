@@ -14,8 +14,8 @@ import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-/** The subcommand that sets the host up; callers render it, with `sudo`, for how T3 was launched. */
-export const SETUP_SUBCOMMAND = "browser setup";
+/** Callers render this host repair with sudo and an explicit profile. */
+export const SETUP_ARGUMENTS = ["browser", "setup"] as const;
 
 /** What Chrome prints before aborting when it cannot sandbox itself. */
 export const NO_SANDBOX_SIGNATURE = "No usable sandbox";
