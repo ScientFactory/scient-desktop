@@ -133,7 +133,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           );
           expect(JSON.parse(output)).toEqual({
             home: baseDir,
-            cli: path.join(baseDir, "bin", "scient"),
+            cli: launcher === oldLink ? legacy : path.join(baseDir, "bin", "scient"),
             args,
           });
         }
@@ -187,7 +187,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const legacy = yield* fs.readFileString(oldLauncher);
       expect(legacy).toContain("SCIENT_NEXT_HOME");
       expect(legacy).toContain("/apps/server/dist/bin.mjs");
-      expect(legacy).toContain(path.join(home, ".scient-next", "bin", "scient"));
+      expect(legacy).toContain(oldLauncher);
       expect(yield* fs.readFileString(unrelated)).toBe("upstream t3\n");
 
       yield* command.uninstall;
@@ -207,6 +207,36 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const command = yield* commandIn({ home });
       expect((yield* command.install).installedPath).not.toBeNull();
       expect(yield* fs.readFileString(legacy)).toBe("someone else's launcher\n");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refreshes the owned legacy launcher when a foreign file blocks scient", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const baseDir = path.join(home, ".scient-next");
+      const canonical = path.join(baseDir, "bin", "scient");
+      const legacy = path.join(baseDir, "bin", "t3");
+      yield* fs.makeDirectory(path.dirname(canonical), { recursive: true });
+      yield* fs.writeFileString(canonical, "foreign scient\n");
+      yield* fs.writeFileString(legacy, `#!/bin/sh\n# ${DesktopCliShim.MARKER}\nexit 127\n`);
+      const command = yield* commandIn({ home });
+      expect((yield* Effect.flip(command.install)).message).toContain(
+        "Could not set up the scient launcher",
+      );
+      expect(yield* fs.readFileString(canonical)).toBe("foreign scient\n");
+      const refreshed = yield* fs.readFileString(legacy);
+      expect(refreshed).toContain("/apps/server/dist/bin.mjs");
+      expect(refreshed).toContain(`export T3CODE_CLI_PATH='${legacy}'`);
+      const backendLauncher = yield* DesktopCliShim.install.pipe(
+        Effect.provideService(
+          DesktopEnvironment.DesktopEnvironment,
+          environmentFor(path, { home, baseDir }),
+        ),
+      );
+      expect(Option.getOrNull(backendLauncher)).toBe(legacy);
+      expect((yield* command.state).installedPath).toBeNull();
     }).pipe(Effect.scoped),
   );
 
@@ -378,7 +408,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect((yield* command.install).installedPath).toBe(path.join(bin, "scient.cmd"));
       expect(registry.writes).toBe(0);
       expect(yield* fs.readFileString(legacy)).toContain("SCIENT_NEXT_HOME");
-      expect(yield* fs.readFileString(legacy)).toContain("scient.cmd");
+      expect(yield* fs.readFileString(legacy)).toContain("t3.cmd");
       yield* command.uninstall;
       expect(registry.path).toBe("C:\\Tools");
     }).pipe(Effect.scoped),

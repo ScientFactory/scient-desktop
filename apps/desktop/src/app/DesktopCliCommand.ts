@@ -190,7 +190,10 @@ export const make = Effect.gen(function* () {
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.fail(fail(`Could not set up the scient launcher at ${launcher}.`)),
-        onSome: () => Effect.void,
+        onSome: (installedLauncher) =>
+          installedLauncher === launcher
+            ? Effect.void
+            : Effect.fail(fail(`Could not set up the scient launcher at ${launcher}.`)),
       }),
     ),
   );

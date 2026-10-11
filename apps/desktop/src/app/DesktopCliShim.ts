@@ -179,7 +179,7 @@ export const install = Effect.gen(function* () {
       yield* logWarning("leaving a CLI launcher the app did not write", { shimPath: launcher });
       return false;
     }
-    const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
+    const content = renderCliShim({ target, shimPath: launcher, t3Home: environment.baseDir });
     if (Option.getOrUndefined(existing) !== content) {
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
       // Rename beside the launcher so an invocation never reads half a file.
@@ -192,15 +192,28 @@ export const install = Effect.gen(function* () {
   });
 
   return yield* Effect.gen(function* () {
-    if (!(yield* writeLauncher(shimPath))) return Option.none<string>();
     // Existing PATH links still point here. Refresh them after app moves/updates,
-    // while directing generated commands to the canonical Scient launcher.
-    yield* writeLauncher(path.join(path.dirname(shimPath), windows ? "t3.cmd" : "t3"), true).pipe(
+    // even if a foreign file blocks the new canonical launcher.
+    const legacyPath = path.join(path.dirname(shimPath), windows ? "t3.cmd" : "t3");
+    const legacyReady = yield* writeLauncher(legacyPath, true).pipe(
       Effect.catchCause((cause) =>
-        logWarning("could not refresh legacy Scient launcher", { cause: Cause.pretty(cause) }),
+        logWarning("could not refresh legacy Scient launcher", { cause: Cause.pretty(cause) }).pipe(
+          Effect.as(false),
+        ),
       ),
     );
-    return Option.some(shimPath);
+    const canonicalReady = yield* writeLauncher(shimPath).pipe(
+      Effect.catchCause((cause) =>
+        logWarning("could not install Scient launcher", { cause: Cause.pretty(cause) }).pipe(
+          Effect.as(false),
+        ),
+      ),
+    );
+    return canonicalReady
+      ? Option.some(shimPath)
+      : legacyReady
+        ? Option.some(legacyPath)
+        : Option.none<string>();
   }).pipe(
     // Best-effort: nothing here may block the backend's start; commands then fall back to plain `scient`.
     Effect.catchCause((cause) =>
