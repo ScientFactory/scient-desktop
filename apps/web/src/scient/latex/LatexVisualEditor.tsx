@@ -7960,11 +7960,14 @@ function LatexVisualEditorReady(
   useLayoutEffect(() => {
     const scroll = visualScroll.current;
     if (!scroll) return;
+    // Fit before the first paint rather than waiting for ResizeObserver delivery.
+    const scale = measureFitZoom();
+    if (scale !== null) setFitZoom(scale);
     return observeLatexWidth(scroll, (width) => {
       const scale = pdfFitWidthScale(width, paperWidth);
       if (scale !== null && Math.round(scale * 100) > 0) setFitZoom(scale);
     });
-  }, [paperWidth]);
+  }, [measureFitZoom, paperWidth]);
 
   const zoom = zoomMode === "fit" ? fitZoom : zoomMode;
   const changeZoom = useLatexPinchZoom(visualScroll, zoom, setZoomMode);

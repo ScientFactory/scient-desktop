@@ -431,7 +431,8 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 20px var(--scient-reader-page-inset, 20px) 72px;
+  /* Like PDF, the centered page's side margins yield to zoomed paper. */
+  padding: 20px 0 72px;
   background: color-mix(in srgb, var(--muted) 78%, var(--background));
   scrollbar-gutter: stable;
   scroll-padding-block: 40px 80px;
@@ -447,6 +448,10 @@
   position: relative;
   flex: none;
   margin: 0 auto;
+  /* A transform can shrink the ink without shrinking its layout overflow.
+     Bound that overflow to the scaled frame, leaving room for page shadows. */
+  overflow-x: clip;
+  overflow-clip-margin: var(--scient-reader-page-inset, 20px);
 }
 .scient-latex-page-stage {
   width: var(--scient-latex-paper-width, 816px);

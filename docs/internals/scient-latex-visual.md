@@ -510,10 +510,14 @@ hidden. Each uses `pdfFitWidthScale` with the same 40 CSS-pixel total page inset
 scrollbar gutter. Visual's physical page width is inches times 96; PDF's page view
 uses the same CSS-pixel baseline. Navigation sidebars use matching widths and
 breakpoints, so matching paper and pane geometry produce matching fit percentages.
+The inset belongs to the fit calculation, not fixed horizontal scroll padding.
+Both surfaces center the paper with margins that shrink as zoom increases;
+horizontal scrolling starts only when the paper exceeds the usable pane width.
 Visual's automatic fit and compiled-artwork widths use `observeLatexWidth`: the
 ResizeObserver content box plus resolved horizontal padding gives the unscaled
 client width, excluding borders and scrollbars. The mount effects install the
-observer without forcing layout; hidden panes retain their last usable dimensions.
+observer; Visual also measures its initial fit before the first paint. Hidden
+panes retain their last usable dimensions.
 Explicit Fit width still measures the current pane immediately. Without
 ResizeObserver, the compatibility measurement runs after an editor paint.
 Each surface supplies its own navigation/search adapter. Visual's sidebar contains Pages and
@@ -529,6 +533,10 @@ natural size and placement when inactive; an overfull equation starts at the tex
 boundary and can extend into the margin.
 The paper's content layer clips at its physical horizontal edges so overfull math
 cannot enlarge the canvas or change the document's outer scroll position.
+The scaled page frame also clips horizontal layout overflow, with room for page
+shadows, so Fit width does not gain an outer scrollbar when math leaves editing.
+Visual, including the Visual pane in Split, measures Fit width before its first
+paint. Fit and manual zoom use the same horizontal scroll boundary as PDF.
 `latexMathViewport.ts` enables horizontal panning only during Visual editing.
 The same padding and natural formula height
 are retained in both modes. Native scrollbars are hidden, so entering a formula
