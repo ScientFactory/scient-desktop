@@ -66,12 +66,13 @@ an SSH session is not enough. If the command cannot reach the app, start or
 update the desktop app and try again. `scient start` and `scient serve` start
 a backend server; use `scient app` to open a project in the running desktop app.
 
-Existing Scient-installed `t3` shortcuts keep working after an update. A
-legacy-only installation offers **Install scient** and **Remove legacy
-shortcut**. **Remove** removes Scient-owned terminal shortcuts, including the
-old `t3` shortcut, and leaves unrelated commands and user-managed PATH entries
-alone. Internal bundled launchers remain available to the app; an update does
-not recreate a removed `t3` terminal shortcut.
+Settings offers **Install scient** when the command is not installed and
+**Remove** when a Scient-owned terminal shortcut exists. A fresh installation
+has nothing to remove. Older Scient-installed `t3` shortcuts are handled
+automatically and keep working after an update; no separate migration action
+is needed. **Remove** cleans up owned shortcuts and leaves unrelated commands
+and user-managed PATH entries alone. Internal bundled launchers remain
+available to the app; an update does not recreate a removed `t3` shortcut.
 
 If another `scient` command would run first, Settings refuses to overwrite or
 hide it and reports its path. Resolve that conflict yourself or run the

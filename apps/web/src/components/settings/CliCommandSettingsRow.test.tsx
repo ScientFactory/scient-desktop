@@ -54,24 +54,44 @@ describe("desktop CLI shortcut actions", () => {
     vi.unstubAllGlobals();
   });
 
-  function button(label: string) {
-    const found = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+  function findButton(label: string) {
+    return [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (candidate) => candidate.textContent?.trim() === label,
     );
+  }
+
+  function button(label: string) {
+    const found = findButton(label);
     if (!found) throw new Error(`Missing action: ${label}`);
     return found;
   }
 
+  it("offers only installation on fresh setup and removal after canonical installation", async () => {
+    state = { supported: true, installedPath: null, onPath: false, legacyInstalled: false };
+    bridge.install.mockImplementation(async () => {
+      state = { ...state, installedPath: "/fixture/bin/scient", onPath: true };
+      return state;
+    });
+    await act(() => root.render(<CliCommandSettingsRow />));
+    expect(findButton("Remove")).toBeUndefined();
+
+    await act(() => button("Install scient").click());
+    expect(findButton("Install scient")).toBeUndefined();
+    expect(button("Remove").disabled).toBe(false);
+
+    await act(() => button("Remove").click());
+    expect(findButton("Remove")).toBeUndefined();
+    expect(button("Install scient").disabled).toBe(false);
+  });
+
   it("allows removing legacy shortcuts when canonical installation fails", async () => {
     await act(() => root.render(<CliCommandSettingsRow />));
     await act(() => button("Install scient").click());
-    expect(notices.add).toHaveBeenCalledOnce();
-    const removeLegacy = button("Remove legacy shortcut");
-    expect(removeLegacy.disabled).toBe(false);
+    const remove = button("Remove");
+    expect(remove.disabled).toBe(false);
 
-    await act(() => removeLegacy.click());
-    expect(bridge.uninstall).toHaveBeenCalledOnce();
-    expect(removeLegacy.isConnected).toBe(false);
+    await act(() => remove.click());
+    expect(findButton("Remove")).toBeUndefined();
     expect(button("Install scient").disabled).toBe(false);
   });
 
@@ -81,16 +101,15 @@ describe("desktop CLI shortcut actions", () => {
       throw new Error("A later legacy shortcut could not be refreshed.");
     });
     await act(() => root.render(<CliCommandSettingsRow />));
-    const removeLegacy = button("Remove legacy shortcut");
     await act(() => button("Install scient").click());
 
-    expect(removeLegacy.isConnected).toBe(false);
+    expect(findButton("Install scient")).toBeUndefined();
     expect(button("Remove").disabled).toBe(false);
     await act(() => button("Remove").click());
     expect(button("Install scient").disabled).toBe(false);
   });
 
-  it("keeps both legacy actions disabled until failure-state reconciliation completes", async () => {
+  it("keeps both actions disabled until failure-state reconciliation completes", async () => {
     let resolveRefresh!: (value: DesktopCliCommandState) => void;
     const refresh = new Promise<DesktopCliCommandState>((resolve) => {
       resolveRefresh = resolve;
@@ -100,12 +119,12 @@ describe("desktop CLI shortcut actions", () => {
     await act(() => button("Install scient").click());
 
     expect(button("Install scient").disabled).toBe(true);
-    expect(button("Remove legacy shortcut").disabled).toBe(true);
-    await act(() => button("Remove legacy shortcut").click());
+    expect(button("Remove").disabled).toBe(true);
+    await act(() => button("Remove").click());
     expect(bridge.uninstall).not.toHaveBeenCalled();
 
     await act(() => resolveRefresh(state));
     expect(button("Install scient").disabled).toBe(false);
-    expect(button("Remove legacy shortcut").disabled).toBe(false);
+    expect(button("Remove").disabled).toBe(false);
   });
 });

@@ -39,7 +39,10 @@ export function CliCommandSettingsRow() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: action === "install" ? "Could not install scient" : "Could not remove scient",
+              title:
+                action === "install"
+                  ? "Could not install scient"
+                  : "Could not remove terminal command",
               description: error instanceof Error ? error.message : "Something went wrong.",
             }),
           );
@@ -55,16 +58,14 @@ export function CliCommandSettingsRow() {
 
   if (!bridge || !state?.supported) return null;
   const installed = state.installedPath !== null;
-  const legacyOnly = !installed && state.legacyInstalled;
+  const removable = installed || state.legacyInstalled;
   const description = state.shadowedBy
-    ? `Another CLI at ${state.shadowedBy} runs first in a new terminal. Remove it to use Scient's.`
-    : legacyOnly
-      ? "An existing Scient-owned `t3` shortcut is installed. Add `scient`, or remove the legacy shortcut."
-      : !installed
-        ? "Run Scient's CLI as `scient` from any terminal."
-        : state.onPath
-          ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
-          : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`scient\`.`;
+    ? `Another CLI at ${state.shadowedBy} runs first in a new terminal. Resolve that conflict to use Scient's command.`
+    : !installed
+      ? "Run Scient's CLI as `scient` from any terminal."
+      : state.onPath
+        ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
+        : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`scient\`.`;
 
   return (
     <SettingsRow
@@ -72,22 +73,24 @@ export function CliCommandSettingsRow() {
       description={description}
       control={
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pending}
-            onClick={() => change(installed ? "uninstall" : "install")}
-          >
-            {installed ? "Remove" : "Install scient"}
-          </Button>
-          {legacyOnly ? (
+          {!installed ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => change("install")}
+            >
+              Install scient
+            </Button>
+          ) : null}
+          {removable ? (
             <Button
               size="sm"
               variant="outline"
               disabled={pending}
               onClick={() => change("uninstall")}
             >
-              Remove legacy shortcut
+              Remove
             </Button>
           ) : null}
         </div>
