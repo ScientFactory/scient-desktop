@@ -196,7 +196,12 @@ captured session has gone, the effect worker requests targeted local settlement 
 same strong native task/thread, provider instance, owning run/turn and root-node bindings.
 That repair ends the exact linked runless child roots and proven nested native descendants,
 whether recorded under the task's node or in its child threads. Each descendant retains the
-native identity, parent/root/run/provider/turn and child-lineage fences. A workflow coordinator's
+native identity, parent/root/run/provider/turn and child-lineage fences. A run-bound descendant
+proves its own run, attempt, native session/thread/turn and root ownership within the captured
+run-ordinal horizon; a resumed coordinator's retained launch root is not substituted for that
+descendant's current root. Terminal intermediate tasks stay terminal while their active
+descendants are reached through compact native items, without loading the full message history.
+A workflow coordinator's
 runless member rows use the same exact coordinator/member/node ownership predicates as native
 event routing; those members do not carry independent native task identities. The repair does
 not interrupt the parent, settle siblings, admit weak native tasks or frozen nodes, stop

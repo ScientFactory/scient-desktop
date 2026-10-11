@@ -47,6 +47,8 @@ const stopEarlierBackgroundWork = ({
   olderStart = false,
   stalledRun,
   nativeStop,
+  nativeResume = false,
+  nativeTerminalParent = false,
 }: {
   readonly failedStart?: boolean;
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
@@ -58,6 +60,8 @@ const stopEarlierBackgroundWork = ({
     | "returned-interrupt-terminal"
     | "superseded-attempt";
   readonly nativeStop?: "released" | "live" | "nonretryable";
+  readonly nativeResume?: boolean;
+  readonly nativeTerminalParent?: boolean;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -197,6 +201,39 @@ const stopEarlierBackgroundWork = ({
           createdBy: "user",
           creationSource: "web",
         });
+        const launchRunId = RunId.make("run:native-coordinator-launch");
+        const launchRootId = NodeId.make("node:native-coordinator-launch-root");
+        if (nativeResume) {
+          const completedAt = yield* DateTime.now;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("fixture:native-launch-run"),
+                type: "run.updated",
+                threadId,
+                runId: launchRunId,
+                occurredAt: completedAt,
+                payload: {
+                  id: launchRunId,
+                  threadId,
+                  ordinal: 1,
+                  providerInstanceId: instanceId,
+                  modelSelection,
+                  providerThreadId: null,
+                  userMessageId: MessageId.make("message:native-coordinator-launch"),
+                  rootNodeId: launchRootId,
+                  activeAttemptId: null,
+                  status: "completed",
+                  requestedAt: completedAt,
+                  startedAt: completedAt,
+                  completedAt,
+                  checkpointId: null,
+                  contextHandoffId: null,
+                },
+              },
+            ],
+          });
+        }
         const running = yield* watch(
           (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
         );
@@ -213,14 +250,26 @@ const stopEarlierBackgroundWork = ({
         });
         yield* worker.drain();
         yield* Fiber.join(running);
-        const first = started[0]!;
-        const codexTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        const first = started.at(-1)!;
+        const codexTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
+          (turn) => turn.runAttemptId === first.attemptId,
+        )!;
         const devServerId = TurnItemId.make("turn-item:dev-server");
         const now = yield* DateTime.now;
         if (nativeStop !== undefined) {
           const before = yield* orchestrator.getThreadProjection(threadId);
-          const run = before.runs[0]!;
+          const run = before.runs.find((candidate) => candidate.id === first.runId)!;
           const ownerRoot = before.nodes.find((node) => node.id === run.rootNodeId)!;
+          const launchRoot = nativeResume
+            ? {
+                ...ownerRoot,
+                id: launchRootId,
+                rootNodeId: launchRootId,
+                runId: launchRunId,
+                status: "completed" as const,
+                completedAt: now,
+              }
+            : ownerRoot;
           const ownerThread = before.providerThreads.find(
             (thread) => thread.id === first.providerThread.id,
           )!;
@@ -234,7 +283,7 @@ const stopEarlierBackgroundWork = ({
             id: taskId,
             threadId,
             runId: run.id,
-            parentNodeId: ownerRoot.id,
+            parentNodeId: launchRoot.id,
             origin: "provider_native",
             createdBy: "agent",
             driver,
@@ -253,6 +302,27 @@ const stopEarlierBackgroundWork = ({
             presentation: { kind: "workflow" },
           };
           const fixtureEvents: OrchestrationV2DomainEvent[] = [];
+          if (nativeResume) {
+            fixtureEvents.push({
+              id: EventId.make("fixture:native-launch-root"),
+              type: "node.updated",
+              threadId,
+              nodeId: launchRootId,
+              occurredAt: now,
+              payload: launchRoot,
+            });
+            fixtureEvents.push({
+              id: EventId.make("fixture:native-launch-owner"),
+              type: "run.updated",
+              threadId,
+              runId: launchRunId,
+              occurredAt: now,
+              payload: {
+                ...before.runs.find((candidate) => candidate.id === launchRunId)!,
+                providerThreadId: ownerThread.id,
+              },
+            });
+          }
           const appendNativeFixture = (
             nativeTask: OrchestrationV2Subagent,
             childRootId: NodeId,
@@ -271,6 +341,9 @@ const stopEarlierBackgroundWork = ({
               parentNodeId: nativeTask.parentNodeId,
               providerTurnId: nativeTurnId,
               nativeItemRef: nativeTask.nativeTaskRef,
+              status: nativeTask.status,
+              startedAt: nativeTask.startedAt,
+              completedAt: nativeTask.completedAt,
             };
             const nativeItem = {
               id: TurnItemId.make(`item:${nativeTask.id}`),
@@ -283,10 +356,10 @@ const stopEarlierBackgroundWork = ({
               nativeItemRef: nativeTask.nativeTaskRef,
               parentItemId: null,
               ordinal: fixtureEvents.length + 100,
-              status: "running" as const,
+              status: nativeTask.status,
               title: null,
-              startedAt: now,
-              completedAt: null,
+              startedAt: nativeTask.startedAt,
+              completedAt: nativeTask.completedAt,
               updatedAt: now,
               subagentId: nativeTask.id,
               origin: "provider_native" as const,
@@ -373,10 +446,10 @@ const stopEarlierBackgroundWork = ({
                   nativeItemRef: null,
                   parentItemId: null,
                   ordinal: 100,
-                  status: "running",
+                  status: nativeTask.status,
                   title: null,
-                  startedAt: now,
-                  completedAt: null,
+                  startedAt: nativeTask.startedAt,
+                  completedAt: nativeTask.completedAt,
                   updatedAt: now,
                   toolName: "synthetic-work",
                   input: "Keep working",
@@ -389,13 +462,14 @@ const stopEarlierBackgroundWork = ({
             task,
             childRootId,
             before.thread,
-            ownerRoot,
+            launchRoot,
             codexTurn.id,
           );
           appendNativeFixture(
             {
               ...task,
               id: siblingId,
+              parentNodeId: ownerRoot.id,
               childThreadId: siblingThreadId,
               nativeTaskRef: { driver, nativeId: "sibling-native-task", strength: "strong" },
             },
@@ -405,21 +479,43 @@ const stopEarlierBackgroundWork = ({
             codexTurn.id,
           );
           const descendants = [];
-          descendants.push(
-            appendNativeFixture(
-              {
-                ...task,
-                id: NodeId.make("node:direct-native-descendant"),
-                parentNodeId: task.id,
-                childThreadId: ThreadId.make("thread:direct-native-descendant"),
-                nativeTaskRef: { driver, nativeId: "direct-native-descendant", strength: "strong" },
-              },
-              NodeId.make("node:direct-native-descendant-root"),
-              before.thread,
-              ownerRoot,
-              codexTurn.id,
-            ),
+          const directFixture = appendNativeFixture(
+            {
+              ...task,
+              id: NodeId.make("node:direct-native-descendant"),
+              parentNodeId: task.id,
+              childThreadId: ThreadId.make("thread:direct-native-descendant"),
+              nativeTaskRef: { driver, nativeId: "direct-native-descendant", strength: "strong" },
+              status: nativeTerminalParent ? "completed" : "running",
+              completedAt: nativeTerminalParent ? now : null,
+            },
+            NodeId.make("node:direct-native-descendant-root"),
+            before.thread,
+            ownerRoot,
+            codexTurn.id,
           );
+          descendants.push(directFixture);
+          if (nativeTerminalParent) {
+            descendants.push(
+              appendNativeFixture(
+                {
+                  ...task,
+                  id: NodeId.make("node:behind-settled-native-parent"),
+                  parentNodeId: directFixture.task.id,
+                  childThreadId: ThreadId.make("thread:behind-settled-native-parent"),
+                  nativeTaskRef: {
+                    driver,
+                    nativeId: "behind-settled-native-parent",
+                    strength: "strong",
+                  },
+                },
+                NodeId.make("node:behind-settled-native-parent-root"),
+                before.thread,
+                ownerRoot,
+                codexTurn.id,
+              ),
+            );
+          }
           const nestedFixture = appendNativeFixture(
             {
               ...task,
@@ -429,6 +525,8 @@ const stopEarlierBackgroundWork = ({
               parentNodeId: childRootId,
               childThreadId: ThreadId.make("thread:child-native-descendant"),
               nativeTaskRef: { driver, nativeId: "child-native-descendant", strength: "strong" },
+              status: nativeTerminalParent ? "completed" : "running",
+              completedAt: nativeTerminalParent ? now : null,
             },
             NodeId.make("node:child-native-descendant-root"),
             mainFixture.childThread,
@@ -743,26 +841,28 @@ const stopEarlierBackgroundWork = ({
           for (const fixture of descendants) {
             const parentProjection = yield* orchestrator.getThreadProjection(fixture.task.threadId);
             const childProjection = yield* orchestrator.getThreadProjection(fixture.childThread.id);
+            const descendantStatus =
+              fixture.task.status === "completed" ? "completed" : expectedStatus;
             assert.equal(
               parentProjection.subagents.find((entry) => entry.id === fixture.task.id)!.status,
-              expectedStatus,
+              descendantStatus,
             );
             assert.equal(
               parentProjection.nodes.find((entry) => entry.id === fixture.task.id)!.status,
-              expectedStatus,
+              descendantStatus,
             );
             assert.equal(
               parentProjection.turnItems.find((entry) => entry.nodeId === fixture.task.id)!.status,
-              expectedStatus,
+              descendantStatus,
             );
             assert.equal(
               childProjection.nodes.find((entry) => entry.id === fixture.childRoot.id)!.status,
-              expectedStatus,
+              descendantStatus,
             );
             assert.equal(
               childProjection.turnItems.find((entry) => entry.nodeId === fixture.childRoot.id)!
                 .status,
-              expectedStatus,
+              descendantStatus,
             );
             descendantStopped.push(childProjection);
           }
@@ -1672,4 +1772,12 @@ it.effect.each([
 it.effect.each(["released", "live", "nonretryable"] as const)(
   "a native child Stop preserves its parent and siblings after %s provider control",
   (nativeStop) => stopEarlierBackgroundWork({ nativeStop }),
+);
+
+it.effect("Stop settles native descendants launched after their coordinator resumes", () =>
+  stopEarlierBackgroundWork({ nativeStop: "released", nativeResume: true }),
+);
+
+it.effect("Stop reaches active native descendants behind settled native parents", () =>
+  stopEarlierBackgroundWork({ nativeStop: "released", nativeTerminalParent: true }),
 );

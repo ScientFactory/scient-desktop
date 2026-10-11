@@ -54,6 +54,7 @@ import {
   ProviderInstanceId,
   ProviderInteractionMode,
   type ProviderSessionId,
+  type ProviderTurnId,
   RunId,
   RuntimeMode,
   ThreadLinkedPullRequest,
@@ -9546,16 +9547,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "turnItems",
             "providerThreads",
           ],
-          {
-            turnItemTypes: [
-              "command_execution",
-              "dynamic_tool",
-              "subagent",
-              "assistant_message",
-              "reasoning",
-            ],
-            turnItemStatuses: ["pending", "running", "waiting"],
-          },
+          command.subagent === undefined
+            ? {
+                turnItemTypes: [
+                  "command_execution",
+                  "dynamic_tool",
+                  "subagent",
+                  "assistant_message",
+                  "reasoning",
+                ],
+                turnItemStatuses: ["pending", "running", "waiting"],
+              }
+            : { turnItemTypes: ["subagent"] },
         ),
         projectionStore.getProviderControlContext(command.threadId, {
           providerThreadId: command.providerThreadId,
@@ -9646,6 +9649,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ) {
           return;
         }
+        const nativeThreadId = owner.nativeThreadRef.nativeId;
         const allocateEventId = () =>
           idAllocator.allocate.event({
             threadId: command.threadId,
@@ -9661,67 +9665,145 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           readonly node: OrchestrationV2ThreadProjection["nodes"][number];
         }> = [{ projection, task, node }];
         const visitedTasks = new Set<NodeId>([task.id]);
+        const nativeTurns = new Map<ProviderTurnId, typeof stopped>([[turn.id, stopped]]);
+        const getNativeTurn = (providerTurnId: ProviderTurnId) =>
+          Effect.gen(function* () {
+            const cached = nativeTurns.get(providerTurnId);
+            if (cached !== undefined) return cached;
+            const context = yield* projectionStore
+              .getProviderControlContext(command.threadId, {
+                providerThreadId: owner.id,
+                providerTurnId,
+              })
+              .pipe(mapDispatchError(command));
+            nativeTurns.set(providerTurnId, context);
+            return context;
+          });
         const enqueueDescendants = (
           current: NativeProjection,
           parent: OrchestrationV2ThreadProjection["nodes"][number],
           coordinator: OrchestrationV2Subagent,
-        ) => {
-          for (const nested of current.subagents) {
-            if (
-              visitedTasks.has(nested.id) ||
-              nested.origin !== "provider_native" ||
-              nested.threadId !== parent.threadId ||
-              nested.parentNodeId !== parent.id ||
-              nested.driver !== task.driver ||
-              nested.providerInstanceId !== task.providerInstanceId
-            ) {
-              continue;
-            }
-            const nestedNode = current.nodes.find((candidate) => candidate.id === nested.id);
-            if (
-              nestedNode !== undefined &&
-              isWorkflowMemberOwnedBy(nested, coordinator, task.driver) &&
-              isWorkflowMemberNode(nestedNode, nested, task.driver)
-            ) {
+        ) =>
+          Effect.gen(function* () {
+            for (const nested of current.subagents) {
+              if (
+                visitedTasks.has(nested.id) ||
+                nested.origin !== "provider_native" ||
+                nested.threadId !== parent.threadId ||
+                nested.parentNodeId !== parent.id ||
+                nested.driver !== task.driver ||
+                nested.providerInstanceId !== task.providerInstanceId
+              ) {
+                continue;
+              }
+              const nestedNode = current.nodes.find((candidate) => candidate.id === nested.id);
+              if (
+                nestedNode !== undefined &&
+                isWorkflowMemberOwnedBy(nested, coordinator, task.driver) &&
+                isWorkflowMemberNode(nestedNode, nested, task.driver)
+              ) {
+                visitedTasks.add(nested.id);
+                dying.push({ projection: current, task: nested, node: nestedNode });
+                continue;
+              }
+              const nestedItem = current.turnItems.find(
+                (candidate) => candidate.type === "subagent" && candidate.subagentId === nested.id,
+              );
+              if (
+                nested.nativeTaskRef?.driver !== task.driver ||
+                nested.nativeTaskRef.strength !== "strong" ||
+                nested.nativeTaskRef.nativeId === null ||
+                nestedNode?.kind !== "subagent" ||
+                nestedNode.threadId !== nested.threadId ||
+                nestedNode.runId !== nested.runId ||
+                nestedNode.parentNodeId !== parent.id ||
+                nestedNode.nativeItemRef?.driver !== task.driver ||
+                nestedNode.nativeItemRef.strength !== "strong" ||
+                nestedNode.nativeItemRef.nativeId !== nested.nativeTaskRef.nativeId ||
+                nestedItem?.type !== "subagent" ||
+                nestedItem.origin !== "provider_native" ||
+                nestedItem.threadId !== nested.threadId ||
+                nestedItem.runId !== nested.runId ||
+                nestedItem.nodeId !== nested.id ||
+                nestedItem.providerThreadId !== nestedNode.providerThreadId ||
+                nestedItem.providerTurnId !== nestedNode.providerTurnId ||
+                nestedItem.driver !== task.driver ||
+                nestedItem.providerInstanceId !== task.providerInstanceId ||
+                nestedItem.childThreadId !== nested.childThreadId
+              ) {
+                continue;
+              }
+              if (parent.runId === null) {
+                if (
+                  nested.runId !== null ||
+                  nestedNode.rootNodeId !== parent.rootNodeId ||
+                  nestedNode.providerThreadId !== parent.providerThreadId ||
+                  nestedNode.providerTurnId !== parent.providerTurnId
+                ) {
+                  continue;
+                }
+              } else {
+                // A resumed coordinator keeps its launch root. A new descendant
+                // belongs to its own run/root/turn, not that historical root.
+                const nestedRun = projection.runs.find(
+                  (candidate) => candidate.id === nested.runId,
+                );
+                const nestedRoot = current.nodes.find(
+                  (candidate) => candidate.id === nestedNode.rootNodeId,
+                );
+                const rootRun = projection.runs.find(
+                  (candidate) => candidate.id === nestedRoot?.runId,
+                );
+                if (
+                  nested.threadId !== command.threadId ||
+                  nestedRun === undefined ||
+                  nestedRun.providerThreadId !== owner.id ||
+                  nestedRun.providerInstanceId !== owner.providerInstanceId ||
+                  nestedRun.ordinal > stoppedRun.ordinal ||
+                  nestedRoot?.kind !== "root_turn" ||
+                  nestedRoot.threadId !== command.threadId ||
+                  nestedRoot.rootNodeId !== nestedRoot.id ||
+                  nestedRoot.runId === null ||
+                  nestedRoot.providerThreadId !== owner.id ||
+                  rootRun === undefined ||
+                  rootRun.rootNodeId !== nestedRoot.id ||
+                  rootRun.providerThreadId !== owner.id ||
+                  rootRun.providerInstanceId !== owner.providerInstanceId ||
+                  rootRun.ordinal > nestedRun.ordinal ||
+                  nestedNode.providerThreadId !== owner.id ||
+                  nestedNode.providerTurnId === null
+                ) {
+                  continue;
+                }
+                const native = yield* getNativeTurn(nestedNode.providerTurnId);
+                const nativeTurn = native.providerTurn;
+                const nativeOwner = native.providerThread;
+                const nestedAttempt = projection.attempts.find(
+                  (candidate) => candidate.id === nativeTurn?.runAttemptId,
+                );
+                if (
+                  nativeOwner?.id !== owner.id ||
+                  nativeOwner.appThreadId !== command.threadId ||
+                  nativeOwner.providerInstanceId !== owner.providerInstanceId ||
+                  nativeOwner.providerSessionId !== target.providerSessionId ||
+                  nativeOwner.driver !== owner.driver ||
+                  nativeOwner.nativeThreadRef?.driver !== owner.driver ||
+                  nativeOwner.nativeThreadRef.strength !== "strong" ||
+                  nativeOwner.nativeThreadRef.nativeId !== nativeThreadId ||
+                  nativeTurn?.id !== nestedNode.providerTurnId ||
+                  nativeTurn.providerThreadId !== owner.id ||
+                  nativeTurn.nodeId !== nestedRun.rootNodeId ||
+                  nestedAttempt?.runId !== nestedRun.id ||
+                  (["preparing", "starting", "running"].includes(nestedRun.status) &&
+                    nestedRun.activeAttemptId !== nativeTurn.runAttemptId)
+                ) {
+                  continue;
+                }
+              }
               visitedTasks.add(nested.id);
               dying.push({ projection: current, task: nested, node: nestedNode });
-              continue;
             }
-            const nestedItem = current.turnItems.find(
-              (candidate) => candidate.type === "subagent" && candidate.subagentId === nested.id,
-            );
-            if (
-              nested.runId !== parent.runId ||
-              nested.nativeTaskRef?.driver !== task.driver ||
-              nested.nativeTaskRef.strength !== "strong" ||
-              nested.nativeTaskRef.nativeId === null ||
-              nestedNode?.kind !== "subagent" ||
-              nestedNode.threadId !== nested.threadId ||
-              nestedNode.runId !== nested.runId ||
-              nestedNode.parentNodeId !== parent.id ||
-              nestedNode.rootNodeId !== parent.rootNodeId ||
-              nestedNode.providerThreadId !== parent.providerThreadId ||
-              nestedNode.providerTurnId !== parent.providerTurnId ||
-              nestedNode.nativeItemRef?.driver !== task.driver ||
-              nestedNode.nativeItemRef.strength !== "strong" ||
-              nestedNode.nativeItemRef.nativeId !== nested.nativeTaskRef.nativeId ||
-              nestedItem?.type !== "subagent" ||
-              nestedItem.origin !== "provider_native" ||
-              nestedItem.threadId !== nested.threadId ||
-              nestedItem.runId !== nested.runId ||
-              nestedItem.nodeId !== nested.id ||
-              nestedItem.providerThreadId !== parent.providerThreadId ||
-              nestedItem.providerTurnId !== parent.providerTurnId ||
-              nestedItem.driver !== task.driver ||
-              nestedItem.providerInstanceId !== task.providerInstanceId ||
-              nestedItem.childThreadId !== nested.childThreadId
-            ) {
-              continue;
-            }
-            visitedTasks.add(nested.id);
-            dying.push({ projection: current, task: nested, node: nestedNode });
-          }
-        };
+          });
         // Only this native task's proven descendants die with its absent process.
         // Parent/sibling work and child-thread user runs keep their own authority.
         for (const current of dying) {
@@ -9734,7 +9816,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             allocateEventId,
           }).pipe(mapDispatchError(command));
           yield* Ref.update(events, (existing) => [...existing, ...ended]);
-          enqueueDescendants(current.projection, current.node, current.task);
+          yield* enqueueDescendants(current.projection, current.node, current.task);
           const childThreadId = current.task.childThreadId;
           if (childThreadId === null) continue;
           const child = yield* projectionStore
@@ -9777,7 +9859,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             allocateEventId,
           }).pipe(mapDispatchError(command));
           yield* Ref.update(events, (existing) => [...existing, ...childEnded]);
-          for (const childRoot of childRoots) enqueueDescendants(child, childRoot, current.task);
+          if (childRoots.length === 0 || child.subagents.length === 0) continue;
+          // Settled intermediate tasks can still own active descendants. Load
+          // their compact native items too, never the child's full message history.
+          const nativeItems = yield* projectionStore
+            .getThreadRecords(child.thread.id, ["turnItems"], {
+              turnItemTypes: ["subagent"],
+              turnItemRunIds: [null],
+            })
+            .pipe(mapDispatchError(command));
+          const nativeChild: NativeProjection = {
+            nodes: child.nodes,
+            subagents: child.subagents,
+            turnItems: nativeItems.turnItems,
+          };
+          for (const childRoot of childRoots) {
+            yield* enqueueDescendants(nativeChild, childRoot, current.task);
+          }
         }
         return;
       }
