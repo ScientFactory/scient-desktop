@@ -762,6 +762,26 @@ describe("workEntryViewedImagePath", () => {
 });
 
 describe("toolGroupAction", () => {
+  it.each(["Edit", "Write", "MultiEdit"])(
+    "groups structured native %s calls as edits without changed-file metadata",
+    (toolName) => {
+      expect(
+        toolGroupAction({
+          id: "native-edit",
+          createdAt: "2026-10-11T00:00:00Z",
+          label: "Tool call",
+          tone: "tool",
+          itemType: "dynamic_tool",
+          structuredPayload: {
+            type: "dynamic_tool",
+            toolName,
+            input: { file_path: "src/example.ts" },
+          } as NonNullable<WorkLogPresentationEntry["structuredPayload"]>,
+        }),
+      ).toBe("edit");
+    },
+  );
+
   it("groups legacy Claude image reads with other reads", () => {
     expect(
       toolGroupAction({

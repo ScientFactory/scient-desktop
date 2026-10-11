@@ -3454,32 +3454,84 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-v2-event-disclosure="true"');
   });
 
-  it("marks an agent's own tool with the one-colour Scient symbol", () => {
+  it.each([
+    ["single row", 1, false],
+    ["collapsed group", 2, false],
+    ["expanded group", 2, true],
+  ] as const)("marks generic dynamic tools with a wrench in a %s", (_name, count, expanded) => {
+    activityTestState.expanded = expanded;
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
+        timelineEntries={Array.from({ length: count }, (_, index) => ({
+          id: `entry-dynamic-tool-${index}`,
+          kind: "work" as const,
+          createdAt: MESSAGE_CREATED_AT,
+          entry: {
+            id: `work-dynamic-tool-${index}`,
+            createdAt: MESSAGE_CREATED_AT,
+            toolCallId: `call-dynamic-tool-${index}`,
+            label: "lsp",
+            toolTitle: "lsp",
+            tone: "tool" as const,
+            itemType: "dynamic_tool" as const,
+            toolLifecycleStatus: "completed" as const,
+          },
+        }))}
+      />,
+    );
+
+    expect(markup.match(/\blucide-wrench\b/g)).toHaveLength(expanded ? count + 1 : 1);
+    expect(markup).not.toContain('data-scient-symbol="mono"');
+    expect(markup).not.toContain("lucide-hammer");
+    expect(markup).not.toContain("lucide-blocks");
+  });
+
+  it.each([
+    ["Edit", "completed"],
+    ["Write", "completed"],
+    ["MultiEdit", "completed"],
+    ["Edit", "inProgress"],
+    ["Write", "inProgress"],
+    ["MultiEdit", "inProgress"],
+  ] as const)("marks native %s calls with a pencil while %s", (toolName, status) => {
+    activityTestState.expandedRuns = true;
+    const working = status === "inProgress";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking={working}
+        activeTurnInProgress={working}
+        latestRun={{
+          runId: RunId.make("run-1"),
+          status: working ? "running" : "completed",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: working ? null : MESSAGE_CREATED_AT,
+        }}
         timelineEntries={[
           {
-            id: "entry-dynamic-tool",
+            id: "entry-native-edit",
             kind: "work",
             createdAt: MESSAGE_CREATED_AT,
             entry: {
-              id: "work-dynamic-tool",
+              id: "work-native-edit",
+              runId: RunId.make("run-1"),
               createdAt: MESSAGE_CREATED_AT,
-              toolCallId: "call-dynamic-tool",
-              label: "lsp",
-              toolTitle: "lsp",
+              label: toolName,
+              toolTitle: toolName,
+              toolData: { toolName, input: { file_path: "src/example.ts" } },
               tone: "tool",
               itemType: "dynamic_tool",
-              toolLifecycleStatus: "completed",
+              toolLifecycleStatus: status,
             },
           },
         ]}
       />,
     );
 
-    expect(markup).toContain('data-scient-symbol="mono"');
-    expect(markup).not.toContain("lucide-hammer");
+    expect(markup).toContain("lucide-pencil");
+    expect(markup).not.toContain("lucide-wrench");
+    expect(markup).not.toContain('data-scient-symbol="mono"');
   });
 
   it("keeps inherited V2 work provenance on the rendered row", async () => {
@@ -3624,8 +3676,8 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    // Known historical MCP namespaces retain the current Scient product symbol.
-    expect(markup).toContain("scient-symbol.svg");
+    // Known historical MCP namespaces use the current Scient trace symbol.
+    expect(markup).toContain("scient-trace-symbol.svg");
     expect(markup).toContain("Read a Scient thread");
     expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
   });
@@ -3998,6 +4050,11 @@ describe("MessagesTimeline", () => {
           )[0]!;
         await act(() => row().props.onClick());
         expect(renderer!.root.findAllByType("strong")).toHaveLength(strongCount);
+        expect(
+          renderer!.root.findAll(
+            (node) => node.type === "div" && node.props["data-scient-reasoning-trace"] === true,
+          ),
+        ).toHaveLength(1);
         await act(() => row().props.onClick());
         expect(previewText()).toContain(expected);
         expect(renderer!.root.findAllByType("strong")).toHaveLength(0);

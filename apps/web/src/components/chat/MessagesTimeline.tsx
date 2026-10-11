@@ -151,14 +151,14 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
-import { ScientSymbol, ScientSymbolMono } from "../ScientSymbol";
+import { ScientTraceSymbol, ScientTraceSymbolMono } from "./ScientTraceSymbol";
+import "../../scient/presentation/scient-reasoning-trace.css";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
 
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
-  BlocksIcon,
   BookOpenIcon,
   BotIcon,
   CheckIcon,
@@ -4741,7 +4741,7 @@ function toolGroupSummaryIconName(
     case "other":
       return "wrench";
     case "dynamic-tool":
-      return "scient-mono";
+      return "wrench";
     case "reasoning":
       return "brain";
     case "agent-tool":
@@ -5800,9 +5800,9 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <SmartphoneIcon className={className} aria-hidden />;
     case "t3-code":
     case "scient":
-      return <ScientSymbol className={className} />;
+      return <ScientTraceSymbol className={className} />;
     case "scient-mono":
-      return <ScientSymbolMono className={className} />;
+      return <ScientTraceSymbolMono className={className} />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":
@@ -5830,7 +5830,7 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "terminal":
       return <SquareTerminalLowered className={className} aria-hidden />;
     case "wrench":
-      return <BlocksIcon className={className} aria-hidden />;
+      return <WrenchIcon className={className} aria-hidden />;
     case "x":
       return <CircleXIcon className={className} aria-hidden />;
     case "zap":
@@ -5969,7 +5969,7 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
 
   switch (workEntry.itemType) {
     case "dynamic_tool":
-      return "scient-mono";
+      return "wrench";
     case "subagent":
       return "bot";
   }
@@ -6005,7 +6005,7 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
   return (
-    <WorkLogDetails>
+    <WorkLogDetails kind="reasoning">
       {entries.map((entry) => (
         <ChatMarkdown
           key={entry.id}
