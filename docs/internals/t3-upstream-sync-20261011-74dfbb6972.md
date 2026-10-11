@@ -98,9 +98,17 @@ Screenshots: [native scientific reader](assets/t3-sync-20261011/native-scientifi
 
 ## Evidence reuse and publication boundary
 
-Runtime evidence is pinned to `f67d1ca39a638110120b359ed9ecb4d68fdbdbbd`. Subsequent changes publish this receipt, visual assets and the integration pointers only; unchanged runtime tests/builds are reused under protocol §5.3. Hosted CI qualifies the exact pushed final revision separately. Existing optional-native/account skips and optional x11/Effect CJS build warnings are not converted into passing platform claims.
+Runtime evidence is pinned to `f67d1ca39a638110120b359ed9ecb4d68fdbdbbd`. Initial publication changes were this receipt, visual assets and integration pointers. Hosted CI then identified one obsolete, unconsumed re-export in the Pi testing entry point; removing it does not change the production server entry point, adapter, driver or Scient factory. Unchanged runtime tests/builds are reused under protocol §5.3, with targeted verification of the testing-surface cleanup below. Hosted CI qualifies each exact pushed revision separately. Existing optional-native/account skips and optional x11/Effect CJS build warnings are not converted into passing platform claims.
 
 The new layer is stacked on PR #498's branch. The parent PR is not mutated. Open the new PR ready for review after final metadata/provenance checks, keep auto-merge disabled, and do not merge, release, publish or clean its worktree. The isolated native candidate remains open for the user's review and approval. User visual approval is separate from this agent's visual review.
+
+## Hosted CI and narrow testing-surface cleanup
+
+On `cfc55284361c6cc1d0c776202d5d9223d96e48c2`, workspace, all web/server shards, layout, Rust, release smoke, native Compute/toolkits across Linux/macOS/Windows, Windows packaging and remote-server packaging/install jobs passed. Documentation and upstream provenance passed. Both cancelled labeling jobs passed their targeted retries.
+
+The [thread-transfer report](https://github.com/ScientFactory/scient-desktop/pull/513#issuecomment-6105532618) passed every enforced ceiling for Codex and Claude on that exact head. No successful `main` baseline was available: this proves absolute ceilings, not a relative improvement.
+
+The remaining `Check` failure was the unused `makePiAdapterV2` re-export in `packages/provider-pi/src/testing.ts` after server consumers migrated to Scient's test factory. Repository reference search confirms direct consumers retain the production/server export or internal implementation. Remove only that obsolete testing re-export; do not suppress Knip or change the adapter implementation. Local verification after removal: the exact two-stage `knip:check` passed with zero cache hits; all 242 Pi provider tests in 14 files passed. The next pushed head requires its own hosted CI result.
 
 ## Complete official commit inventory
 
