@@ -1,0 +1,4 @@
+/* Expanded thoughts keep their Markdown layout at the surrounding text weight. */
+[data-scient-reasoning-trace] .chat-markdown :is(b, strong, h1, h2, h3, h4, h5, h6) {
+  font-weight: inherit;
+}
