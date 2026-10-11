@@ -114,6 +114,14 @@ import { prepareLatexDocument } from "./prepareLatexDocument";
 import { latexDocumentInputs } from "./latexDocumentInputs";
 import { useLatexAutoBuild } from "./useLatexAutoBuild";
 import { observeLatexHeaderFit } from "./observeLatexHeaderFit";
+import { LatexCompilerControl, LatexCompilerMenuItems } from "./LatexCompilerControl";
+import { changeLatexDocumentCompiler } from "./changeLatexDocumentCompiler";
+import { useLatexDocumentCompiler } from "./useLatexDocumentCompiler";
+import {
+  declaredLatexCompiler,
+  isLatexCompilerUnavailable,
+  type LatexCompilerChoice,
+} from "./latexCompiler";
 
 import "./scient-latex.css";
 
@@ -346,6 +354,7 @@ const HEADER_FIT_STEPS = [
   "page",
   "sidebar",
   "status",
+  "compiler",
   "search-short",
   "split",
   "search-icon",
@@ -1006,7 +1015,37 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     return result;
   }, [target, props.truncated, persistence]);
   const pdfVisible = activePreview === "pdf";
+  const compilerSource = useSyncExternalStore(
+    persistence?.subscribe ?? noSubscription,
+    () => persistence?.getSnapshot().draftSource ?? props.contents,
+  );
+  const compilerState = useLatexDocumentCompiler({
+    target,
+    selectedPath: props.relativePath,
+    selectedSource: compilerSource,
+    refreshKey: build.toolchain?.probedAtEpochMs ?? null,
+    offline: status.offline,
+  });
+  const selectedCompiler =
+    compilerState.source === null ? null : declaredLatexCompiler(compilerState.source);
+  const compilerUnavailable =
+    !status.offline &&
+    selectedCompiler !== null &&
+    isLatexCompilerUnavailable(compilerState.report, selectedCompiler);
   const buildBlocked = props.truncated || sourceNeedsAttention || visualProjectState.error !== null;
+  const [changingCompiler, setChangingCompiler] = useState(false);
+  const compilerEditBlocked =
+    props.truncated ||
+    sourceRecovery.blocked ||
+    sourceNeedsAttention ||
+    visualProjectState.error !== null;
+  const compilerOwner = useRef({ target, persistence, blocked: compilerEditBlocked });
+  useLayoutEffect(() => {
+    compilerOwner.current = { target, persistence, blocked: compilerEditBlocked };
+    return () => {
+      compilerOwner.current = { target: null, persistence: null, blocked: true };
+    };
+  }, [target, persistence, compilerEditBlocked]);
   const buildRequestInFlight = useRef(false);
   const saveAndBuild = useCallback(
     async (reprobe = false, compile = true) => {
@@ -1014,14 +1053,75 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       buildRequestInFlight.current = true;
       try {
         const prepared = await prepareDocument();
-        if (prepared?.isCurrent() && compile && target !== null)
+        if (prepared?.isCurrent() && compile && !compilerUnavailable && target !== null)
           requestLatexRebuild(target, { reprobeToolchain: reprobe });
       } finally {
         buildRequestInFlight.current = false;
       }
     },
-    [buildBlocked, prepareDocument, target],
+    [buildBlocked, compilerUnavailable, prepareDocument, target],
   );
+  const changeCompiler = async (compiler: LatexCompilerChoice) => {
+    if (!target || !persistence || buildRequestInFlight.current || status.busy || status.offline)
+      return;
+    if (compiler !== "automatic" && isLatexCompilerUnavailable(compilerState.report, compiler))
+      return;
+    buildRequestInFlight.current = true;
+    preparing.current += 1;
+    setChangingCompiler(true);
+    try {
+      const result = await changeLatexDocumentCompiler({
+        target,
+        lease: persistence,
+        compiler,
+        prepare: prepareDocument,
+        blocked: () => compilerOwner.current.blocked,
+        isActive: () =>
+          compilerOwner.current.target === target &&
+          compilerOwner.current.persistence === persistence,
+      });
+      if (!result.ok) setSyncNotice({ label: "Compiler not changed", message: result.message });
+      else requestLatexRebuild(target, { reprobeToolchain: true });
+    } catch (error) {
+      setSyncNotice({
+        label: "Compiler not changed",
+        message: error instanceof Error ? error.message : "Could not save the compiler change.",
+      });
+    } finally {
+      preparing.current -= 1;
+      buildRequestInFlight.current = false;
+      setChangingCompiler(false);
+    }
+  };
+  const compilerControlProps = {
+    source: compilerState.source,
+    report: compilerState.report,
+    capabilityError: compilerState.capabilityError,
+    offline: status.offline,
+    busy: changingCompiler || status.busy,
+    rootPath: target?.relativePath ?? null,
+    blockedReason:
+      target === null
+        ? "Resolve the document root before choosing its compiler."
+        : target.relativePath !== props.relativePath
+          ? "The compiler belongs to the root document. Open it to change the compiler."
+          : props.truncated || persistence === null
+            ? "This source is read-only; its compiler cannot be changed here."
+            : compilerEditBlocked
+              ? "Resolve recovery or the document's save notice before changing its compiler."
+              : compilerState.sourceError,
+    onChange: (compiler: LatexCompilerChoice) => {
+      void changeCompiler(compiler);
+    },
+    onOpenRoot:
+      target !== null && target.relativePath !== props.relativePath
+        ? () =>
+            onOpenFileSource(target.relativePath, undefined, {
+              latexRootRelativePath: target.relativePath,
+            })
+        : null,
+  };
+  const compilerControl = <LatexCompilerControl {...compilerControlProps} />;
   const requestAutoBuild = useCallback(() => {
     void saveAndBuild();
   }, [saveAndBuild]);
@@ -1033,6 +1133,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       !target ||
       !status.canRebuild ||
       buildBlocked ||
+      compilerUnavailable ||
       sourcePending ||
       visualProjectState.pending ||
       hasLocalVisualDraft,
@@ -1127,7 +1228,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         type="button"
         className="scient-latex-action scient-latex-build-action"
         aria-label={status.canCancel ? "Cancel PDF build" : "Rebuild PDF"}
-        disabled={target === null || (!status.canCancel && (!status.canRebuild || buildBlocked))}
+        disabled={
+          target === null ||
+          (!status.canCancel && (!status.canRebuild || buildBlocked || compilerUnavailable))
+        }
         onClick={() => {
           if (status.canCancel && target) cancelLatexBuild(target);
           else void saveAndBuild(true);
@@ -1292,6 +1396,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const exportItems = exportMenu(false);
   const documentMenuItems = (withExport = true) => (
     <>
+      <IfRowHidden selector=".scient-latex-compiler-control">
+        <LatexCompilerMenuItems {...compilerControlProps} />
+      </IfRowHidden>
       {mode === "split" ? (
         // Here only while the row has no room for its PDF/Visual switch.
         <IfRowHidden selector=".scient-latex-split-modes">
@@ -1471,7 +1578,12 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     afterPage: splitPreviewSwitch,
     // Room between the zoom and Rebuild, which keeps its place at the end.
     afterZoom: <div className="scient-latex-before-build" aria-hidden="true" />,
-    trailing: buildButton,
+    trailing: (
+      <>
+        {compilerControl}
+        {buildButton}
+      </>
+    ),
     moreActions: documentMenuItems(!editor),
     ...(editor
       ? {
@@ -1517,6 +1629,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         <div ref={setReaderSlot} className="scient-latex-reader-slot" hidden={!mergesReaderBar} />
         <div className="scient-latex-actions">
           {readerHosted ? null : splitPreviewSwitch}
+          {readerHosted ? null : compilerControl}
           {readerHosted ? null : buildButton}
           {readerHosted ? null : (
             // The same button and menu the reader controls use, so Rebuild and

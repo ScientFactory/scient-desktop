@@ -8,12 +8,12 @@ import * as Schema from "effect/Schema";
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const PathString = NonEmptyString.check(Schema.isMaxLength(4_096));
 
-/** The two engines Scient drives. `null` on a status means neither was found. */
+/** The two build drivers Scient uses. `null` on a status means neither was found. */
 export const ScientLatexToolchainKind = Schema.Literals(["latexmk", "tectonic"]);
 export type ScientLatexToolchainKind = typeof ScientLatexToolchainKind.Type;
 
 /**
- * Where the engine came from. `system` is anything already on this computer's
+ * Where the driver came from. `system` is anything already on this computer's
  * PATH; `scient-managed` is the distribution Scient installed and owns.
  */
 export const ScientLatexToolchainSource = Schema.Literals(["system", "scient-managed"]);
@@ -28,6 +28,18 @@ export const ScientLatexToolchainStatus = Schema.Struct({
   source: Schema.optionalKey(ScientLatexToolchainSource),
 });
 export type ScientLatexToolchainStatus = typeof ScientLatexToolchainStatus.Type;
+
+export const ScientLatexCompiler = Schema.Literals(["pdflatex", "xelatex", "lualatex"]);
+export type ScientLatexCompiler = typeof ScientLatexCompiler.Type;
+
+/** Standalone compiler binaries runnable through the selected build driver. */
+export const ScientLatexCompilerAvailability = Schema.Struct({
+  compiler: ScientLatexCompiler,
+  available: Schema.Boolean,
+  executable: Schema.NullOr(Schema.String),
+  version: Schema.NullOr(Schema.String),
+});
+export type ScientLatexCompilerAvailability = typeof ScientLatexCompilerAvailability.Type;
 
 /**
  * One managed install, from the client's point of view. `downloading` is the
@@ -82,6 +94,8 @@ export type ScientLatexManagedInstallState = typeof ScientLatexManagedInstallSta
  */
 export const ScientLatexToolchainReport = Schema.Struct({
   ...ScientLatexToolchainStatus.fields,
+  /** Tectonic's embedded XeTeX is not an independently installed compiler binary. */
+  compilers: Schema.Array(ScientLatexCompilerAvailability),
   /** Scient has a pinned distribution it can install on this platform. */
   canInstallManaged: Schema.Boolean,
   /** Absent until this server has been asked to install one. */

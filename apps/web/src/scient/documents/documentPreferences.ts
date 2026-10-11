@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { getLocalStorageItem } from "~/hooks/useLocalStorage";
+import { normalizeLatexCompilerChoice, type LatexCompilerChoice } from "../latex/latexCompiler";
 
 import {
   NEW_DOCUMENT_LANGUAGES,
@@ -16,9 +17,11 @@ import {
  */
 export const NEW_DOCUMENT_TEMPLATE_STORAGE_KEY = "scient.newDocumentTemplate";
 export const NEW_DOCUMENT_LANGUAGE_STORAGE_KEY = "scient.newDocumentLanguage";
+export const NEW_DOCUMENT_COMPILER_STORAGE_KEY = "scient.newDocumentCompiler";
 
 export const DEFAULT_NEW_DOCUMENT_TEMPLATE: DocumentTemplateId = "blank";
 export const DEFAULT_NEW_DOCUMENT_LANGUAGE: NewDocumentLanguage = "english";
+export const DEFAULT_NEW_DOCUMENT_COMPILER: LatexCompilerChoice = "automatic";
 
 /** Templates that were renamed, so a default chosen before still applies. */
 const RENAMED_TEMPLATES: Readonly<Record<string, DocumentTemplateId>> = {
@@ -54,9 +57,11 @@ function readStored(key: string): string | null {
 export function readNewDocumentDefaults(): {
   readonly template: DocumentTemplateId;
   readonly language: NewDocumentLanguage;
+  readonly compiler: LatexCompilerChoice;
 } {
   return {
     template: normalizeNewDocumentTemplate(readStored(NEW_DOCUMENT_TEMPLATE_STORAGE_KEY)),
     language: normalizeNewDocumentLanguage(readStored(NEW_DOCUMENT_LANGUAGE_STORAGE_KEY)),
+    compiler: normalizeLatexCompilerChoice(readStored(NEW_DOCUMENT_COMPILER_STORAGE_KEY)),
   };
 }

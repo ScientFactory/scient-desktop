@@ -86,6 +86,19 @@ vi.mock("../writing/dockChrome", () => ({
   DockCommandItem: ({ children, onClick }: { children: React.ReactNode; onClick: () => void }) => (
     <button onClick={onClick}>{children}</button>
   ),
+  DockCommandRadioItem: ({
+    children,
+    onClick,
+    disabled,
+  }: {
+    children: React.ReactNode;
+    onClick: () => void;
+    disabled: boolean;
+  }) => (
+    <button onClick={onClick} disabled={disabled}>
+      {children}
+    </button>
+  ),
 }));
 // The header's own More menu is drawn eagerly so its items can be inspected.
 vi.mock("~/components/ui/menu", async (importOriginal) => ({
@@ -93,6 +106,7 @@ vi.mock("~/components/ui/menu", async (importOriginal) => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DropdownMenuTrigger: () => null,
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DropdownMenuRadioGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 vi.mock("../documentExport/DocumentExportMenuItems", () => ({
   DocumentExportMenuItems: (props: NonNullable<typeof exportMenu.props>) => {
@@ -123,6 +137,7 @@ vi.mock("./LatexProjectVisualEditor", async () => {
 vi.mock("./useLatexAutoBuild", () => ({ useLatexAutoBuild: () => {} }));
 vi.mock("./client", () => ({
   readLatexBuildStatus,
+  readLatexToolchain: vi.fn().mockRejectedValue(new Error("Compiler availability not checked")),
   requestLatexForwardSync: sync.forward,
   requestLatexInverseSync: sync.inverse,
 }));

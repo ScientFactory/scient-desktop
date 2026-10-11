@@ -14,6 +14,7 @@ function errorMessage(cause: unknown, fallback: string): string {
 
 export interface LatexInstallationController {
   readonly view: LatexInstallationView;
+  readonly report: ScientLatexToolchainReport | null;
   /** Installs TinyTeX, or retries reading the engine when it could not be read. */
   readonly act: () => void;
   /** Looks for an engine again, for one installed outside Scient since. */
@@ -118,6 +119,7 @@ export function useLatexInstallation(environmentId: EnvironmentId): LatexInstall
 
   return {
     view: latexInstallationView({ report, requesting, error }),
+    report: error === null ? report : null,
     act,
     refresh,
     refreshing,

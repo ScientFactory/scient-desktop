@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 
 import { describe, expect, it } from "vite-plus/test";
 
+import { declaredLatexCompiler } from "../latex/latexCompiler";
 import {
   createNewDocumentSource,
   includedFiles,
@@ -61,6 +62,28 @@ describe("the person's own templates", () => {
     await userTemplates.remove(saved.id);
     expect(isDocumentTemplateId(saved.id)).toBe(false);
     expect(normalizeNewDocumentTemplate(saved.id)).toBe("blank");
+  });
+
+  it("keeps the template's declared compiler ahead of the device's new-document preference", async () => {
+    await userTemplates.ready();
+    const saved = await userTemplates.save({
+      name: "Lua notes",
+      source: `% !TEX program = lualatex\n${withEmptyTitle(notes)}`,
+      files: { "sections/summary.tex": "Summary." },
+      preview: null,
+    });
+    try {
+      const source = createNewDocumentSource({
+        format: "latex",
+        template: saved.id,
+        language: "hebrew",
+        compiler: "pdflatex",
+      });
+      expect(declaredLatexCompiler(source)).toBe("lualatex");
+      expect(isUntouchedNewLatexDocument(source, saved.id, "hebrew")).toBe(true);
+    } finally {
+      await userTemplates.remove(saved.id);
+    }
   });
 
   it("rename without bringing back an older copy another window replaced", async () => {

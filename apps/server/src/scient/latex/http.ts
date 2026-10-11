@@ -42,7 +42,7 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
     const syncTex = yield* LatexSyncTex;
     const artwork = yield* LatexTikzPreview;
 
-    /** The probe result plus what this server can do about a missing engine. */
+    /** Cached driver/compiler probes plus this server's managed-install facts. */
     const toolchainReport = (refresh: boolean) =>
       Effect.gen(function* () {
         // Read the install state first. A finished install drops the probe

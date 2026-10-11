@@ -435,7 +435,9 @@ const makeHarness = (input: {
       Layer.provide(
         Layer.succeed(
           LatexToolchain,
-          LatexToolchain.of({ probe: () => Effect.succeed(input.toolchain ?? LATEXMK) }),
+          LatexToolchain.of({
+            probe: () => Effect.succeed({ ...(input.toolchain ?? LATEXMK), compilers: [] }),
+          }),
         ),
       ),
       Layer.provideMerge(gatedStoreLayer),

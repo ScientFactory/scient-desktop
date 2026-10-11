@@ -1,16 +1,21 @@
 /**
- * Discovers which TeX engine this machine can run. Probing is a short bounded
- * subprocess per candidate, so it uses `ProcessRunner` rather than the
- * streaming execution port. A candidate that cannot be spawned is simply
- * absent — a missing engine is the normal state on a fresh machine, never a
- * defect — and the answer is cached so every build and every status poll does
- * not re-shell out.
+ * Discovers this server's build driver and the standalone compiler binaries
+ * it can run. Probes are bounded subprocesses; missing or broken executables
+ * are normal on a fresh machine. Driver and compiler facts share a cached,
+ * single-flight observation so status polling never launches a build.
  *
  * PATH wins. Someone who already runs TeX Live or MiKTeX keeps building with
  * it, exactly as before; the distribution Scient installs is only consulted
  * once PATH has turned up nothing, and says so through `source`.
  */
-import type { ScientLatexToolchainKind, ScientLatexToolchainStatus } from "@t3tools/contracts";
+import {
+  ScientLatexCompiler,
+  type ScientLatexCompilerAvailability,
+  type ScientLatexToolchainKind,
+  type ScientLatexToolchainStatus,
+} from "@t3tools/contracts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -23,12 +28,17 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import { readManagedLatexInstall } from "./managedLatexInstall.ts";
+import { latexEngineEnvironment } from "./latexCommand.ts";
+
+export type LatexToolchainProbe = ScientLatexToolchainStatus & {
+  readonly compilers: ReadonlyArray<ScientLatexCompilerAvailability>;
+};
 
 export class LatexToolchain extends Context.Service<
   LatexToolchain,
   {
     /** `refresh` forces a new probe; otherwise a result younger than the TTL is reused. */
-    readonly probe: (refresh: boolean) => Effect.Effect<ScientLatexToolchainStatus>;
+    readonly probe: (refresh: boolean) => Effect.Effect<LatexToolchainProbe>;
   }
 >()("t3/scient/latex/LatexToolchain") {}
 
@@ -52,6 +62,11 @@ const CANDIDATES: ReadonlyArray<ToolchainCandidate> = [
 const LATEXMK_VERSION_PATTERN = /Version\s+([0-9][\w.-]*)/iu;
 const TECTONIC_VERSION_PATTERN = /Tectonic\s+([0-9][\w.+-]*)/iu;
 const LOOSE_VERSION_PATTERN = /([0-9]+(?:\.[0-9]+)+)/u;
+const COMPILER_VERSION_PATTERNS = {
+  pdflatex: /pdfTeX\s+[\d.]+-[\d.]+-([0-9][\w.+-]*)/iu,
+  xelatex: /XeTeX\s+[\d.]+-[\d.]+-([0-9][\w.+-]*)/iu,
+  lualatex: /Lua(?:HB)?TeX,?\s+(?:Version\s+)?([0-9][\w.+-]*)/iu,
+};
 
 /** Reads the engine's own `-v` banner; an unparsable banner still proves the engine exists. */
 export function parseLatexToolchainVersion(
@@ -72,13 +87,18 @@ const absent = (probedAtEpochMs: number): ScientLatexToolchainStatus => ({
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const hostEnvironment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcessPlatform;
+  const path = yield* Path.Path;
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const pathDelimiter = platform === "win32" ? ";" : ":";
   // The managed lookup reads app state, but `probe` must stay dependency-free
   // for its callers, so its services are captured once here.
   const managedContext = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
   >();
   const findManagedInstall = readManagedLatexInstall().pipe(Effect.provideContext(managedContext));
-  const cacheRef = yield* Ref.make<ScientLatexToolchainStatus | null>(null);
+  const cacheRef = yield* Ref.make<LatexToolchainProbe | null>(null);
   // Every build and every status poll asks for the toolchain, so a lapsed TTL
   // would otherwise let a burst of pollers each shell out. One probe runs; the
   // rest queue here and read the answer it leaves in the cache.
@@ -88,11 +108,13 @@ export const make = Effect.gen(function* () {
     candidate: ToolchainCandidate,
     probedAtEpochMs: number,
     source: NonNullable<ScientLatexToolchainStatus["source"]> = "system",
+    env: NodeJS.ProcessEnv = {},
   ) =>
     processRunner
       .run({
         command: candidate.executable,
         args: candidate.args,
+        env,
         timeout: PROBE_TIMEOUT,
         maxOutputBytes: PROBE_MAX_OUTPUT_BYTES,
         outputMode: "truncate",
@@ -124,7 +146,58 @@ export const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => null),
       );
 
-  const probeAll = Effect.gen(function* () {
+  const probeCompilers = Effect.fnUntraced(function* (status: ScientLatexToolchainStatus) {
+    const environment = latexEngineEnvironment({
+      base: {},
+      hostEnvironment,
+      binDirectory:
+        status.source === "scient-managed" && status.executable !== null
+          ? path.dirname(status.executable)
+          : null,
+      pathDelimiter,
+    });
+    return yield* Effect.forEach(ScientLatexCompiler.literals, (compiler) =>
+      Effect.gen(function* (): Effect.fn.Return<ScientLatexCompilerAvailability> {
+        const missing = { compiler, available: false, executable: null, version: null };
+        // Tectonic embeds XeTeX, but does not run any of these binaries.
+        if (status.kind !== "latexmk") return missing;
+        const executable =
+          resolveExecutable(compiler, platform, { ...hostEnvironment, ...environment }) ?? compiler;
+        return yield* processRunner
+          .run({
+            command: executable,
+            args: ["--version"],
+            env: environment,
+            timeout: PROBE_TIMEOUT,
+            maxOutputBytes: PROBE_MAX_OUTPUT_BYTES,
+            outputMode: "truncate",
+            timeoutBehavior: "timedOutResult",
+          })
+          .pipe(
+            Effect.flatMap((result) =>
+              Effect.gen(function* () {
+                const notFound = yield* ProcessRunner.isWindowsCommandNotFound(
+                  result.code,
+                  result.stderr,
+                );
+                if (result.timedOut || notFound || result.code !== 0) return missing;
+                const banner = `${result.stdout}\n${result.stderr}`;
+                return {
+                  compiler,
+                  available: true,
+                  executable,
+                  version:
+                    (COMPILER_VERSION_PATTERNS[compiler].exec(banner) ??
+                      LOOSE_VERSION_PATTERN.exec(banner))?.[1] ?? null,
+                };
+              }),
+            ),
+            Effect.orElseSucceed(() => missing),
+          );
+      }),
+    );
+  });
+  const probeDriver = Effect.gen(function* () {
     const probedAtEpochMs = yield* Clock.currentTimeMillis;
     for (const candidate of CANDIDATES) {
       const found = yield* probeCandidate(candidate, probedAtEpochMs);
@@ -139,10 +212,21 @@ export const make = Effect.gen(function* () {
         { kind: "latexmk", executable: managed.executable, args: ["-v"] },
         probedAtEpochMs,
         "scient-managed",
+        latexEngineEnvironment({
+          base: {},
+          hostEnvironment,
+          binDirectory: path.dirname(managed.executable),
+          pathDelimiter,
+        }),
       );
       if (found !== null) return found;
     }
     return absent(probedAtEpochMs);
+  });
+
+  const probeAll = Effect.gen(function* () {
+    const status = yield* probeDriver;
+    return { ...status, compilers: yield* probeCompilers(status) };
   });
 
   const isFresh = (cached: ScientLatexToolchainStatus | null) =>

@@ -64,6 +64,11 @@ const report = (
   probedAtEpochMs: 1,
   source: "system",
   canInstallManaged: true,
+  compilers: [
+    { compiler: "pdflatex", available: true, executable: "pdflatex", version: "3.141592653" },
+    { compiler: "xelatex", available: true, executable: "xelatex", version: "0.999997" },
+    { compiler: "lualatex", available: false, executable: null, version: null },
+  ],
   ...overrides,
 });
 
@@ -223,6 +228,29 @@ describe("Settings ▸ Documents", () => {
     expect(select("Open LaTeX files in").textContent).toBe("Source");
     await choose("Open LaTeX files in", "Split");
     expect(stored("scient.latexPreviewMode")).toBe("split");
+  });
+
+  it("keeps compiler preferences editable offline without claiming server availability", async () => {
+    mocks.scopeEnvironmentId = null;
+    await render();
+    expect(container.querySelector("#latex-compilers")?.textContent).toContain("Offline");
+    await choose("Default compiler for new documents", "XeLaTeX — recommended for Hebrew");
+    expect(stored("scient.newDocumentCompiler")).toBe("xelatex");
+    await act(() => root.unmount());
+    root = createRoot(container);
+    await render();
+    expect(select("Default compiler for new documents").textContent).toBe(
+      "XeLaTeX — recommended for Hebrew",
+    );
+    expect(mocks.readToolchain).not.toHaveBeenCalled();
+  });
+
+  it("does not infer all compilers are installed from the build driver", async () => {
+    await render();
+    const row = container.querySelector("#latex-compilers")!;
+    expect(row.textContent).toContain("pdfLaTeX · Available");
+    expect(row.textContent).toContain("XeLaTeX — recommended for Hebrew · Available");
+    expect(row.textContent).toContain("LuaLaTeX · Not installed");
   });
 
   it("opens Markdown files Rich or Source", async () => {

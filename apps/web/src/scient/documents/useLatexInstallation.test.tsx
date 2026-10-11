@@ -20,6 +20,7 @@ const missing: ScientLatexToolchainReport = {
   version: null,
   probedAtEpochMs: 1,
   canInstallManaged: true,
+  compilers: [],
 };
 const downloading: ScientLatexManagedInstallState = {
   state: "downloading",

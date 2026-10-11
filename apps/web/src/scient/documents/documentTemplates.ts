@@ -16,6 +16,12 @@ import thesisMethods from "./templates/thesis/chapters/methods.tex?raw";
 import thesisResults from "./templates/thesis/chapters/results.tex?raw";
 import thesisSource from "./templates/thesis/main.tex?raw";
 import { updateLatexLanguageSource } from "../latex/latexLanguage";
+import {
+  declaredLatexCompiler,
+  latexCompilerDeclaration,
+  updateLatexCompilerSource,
+  type LatexCompilerChoice,
+} from "../latex/latexCompiler";
 import { userTemplates } from "./userTemplates";
 
 /**
@@ -280,10 +286,13 @@ export function createNewDocumentSource(input: {
   readonly format: NewDocumentFormat;
   readonly template: DocumentTemplateId;
   readonly language: NewDocumentLanguage;
+  readonly compiler?: LatexCompilerChoice;
 }): string {
   if (input.format === "markdown") return "# \n";
   // The title and the author start empty, for the person to write.
-  const source = templateSource(input.template).replace(/<<SCIENT_(?:TITLE|AUTHOR_BLOCK)>>/gu, "");
+  let source = templateSource(input.template).replace(/<<SCIENT_(?:TITLE|AUTHOR_BLOCK)>>/gu, "");
+  if (input.compiler && input.compiler !== "automatic" && latexCompilerDeclaration(source) === null)
+    source = updateLatexCompilerSource(source, input.compiler);
   if (input.language === "english") return source;
   // Hebrew runs on XeLaTeX with fontspec, which replaces the 8-bit font setup.
   const unicode = source.replace(
@@ -304,7 +313,10 @@ export function isUntouchedNewLatexDocument(
   language: NewDocumentLanguage,
 ): boolean {
   const pristine = createNewDocumentSource({ format: "latex", template, language });
-  return withRawLatexTitle(source, "") === pristine;
+  return (
+    updateLatexCompilerSource(withRawLatexTitle(source, ""), "automatic") ===
+    updateLatexCompilerSource(pristine, "automatic")
+  );
 }
 
 /**
@@ -319,5 +331,13 @@ export function switchNewLatexDocument(
 ): string {
   const range = latexTitleRange(source);
   const title = range ? source.slice(range.from, range.to) : escapeDocumentText(name.trim());
-  return withRawLatexTitle(createNewDocumentSource({ format: "latex", template, language }), title);
+  return withRawLatexTitle(
+    createNewDocumentSource({
+      format: "latex",
+      template,
+      language,
+      compiler: declaredLatexCompiler(source) ?? "automatic",
+    }),
+    title,
+  );
 }

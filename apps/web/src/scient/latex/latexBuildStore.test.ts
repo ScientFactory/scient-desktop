@@ -124,6 +124,7 @@ function missingToolchain(managedInstall?: ScientLatexManagedInstallState) {
   return {
     ...missingProbe(),
     canInstallManaged: true,
+    compilers: [],
     ...(managedInstall === undefined ? {} : { managedInstall }),
   };
 }
@@ -146,7 +147,11 @@ beforeEach(() => {
   requestLatexCancel.mockResolvedValue(snapshot("cancelled"));
   readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
   requestLatexToolchainInstall.mockResolvedValue(install("downloading"));
-  readLatexToolchain.mockResolvedValue({ ...foundToolchain(), canInstallManaged: false });
+  readLatexToolchain.mockResolvedValue({
+    ...foundToolchain(),
+    canInstallManaged: false,
+    compilers: [],
+  });
 });
 
 afterEach(() => {
@@ -469,7 +474,11 @@ describe("latexBuildStore", () => {
     // TeX Live was installed by hand while this document sat here. The probe's
     // answer is cached for five minutes and the loop is quiet, so Rebuild is
     // the only thing that can go and look again.
-    readLatexToolchain.mockResolvedValue({ ...foundToolchain(), canInstallManaged: false });
+    readLatexToolchain.mockResolvedValue({
+      ...foundToolchain(),
+      canInstallManaged: false,
+      compilers: [],
+    });
     // The build that follows runs on a server whose probe has just seen it.
     requestLatexBuild.mockResolvedValue(snapshot("queued"));
     requestLatexRebuild(target, { reprobeToolchain: true });
@@ -577,6 +586,7 @@ describe("latexBuildStore", () => {
         probedAtEpochMs: 2,
         source: "scient-managed",
         canInstallManaged: true,
+        compilers: [],
         managedInstall: install("ready"),
       });
 

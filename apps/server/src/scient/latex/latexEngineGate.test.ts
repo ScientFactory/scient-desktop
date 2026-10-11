@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { evaluateLatexEngineGate } from "./latexEngineGate.ts";
+import { evaluateLatexEngineGate, selectLatexBuildEngine } from "./latexEngineGate.ts";
 
 const PLAIN_PDFLATEX_DOCUMENT = [
   "\\documentclass[11pt]{article}",
@@ -322,28 +322,43 @@ describe("evaluateLatexEngineGate", () => {
       expect(verdict).toMatchObject({ supported: false, requiredEngine: "lualatex" });
     });
   });
+});
 
-  it("names the package and the found line in the unsupported message", () => {
-    const source = "\\usepackage{fontspec}";
-    const verdict = evaluateLatexEngineGate({ rootText: source });
-    expect(verdict.supported).toBe(false);
-    if (!verdict.supported) {
-      // pdfLaTeX cannot load it, and the message says how to pick a compiler that can.
-      expect(verdict.message).toContain("pdfLaTeX cannot process it");
-      expect(verdict.message).toContain("% !TEX program = lualatex");
-      expect(verdict.message).toContain("fontspec");
-      expect(verdict.message).toContain(source);
-    }
+describe("compiler resolution", () => {
+  it("uses XeLaTeX automatically when a preamble requires Unicode fonts", () => {
+    expect(
+      selectLatexBuildEngine(
+        { rootText: "\\usepackage{polyglossia}", includedTexts: ["\\usepackage{fontspec}"] },
+        "latexmk",
+      ),
+    ).toEqual({ engine: "xelatex", error: null });
   });
 
-  it("names the requested engine and the found line in the magic-comment message", () => {
-    const source = "% !TEX program = xelatex";
-    const verdict = evaluateLatexEngineGate({ rootText: source });
-    expect(verdict.supported).toBe(false);
-    if (!verdict.supported) {
-      expect(verdict.message).toContain("cannot be compiled by pdfLaTeX");
-      expect(verdict.message).toContain("XeLaTeX");
-      expect(verdict.message).toContain(source);
-    }
+  it("does not override an explicit compiler or infer from Hebrew characters", () => {
+    expect(
+      selectLatexBuildEngine(
+        { rootText: "% !TEX program = lualatex\n\\usepackage{fontspec}" },
+        "latexmk",
+      ),
+    ).toEqual({ engine: "lualatex", error: null });
+    expect(selectLatexBuildEngine({ rootText: "שלום" }, "latexmk")).toEqual({
+      engine: "pdflatex",
+      error: null,
+    });
+    const explicitPdf = selectLatexBuildEngine(
+      { rootText: "% !TEX program = pdflatex\n\\usepackage{fontspec}" },
+      "latexmk",
+    );
+    expect(explicitPdf.engine).toBe("pdflatex");
+    expect(explicitPdf.error).not.toBeNull();
+  });
+
+  it("keeps conditional Unicode packages on the default compiler", () => {
+    expect(
+      selectLatexBuildEngine(
+        { rootText: "\\usepackage{iftex}\n\\ifPDFTeX\\else\\usepackage{fontspec}\\fi" },
+        "latexmk",
+      ),
+    ).toEqual({ engine: "pdflatex", error: null });
   });
 });

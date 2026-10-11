@@ -178,6 +178,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["tinytex", "tex live", "miktex", "tectonic", "latexmk", "pdf build", "engine"],
   },
   {
+    id: "new-document-compiler",
+    title: "Default LaTeX compiler for new documents",
+    to: "/settings/documents",
+    targetId: "new-document-compiler",
+    searchTerms: ["compiler", "pdflatex", "xelatex", "lualatex", "hebrew compiler", "automatic"],
+  },
+  {
     id: "new-document-template",
     title: "Templates and language for new documents",
     to: "/settings/documents",

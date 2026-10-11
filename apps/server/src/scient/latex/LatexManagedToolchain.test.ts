@@ -401,7 +401,14 @@ describe("LatexManagedToolchain", () => {
         const installRoot = yield* currentInstallRoot(harness.paths.statePath);
         expect(yield* Ref.get(harness.packageRequests)).toEqual([
           {
-            packages: ["collection-latexrecommended", "collection-fontsrecommended"],
+            packages: [
+              "collection-latexrecommended",
+              "collection-fontsrecommended",
+              "collection-xetex",
+              "fontspec",
+              "polyglossia",
+              "bidi",
+            ],
             binDirectory: path.dirname(path.join(installRoot, EXECUTABLE_RELATIVE_PATH)),
             timeout: "15 minutes",
           },

@@ -45,10 +45,17 @@ import {
   LATEX_PREVIEW_MODES,
   normalizeLatexPreviewMode,
 } from "../latex/scientLatexSurfaceModel";
+import {
+  LATEX_COMPILER_CHOICES,
+  latexCompilerAvailabilityLabel,
+  normalizeLatexCompilerChoice,
+} from "../latex/latexCompiler";
 import { PandocSettingsRow } from "../wordExport/PandocSettingsRow";
 import { pandocToolSummary } from "../wordExport/pandocToolModel";
 import { usePandocTool, type PandocToolController } from "../wordExport/usePandocTool";
 import {
+  DEFAULT_NEW_DOCUMENT_COMPILER,
+  NEW_DOCUMENT_COMPILER_STORAGE_KEY,
   DEFAULT_NEW_DOCUMENT_LANGUAGE,
   NEW_DOCUMENT_LANGUAGE_STORAGE_KEY,
   normalizeNewDocumentLanguage,
@@ -67,6 +74,8 @@ const SEARCH_TARGET_FORMATS: Readonly<Record<string, DocumentFormat>> = {
   "latex-installation": "latex",
   "new-document-template": "latex",
   "new-document-language": "latex",
+  "new-document-compiler": "latex",
+  "latex-compilers": "latex",
   "latex-open-in": "latex",
   "markdown-open-in": "markdown",
   "word-export": "word",
@@ -154,6 +163,11 @@ function LatexPanel(props: {
     DEFAULT_NEW_DOCUMENT_LANGUAGE,
     Schema.String,
   );
+  const [compiler, setCompiler] = useLocalStorage(
+    NEW_DOCUMENT_COMPILER_STORAGE_KEY,
+    DEFAULT_NEW_DOCUMENT_COMPILER,
+    Schema.String,
+  );
   // The view the editor remembers: choosing here or in the editor is the same choice.
   const [view, setView] = useLocalStorage(
     LATEX_PREVIEW_MODE_STORAGE_KEY,
@@ -171,6 +185,31 @@ function LatexPanel(props: {
       ) : (
         <OfflineToolRow id="latex-installation" title="Installation" />
       )}
+      <SettingsRow
+        id="latex-compilers"
+        title="Available compilers"
+        serverScoped
+        description={
+          <span className="flex flex-col gap-1">
+            {LATEX_COMPILER_CHOICES.map((choice) => {
+              if (choice.id === "automatic") return null;
+              const report = props.installation?.report ?? null;
+              const availability = report?.compilers.find((item) => item.compiler === choice.id);
+              const label = latexCompilerAvailabilityLabel(
+                report,
+                choice.id,
+                props.installation === null,
+              );
+              return (
+                <span key={choice.id}>
+                  {choice.name} ·{" "}
+                  {label ?? `Available${availability?.version ? ` (${availability.version})` : ""}`}
+                </span>
+              );
+            })}
+          </span>
+        }
+      />
       <TemplatesSettingsRow />
       <SettingsRow
         id="new-document-language"
@@ -181,6 +220,19 @@ function LatexPanel(props: {
             value={normalizeNewDocumentLanguage(language)}
             groups={[NEW_DOCUMENT_LANGUAGES]}
             onChange={setLanguage}
+          />
+        }
+      />
+      <SettingsRow
+        id="new-document-compiler"
+        title="Default compiler for new documents"
+        description="Template engine declarations take precedence. Hebrew uses XeLaTeX unless LuaLaTeX is selected. Existing documents are unchanged."
+        control={
+          <OptionSelect
+            label="Default compiler for new documents"
+            value={normalizeLatexCompilerChoice(compiler)}
+            groups={[LATEX_COMPILER_CHOICES]}
+            onChange={setCompiler}
           />
         }
       />

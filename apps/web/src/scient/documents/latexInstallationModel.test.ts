@@ -13,6 +13,7 @@ function report(overrides: Partial<ScientLatexToolchainReport> = {}): ScientLate
     version: null,
     probedAtEpochMs: 1,
     canInstallManaged: true,
+    compilers: [],
     ...overrides,
   };
 }

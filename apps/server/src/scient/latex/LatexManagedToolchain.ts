@@ -94,18 +94,19 @@ const ENGINE_VALIDATION_TIMEOUT = "30 seconds";
 const ENGINE_VALIDATION_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /**
- * The two collections that make an ordinary paper compile on the first try.
- * TinyTeX-1 is TeX Live's infrastructure plus roughly a hundred packages,
- * which is not what a real document uses: `mathtools`, `siunitx`, and most of
- * the fonts live in these. Fetching them once, here, is the difference between
- * a first build that works and a first build that stops on a missing `.sty`
- * while the per-build resolver catches up one package at a time.
+ * Collections for ordinary papers, plus the Unicode/Hebrew packages needed
+ * by XeLaTeX documents. Fetching these during installation avoids stopping
+ * the first Hebrew build on a missing language or directionality package.
  */
 const RECOMMENDED_PACKAGES: ReadonlyArray<string> = [
   "collection-latexrecommended",
   "collection-fontsrecommended",
+  "collection-xetex",
+  "fontspec",
+  "polyglossia",
+  "bidi",
 ];
-/** Two collections over a slow connection; the ceiling above accommodates it. */
+/** Collections over a slow connection; the ceiling above accommodates it. */
 const COLLECTIONS_TIMEOUT = "15 minutes";
 const COLLECTIONS_WARNING =
   "Some recommended LaTeX tools or packages could not be preinstalled; document packages may still install on first use.";

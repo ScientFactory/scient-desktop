@@ -2,10 +2,10 @@
  * Select a declared compiler and check whether the default pdfLaTeX lane can
  * process the document. Only fixed engine names become invocation flags.
  *
- * Without a directive, `latexCommand.ts` uses `latexmk -pdf`. Explicit
- * `% !TEX program = …` declarations select LuaLaTeX or XeLaTeX through latexmk.
- * For the default pdfLaTeX lane, package checks explain incompatible
- * `fontspec`/`unicode-math` loads before compilation.
+ * Without a directive, `latexCommand.ts` uses `latexmk -pdf` unless an
+ * unconditional Unicode-font package requires XeLaTeX. Explicit
+ * `% !TEX program = …` declarations select the compiler through latexmk.
+ * Explicit pdfLaTeX still reports incompatible `fontspec`/`unicode-math` loads.
  *
  * Two kinds of finding, and they are not equally strong. The magic comment is
  * an author's declaration — they wrote down which engine this document is for
@@ -230,5 +230,7 @@ export function selectLatexBuildEngine(input: LatexEngineGateInput, toolchain: L
   }
   if (engine !== "pdflatex") return { engine, error: null };
   const verdict = evaluatePdfLatexPackages([input.rootText, ...(input.includedTexts ?? [])]);
+  if (declared === null && !verdict.supported)
+    return { engine: verdict.requiredEngine, error: null };
   return { engine, error: verdict.supported ? null : verdict.message };
 }
