@@ -9636,7 +9636,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           item.driver !== owner.driver ||
           item.providerInstanceId !== owner.providerInstanceId ||
           item.childThreadId !== task.childThreadId ||
-          Option.isSome(yield* providerSessions.get(target.providerSessionId))
+          Option.isSome(
+            yield* providerSessions.get(target.providerSessionId).pipe(mapDispatchError(command)),
+          )
         ) {
           return;
         }
