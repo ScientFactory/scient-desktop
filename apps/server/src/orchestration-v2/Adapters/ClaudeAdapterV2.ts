@@ -2937,6 +2937,9 @@ interface ActiveClaudeProviderRetry {
 
 interface ActiveClaudeSubagent {
   task: OrchestrationV2Subagent;
+  // Retain the activation's real owner after its root settles or its query exits.
+  readonly ownerContext: ActiveClaudeTurnContext;
+  readonly ownerQuery: ClaudeLiveQueryContext | null;
   // The launch run's root node. task.parentNodeId is that same node, or the
   // owning subagent's node for a subagent another subagent started.
   readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
@@ -3393,6 +3396,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const queryOwnership = yield* Semaphore.make(1);
+        const subagentUpdates = yield* Semaphore.make(1);
         let nextStartGeneration = 0;
         let pendingStart: number | null = null;
         const refuseQueryOwnership = (detail: string) =>
@@ -4427,6 +4431,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const ids = claudeSubagentIds(resume.context, resume.taskId);
           const now = yield* DateTime.now;
           const subagent: ActiveClaudeSubagent = {
+            ownerContext: resume.context,
+            ownerQuery: yield* Ref.get(queryContext),
             task: {
               id: ids.nodeId,
               threadId: resume.context.input.threadId,
@@ -4506,15 +4512,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly result?: string;
           readonly status: OrchestrationV2Subagent["status"];
           readonly reopen?: boolean;
+          readonly expectedSubagent?: ActiveClaudeSubagent;
         }) {
+          const registeredSubagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId);
+          if (
+            input.expectedSubagent !== undefined &&
+            registeredSubagent !== input.expectedSubagent
+          ) {
+            return false;
+          }
           // The session registry lets a wake-replay turn (fresh context maps)
           // hydrate a subagent that was created by an earlier, settled turn.
           const existingSubagent =
+            input.expectedSubagent ??
             input.context.subagentsByTaskId.get(input.taskId) ??
             (input.toolUseId === undefined
               ? undefined
               : input.context.subagentsByToolUseId.get(input.toolUseId)) ??
-            (yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId);
+            registeredSubagent;
           if (existingSubagent === undefined && input.status !== "running") {
             return;
           }
@@ -4671,6 +4686,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // SCIENT-FORK: a workflow coordinator owns its members on this native thread.
           workflowRegistry.recordCoordinator(task, input.context, input.taskId);
           const subagent = {
+            ownerContext:
+              existingSubagent === undefined ||
+              (input.reopen === true && input.status === "running")
+                ? input.context
+                : existingSubagent.ownerContext,
+            ownerQuery:
+              existingSubagent === undefined ||
+              (input.reopen === true && input.status === "running")
+                ? yield* Ref.get(queryContext)
+                : existingSubagent.ownerQuery,
             task,
             rootNodeId: existingSubagent?.rootNodeId ?? input.context.input.rootNodeId,
             childThreadId,
@@ -4939,7 +4964,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               turnItem: resultArtifacts.turnItem,
             });
           }
-        });
+        }, subagentUpdates.withPermits(1));
 
         const emitClaudePlanProjection = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
@@ -5798,14 +5823,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             message.subtype === "task_started"
           ) {
             const now = yield* DateTime.now;
+            const ownerQuery = yield* Ref.get(queryContext);
             yield* Ref.update(sessionSubagentsByTaskId, (current) => {
               const registered = current.get(message.task_id);
-              if (registered === undefined || registered.task.status === "running") {
-                return current;
+              if (registered === undefined) return current;
+              if (registered.task.status === "running") {
+                return registered.ownerQuery === ownerQuery
+                  ? current
+                  : new Map(current).set(message.task_id, { ...registered, ownerQuery });
               }
               const { progress: _staleProgress, ...priorTask } = registered.task;
               return new Map(current).set(message.task_id, {
                 ...registered,
+                ownerQuery,
                 task: {
                   ...priorTask,
                   // This authoritative idle start opens the activation now;
@@ -5823,7 +5853,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   updatedAt: now,
                 },
               });
-            });
+            }).pipe(subagentUpdates.withPermits(1));
           }
           // Rate-limit frames park with the wake output so the drain can
           // replay them to the turn that was still starting when they
@@ -8797,10 +8827,53 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId;
             const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
             if (subagent === undefined || subagent.task.status !== "running") return;
+            const ownerContext = subagent.ownerContext;
+            const ownerQuery = subagent.ownerQuery;
             if (
-              existing === null ||
-              existing.nativeThreadId !== nativeThreadId ||
+              ownerQuery === null ||
+              input.providerThread.driver !== CLAUDE_PROVIDER ||
+              input.providerThread.providerInstanceId !== subagent.task.providerInstanceId ||
+              input.providerThread.nativeThreadRef?.driver !== CLAUDE_PROVIDER ||
+              input.providerThread.nativeThreadRef.strength !== "strong" ||
+              nativeThreadId === undefined ||
+              nativeThreadId === null ||
+              ownerQuery.nativeThreadId !== nativeThreadId ||
+              ownerContext.nativeThreadId !== nativeThreadId ||
+              ownerContext.input.providerThread.id !== input.providerThread.id ||
+              ownerContext.input.providerThread.providerSessionId !==
+                input.providerThread.providerSessionId ||
+              ownerContext.input.threadId !== input.providerThread.appThreadId ||
+              ownerContext.input.runId !== subagent.task.runId ||
               subagent.task.threadId !== input.providerThread.appThreadId ||
+              subagent.task.nativeTaskRef?.strength !== "strong" ||
+              subagent.task.nativeTaskRef.driver !== CLAUDE_PROVIDER ||
+              subagent.task.nativeTaskRef.nativeId !== input.nativeTaskId ||
+              (existing !== null && existing.nativeThreadId !== nativeThreadId)
+            ) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude subagent has no live owning query with task stopping support.",
+              });
+            }
+            // A genuine EOF proves this activation runs nowhere. Finish only its
+            // retained artifacts; a replacement process cannot stop the old task.
+            if (ownerQuery.streamExited) {
+              const cancelled = yield* updateClaudeSubagentNode({
+                context: ownerContext,
+                taskId: input.nativeTaskId,
+                status: "cancelled",
+                expectedSubagent: subagent,
+              });
+              if (cancelled === false) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: "Claude subagent ownership changed before orphan cleanup.",
+                });
+              }
+              return;
+            }
+            if (
+              existing !== ownerQuery ||
               existing.subagentsFromEarlierProcesses.has(subagent) ||
               existing.query.stopTask === undefined
             ) {

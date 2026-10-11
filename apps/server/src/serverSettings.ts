@@ -502,8 +502,8 @@ const legacyGitHubTokenSecretName = (host: string) =>
   `github-token-${Buffer.from(host.trim().toLowerCase(), "utf8").toString("base64url")}`;
 
 /**
- * Folds the retired `bitbucket` and `github` keys into `sourceControlHosts`, unless the new key
- * already holds that host. Returns the secret store entries to copy to their new names.
+ * Folds the retired `bitbucket` and `github` keys into `sourceControlHosts`. Current Bitbucket
+ * settings and normalized GitHub host/token entries win. Returns adopted secrets to copy.
  */
 function migrateLegacySourceControlSettings(
   settings: ServerSettings,
@@ -527,15 +527,44 @@ function migrateLegacySourceControlSettings(
       });
     }
   }
-  if (legacy.github !== undefined && sourceControlHosts.github === undefined) {
-    sourceControlHosts.github = legacy.github;
-    for (const [serverHost, value] of readSecretFieldValues(legacy.github.tokens)) {
-      if (serverHost === null || value !== SECRET_REDACTED) continue;
-      secretMoves.push({
-        from: legacyGitHubTokenSecretName(serverHost),
-        to: sourceControlHostSecretName({ kind: "github", field: "tokens", serverHost }),
-      });
+  if (legacy.github !== undefined) {
+    const currentGitHub = sourceControlHosts.github;
+    const github = { ...legacy.github, ...currentGitHub };
+    for (const field of ["hosts", "tokens"] as const) {
+      const legacyEntries = legacy.github[field];
+      const currentEntries = currentGitHub?.[field];
+      if (
+        !isLegacyProviderConfig(legacyEntries) ||
+        (currentEntries !== undefined && !isLegacyProviderConfig(currentEntries))
+      ) {
+        continue;
+      }
+      const legacyHosts = Object.fromEntries(
+        Object.entries(legacyEntries).map(([host, value]) => [host.trim().toLowerCase(), value]),
+      );
+      const currentHosts = Object.fromEntries(
+        Object.entries(currentEntries ?? {}).map(([host, value]) => [
+          host.trim().toLowerCase(),
+          value,
+        ]),
+      );
+      github[field] = { ...legacyHosts, ...currentHosts };
+      if (field !== "tokens") continue;
+      for (const [serverHost, value] of readSecretFieldValues(legacyHosts)) {
+        if (
+          serverHost === null ||
+          Object.hasOwn(currentHosts, serverHost) ||
+          value !== SECRET_REDACTED
+        ) {
+          continue;
+        }
+        secretMoves.push({
+          from: legacyGitHubTokenSecretName(serverHost),
+          to: sourceControlHostSecretName({ kind: "github", field: "tokens", serverHost }),
+        });
+      }
     }
+    sourceControlHosts.github = github;
   }
   return { settings: { ...settings, sourceControlHosts }, secretMoves };
 }

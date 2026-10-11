@@ -56,35 +56,50 @@ export async function copyContextMenuImage(
   const bytes = Buffer.concat(chunks, byteLength);
   const dimensions = sourceDimensions(bytes, MAX_IMAGE_BYTES / 4);
   if (
-    !dimensions ||
-    dimensions.width <= 0 ||
-    dimensions.height <= 0 ||
-    dimensions.width * dimensions.height > MAX_IMAGE_BYTES / 4
+    dimensions &&
+    (dimensions.width <= 0 ||
+      dimensions.height <= 0 ||
+      dimensions.width * dimensions.height > MAX_IMAGE_BYTES / 4)
   ) {
     throw new Error("Image dimensions exceed the size limit");
   }
   if (contents.isDestroyed() || frame.isDestroyed()) return;
-  const image = Electron.nativeImage.createFromBuffer(bytes);
+  const image = dimensions ? Electron.nativeImage.createFromBuffer(bytes) : null;
   let png: Buffer;
-  if (image.isEmpty()) {
+  if (image === null || image.isEmpty()) {
+    const mimeType = response.headers.get("content-type")?.split(";", 1)[0]?.trim() ?? "";
     const decoded: unknown = await contents.executeJavaScriptInIsolatedWorld(1002, [
       {
         code: `(async () => {
           const source = Uint8Array.from(atob("${bytes.toString("base64")}"), char => char.charCodeAt(0));
-          const bitmap = await createImageBitmap(new Blob([source]));
+          const sourceUrl = URL.createObjectURL(new Blob([source], { type: ${JSON.stringify(mimeType)} }));
+          let timer;
           try {
-            if (bitmap.width <= 0 || bitmap.height <= 0 || bitmap.width * bitmap.height > ${MAX_IMAGE_BYTES / 4}) {
+            const image = new Image();
+            // Bound Chromium's intrinsic dimensions before creating the raster
+            // surface, including formats the header parser does not recognize.
+            const { promise, resolve, reject } = Promise.withResolvers();
+            image.onload = () => resolve();
+            image.onerror = () => reject(new Error("Image could not be decoded"));
+            timer = setTimeout(() => reject(new Error("Image decoding timed out")), 10_000);
+            image.src = sourceUrl;
+            await promise;
+            clearTimeout(timer);
+            const width = image.naturalWidth;
+            const height = image.naturalHeight;
+            if (width <= 0 || height <= 0 || width * height > ${MAX_IMAGE_BYTES / 4}) {
               throw new Error("Image dimensions exceed the size limit");
             }
-            const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+            const canvas = new OffscreenCanvas(width, height);
             const context = canvas.getContext("2d");
             if (!context) throw new Error("Image could not be decoded");
-            context.drawImage(bitmap, 0, 0);
+            context.drawImage(image, 0, 0);
             const output = await canvas.convertToBlob({ type: "image/png" });
             if (output.size > ${MAX_IMAGE_BYTES}) throw new Error("PNG exceeded the size limit");
             return await output.arrayBuffer();
           } finally {
-            bitmap.close();
+            clearTimeout(timer);
+            URL.revokeObjectURL(sourceUrl);
           }
         })()`,
       },

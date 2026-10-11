@@ -8482,6 +8482,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }
           const stop = harness.runtime.stopSubagent;
           assert.isDefined(stop);
+          const beforeForeignStop = harness.events.filter(
+            (event) => event.type === "subagent.updated",
+          );
+          for (const providerThread of [
+            { ...harness.providerThread, appThreadId: ThreadId.make("frozen-copy-thread") },
+            {
+              ...harness.providerThread,
+              nativeThreadRef: {
+                driver: "claudeAgent" as const,
+                nativeId: "foreign-native-owner",
+                strength: "strong" as const,
+              },
+            },
+            {
+              ...harness.providerThread,
+              providerInstanceId: ProviderInstanceId.make("foreign-claude-instance"),
+            },
+          ]) {
+            const rejected = yield* stop!({ providerThread, nativeTaskId: "agent-stop" }).pipe(
+              Effect.flip,
+            );
+            assert.equal(rejected._tag, "ProviderAdapterProtocolError");
+          }
+          assert.deepEqual(stopped, []);
+          assert.deepEqual(
+            harness.events.filter((event) => event.type === "subagent.updated"),
+            beforeForeignStop,
+          );
           yield* stop!({ providerThread: harness.providerThread, nativeTaskId: "agent-stop" });
           assert.deepEqual(stopped, ["agent-stop"]);
           yield* harness.offerAndWait(
@@ -8533,6 +8561,431 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect.each([false, true])(
+    "cancels only an exited query's orphan, replacement parent active %s",
+    (replacementParentActive) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const TASK_ID = "agent-exited-query-orphan";
+          const TOOL_USE_ID = "toolu-exited-query-orphan";
+          const BASH = "toolu-exited-query-orphan-bash";
+          const fileSystem = yield* FileSystem.FileSystem;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-v2-orphan-stop-",
+          });
+          const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+          const sdkStops: Array<{ query: number; taskId: string }> = [];
+          const interrupts: number[] = [];
+          const closes: number[] = [];
+          const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+          const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            settings: DEFAULT_CLAUDE_SETTINGS,
+            environment: {},
+            attachmentsDir,
+            fileSystem,
+            path: yield* Path.Path,
+            crypto: yield* Crypto.Crypto,
+            idAllocator,
+            continuationRequests: { offer: () => Effect.void },
+            queryRunner: {
+              allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
+              open: () =>
+                Effect.gen(function* () {
+                  const query = processQueues.length;
+                  const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+                  processQueues.push(sdkMessages);
+                  return {
+                    messages: Stream.fromQueue(sdkMessages),
+                    offer: () => Effect.void,
+                    setModel: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    stopTask: (taskId) =>
+                      Effect.sync(() => {
+                        sdkStops.push({ query, taskId });
+                      }),
+                    interrupt: Effect.sync(() => {
+                      interrupts.push(query);
+                    }),
+                    close: Effect.sync(() => {
+                      closes.push(query);
+                    }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+                  } satisfies ClaudeAdapterV2.ClaudeAgentSdkQuerySession;
+                }),
+              forkSession: () => Effect.die("unused forkSession"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
+              assertComplete: Effect.void,
+            },
+          });
+          const threadId = ThreadId.make("thread-claude-orphan-stop");
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-claude-orphan-stop"),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          });
+          yield* runtime.events.pipe(
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                events.push(event);
+              }),
+            ),
+            Effect.forkScoped,
+          );
+          const terminals = () => events.filter((event) => event.type === "turn.terminal");
+          const tasks = () => events.filter((event) => event.type === "subagent.updated");
+          const items = () => events.filter((event) => event.type === "turn_item.updated");
+          const latestTask = (taskId: string) =>
+            tasks().findLast((event) => event.subagent.nativeTaskRef?.nativeId === taskId)
+              ?.subagent;
+          const stop = runtime.stopSubagent;
+          assert.isDefined(stop);
+          const launch = makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-exited-query-orphan-launch"),
+            text: "Audit in the background.",
+            attachments: [],
+          });
+          yield* runtime.startTurn(launch);
+          const firstProcess = processQueues[0]!;
+          for (const frame of [
+            makeSubagentTaskStartedFrame({
+              taskId: TASK_ID,
+              toolUseId: TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000002001",
+            }),
+            ...makeSubagentAssistantFrames({
+              parentToolUseId: TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000002002",
+              text: "Keep this child's history.",
+              bashToolUseId: BASH,
+            }),
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000002003",
+              result: "The auditor is working.",
+            }),
+          ]) {
+            yield* Queue.offer(firstProcess, frame);
+          }
+          yield* awaitUntil(() => terminals().length === 1, "orphan launch settled");
+          const originalTask = latestTask(TASK_ID)!;
+          const originalItem = items().findLast(
+            (event) =>
+              event.turnItem.type === "subagent" && event.turnItem.subagentId === originalTask.id,
+          )!.turnItem;
+          const childHistory = events.filter(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.threadId === originalTask.childThreadId,
+          );
+          yield* Queue.shutdown(firstProcess);
+          // This terminal child call is emitted after the adapter observes genuine EOF.
+          yield* awaitUntil(
+            () =>
+              items().some(
+                (event) =>
+                  event.turnItem.nativeItemRef?.nativeId === BASH &&
+                  event.turnItem.status === "failed",
+              ),
+            "owning query exited",
+          );
+
+          if (replacementParentActive) {
+            yield* runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId,
+                providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("attempt-exited-query-orphan-new-parent"),
+                text: "Start a different agent while I stop the old one.",
+                attachments: [],
+                providerTurnOrdinal: 2,
+              }),
+            );
+            yield* Queue.offer(
+              processQueues[1]!,
+              makeSubagentTaskStartedFrame({
+                taskId: "agent-live-sibling",
+                toolUseId: "toolu-live-sibling",
+                uuid: "00000000-0000-4000-8000-000000002004",
+              }),
+            );
+            yield* awaitUntil(
+              () => latestTask("agent-live-sibling")?.status === "running",
+              "replacement sibling running",
+            );
+          }
+          assert.lengthOf(processQueues, replacementParentActive ? 2 : 1);
+          const beforeStopTerminals = terminals();
+          const sibling = latestTask("agent-live-sibling");
+          const frozenCopyThread = {
+            ...providerThread,
+            appThreadId: ThreadId.make("frozen-orphan-copy"),
+          };
+          const foreignNativeThread = {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: "claudeAgent" as const,
+              nativeId: "foreign-orphan-owner",
+              strength: "strong" as const,
+            },
+          };
+          for (const foreign of [frozenCopyThread, foreignNativeThread]) {
+            const rejected = yield* stop!({ providerThread: foreign, nativeTaskId: TASK_ID }).pipe(
+              Effect.flip,
+            );
+            assert.equal(rejected._tag, "ProviderAdapterProtocolError");
+            assert.deepEqual(latestTask(TASK_ID), originalTask);
+          }
+          yield* stop!({ providerThread, nativeTaskId: TASK_ID });
+          yield* awaitUntil(
+            () =>
+              items().findLast((event) => event.turnItem.id === originalItem.id)?.turnItem
+                .status === "cancelled",
+            "orphan artifacts cancelled",
+          );
+          const endedTask = latestTask(TASK_ID)!;
+          assert.equal(endedTask.status, "cancelled");
+          assert.equal(endedTask.id, originalTask.id);
+          assert.equal(endedTask.runId, launch.runId);
+          assert.equal(endedTask.parentNodeId, launch.rootNodeId);
+          assert.equal(endedTask.childThreadId, originalTask.childThreadId);
+          assert.deepEqual(endedTask.nativeTaskRef, originalTask.nativeTaskRef);
+          assert.isNotNull(endedTask.completedAt);
+          const endedNode = events
+            .filter((event) => event.type === "node.updated")
+            .findLast((event) => event.node.id === originalTask.id)!.node;
+          assert.equal(endedNode.status, "cancelled");
+          assert.equal(endedNode.runId, launch.runId);
+          assert.equal(endedNode.rootNodeId, launch.rootNodeId);
+          assert.equal(endedNode.providerTurnId, originalItem.providerTurnId);
+          const childRoot = events
+            .filter((event) => event.type === "node.updated")
+            .findLast(
+              (event) =>
+                event.node.threadId === originalTask.childThreadId &&
+                event.node.kind === "root_turn",
+            )!.node;
+          assert.equal(childRoot.status, "cancelled");
+          assert.isNull(childRoot.runId);
+          const endedItem = items().findLast(
+            (event) => event.turnItem.id === originalItem.id,
+          )!.turnItem;
+          assert.equal(endedItem.runId, originalItem.runId);
+          assert.equal(endedItem.providerTurnId, originalItem.providerTurnId);
+          assert.equal(endedItem.ordinal, originalItem.ordinal);
+          assert.deepEqual(
+            events.filter(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.threadId === originalTask.childThreadId,
+            ),
+            childHistory,
+          );
+          assert.deepEqual(latestTask("agent-live-sibling"), sibling);
+          assert.deepEqual(terminals(), beforeStopTerminals);
+          assert.deepEqual(sdkStops, []);
+          assert.deepEqual(interrupts, []);
+          assert.deepEqual(closes, []);
+          assert.equal(yield* runtime.hasPendingBackgroundWork!, replacementParentActive);
+          const cancelledEvents = tasks().filter((event) => event.subagent.status === "cancelled");
+          yield* stop!({ providerThread, nativeTaskId: TASK_ID });
+          assert.deepEqual(
+            tasks().filter((event) => event.subagent.status === "cancelled"),
+            cancelledEvents,
+          );
+
+          if (replacementParentActive) {
+            yield* stop!({ providerThread, nativeTaskId: "agent-live-sibling" });
+            assert.deepEqual(sdkStops, [{ query: 1, taskId: "agent-live-sibling" }]);
+            assert.equal(latestTask("agent-live-sibling")?.status, "running");
+            yield* Queue.offer(
+              processQueues[1]!,
+              claudeSdkFrame({
+                ...makeSubagentNotificationFrame({
+                  taskId: "agent-live-sibling",
+                  toolUseId: "toolu-live-sibling",
+                  summary: "Stopped by user",
+                  uuid: "00000000-0000-4000-8000-000000002005",
+                }),
+                status: "stopped",
+              }),
+            );
+            yield* awaitUntil(
+              () => latestTask("agent-live-sibling")?.status === "cancelled",
+              "live sibling stop acknowledged",
+            );
+            assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+            yield* Queue.offer(
+              processQueues[1]!,
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000002006",
+                result: "The replacement parent completed normally.",
+              }),
+            );
+            yield* awaitUntil(() => terminals().length === 2, "replacement parent completed");
+            assert.equal(terminals()[1]?.status, "completed");
+
+            // A known task_started can resume the old child while the parent is
+            // idle, before a continuation has republished its new activation.
+            yield* Queue.offer(
+              processQueues[1]!,
+              makeSubagentTaskStartedFrame({
+                taskId: TASK_ID,
+                toolUseId: TOOL_USE_ID,
+                uuid: "00000000-0000-4000-8000-000000002007",
+              }),
+            );
+            yield* Effect.gen(function* () {
+              for (let attempt = 0; attempt < 5000; attempt++) {
+                if (yield* runtime.hasPendingBackgroundWork!) return;
+                yield* Effect.yieldNow;
+              }
+              return yield* Effect.die("Timed out waiting for the idle subagent resume.");
+            });
+            yield* stop!({ providerThread, nativeTaskId: TASK_ID });
+            assert.deepEqual(sdkStops, [
+              { query: 1, taskId: "agent-live-sibling" },
+              { query: 1, taskId: TASK_ID },
+            ]);
+            assert.deepEqual(latestTask(TASK_ID), endedTask);
+            yield* Queue.offer(
+              processQueues[1]!,
+              claudeSdkFrame({
+                ...makeSubagentNotificationFrame({
+                  taskId: TASK_ID,
+                  toolUseId: TOOL_USE_ID,
+                  summary: "Stopped resumed work",
+                  uuid: "00000000-0000-4000-8000-000000002008",
+                }),
+                status: "stopped",
+              }),
+            );
+            const continuation = makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-exited-query-orphan-resume-drain"),
+              text: "Background task stopped.",
+              attachments: [],
+              providerTurnOrdinal: 3,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            });
+            yield* runtime.startTurn(continuation);
+            yield* awaitUntil(
+              () =>
+                latestTask(TASK_ID)?.runId === continuation.runId &&
+                latestTask(TASK_ID)?.status === "cancelled",
+              "resumed stop notification drained",
+            );
+            yield* Queue.offer(
+              processQueues[1]!,
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000002009",
+                result: "Resumed work stopped.",
+              }),
+            );
+            yield* awaitUntil(() => terminals().length === 3, "resume continuation completed");
+            assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("rejects earlier-process membership while the owning query has not exited", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stopped: string[] = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          stopTask: (taskId) =>
+            Effect.sync(() => {
+              stopped.push(taskId);
+            }),
+        });
+        const input = (providerThread: OrchestrationV2ProviderThread, ordinal: number) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread,
+            now: providerThread.createdAt,
+            attemptId: RunAttemptId.make(`attempt-ambiguous-query-${ordinal}`),
+            text: "Continue.",
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          });
+        yield* harness.runtime.startTurn(input(harness.providerThread, 1));
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "agent-unexited-owner",
+            toolUseId: "toolu-unexited-owner",
+            uuid: "00000000-0000-4000-8000-000000002011",
+          }),
+        );
+        yield* Queue.take(harness.subagentReceipts);
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000002012",
+            result: "Working in the background.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const otherNativeThread = {
+          ...harness.providerThread,
+          nativeThreadRef: {
+            driver: "claudeAgent" as const,
+            nativeId: "native-thread-ambiguous-other",
+            strength: "strong" as const,
+          },
+        };
+        // The first query's close is deliberately a no-op. Replacing it is not EOF proof.
+        yield* harness.runtime.startTurn(input(otherNativeThread, 2));
+        yield* Queue.offer(
+          harness.processQueues[1]!,
+          claudeSdkFrame({
+            ...makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000002013",
+              result: "Other native turn completed.",
+            }),
+            session_id: otherNativeThread.nativeThreadRef.nativeId,
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(input(harness.providerThread, 3));
+        assert.lengthOf(harness.processQueues, 3);
+        const before = harness.events.filter((event) => event.type === "subagent.updated");
+        const rejected = yield* harness.runtime.stopSubagent!({
+          providerThread: harness.providerThread,
+          nativeTaskId: "agent-unexited-owner",
+        }).pipe(Effect.flip);
+        assert.equal(rejected._tag, "ProviderAdapterProtocolError");
+        assert.deepEqual(stopped, []);
+        assert.deepEqual(
+          harness.events.filter((event) => event.type === "subagent.updated"),
+          before,
+        );
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        assert.lengthOf(harness.terminalEvents(), 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect.each(["requested", "observed-before", "observed-after", "inherit", "unknown"] as const)(
