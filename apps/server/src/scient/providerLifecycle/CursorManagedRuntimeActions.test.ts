@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { CursorSettings } from "@t3tools/contracts";
+import { CursorSettings } from "@t3tools/provider-cursor/settings";
 import { afterEach, describe, expect } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

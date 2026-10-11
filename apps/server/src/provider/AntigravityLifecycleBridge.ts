@@ -18,7 +18,7 @@ import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
-} from "./ProviderDriver.ts";
+} from "./ScientProviderInstanceSeams.ts";
 import type { AntigravityInstallation } from "./AntigravityInstallation.ts";
 import { resolveAntigravityReleaseAsset } from "./antigravityRelease.ts";
 import type { AntigravityReleaseAsset } from "./antigravityRelease.ts";

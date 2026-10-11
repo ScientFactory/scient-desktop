@@ -38,7 +38,7 @@ import {
   projectLegacyCitationText,
 } from "../legacyCitationProjection.ts";
 
-import { randomUuidV4 } from "../RandomUuid.ts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import {
   importMarkerField,
   makeForkLineageQueries,
@@ -46,6 +46,12 @@ import {
   type ProjectionForkLineageRow,
 } from "./LegacyForkLineageReader.ts";
 import { importLegacyHistory, prepareLegacyHistory } from "./LegacyScientHistory.ts";
+// SCIENT-FORK:START legacy attachment repair
+import {
+  repairLegacyImportedAttachments,
+  type LegacyScientAttachmentRepairRow,
+} from "./LegacyScientAttachmentRepair.ts";
+// SCIENT-FORK:END
 import { writeLegacySourceEvents } from "./LegacySourceReconciliation.ts";
 import * as NodeUtil from "node:util";
 
@@ -130,7 +136,7 @@ export class LegacyV1ThreadImportError extends Schema.TaggedError<LegacyV1Thread
 }
 
 export interface LegacyV1ThreadImporterShape {
-  readonly reconciliationFailure?: Effect.Effect<boolean, LegacyV1ThreadImportError>;
+  readonly reconciliationFailure: Effect.Effect<boolean, LegacyV1ThreadImportError>;
   readonly pendingThreadCount: Effect.Effect<number, LegacyV1ThreadImportError>;
   readonly reconcileShells: Effect.Effect<LegacyV1ImportSummary, LegacyV1ThreadImportError>;
   readonly ensureTranscript: (
@@ -1087,6 +1093,48 @@ const make = Effect.gen(function* () {
           );
           yield* Effect.yieldNow;
         }
+        // SCIENT-FORK:START legacy attachment repair
+        // Only revision-zero retries need the earlier missing-attachment repair.
+        // Source reconciliation already decides attachments against the V2
+        // baseline inside EventSink; repairing afterward would overwrite edits.
+        for (const batch of chunks(messages, TRANSCRIPT_EVENT_BATCH_SIZE / 2)) {
+          const repairRows: LegacyScientAttachmentRepairRow[] = batch.flatMap((message) => {
+            if (
+              revision > 0 ||
+              !existing.has(`${IMPORT_EVENT_PREFIX}:message:${message.message_id}`)
+            )
+              return [];
+            const { attachments, invalid } = attachmentsFor(message);
+            return invalid
+              ? []
+              : [
+                  {
+                    messageId: MessageId.make(message.message_id),
+                    role: message.role,
+                    attachments,
+                    updatedAt: dateTime(message.updated_at),
+                  },
+                ];
+          });
+          if (repairRows.length > 0) {
+            yield* repairLegacyImportedAttachments({
+              sql,
+              eventSink,
+              threadId,
+              messages: repairRows,
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new LegacyV1ThreadImportError({
+                    operation: "repair imported message attachments for",
+                    threadId,
+                    cause,
+                  }),
+              ),
+            );
+          }
+        }
+        // SCIENT-FORK:END
         // Retain valid siblings and the raw source, but never acknowledge or
         // continue a transcript whose attachment conversion is incomplete.
         const invalidMessage = messages.find((message) => attachmentsFor(message).invalid);

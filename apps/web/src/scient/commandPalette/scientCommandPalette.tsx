@@ -538,5 +538,6 @@ export function scientMissingGitReadiness(discovery: SourceControlDiscoveryResul
     forgejo: missingGit,
     bitbucket: missingGit,
     "azure-devops": missingGit,
+    gitcafe: missingGit,
   };
 }

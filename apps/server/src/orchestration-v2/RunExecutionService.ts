@@ -46,20 +46,15 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
-import type {
-  ProviderAdapterV2Event,
-  ProviderAdapterV2EventSubscription,
-  ProviderAdapterV2RuntimePolicy,
-  ProviderAdapterV2SessionRuntime,
-  ProviderAdapterV2TurnMessage,
-  ProviderTextSnapshotConsumerOwner,
-} from "./ProviderAdapter.ts";
-import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
-import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import {
+  makeProviderFailure,
+  makeProviderFailureTurnItem,
+} from "@t3tools/provider-core/server/failure";
 import {
   ThreadCommandExecutor,
   layer as threadCommandExecutorLayer,
@@ -118,7 +113,10 @@ export interface InheritedBackgroundTurnItemRoute {
   readonly runId: OrchestrationV2Run["id"];
 }
 
-type ProviderTerminalEvent = Extract<ProviderAdapterV2Event, { readonly type: "turn.terminal" }>;
+type ProviderTerminalEvent = Extract<
+  ProviderAdapter.ProviderAdapterV2Event,
+  { readonly type: "turn.terminal" }
+>;
 
 function isTerminalProviderTurnStatus(status: OrchestrationV2ProviderTurn["status"]): boolean {
   return (
@@ -396,7 +394,7 @@ export function makeProviderEventRoutingState(input: {
 }
 
 export function routeProviderEvent(
-  event: ProviderAdapterV2Event,
+  event: ProviderAdapter.ProviderAdapterV2Event,
   input: ProviderEventRouteIdentity,
   state: ProviderEventRoutingState,
 ): readonly [boolean, ProviderEventRoutingState] {
@@ -570,7 +568,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly commandId: CommandId;
   readonly appThread: OrchestrationV2AppThread;
   readonly providerSessionId: ProviderSessionId;
-  readonly session: ProviderAdapterV2SessionRuntime;
+  readonly session: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly nativeModelCapacityOwner?: NativeModelCapacityOwner;
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
@@ -593,9 +591,9 @@ export interface RunExecutionServiceV2StartRootRunInput {
   >;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
-  readonly message: ProviderAdapterV2TurnMessage;
+  readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
-  readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
 
 export interface RunExecutionServiceV2Shape {
@@ -836,7 +834,6 @@ export const layer: Layer.Layer<
                     providerInstanceId: input.run.providerInstanceId,
                     occurredAt: completedAt,
                     payload: makeProviderFailureTurnItem({
-                      idAllocator,
                       driver: input.terminal.driver,
                       threadId: input.run.threadId,
                       runId: input.run.id,
@@ -1070,7 +1067,7 @@ export const layer: Layer.Layer<
             input.session.subscribeTextSnapshotEvents === undefined
               ? null
               : yield* input.session.subscribeTextSnapshotEvents;
-          const eventSubscription: ProviderAdapterV2EventSubscription =
+          const eventSubscription: ProviderAdapter.ProviderAdapterV2EventSubscription =
             snapshotSubscription ??
             (input.session.subscribeEvents === undefined
               ? { events: input.session.events, close: Effect.void }
@@ -1079,7 +1076,7 @@ export const layer: Layer.Layer<
           const subscriptionLifetime = yield* makeRunEventSubscriptionLifetime(
             eventSubscription.close,
           );
-          const textSnapshotOwner: ProviderTextSnapshotConsumerOwner = {
+          const textSnapshotOwner: ProviderAdapter.ProviderTextSnapshotConsumerOwner = {
             threadId: input.run.threadId,
             runId: input.run.id,
             activeAttemptId: input.attempt.id,
@@ -1194,7 +1191,10 @@ export const layer: Layer.Layer<
               }
               yield* Ref.set(rootRunFinalized, true);
             });
-          const trackChildLifecycle = (event: ProviderAdapterV2Event, deliverable: boolean) =>
+          const trackChildLifecycle = (
+            event: ProviderAdapter.ProviderAdapterV2Event,
+            deliverable: boolean,
+          ) =>
             Effect.gen(function* () {
               const routing = yield* Ref.get(eventRouting);
               if (event.type === "provider_turn.updated") {
@@ -1723,7 +1723,7 @@ export const layer: Layer.Layer<
           const startTurn = compact
             ? (input.session.compactThread?.(turnInput) ??
               Effect.fail(
-                new ProviderAdapterTurnStartError({
+                new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: input.session.driver,
                   threadId: input.run.threadId,
                   providerThreadId: input.providerThread.id,
@@ -1825,7 +1825,7 @@ export const layer: Layer.Layer<
 ).pipe(Layer.provide(threadCommandExecutorLayer));
 
 export function makeInterruptResultTurnItem(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;

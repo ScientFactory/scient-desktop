@@ -251,7 +251,7 @@ export function FileBreadcrumbNavigator({
                             className={cn(
                               "-mx-1 max-w-40 cursor-pointer truncate rounded-sm px-1 py-0.5 text-muted-foreground outline-none",
                               "hover:bg-accent/60 hover:text-foreground data-popup-open:bg-accent/60 data-popup-open:text-foreground",
-                              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                              "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                             )}
                           />
                         }

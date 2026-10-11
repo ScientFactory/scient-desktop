@@ -7,11 +7,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { CurrentLogLevel } from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { AiError, McpProtocol, McpSchema, McpServer, Tool, type Toolkit } from "effect/ai";
+import { AiError, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { OrchestratorMcpFailure, PreviewAutomationError } from "@t3tools/contracts";
 
@@ -29,6 +30,7 @@ import { makeScientToolListLayer, ScientMcpProtocol } from "./ScientMcpProtocol.
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
@@ -532,8 +534,9 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                 const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
                 const screenshotPath =
                   payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
-                if (screenshotPath !== undefined && payload?.includeImage === false) {
-                  // The agent only wants a file to show the user. The url keeps the site icon on the tool row.
+                // Avoid replaying large images on every provider turn unless requested.
+                const includeImage = payload?.includeImage === true;
+                if (screenshotPath !== undefined && !includeImage) {
                   const saved = {
                     url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
                     screenshotPath,
@@ -561,7 +564,6 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                       ? bounded.value
                       : { ...bounded.value, omitted: bounded.omitted },
                   content: [
-                    // Keep the page identity readable even if a provider truncates the snapshot.
                     {
                       type: "text",
                       text: encodeJsonText({
@@ -577,9 +579,9 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                             text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
                           },
                         ]),
-                    ...(payload?.includeImage === false
-                      ? []
-                      : [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]),
+                    ...(includeImage
+                      ? [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]
+                      : []),
                   ],
                 });
               }),
@@ -664,7 +666,111 @@ const imageToolFailure =
     }).pipe(Effect.as(result));
   };
 
-// SCIENT-FORK:START — Catalogue-checked Scient operations share the MCP registration boundary.
+// SCIENT-FORK:START — Request authority and catalogue-checked operations share the MCP boundary.
+const omitInvocationServices = Context.omit(
+  McpInvocationContext.McpInvocationContext,
+  AgentInvocationContext,
+  McpSchema.McpRequestContext,
+  McpSchema.McpServerClient,
+  HttpServerRequest.HttpServerRequest,
+  CurrentLogLevel,
+);
+
+/**
+ * Bind authoring-tool dependencies at the transport boundary. Only static
+ * services are captured during registration; authority comes from the current
+ * authenticated request. The MCP-facing tool retains the original schemas,
+ * annotations and failure mode, so upstream still owns validation and encoding.
+ */
+const registerRequestToolkit = <Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.Toolkit<Tools>,
+) =>
+  Effect.gen(function* () {
+    const services = yield* Effect.context<
+      | Tool.HandlersFor<Tools>
+      | Exclude<
+          Tool.HandlerServices<Tools[keyof Tools]>,
+          | McpInvocationContext.McpInvocationContext
+          | AgentInvocationContext
+          | McpSchema.McpRequestContext
+        >
+    >();
+    const staticServices = omitInvocationServices(services);
+    for (const name in toolkit.tools) {
+      if (!Object.hasOwn(toolkit.tools, name)) continue;
+      const tool = toolkit.tools[name];
+      if (tool === undefined) {
+        return yield* Effect.die(new Error(`Missing MCP tool definition: ${name}`));
+      }
+      const requestName: string = tool.name;
+      const source = Context.getUnsafe(services, Context.Service<Tool.Handler<string>>(tool.id));
+      const sourceServices = omitInvocationServices(source.context);
+      type SourceTool = Tools[Extract<keyof Tools, string>];
+      const requestTool = Tool.make<
+        string,
+        SourceTool["parametersSchema"],
+        SourceTool["successSchema"],
+        SourceTool["failureSchema"],
+        SourceTool["failureMode"],
+        [typeof McpSchema.McpRequestContext]
+      >(requestName, {
+        description: tool.description,
+        parameters: tool.parametersSchema,
+        success: tool.successSchema,
+        failure: tool.failureSchema,
+        failureMode: tool.failureMode,
+        needsApproval: tool.needsApproval,
+        dependencies: [McpSchema.McpRequestContext],
+      }).annotateMerge(tool.annotations);
+      const requestToolkit = Toolkit.make(requestTool);
+      yield* McpServer.registerToolkit(requestToolkit).pipe(
+        Effect.provide(
+          Layer.succeedContext(
+            // Bind the canonical Handler SPI by the constructed tool's service id.
+            // No conditional handler-name map or Effect requirement assertion is needed.
+            Context.makeUnsafe<Tool.HandlersFor<Toolkit.Tools<typeof requestToolkit>>>(
+              new Map([
+                [
+                  requestTool.id,
+                  {
+                    name: requestName,
+                    context: staticServices,
+                    handler: (
+                      payload: Tool.Parameters<typeof requestTool>,
+                      context: Toolkit.HandlerContext<typeof requestTool>,
+                    ) =>
+                      Effect.withFiber((fiber) => {
+                        const invocation = Context.getUnsafe(
+                          fiber.context,
+                          McpInvocationContext.McpInvocationContext,
+                        );
+                        // Handler SPI erases success and failure types; transport validation
+                        // still uses the source tool's exact schema objects.
+                        const action: Effect.Effect<
+                          Tool.Success<typeof requestTool>,
+                          Tool.Failure<typeof requestTool> | AiError.AiError | AiError.AiErrorReason
+                        > = source.handler(payload, context);
+                        return action.pipe(
+                          Effect.updateContext((input: Context.Context<never>) =>
+                            Context.merge(sourceServices, input),
+                          ),
+                          Effect.provideService(
+                            McpInvocationContext.McpInvocationContext,
+                            invocation,
+                          ),
+                        );
+                      }),
+                  },
+                ],
+              ]),
+            ),
+          ),
+        ),
+        Effect.provideContext(staticServices),
+      );
+    }
+  });
+
 /** Intercepts registration, preserving Effect's schemas and result encoding. */
 export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
@@ -732,7 +838,7 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
           });
         },
       });
-      yield* McpServer.registerToolkit(toolkit).pipe(
+      yield* registerRequestToolkit(toolkit).pipe(
         Effect.provideService(McpServer.McpServer, guarded),
       );
     }),
@@ -878,11 +984,19 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
 /**
  * `McpServer.toolkit` for handlers that declared their access (see
  * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
+ *
+ * The request adapter captures static services only and binds each original
+ * handler to the authenticated invocation before calling it.
  */
 export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, RX>(
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
-) => McpServer.toolkit(toolkit).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
+) => {
+  return Layer.effectDiscard(registerRequestToolkit(toolkit)).pipe(
+    Layer.provide(McpServer.McpServer.layer),
+    Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
+  );
+};
 
 /** A hand-registered tool, also only with handlers that declared their access. */
 const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(
@@ -917,9 +1031,9 @@ export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientS
   Layer.provide(ScientSkillsToolkitHandlersLive),
 );
 
-export const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(
-  ScientDocumentsToolkit,
-).pipe(Layer.provide(ScientDocumentsToolkitHandlersLive));
+const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(ScientDocumentsToolkit).pipe(
+  Layer.provide(ScientDocumentsToolkitHandlersLive),
+);
 
 export const ScientComputeToolkitRegistrationLive = registerScientToolkit(
   ScientComputeToolkit,
@@ -947,14 +1061,14 @@ const layerPreviewControlsRegistration = toolkitRegistration(
   PreviewControlsHandlers.layer,
 );
 
-const layerEnvironmentRegistration = toolkitRegistration(
+export const layerEnvironmentToolkit = toolkitRegistration(
   EnvironmentToolkit,
   EnvironmentHandlers.layer,
-);
+).pipe(Layer.provide(ThreadCommandExecutor.layer));
 
 const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
-const layerAttachmentRegistration = toolkitRegistration(
+export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
 );
@@ -1000,6 +1114,7 @@ export const layerMcpTransport = McpServer.layerHttp({
   version: packageJson.version,
   path: "/mcp",
   protocols: [ScientMcpProtocol],
+  allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware), Layer.provide(layerScientToolList));
 
 export const layer = Layer.mergeAll(
@@ -1011,9 +1126,9 @@ export const layer = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
-  layerAttachmentRegistration,
+  layerAttachmentToolkit,
   layerProjectRegistration,
-  layerEnvironmentRegistration,
+  layerEnvironmentToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,

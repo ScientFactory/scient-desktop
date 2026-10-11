@@ -6,7 +6,7 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -71,10 +71,10 @@ const harness = (
           }),
         ),
       ),
-      Layer.provide(Layer.succeed(HostProcessPlatform, options.platform ?? "linux")),
+      Layer.provide(Layer.succeed(HostProcess.Platform, options.platform ?? "linux")),
       Layer.provide(
         Layer.succeed(
-          HostProcessEnvironment,
+          HostProcess.Environment,
           options.systemRoot === undefined ? {} : { SystemRoot: options.systemRoot },
         ),
       ),

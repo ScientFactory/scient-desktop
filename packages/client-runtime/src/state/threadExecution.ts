@@ -362,7 +362,7 @@ export function presentPendingBackgroundWork(
     const named = only.label !== noun;
     const title = waiting
       ? named
-        ? `Waiting on ${noun} ${only.label}`
+        ? `${only.kind === "monitor" ? "" : `Waiting on ${noun} `}${only.label}`
         : `Waiting on a ${noun}`
       : named
         ? `Running: ${only.label}`
@@ -446,6 +446,7 @@ export function notificationChildThreadId(
     case "provider_work":
     case "background_task":
     case "output_truncated":
+    case "system":
       return undefined;
     default:
       source satisfies never;

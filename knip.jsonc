@@ -59,11 +59,14 @@
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // Native msgpack acceleration and the Vite+ web build prerequisite.
       // PDF.js resolves the packaged native canvas through createRequire.
+      // Native and disk-loaded provider packages stay external to the bundle; the
+      // CLI archive and desktop sidecar stage them from this manifest.
       "ignoreDependencies": [
         "@effect/platform-node-shared",
         "msgpackr-extract",
         "@t3tools/web",
         "@napi-rs/canvas",
+        "@napi-rs/keyring",
       ],
     },
     "apps/desktop": {

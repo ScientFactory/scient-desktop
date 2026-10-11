@@ -18,6 +18,7 @@ import {
   validateScientV2SteerInput,
 } from "../scient/skills/ScientV2SkillTurn.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ServerConfig } from "../config.ts";
 import {
   makeInterruptPendingStart,
@@ -89,12 +90,16 @@ export class ProviderTurnControlServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
-  ServerConfig | ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
+  | ServerConfig
+  | ProjectionStore.ProjectionStoreV2
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | McpProviderSessions.McpProviderSessions
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const skillPlanner = yield* ScientSkillSessionPlanner;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const serverConfig = yield* ServerConfig;
 
@@ -343,7 +348,7 @@ export const layer: Layer.Layer<
             session: loaded.session.value,
             message,
             skillPlanner,
-          });
+          }).pipe(Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions));
           let text = prepared.text;
           yield* validateScientV2SteerInput({
             prepared,

@@ -10,7 +10,7 @@ import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import * as McpProviderSession from "./McpProviderSession.ts";
+import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
@@ -176,7 +176,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           // Keep the provider-facing manifest independent from the
           // authorization record. `ReadonlySet` is compile-time only; sharing
           // one mutable Set would let an adapter accidentally widen its token.
-          browserToolsAvailable: scope.capabilities.has("preview"),
           capabilities: new Set(scope.capabilities),
         },
       };

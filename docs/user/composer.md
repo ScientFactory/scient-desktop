@@ -649,12 +649,11 @@ waiting. Finishing a turn or starting another queued message does not submit
 your draft automatically. **Stash** saves it for later through the usual menu.
 
 **Stop**, interruptions, and failed starts leave the remaining queue held.
-You can send another ordinary message, but its successful answer does not release
-the queue. **Resume** releases it to advance automatically, one message at a time,
-after each successful answer. Restarting work or the server does not release a
-held queue. You can instead click **Send** on the first waiting message to send
-only that row; the rest stays held until you choose **Resume**. Reorder while idle
-to choose a different head.
+Sending another ordinary message releases the queue to follow it automatically,
+one message at a time after each successful answer. Restarting work or the server
+does not release a held queue. You can also click **Send** on any waiting message:
+that message starts first and the remaining queue is released in its retained
+order, with automatic completions first. Reorder while idle to choose the order.
 
 **Retry** is for a queued message whose provider failed to start; the message stays
 queued. It cannot bypass a running answer or silently release the held tail.

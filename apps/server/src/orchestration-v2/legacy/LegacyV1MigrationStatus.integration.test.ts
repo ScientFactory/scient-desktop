@@ -155,7 +155,7 @@ const validAttachment = {
 };
 
 it.effect(
-  "preserves valid attachment siblings without acknowledging or continuing an incomplete conversion",
+  "repairs partial attachment projections before completing a retried transcript import",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -174,8 +174,15 @@ it.effect(
         totalThreadCount: 1,
         pendingThreadCount: 1,
       });
-      const projection = yield* projections.getThreadProjection(ThreadId.make("mixed"));
-      assert.deepEqual(projection.messages[0]?.attachments, [validAttachment]);
+      const threadId = ThreadId.make("mixed");
+      const initialProjection = yield* projections.getThreadProjection(threadId);
+      assert.deepEqual(initialProjection.messages[0]?.attachments, [validAttachment]);
+      const initialUserTurn = initialProjection.turnItems.find(
+        (item) => item.type === "user_message",
+      );
+      assert.isDefined(initialUserTurn);
+      if (initialUserTurn?.type !== "user_message") throw new Error("Missing imported user turn");
+      assert.deepEqual(initialUserTurn.attachments, [validAttachment]);
       const error = yield* importer.ensureTranscript(ThreadId.make("mixed")).pipe(Effect.flip);
       assert.equal(error.threadId, "mixed");
       assert.equal(yield* importer.pendingThreadCount, 1);
@@ -186,6 +193,65 @@ it.effect(
         yield* sql`SELECT transcript_imported_at,last_error FROM orchestration_v2_legacy_imports WHERE thread_id='mixed'`;
       assert.isNull(marker[0]?.transcript_imported_at);
       assert.isNotNull(marker[0]?.last_error);
+
+      const repairedAttachments = [
+        validAttachment,
+        {
+          ...validAttachment,
+          id: "repaired_file",
+          name: "repaired.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 28,
+        },
+      ];
+      yield* sql`UPDATE projection_thread_messages
+        SET attachments_json = ${JSON.stringify(repairedAttachments)}
+        WHERE message_id = 'mixed-message'`;
+      yield* sql`CREATE TRIGGER fail_import_completion BEFORE UPDATE OF transcript_imported_at
+        ON orchestration_v2_legacy_imports
+        WHEN OLD.thread_id='mixed' AND NEW.transcript_imported_at IS NOT NULL
+        BEGIN SELECT RAISE(ABORT,'injected completion failure'); END`;
+      const completionError = yield* importer.ensureTranscript(threadId).pipe(Effect.flip);
+      assert.equal(completionError.threadId, "mixed");
+
+      const repairedProjection = yield* projections.getThreadProjection(threadId);
+      assert.deepEqual(repairedProjection.messages[0]?.attachments, repairedAttachments);
+      const repairedUserTurn = repairedProjection.turnItems.find(
+        (item) => item.type === "user_message",
+      );
+      assert.isDefined(repairedUserTurn);
+      if (repairedUserTurn?.type !== "user_message") throw new Error("Missing repaired user turn");
+      assert.deepEqual(repairedUserTurn.attachments, repairedAttachments);
+      const repairEventsBeforeRetry = yield* sql`
+        SELECT COUNT(*) AS total, COUNT(DISTINCT event_id) AS unique_count
+        FROM orchestration_events
+        WHERE event_id LIKE 'migration:v1:attachment-repair:mixed-message:%'
+      `;
+      assert.equal(repairEventsBeforeRetry[0]?.total, 2);
+      assert.equal(repairEventsBeforeRetry[0]?.unique_count, 2);
+
+      yield* sql`DROP TRIGGER fail_import_completion`;
+      yield* importer.ensureTranscript(threadId);
+      yield* importLegacyTranscriptsWithStatus(1);
+      assert.deepEqual(yield* migrationPayload, {
+        status: "complete",
+        totalThreadCount: 1,
+        pendingThreadCount: 0,
+      });
+      const finalProjection = yield* projections.getThreadProjection(threadId);
+      assert.deepEqual(finalProjection.messages[0]?.attachments, repairedAttachments);
+      const finalUserTurn = finalProjection.turnItems.find((item) => item.type === "user_message");
+      assert.isDefined(finalUserTurn);
+      if (finalUserTurn?.type !== "user_message") throw new Error("Missing final user turn");
+      assert.deepEqual(finalUserTurn.attachments, repairedAttachments);
+      const repairEventsAfterRetry = yield* sql`
+        SELECT COUNT(*) AS total, COUNT(DISTINCT event_id) AS unique_count
+        FROM orchestration_events
+        WHERE event_id LIKE 'migration:v1:attachment-repair:mixed-message:%'
+      `;
+      assert.equal(repairEventsAfterRetry[0]?.total, 2);
+      assert.equal(repairEventsAfterRetry[0]?.unique_count, 2);
+      assert.equal(yield* importer.pendingThreadCount, 0);
     }).pipe(Effect.provide(testLayer)),
 );
 

@@ -27,7 +27,9 @@ export const DETAILS_CARD_CLEARANCE = 32;
 export function resolveChatCanvasLayout({
   container,
   preview,
+  // SCIENT-FORK:START — preserve the shared compact chat lane.
   padding = 20,
+  // SCIENT-FORK:END
   maxChatWidth = 768,
   minChatWidth = 640,
   composerHeight = 0,

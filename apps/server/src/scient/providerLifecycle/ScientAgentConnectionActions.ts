@@ -25,7 +25,7 @@ import type {
   ProviderConnectionActionFailure,
   ProviderConnectionActions,
   ProviderConnectionAttempt,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 
 const SCIENT_AGENT_ACCOUNT_METHOD = "scient_agent_account" satisfies ProviderConnectionMethod;

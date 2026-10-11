@@ -19,7 +19,7 @@ import type {
   ProviderRuntimeDiagnostics,
   ProviderRuntimeSummary,
 } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -31,7 +31,7 @@ import { openCodexAppServerConnection } from "../../provider/CodexProvider.ts";
 import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,
@@ -367,8 +367,8 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       readonly probeRuntime?: (binaryPath: string) => Effect.Effect<CodexCapabilityCheck>;
     };
   }): Effect.fn.Return<CodexManagedRuntimeResolution, never> {
-    const platform = yield* HostProcessPlatform;
-    const arch = yield* HostProcessArchitecture;
+    const platform = yield* HostProcess.Platform;
+    const arch = yield* HostProcess.Architecture;
     const target = detectTargetSafely({ platform, arch });
     const bundledArtifact = target ? resolveReviewedCodexArtifact(target) : undefined;
     const catalogService = yield* ManagedRuntimeCatalog;

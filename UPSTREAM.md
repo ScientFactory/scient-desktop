@@ -254,9 +254,9 @@ Approvability guard and privacy-link withholding remain. The receipt records
 two independent source reviews, complete local qualification, actual-app visual
 evidence and the remaining hosted/platform boundaries.
 
-The current locally qualified alignment is recorded in
+The preceding locally qualified alignment is recorded in
 [the 2a93885bac receipt](docs/internals/t3-upstream-sync-20261008-2a93885bac.md)
-and `upstream-state.json` ([Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487)).
+([Scient PR #487](https://github.com/ScientFactory/scient-desktop/pull/487)).
 It receives all 63 subsequent first-parent official commits through
 `2a93885bac5798a79d55069a0b5dc3e53c6176bc` onto owned base
 `565b3bd15cbb7660250e53b2421915d2f6bdebc5`. Literal merge
@@ -272,6 +272,28 @@ Optional Muse remains disabled by default and system-installed; Scient lifecycle
 frozen history, managed runtime, privacy and publication boundaries remain.
 The receipt separates complete local qualification with exact affected-scope reuse,
 independent review and bounded stress from hosted CI and the user's visual acceptance.
+
+The current locally qualified alignment through `bd2346eda2e2c380d1844869c7fd16c279d2190f`
+is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009-ec80933ac8.md)
+([Scient PR #498](https://github.com/ScientFactory/scient-desktop/pull/498)).
+It receives 160 official first-parent commits: the original 43 plus the
+117-commit extension. It adopts canonical Effect 4 services, shared provider
+and source-control packages, ModelCatalog and scoped MCP sessions while
+preserving Scient's instruction, tool, fork, queue and lifecycle ownership.
+Provider Settings retains visible built-in default slots even when disabled or
+unconfigured; showing a row does not enable, install or persist an instance.
+The receipt records complete aggregate local test qualification, static/build
+checks, affected follow-up qualification, independent source review and explicit
+native/platform limits.
+Literal extension merge `de4f75bb7267e9bb0cbfcc5cc8ce8b2c8675222c` retains the
+exact official target. Owned-main catch-up `71b1799a9db1feb1a8f102b5f528314e32230ca2`
+retains main `397befbdaab86d5798c840168a398d653e96f081`, including transactional
+legacy-source reconciliation and isolated Stable/Beta release channels.
+The original 43-commit callback-composition tradeoff remains the maintainer's
+bounded 2026-10-10 exception, documented with paired Scient comments at its
+application seams. No publication authority or general extraction-line waiver
+is added. The development candidate is held stopped until requested for app
+acceptance; hosted CI qualifies the pushed revision separately.
 
 ## Receiving T3 updates
 
@@ -1036,17 +1058,20 @@ hosted-web aliases, or release bot. The owned manual workflow packages the
 exact promoted Scient tree, embeds the owned updater repository, and
 distributes the exact server runtime as a GitHub release asset.
 
-Scient publishes one desktop update track: stable. Preserve T3's internal
-channel contracts and updater implementation for alignment compatibility, but
-do not expose the inherited Stable/Nightly selector in the Scient desktop.
-Desktop settings normalize and remove stale saved channel overrides before the
-updater is configured, so users who previously selected Nightly return to the
-owned stable feed. This product-policy boundary must not fork Electron update
-discovery, download, installation, or the release workflow.
+Scient exposes Stable and Beta desktop update tracks. Stable retains its owned
+feed; Beta uses the isolated `ScientFactory/scient-desktop-beta` artifact
+repository and separate publication gates. Preserve the explicit saved
+preference, empty-Beta handling, integrity checks and non-downgrade policy.
+Legacy Nightly preferences migrate to Stable without enrolling users in Beta;
+non-Beta builds default to Stable. Keep T3's internal channel contracts where
+the owned implementation consumes them, without exposing a Nightly choice or
+forking Electron discovery, download and installation.
 
-The downloaded-update notification links to the exact version under the shared
-`SCIENT_DESKTOP_RELEASE_REPOSITORY` in `packages/shared/src/scientRelease.ts`.
-It must not combine a Scient version with T3's release repository. The brand
+The downloaded-update notification links to the exact version using
+`scientReleaseRepository` in `packages/shared/src/scientRelease.ts`: Stable
+versions use the owned desktop repository and Beta versions use its isolated
+Beta artifact repository. It must not combine a Scient version with T3's
+release repository. The brand
 guard rejects upstream release links on active product surfaces; source
 attribution and donor-only surfaces remain allowed. This presentation seam
 does not change update-feed configuration, download, or installation behavior.

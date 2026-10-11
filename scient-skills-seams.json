@@ -42,6 +42,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "src/scient/skills/ScientV2SkillTurn.test.ts",
+      "purpose": "Record CI durations for skills behavioral tests in the shared server shard profile; scheduling changes retain every test and assertion (weightedShardSequencer.test.ts and the full current-file assignment check)."
+    },
+    {
       "path": "apps/mobile/src/lib/projectThreadStartTurn.ts",
       "anchor": "selectedScientSkillNames",
       "purpose": "Preserve explicit Scient skill selection when starting a mobile project thread."
@@ -107,7 +112,7 @@
       "purpose": "Carry the semantic capability and exact per-turn skill scope."
     },
     {
-      "path": "apps/server/src/mcp/McpProviderSession.ts",
+      "path": "packages/provider-core/src/server/mcpSession.ts",
       "anchor": "capabilities",
       "purpose": "Carry the stable MCP skill transport into provider adapters without duplicating turn scope."
     },
@@ -115,11 +120,6 @@
       "path": "apps/server/src/mcp/McpSessionRegistry.ts",
       "anchor": "skillScope",
       "purpose": "Bind defensive copies of exact turn skill authority to bearer credentials."
-    },
-    {
-      "path": "apps/server/src/provider/ProviderDriver.ts",
-      "anchor": "skillActions",
-      "purpose": "Expose an optional provider-owned native skill mutation capability without coupling Scient policy to provider implementations."
     },
     {
       "path": "apps/server/src/provider/ProviderRegistry.ts",
@@ -142,22 +142,12 @@
       "purpose": "Publish Codex native skill activation only for snapshots backed by its reviewed app-server API."
     },
     {
-      "path": "apps/server/src/provider/Drivers/GrokDriver.ts",
-      "anchor": "skillActions",
-      "purpose": "Attach Grok skill activation to the exact configured provider instance."
-    },
-    {
-      "path": "apps/server/src/provider/Drivers/GrokSkills.ts",
-      "anchor": "setGrokSkillEnabled",
-      "purpose": "Preserve unrelated Grok TOML while changing only the native disabled-skill list."
-    },
-    {
       "path": "apps/server/src/provider/CodexProvider.ts",
       "anchor": "skills/config/write",
       "purpose": "Use Codex's authoritative native skill configuration method."
     },
     {
-      "path": "apps/server/src/provider/OpenCodeProvider.ts",
+      "path": "packages/provider-opencode/src/server/status.ts",
       "anchor": "resolveOpenCodeSkillScope",
       "purpose": "Normalize OpenCode skill scope so project inventory stays out of global skill surfaces."
     },
@@ -362,6 +352,21 @@
       "path": "apps/web/src/scient/threadQueue/submission.ts",
       "anchor": "selectedScientSkillNames: Schema.optionalKey(Schema.Array(Schema.String))",
       "purpose": "Retain selected Scient skills in the durable queued thread-start payload."
+    },
+    {
+      "path": "apps/server/src/provider/ScientProviderInstance.ts",
+      "anchor": "skillActions",
+      "purpose": "Expose an optional provider-owned native skill mutation capability without coupling Scient policy to provider implementations."
+    },
+    {
+      "path": "apps/server/src/provider/AppProviderDriverComposition.ts",
+      "anchor": "skillActions",
+      "purpose": "Attach Grok skill activation to the exact configured provider instance."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/ScientNativeSkills.ts",
+      "anchor": "setGrokSkillEnabled",
+      "purpose": "Preserve unrelated Grok TOML while changing only the native disabled-skill list."
     }
   ]
 }

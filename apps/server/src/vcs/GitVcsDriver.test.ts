@@ -3,7 +3,7 @@
 import * as NodeCrypto from "node:crypto";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - FileSystem takes string paths; the non-UTF-8 test needs a byte path.
 import * as NodeFS from "node:fs";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // SCIENT-FORK:END
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
@@ -1745,7 +1745,7 @@ it.live(
   90_000,
 );
 
-it.effect.skipIf(HostProcessPlatform.defaultValue() !== "linux")(
+it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "captures a changed file whose name is not valid UTF-8",
   () =>
     Effect.gen(function* () {

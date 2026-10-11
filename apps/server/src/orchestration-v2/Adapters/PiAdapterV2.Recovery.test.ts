@@ -3,7 +3,7 @@ import { RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { makePiRpcConnection } from "./PiRpc.ts";
+import { makePiRpcConnection } from "@t3tools/provider-pi/testing";
 import { piContextErrorMessage } from "../../provider/pi/PiContextError.ts";
 import {
   testLayer,

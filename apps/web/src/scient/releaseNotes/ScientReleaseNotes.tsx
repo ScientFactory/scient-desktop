@@ -80,7 +80,7 @@ function ScientReleaseNotesCard({
       </button>
       <button
         aria-label="Dismiss this release note"
-        className="absolute right-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-[color-mix(in_srgb,var(--scient-warm-white)_72%,transparent)] hover:text-foreground focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--scient-slate)_62%,transparent)]"
+        className="absolute right-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-[color-mix(in_srgb,var(--scient-warm-white)_72%,transparent)] hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color-mix(in_srgb,var(--scient-slate)_62%,transparent)]"
         onClick={onDismiss}
         type="button"
       >

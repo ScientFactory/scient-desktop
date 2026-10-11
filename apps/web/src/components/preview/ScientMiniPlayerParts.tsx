@@ -16,6 +16,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
 import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSurface";
+import { observeResize } from "~/lib/observeResize";
 
 import {
   clampPreviewMiniPlayerPosition,
@@ -130,11 +131,10 @@ export function useMiniPlayerMeasuredLayout(
       setLayout((current) => (current && sameLayout(current, next) ? current : next));
     };
     measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    if (composerOverlayElement) observer.observe(composerOverlayElement);
-    return () => observer.disconnect();
+    return observeResize(
+      composerOverlayElement ? [element, composerOverlayElement] : element,
+      measure,
+    );
   }, [composerOverlayElement, canvasFrame, containerRef, setLayout]);
 }
 

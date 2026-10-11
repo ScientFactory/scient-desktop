@@ -1,5 +1,5 @@
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
-import { historyResponseItems } from "../ContextHandoffBudget.ts";
+import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderCitationPresentation,
@@ -16,14 +16,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as Logger from "effect/Logger";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
@@ -62,6 +62,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Layer.provide(Layer.mergeAll(imageStoresLayer, imageSinkLayer, IdAllocator.layer)),
     ),
     IdAllocator.layer,
+    McpProviderSessions.layer,
   ).pipe(Layer.provideMerge(Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer)));
 
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
@@ -199,8 +200,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isEmpty(assistantMessages(harness.events));
       }).pipe(
         Effect.provide(
-          Layer.merge(
+          Layer.mergeAll(
             IdAllocator.layer,
+            McpProviderSessions.layer,
             Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer),
           ),
         ),
@@ -818,6 +820,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   )("$caseTitle", ({ scenario }) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
         const nativeThreadId = "context-thread";
         const nativeTurnId = "context-turn";
         const { hasMcp } = scenario;
@@ -837,85 +840,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           hasT3Mcp: hasMcp,
           mcpCapabilities: capabilities,
         });
-        assert.include(
-          params.additionalContext?.t3_code_runtime?.value ?? "",
-          "Codex harness, as gpt-5.4 with high reasoning effort",
+        const contextSchema = Schema.Struct({
+          additionalContext: Schema.Record(Schema.String, Schema.Struct({ value: Schema.String })),
+        });
+        const decodeContext = Schema.decodeUnknownEffect(contextSchema);
+        const delivered = yield* Ref.make<ReadonlyArray<Schema.Schema.Type<typeof contextSchema>>>(
+          [],
         );
-        if (!hasMcp) {
-          assert.deepEqual(Object.keys(params.additionalContext ?? {}), [
-            "t3_code_runtime",
-            "scient_awareness",
-          ]);
-          assert.notInclude(
-            params.additionalContext?.scient_awareness?.value ?? "",
-            "scient_skill_load",
-          );
-        } else if (scenario.grants) {
-          assert.include(
-            params.additionalContext?.t3_code_orchestration?.value ?? "",
-            "delegate_task",
-          );
-          assert.include(
-            params.additionalContext?.scient_awareness?.value ?? "",
-            "scient_pdf_build",
-          );
-          assert.include(
-            params.additionalContext?.scient_awareness?.value ?? "",
-            "scient_compute_inventory",
-          );
-          assert.include(
-            params.additionalContext?.scient_awareness?.value ?? "",
-            "scient_skill_load",
-          );
-          assert.notInclude(params.additionalContext?.scient_awareness?.value ?? "", "device_list");
-        }
-        const awareness = params.additionalContext?.scient_awareness?.value ?? "";
-        assert.include(awareness, "## Scient");
-        assert.include(awareness, "workspace-relative Markdown images");
-        assert.include(awareness, "diagram declaration before its contents");
-        assert.include(awareness, "Create workspace files for standalone deliverables");
-        assert.include(awareness, "clickable project-relative Markdown links");
-        if (scenario.grants) {
-          assert.include(awareness, "Scient browser");
-          assert.include(awareness, "preview_open");
-          assert.include(awareness, "another browser system only when");
-        } else {
-          for (const absent of [
-            "Scient browser",
-            "preview_status",
-            "preview_open",
-            "device_open",
-            "scient_skill_load",
-            "scient_pdf_build",
-            "scient_compute_inventory",
-          ])
-            assert.notInclude(awareness, absent);
-        }
-        if (hasMcp) {
-          assert.equal(
-            (params.additionalContext?.t3_code_orchestration?.value ?? "") +
-              (params.additionalContext?.t3_code_workspace?.value ?? ""),
-            T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-          );
-          assert.equal(params.additionalContext?.t3_code_orchestration?.kind, "application");
-          assert.deepEqual(Object.keys(params.additionalContext ?? {}), [
-            "t3_code_orchestration",
-            "t3_code_workspace",
-            "t3_code_runtime",
-            "scient_awareness",
-          ]);
-          assert.include(
-            params.additionalContext?.t3_code_workspace?.value ?? "",
-            "Choose the workspace",
-          );
-          const modeInstructions = params.collaborationMode?.settings.developer_instructions ?? "";
-          assert.match(modeInstructions, /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/);
-          assert.notMatch(
-            modeInstructions,
-            /runtime_info|pull_request_linking|preview_|device_|## Scient/,
-          );
-          assert.equal(params.collaborationMode?.mode, scenario.mode);
-        }
         const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
         const transcript = makeCodexReplayTranscript({
           scenario: "restore-context",
@@ -969,9 +900,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
+        const harness = yield* makeCodexReplayHarness(transcript, undefined, (method, packet) =>
+          method === "turn/start"
+            ? decodeContext(packet).pipe(
+                Effect.orDie,
+                Effect.flatMap((context) =>
+                  Ref.update(delivered, (current) => [...current, context]),
+                ),
+              )
+            : Effect.void,
+        );
         if (hasMcp)
-          McpProviderSession.setMcpProviderSession({
+          yield* sessions.set({
             environmentId: EnvironmentId.make("test"),
             threadId: harness.threadId,
             providerSessionId: "context-session",
@@ -980,9 +920,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             authorizationHeader: "Bearer test",
             capabilities,
           });
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => McpProviderSession.clearMcpProviderSession(harness.threadId)),
-        );
+        yield* Effect.addFinalizer(() => sessions.clear(harness.threadId));
         yield* harness.runtime.startTurn({
           ...makeCodexTestTurnInput({
             threadId: harness.threadId,
@@ -995,11 +933,36 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           runtimePolicy,
         });
         yield* harness.firstTerminal;
+        const contexts = yield* Ref.get(delivered);
+        assert.lengthOf(contexts, 1);
+        const context = contexts[0]!.additionalContext;
+        const awareness = context.scient_awareness?.value ?? "";
+        for (const tool of [
+          "preview_status",
+          "preview_open",
+          "scient_pdf_build",
+          "scient_compute_inventory",
+          "scient_skill_load",
+        ]) {
+          if (scenario.grants) assert.include(awareness, tool);
+          else assert.notInclude(awareness, tool);
+        }
+        assert.notInclude(awareness, "device_open");
+        if (hasMcp) {
+          assert.include(context.t3_code_orchestration?.value ?? "", "delegate_task");
+        } else {
+          assert.notProperty(context, "t3_code_orchestration");
+          assert.notProperty(context, "t3_code_workspace");
+        }
+        for (const entry of Object.values(context)) {
+          assert.isAtMost(Buffer.byteLength(entry.value, "utf8"), 4_000);
+        }
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
       }).pipe(
         Effect.provide(
-          Layer.merge(
+          Layer.mergeAll(
             IdAllocator.layer,
+            McpProviderSessions.layer,
             Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer),
           ),
         ),

@@ -17,8 +17,8 @@ import {
 import type {
   ProviderConnectionActions,
   ProviderConnectionActionFailure,
-} from "../../provider/ProviderDriver.ts";
-import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   findTerminalAuthorizationUrl,
   pickProcessEnvironment,

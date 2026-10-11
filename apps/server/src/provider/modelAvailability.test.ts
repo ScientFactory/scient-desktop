@@ -5,7 +5,10 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { buildServerProvider, retainUnavailableAgentModels } from "./providerSnapshot.ts";
+import {
+  buildServerProvider,
+  retainUnavailableAgentModels,
+} from "@t3tools/provider-core/server/snapshotProbe";
 
 const model = (slug: string): ServerProviderModel => ({
   slug,

@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { CodexSettings } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -552,8 +552,8 @@ describe("Codex managed runtime and a newer PATH Codex", () => {
   });
   const onDarwinArm = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices>) =>
     effect.pipe(
-      Effect.provideService(HostProcessPlatform, "darwin"),
-      Effect.provideService(HostProcessArchitecture, "arm64"),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Architecture, "arm64"),
       Effect.provide(NodeServices.layer),
     );
 

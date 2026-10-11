@@ -1,8 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./piT3McpExtensionSource.ts";
+import * as Schema from "effect/Schema";
+import { makePiMcpExtensionSource } from "@t3tools/provider-pi/testing";
+import { buildPiRuntimeGuidance } from "../../provider/PiDriverComposition.ts";
+import { SCIENT_ORCHESTRATION_INSTRUCTIONS } from "../../provider/ScientProviderInstructions.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 type Tool = {
@@ -16,32 +21,51 @@ type ToolHook = (
   event: { toolName: string; input: unknown },
   context: { hasUI: boolean; ui: { confirm: () => Promise<boolean> } },
 ) => Promise<unknown>;
+type ExtensionHook = (event: unknown, context?: unknown) => unknown;
+const decodeGuidance = Schema.decodeUnknownSync(Schema.Struct({ systemPrompt: Schema.String }));
 
 /** Only Pi's extension API and the MCP HTTP peer are substituted. */
 async function loadBridge(result: unknown, mode = "full-access") {
   const tools = new Map<string, Tool>();
   let hook: ToolHook | undefined;
+  let guidance: ExtensionHook | undefined;
+  let extension = makePiMcpExtensionSource(SCIENT_ORCHESTRATION_INSTRUCTIONS);
+  for (const declaration of [
+    'import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+    'import * as NodeFSP from "node:fs/promises";',
+    'import * as NodePath from "node:path";',
+    'import { Type } from "typebox";',
+  ]) {
+    expect(extension.split(declaration)).toHaveLength(2);
+    extension = extension.replace(declaration, "");
+  }
   const source = NodeModule.stripTypeScriptTypes(
-    PI_T3_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
-      "export default async function",
-      "async function",
-    ),
+    extension.replace("export default async function", "async function"),
   );
+  const runtimeGuidance = buildPiRuntimeGuidance(new Set(["preview"]));
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     AbortSignal,
     TextDecoder,
     TextEncoder,
+    NodeFSP,
+    NodePath,
+    stripFrontmatter: () => {
+      throw new Error("The MCP result fixture must not read native skill files.");
+    },
     Type: { Unsafe: (schema: unknown) => schema },
     process: {
       env: {
         T3_MCP_URL: "http://127.0.0.1/mcp",
         T3_MCP_BEARER_TOKEN: "synthetic",
         T3_PI_RUNTIME_MODE: mode,
+        PI_RUNTIME_GUIDANCE: runtimeGuidance,
       },
     },
     pi: {
-      on: (name: string, handler: ToolHook) => {
-        if (name === "tool_call") hook = handler;
+      on: (name: string, handler: ExtensionHook) => {
+        if (name === "tool_call")
+          hook = (event, context) => Promise.resolve(handler(event, context));
+        if (name === "before_agent_start") guidance = handler;
       },
       registerCommand: () => undefined,
       registerTool: (tool: Tool) => tools.set(tool.name, tool),
@@ -54,14 +78,26 @@ async function loadBridge(result: unknown, mode = "full-access") {
         request.method === "initialize"
           ? { protocolVersion: "2025-06-18" }
           : request.method === "tools/list"
-            ? { tools: [{ name: "scient_fixture", inputSchema: { type: "object" } }] }
+            ? {
+                tools: [
+                  { name: "scient_fixture", inputSchema: { type: "object" } },
+                  { name: "preview_status", inputSchema: { type: "object" } },
+                ],
+              }
             : result;
       return Response.json({ jsonrpc: "2.0", id: request.id, result: response });
     },
   });
-  const tool = [...tools.values()][0];
-  if (!tool || !hook)
+  const tool = tools.get("scient_fixture");
+  if (!tool || !hook || !guidance)
     throw new Error("Native bridge did not register its tool and permission hook.");
+  expect([...tools.keys()]).toEqual(["scient_fixture", "preview_status"]);
+  const systemPrompt = decodeGuidance(
+    guidance({ systemPrompt: "Base system prompt" }),
+  ).systemPrompt;
+  expect(systemPrompt).toBe(
+    ["Base system prompt", runtimeGuidance, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim()].join("\n\n"),
+  );
   return { execute: () => tool.execute("call-1", {}), hook };
 }
 

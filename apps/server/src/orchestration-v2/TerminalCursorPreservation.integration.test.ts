@@ -29,16 +29,19 @@ import { makeOmpAdapterV2 } from "./Adapters/OmpAdapterV2.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const Audit = Schema.Struct({
   pid: Schema.Int,
@@ -134,7 +137,7 @@ it.live(
         const makeRuntime = (recoverOnStartup: boolean) =>
           makeOrchestratorV2ReplayLayerWithRegistry(
             { name: "terminal-cursor", runtimePolicyOverride: { cwd } },
-            makeLayer([
+            ProviderAdapterRegistry.layerFromAdaptersEffect(
               makeOmpAdapterV2({
                 target: ompTarget,
                 instanceId,
@@ -153,12 +156,12 @@ it.live(
                 idAllocator: yieldAllocator,
                 continuations: { offer: () => Effect.void },
                 makeProcess,
-              }),
-            ]),
+              }).pipe(Effect.map((adapter) => [adapter])),
+            ),
             {
               configureMcp: false,
               layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
-              layerDatabase: makeSqlitePersistenceLive(
+              databaseLayer: makeSqlitePersistenceLive(
                 path.join(privateRoot, "statev2.sqlite"),
               ).pipe(Layer.provide(NodeServices.layer)),
               recoverOnStartup,

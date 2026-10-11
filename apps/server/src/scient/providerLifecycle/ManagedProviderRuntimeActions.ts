@@ -27,8 +27,11 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
-} from "../../provider/ProviderDriver.ts";
-import { parseGenericCliVersion, spawnAndCollect } from "../../provider/providerSnapshot.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
+import {
+  parseGenericCliVersion,
+  spawnAndCollect,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,

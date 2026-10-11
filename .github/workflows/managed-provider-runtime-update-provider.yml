@@ -287,9 +287,10 @@ jobs:
             apps/server/src/auth \
             apps/server/src/scient/threadSections \
             apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts \
-            apps/server/src/stream \
             apps/server/src/provider/Drivers/AntigravitySkills.ts \
             apps/server/src/process \
+            packages/provider-acp \
+            packages/provider-core \
             packages/contracts \
             packages/scient-analysis \
             packages/scient-execution \
@@ -324,11 +325,13 @@ jobs:
             apps/server/src/scient/providerLifecycle \
             apps/server/src/scient/threadSections \
             apps/server/src/sourceControl \
-            apps/server/src/stream \
             apps/server/src/telemetry \
             apps/server/src/textGeneration \
             apps/server/src/utils \
             apps/server/src/vcs \
+            packages/provider-acp \
+            packages/provider-core \
+            packages/provider-testing \
             packages/contracts \
             packages/scient-analysis \
             packages/scient-analytics \
@@ -338,6 +341,13 @@ jobs:
             packages/scient-operations \
             packages/scient-project-init \
             packages/scient-sources \
+            packages/source-control-azure-devops \
+            packages/source-control-bitbucket \
+            packages/source-control-core \
+            packages/source-control-forgejo \
+            packages/source-control-gitcafe \
+            packages/source-control-github \
+            packages/source-control-gitlab \
             packages/shared; then
             echo "What Droid's protocol qualification runs changed during this run; retry from current main." >&2
             exit 1
@@ -351,7 +361,7 @@ jobs:
             apps/server/src/provider \
             apps/server/src/scient/providerLifecycle \
             apps/server/src/scient/threadSections \
-            apps/server/src/stream \
+            packages/provider-core \
             packages/effect-omp-rpc \
             packages/contracts \
             packages/scient-analysis \

@@ -2,9 +2,12 @@ import {
   AuthDiagnosticsReadScope,
   AuthEnvironmentMaintainScope,
   AuthFilesystemReadScope,
+  AuthPreviewOperateScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
+  AuthTerminalReadScope,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentFilePath,
   type AuthEnvironmentScope,
@@ -155,6 +158,71 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires source control writes to start, retry, or cancel project clones", () => {
+    for (const method of [
+      WS_METHODS.projectCloneStart,
+      WS_METHODS.projectCloneRetry,
+      WS_METHODS.projectCloneCancel,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSourceControlWriteScope);
+    }
+    expect(requiredScopeForRpcMethod(WS_METHODS.subscribeProjectClones)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
+  it("separates viewing pull request file progress from writing it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsFilesViewed)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsSetFilesViewed)).toBe(
+      AuthSourceControlWriteScope,
+    );
+  });
+
+  it("separates preview control from observation", () => {
+    for (const method of [
+      WS_METHODS.previewOpen,
+      WS_METHODS.previewNavigate,
+      WS_METHODS.previewResize,
+      WS_METHODS.previewRefresh,
+      WS_METHODS.previewClose,
+      WS_METHODS.previewReportStatus,
+      WS_METHODS.previewAdjust,
+      WS_METHODS.previewClearProfile,
+      WS_METHODS.previewReportProfiles,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthPreviewOperateScope);
+    }
+    for (const method of [
+      WS_METHODS.previewList,
+      WS_METHODS.subscribePreviewEvents,
+      WS_METHODS.subscribeDiscoveredLocalServers,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
+  it("separates passive terminal observation from operations that can change a shell", () => {
+    for (const method of [
+      WS_METHODS.terminalObserve,
+      WS_METHODS.subscribeTerminalEvents,
+      WS_METHODS.subscribeTerminalMetadata,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
+    }
+    for (const method of [
+      WS_METHODS.terminalAttach,
+      WS_METHODS.terminalOpen,
+      WS_METHODS.terminalWrite,
+      WS_METHODS.terminalResize,
+      WS_METHODS.terminalClear,
+      WS_METHODS.terminalRestart,
+      WS_METHODS.terminalClose,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
+    }
+  });
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(
@@ -494,5 +562,46 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       });
     }
     expect(handled).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("denies manual cleanup before the handler without settings permission", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.serverRunStorageCleanup
+        > => tag !== WS_METHODS.serverRunStorageCleanup,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.serverRunStorageCleanup, () =>
+            Effect.sync(() => {
+              handled = true;
+              return {
+                trigger: "manual" as const,
+                startedAt: "2026-10-09T12:00:00.000Z",
+                finishedAt: "2026-10-09T12:00:00.000Z",
+                entries: [],
+                counts: { removed: 0, kept: 0, failed: 0 },
+                omittedCount: 0,
+                bytesFreed: 0,
+              };
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthSettingsWriteScope,
+    });
+    expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
