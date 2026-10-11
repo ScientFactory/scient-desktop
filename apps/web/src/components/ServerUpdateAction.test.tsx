@@ -167,19 +167,19 @@ describe("ServerUpdateAction", () => {
       { kind: "npm-global", prefix: "/opt/node" },
       "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3",
       "Relaunch command copied",
-      "This does not update an installed t3 command.",
+      "This does not update an installed scient command.",
     ],
     [
       { kind: "npx" },
       "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3",
       "Relaunch command copied",
-      "This does not update an installed t3 command.",
+      "This does not update an installed scient command.",
     ],
     [
       undefined,
       "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3",
       "Relaunch command copied",
-      "This does not update an installed t3 command.",
+      "This does not update an installed scient command.",
     ],
   ] satisfies ReadonlyArray<readonly [ServerInstallation | undefined, string, string, string]>)(
     "copies an honest manual command for %j without invoking remote update",

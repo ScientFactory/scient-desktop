@@ -33,7 +33,7 @@ export class DesktopAppSshUnsupportedError extends Schema.TaggedError<DesktopApp
   {},
 ) {
   override get message(): string {
-    return "`t3 app` only controls the Scient desktop app on the same machine. It cannot run over SSH.";
+    return "`scient app` only controls the Scient desktop app on the same machine. It cannot run over SSH.";
   }
 }
 
@@ -42,7 +42,7 @@ export class DesktopAppPlatformUnsupportedError extends Schema.TaggedError<Deskt
   { platform: Schema.String },
 ) {
   override get message(): string {
-    return `\`t3 app\` is not supported on ${this.platform}.`;
+    return `\`scient app\` is not supported on ${this.platform}.`;
   }
 }
 
@@ -56,7 +56,7 @@ export class DesktopAppUnreachableError extends Schema.TaggedError<DesktopAppUnr
   },
 ) {
   override get message(): string {
-    return "Could not reach the Scient desktop app. Start or update Scient on this machine, then run `t3 app` again. A running Scient server is not enough.";
+    return "Could not reach the Scient desktop app. Start or update Scient on this machine, then run `scient app` again. A running Scient server is not enough.";
   }
 }
 

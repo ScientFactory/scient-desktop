@@ -342,7 +342,11 @@ const make = Effect.gen(function* () {
   // Chrome's sandbox stays on unless the operator explicitly turns it off.
   // Chrome also refuses it as root, where that opt-out is the only way to run.
   const noSandbox = PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment);
-  const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
+  const setupCommand = yield* resolveRootCliCommand([
+    ...PreviewBrowserHost.SETUP_ARGUMENTS,
+    "--base-dir",
+    config.baseDir,
+  ]);
 
   /** Runs one browser launch; a host that cannot start it gets setup steps instead. */
   const launching = <A>(

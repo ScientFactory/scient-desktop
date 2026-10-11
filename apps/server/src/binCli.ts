@@ -48,7 +48,7 @@ const connectUnavailableCommand = Command.make("connect", {
   Command.withHandler(() =>
     Effect.fail(
       new CliError.ShowHelp({
-        commandPath: ["t3", "connect"],
+        commandPath: [SCIENT_DESKTOP_IDENTITY.cliCommandName, "connect"],
         errors: [new ConnectPublicConfigMissingError({ cause: connectPublicConfigMissingMessage })],
       }),
     ),
@@ -59,14 +59,19 @@ export const makeCli = ({
   cloudEnabled = hasCloudPublicConfig(),
   serviceEnabled = !SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled,
 } = {}) =>
-  Command.make("t3", { ...sharedServerCommandFlags }).pipe(
+  Command.make(SCIENT_DESKTOP_IDENTITY.cliCommandName, { ...sharedServerCommandFlags }).pipe(
     Command.withDescription("Run the Scient server."),
     Command.withHandler(runDefaultServerCommand),
     Command.withSubcommands([
       Command.make("help").pipe(
         Command.withDescription("Show command help."),
         Command.withHandler(() =>
-          Effect.fail(new CliError.ShowHelp({ commandPath: ["t3"], errors: [] })),
+          Effect.fail(
+            new CliError.ShowHelp({
+              commandPath: [SCIENT_DESKTOP_IDENTITY.cliCommandName],
+              errors: [],
+            }),
+          ),
         ),
       ),
       acpMcpBridgeCommand,

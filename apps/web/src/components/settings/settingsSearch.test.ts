@@ -46,6 +46,16 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("settings sidebar order", () => {
+  it("finds the canonical Scient command and its former t3 name", () => {
+    expect(searchableSetting("cli-command").title).toBe("scient command");
+    const items = SETTINGS_SEARCH_ITEMS.filter((item) => item.id === "cli-command").map((item) => ({
+      ...item,
+      desktopOnly: false,
+    }));
+    expect(searchSettings("scient command", items).map((item) => item.id)).toEqual(["cli-command"]);
+    expect(searchSettings("t3", items).map((item) => item.id)).toEqual(["cli-command"]);
+  });
+
   it("keeps integrations prominent and keybindings below scientific computing", () => {
     const paths = Object.keys(SETTINGS_SECTION_LABELS);
 
