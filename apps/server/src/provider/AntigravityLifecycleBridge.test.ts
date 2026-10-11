@@ -5,10 +5,13 @@ import {
   type ProviderAuthState,
   type ProviderInstallState,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { AntigravityInstallation } from "./AntigravityInstallation.ts";
 import {
@@ -98,6 +101,57 @@ it.effect("bridges official Google auth into Scient's one-click connection flow"
       "stop-sessions",
       "logout",
     ]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("waits for cold ACP startup beyond thirty seconds before returning the Google URL", () =>
+  Effect.gen(function* () {
+    const scope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+    const subscribed = yield* Deferred.make<void>();
+    const cancelled: string[] = [];
+    const starting = authState("starting", { flowId: "cold-start-flow" });
+    const waiting = authState("waiting", {
+      flowId: "cold-start-flow",
+      authorizationUrl,
+    });
+    const controller: ProviderAuthController = {
+      start: () => Effect.succeed(starting),
+      complete: () => Effect.die("not used"),
+      cancel: (_owner, flowId) =>
+        Effect.sync(() => {
+          cancelled.push(flowId);
+          return authState("cancelled", { flowId });
+        }),
+      logout: () => Effect.succeed(authState("idle")),
+      subscribe: () =>
+        Stream.fromEffect(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(subscribed, undefined);
+            yield* Effect.sleep("40 seconds");
+            return waiting;
+          }),
+        ),
+    };
+    const actions = makeAntigravityConnectionActionsFromController({
+      instanceId,
+      authMethod: "oauth-personal",
+      controller,
+      stopSessions: Effect.void,
+      randomOwnerId: Effect.succeed("cold-start-owner"),
+    });
+    const pending = yield* actions
+      .start("antigravity_google")
+      .pipe(Effect.provideService(Scope.Scope, scope), Effect.forkChild);
+    yield* Deferred.await(subscribed);
+    yield* TestClock.adjust("40 seconds");
+    const attempt = yield* Fiber.join(pending);
+    expect(attempt.authorizationUrl).toBe(authorizationUrl);
+    expect(attempt.initialStatus).toBe("waiting_for_browser");
+    expect(attempt.authorizationResponseKind).toBe("callback_url");
+    expect(cancelled).toEqual([]);
+    yield* Scope.close(scope, Exit.void);
+    expect(cancelled).toEqual(["cold-start-flow"]);
   }).pipe(Effect.scoped),
 );
 

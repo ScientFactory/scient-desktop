@@ -99,14 +99,11 @@ export function makeAntigravityConnectionActionsFromController(input: {
         const initial =
           started.phase === "starting"
             ? Option.getOrElse(
+                // The auth controller owns expiry, including cold ACP startup.
+                // A shorter deadline here cancels the process before it can emit a URL.
                 yield* input.controller.subscribe(owner).pipe(
                   Stream.filter((state) => state.phase !== "starting"),
                   Stream.runHead,
-                  Effect.timeoutOrElse({
-                    duration: "30 seconds",
-                    orElse: () =>
-                      Effect.fail(failure("Antigravity did not start sign-in in time.")),
-                  }),
                 ),
                 () => started,
               )
