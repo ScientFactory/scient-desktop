@@ -31,7 +31,8 @@ import * as ScientTestProviderHost from "./testkit/ScientTestProviderHost.ts";
 import * as McpRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../provider/testUtils/providerRegistryMock.ts";
-import { makePiAdapterV2, makePiRpcConnection } from "@t3tools/provider-pi/testing";
+import { makeScientPiAdapterV2 } from "../provider/PiDriverComposition.ts";
+import { makePiRpcConnection } from "@t3tools/provider-pi/testing";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -140,7 +141,7 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
       const publicationReleased = yield* Deferred.make<void>();
       let startupHeld = false;
       let publicationHeld = false;
-      const adapter = yield* makePiAdapterV2({
+      const adapter = yield* makeScientPiAdapterV2({
         instanceId,
         settings: { enabled: true, binaryPath: binary, launchArgs: "", customModels: [] },
         environment: { PI_OWNER_FILE: file, PI_OWNER_LOG: log },

@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -17,6 +18,8 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  getNewProjectPublishTarget,
+  getNewProjectPublishTargets,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
@@ -71,21 +74,21 @@ describe("add project shared logic", () => {
   it("uses HTTPS for repositories selected through a provider", () => {
     expect(
       getDefaultCloneUrl({
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         url: "https://github.com/imputnet/helium",
         sshUrl: "git@github.com:imputnet/helium.git",
       }),
     ).toBe("https://github.com/imputnet/helium");
     expect(
       getDefaultCloneUrl({
-        provider: "forgejo",
+        provider: SourceControlProviderKind.make("forgejo"),
         url: "https://forgejo.example.test:8443/owner/repo.git",
         sshUrl: "ssh://git@forgejo.example.test:2222/owner/repo.git",
       }),
     ).toBe("https://forgejo.example.test:8443/owner/repo.git");
     expect(
       getDefaultCloneUrl({
-        provider: "gitcafe",
+        provider: SourceControlProviderKind.make("gitcafe"),
         url: "https://gitcafe.com/owner/repo.git",
         sshUrl: "git@gitcafe.com:owner/repo.git",
       }),
@@ -95,7 +98,7 @@ describe("add project shared logic", () => {
   it("preserves existing clone transport behavior for other providers", () => {
     expect(
       getDefaultCloneUrl({
-        provider: "gitlab",
+        provider: SourceControlProviderKind.make("gitlab"),
         url: "https://gitlab.com/group/project.git",
         sshUrl: "git@gitlab.com:group/project.git",
       }),
@@ -194,7 +197,7 @@ describe("add project shared logic", () => {
       versionControlSystems: [],
       sourceControlProviders: [
         {
-          kind: providerKind,
+          kind: SourceControlProviderKind.make(providerKind),
           label: providerKind === "gitcafe" ? "GitCafe" : "GitHub",
           status: "available",
           installHint: "Install gh",
@@ -208,7 +211,7 @@ describe("add project shared logic", () => {
           },
         },
         {
-          kind: "gitlab",
+          kind: SourceControlProviderKind.make("gitlab"),
           label: "GitLab",
           status: "available",
           installHint: "Install glab",
@@ -225,9 +228,12 @@ describe("add project shared logic", () => {
     };
 
     const readiness = buildAddProjectRemoteSourceReadiness(discovery);
-    expect(readiness.url.ready).toBe(true);
-    expect(readiness[providerKind].ready).toBe(true);
-    expect(readiness.gitlab).toEqual({ ready: false, hint: "Run glab auth login" });
+    expect(readiness("url").ready).toBe(true);
+    expect(readiness(SourceControlProviderKind.make(providerKind)).ready).toBe(true);
+    expect(readiness(SourceControlProviderKind.make("gitlab"))).toEqual({
+      ready: false,
+      hint: "Run glab auth login",
+    });
     expect(sortAddProjectProviderSources(readiness)[0]).toBe(providerKind);
   });
 
@@ -249,15 +255,12 @@ describe("add project shared logic", () => {
     };
 
     const readiness = buildAddProjectRemoteSourceReadiness(discovery);
-    expect(Object.values(readiness)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          ready: false,
-          hint: "Git is unavailable in this environment.",
-        }),
-      ]),
-    );
-    expect(Object.values(readiness).every((source) => !source.ready)).toBe(true);
+    for (const source of ["url", ...sortAddProjectProviderSources(readiness)] as const) {
+      expect(readiness(source)).toEqual({
+        ready: false,
+        hint: "Git is unavailable in this environment.",
+      });
+    }
   });
 
   it("finds existing projects by normalized path in the target environment", () => {
@@ -309,5 +312,38 @@ describe("add project shared logic", () => {
       createWorkspaceRootIfMissing: true,
       defaultModelSelection: null,
     });
+  });
+});
+
+describe("new project publish targets", () => {
+  const readyHost = (kind: string, account: string | null) => ({
+    kind: SourceControlProviderKind.make(kind),
+    label: kind,
+    status: "available" as const,
+    installHint: "",
+    version: Option.none(),
+    detail: Option.none(),
+    auth: {
+      status: "authenticated" as const,
+      account: Option.fromNullOr(account),
+      host: Option.none(),
+      detail: Option.none(),
+    },
+  });
+
+  it("offers ready hosts that can place the repository, GitHub first, and keeps the pick", () => {
+    const targets = getNewProjectPublishTargets({
+      versionControlSystems: [],
+      sourceControlProviders: [
+        readyHost("gitlab", "group"),
+        readyHost("github", null),
+        readyHost("azure-devops", "me"),
+      ],
+    });
+    expect(targets.map((target) => target.definition.kind)).toEqual(["github", "gitlab"]);
+    expect(getNewProjectPublishTarget(targets, null)?.definition.kind).toBe("github");
+    expect(
+      getNewProjectPublishTarget(targets, SourceControlProviderKind.make("gitlab"))?.owner,
+    ).toBe("group");
   });
 });

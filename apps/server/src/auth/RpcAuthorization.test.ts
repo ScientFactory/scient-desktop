@@ -8,6 +8,9 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
+  CommandId,
+  ProjectId,
+  ProjectMutationError,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentFilePath,
   type AuthEnvironmentScope,
@@ -603,5 +606,100 @@ it.effect("denies manual cleanup before the handler without settings permission"
       requiredPermission: AuthSettingsWriteScope,
     });
     expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("requires filesystem read authority before inspecting host metadata", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.filesystemGetMetadata
+        > => tag !== WS_METHODS.filesystemGetMetadata,
+      ),
+    );
+    const inspected: string[][] = [];
+    const handlers = group.toLayerHandler(WS_METHODS.filesystemGetMetadata, (input) =>
+      Effect.sync(() => {
+        inspected.push([...input.paths]);
+        return { entries: [{ kind: "directory" as const }] };
+      }),
+    );
+    const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.mergeAll(handlers, RpcAuthorization.layer(scopes))),
+      );
+    const operator = yield* clientWith([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+    expect(
+      yield* operator[WS_METHODS.filesystemGetMetadata]({ paths: ["/tmp/metadata-fixture"] }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthFilesystemReadScope });
+    expect(inspected).toEqual([]);
+    const reader = yield* clientWith([AuthFilesystemReadScope]);
+    expect(
+      yield* reader[WS_METHODS.filesystemGetMetadata]({ paths: ["/tmp/metadata-fixture"] }),
+    ).toEqual({ entries: [{ kind: "directory" }] });
+    expect(inspected).toEqual([["/tmp/metadata-fixture"]]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("requires settings authority as well as project authority for script mutations", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.projectsMutate> =>
+          tag !== WS_METHODS.projectsMutate,
+      ),
+    );
+    let handled = 0;
+    const handlers = group.toLayerHandler(WS_METHODS.projectsMutate, (mutation) =>
+      Effect.sync(() => {
+        handled++;
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ProjectMutationError({
+              commandId: mutation.commandId,
+              message: "Synthetic project-store failure after authorization.",
+            }),
+          ),
+        ),
+      ),
+    );
+    const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.mergeAll(handlers, RpcAuthorization.layer(scopes))),
+      );
+    const mutation = {
+      type: "project.update" as const,
+      commandId: CommandId.make("command:script-scope"),
+      projectId: ProjectId.make("project:script-scope"),
+      scripts: [],
+    };
+    const operator = yield* clientWith([AuthOrchestrationOperateScope]);
+    expect(yield* operator[WS_METHODS.projectsMutate](mutation).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthSettingsWriteScope,
+    });
+    const settingsWriter = yield* clientWith([AuthSettingsWriteScope]);
+    expect(
+      yield* settingsWriter[WS_METHODS.projectsMutate](mutation).pipe(Effect.flip),
+    ).toMatchObject({
+      requiredPermission: AuthOrchestrationOperateScope,
+    });
+    expect(handled).toBe(0);
+    const authorized = yield* clientWith([AuthOrchestrationOperateScope, AuthSettingsWriteScope]);
+    expect(yield* authorized[WS_METHODS.projectsMutate](mutation).pipe(Effect.flip)).toMatchObject({
+      _tag: "ProjectMutationError",
+    });
+    expect(handled).toBe(1);
+    const ordinary = { ...mutation, scripts: undefined, title: "Renamed" };
+    expect(yield* operator[WS_METHODS.projectsMutate](ordinary).pipe(Effect.flip)).toMatchObject({
+      _tag: "ProjectMutationError",
+    });
+    expect(handled).toBe(2);
   }).pipe(Effect.scoped),
 );

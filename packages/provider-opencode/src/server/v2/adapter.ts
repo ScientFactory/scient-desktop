@@ -311,6 +311,8 @@ interface SubagentCall {
   model: string | null;
   /** The tool returned while the subagent runs on; the report OpenCode gives its parent settles it. */
   background: boolean;
+  /** The running call whose subagent run this call joined, so that run's one report settles both. */
+  joined: SubagentCall | undefined;
   child: ThreadState | undefined;
   status: OrchestrationV2Subagent["status"];
   result: string | null;
@@ -365,6 +367,8 @@ interface ThreadState {
    * rules stay in force, and a changed mode switches it before prompting.
    */
   agent: string;
+  /** The native session's title as T3 last read or wrote it. */
+  title: string | undefined;
   /** The native session's rules as T3 last read or wrote them, and the policy they are for. */
   rules: ReadonlyArray<Rule> | undefined;
   policy: RulesPolicy;
@@ -960,6 +964,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       unsettled: false,
       directory,
       agent: "build",
+      title: undefined,
       rules: undefined,
       policy: input.runtimePolicy,
       grants: [],
@@ -1529,6 +1534,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       // ran (each one's native id is its own), its grants and rules, and the
       // background work an earlier call left running, which Stop must reach.
       const previous = threads.get(childId);
+      // Called again while it runs, the subagent takes the prompt as a steer
+      // and OpenCode reports that run once, for every call that joined it.
+      if (previous?.active !== undefined) {
+        call.joined = [...call.state.calls.values()].findLast(
+          (candidate) =>
+            candidate !== call && candidate.child === previous && candidate.joined === undefined,
+        );
+      }
       const subagent = {
         call,
         appThread,
@@ -2215,6 +2228,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         agent: undefined,
         model: null,
         background: false,
+        joined: undefined,
         child: undefined,
         status: "running",
         result: null,
@@ -2280,8 +2294,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           if (call !== undefined) {
             const childId = stringField(event.data.metadata, "sessionID");
             if (childId !== undefined) yield* attachChild(call, childId);
-            // A background call returns at launch; its report settles it.
-            if (event.data.metadata?.["status"] === "running") return;
+            // A background call returns at launch, and so does one that joined a
+            // background run; the report settles it.
+            if (event.data.metadata?.["status"] === "running") {
+              if (call.background) return;
+              call.background = true;
+              return yield* emitSubagent(call);
+            }
             return yield* settleCall(call, "completed", subagentOutput(textOf(event.data.content)));
           }
           const output = textOf(event.data.content);
@@ -2420,6 +2439,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       const call = [...state.calls.values()].find(
         (candidate) => candidate.child?.sessionId === childId,
       );
+      const calls = [...state.calls.values()].filter(
+        (candidate) => candidate === call || (call !== undefined && candidate.joined === call),
+      );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
@@ -2432,18 +2454,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           outcome,
         },
       });
-      if (call === undefined) return;
-      yield* settleCall(
-        call,
-        state.stoppedChildren.has(childId)
-          ? "interrupted"
-          : outcome === "failed"
-            ? "failed"
-            : outcome === "cancelled"
-              ? "cancelled"
-              : "completed",
-        subagentOutput(payload.text),
-      );
+      const status = state.stoppedChildren.has(childId)
+        ? "interrupted"
+        : outcome === "failed"
+          ? "failed"
+          : outcome === "cancelled"
+            ? "cancelled"
+            : "completed";
+      for (const each of calls) yield* settleCall(each, status, subagentOutput(payload.text));
     });
 
     /**
@@ -3054,12 +3072,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       state.policy = policy;
     });
 
+    /** Names the session after its thread when they differ. */
+    const writeTitle = Effect.fnUntraced(function* (state: ThreadState, title: string) {
+      const next = title.trim();
+      // An empty title asks OpenCode to generate one.
+      if (next === "" || next === state.title) return;
+      yield* client.session.update({ sessionID: Session.ID.make(state.sessionId), title: next });
+      state.title = next;
+    });
+
     const register = (
       providerThread: OrchestrationV2ProviderThread,
       native: {
         readonly id: string;
         readonly model?: ModelRef | undefined;
         readonly agent?: string | undefined;
+        readonly title?: string | undefined;
         readonly permissions?: ReadonlyArray<Rule> | undefined;
       },
       directory: string,
@@ -3071,12 +3099,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         existing.model = native.model;
         existing.directory = directory;
         existing.agent = native.agent ?? existing.agent;
+        existing.title = native.title;
         existing.rules = native.permissions;
         return existing;
       }
       const state = newThreadState(native.id, providerThread, directory, undefined);
       state.model = native.model;
       state.agent = native.agent ?? state.agent;
+      state.title = native.title;
       state.rules = native.permissions;
       threads.set(native.id, state);
       return state;
@@ -3680,10 +3710,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             policy,
             threadInput.threadId,
           );
+          const title = threadInput.title?.trim() || undefined;
+          // A session created with a title is never titled by OpenCode's own model.
           const created = yield* client.session.create({
             location: Location.PublicRef.make({ directory: AbsolutePath.make(directory) }),
             model,
             permissions,
+            ...(title === undefined ? {} : { title }),
           });
           const createdAt = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
@@ -3707,7 +3740,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           };
           const state = register(
             providerThread,
-            { id: created.id, model: created.model, agent: created.agent, permissions },
+            {
+              id: created.id,
+              model: created.model,
+              agent: created.agent,
+              title: title ?? created.title,
+              permissions,
+            },
             directory,
           );
           state.policy = policy;
@@ -3866,6 +3905,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
               // and its subagents still running hold the rules they started with.
               // Those run on whether or not this turn starts, so theirs are best effort.
               yield* writeRules(state, turnInput.runtimePolicy);
+              // A thread renamed since the last turn, or titled after its first prompt.
+              yield* writeTitle(state, turnInput.appThread.title).pipe(
+                Effect.timeout(REQUEST_REPLY_TIMEOUT),
+                Effect.ignore({ log: true }),
+              );
               for (const call of runningCalls(state)) {
                 if (call.child === undefined) continue;
                 yield* writeRules(call.child, turnInput.runtimePolicy).pipe(

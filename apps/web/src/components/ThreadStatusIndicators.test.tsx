@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
@@ -76,7 +77,11 @@ describe("linked pull request snapshots", () => {
         baseRef: "main",
         updatedAt: "2026-01-02T00:00:00Z",
       },
-      sourceControlProvider: { kind: "gitlab", name: "gitlab", baseUrl: "" },
+      sourceControlProvider: {
+        kind: SourceControlProviderKind.make("gitlab"),
+        name: "gitlab",
+        baseUrl: "",
+      },
     });
   });
   it.each([

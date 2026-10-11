@@ -464,7 +464,7 @@ export function routeProviderEvent(
         ownsRun(event.node.runId) ||
         ownsChildThread(event.node.threadId) ||
         // SCIENT-FORK:START — an accepted runless native workflow member's node.
-        isWorkflowMemberNode(event, state.workflowMembers.get(event.node.id));
+        isWorkflowMemberNode(event.node, state.workflowMembers.get(event.node.id), event.driver);
       // SCIENT-FORK:END
       if (!belongs || event.node.providerThreadId === null) {
         return [belongs, state];
@@ -1233,7 +1233,15 @@ export const layer: Layer.Layer<
                 // Preserve childThreadId linkage for the root-run lifetime even
                 // after the subagent row terminalizes, so open child-thread
                 // nodes can still be proven linked on a later root interrupt.
-                if (belongsToRootRun || routing.workflowMembers.has(event.subagent.id)) {
+                // A provider records nested native subagents on the child
+                // thread, runless; they die with this run too.
+                if (
+                  belongsToRootRun ||
+                  routing.workflowMembers.has(event.subagent.id) ||
+                  (belongsToOwnedChildThread &&
+                    event.subagent.runId === null &&
+                    event.subagent.origin === "provider_native")
+                ) {
                   yield* Ref.update(openRunOwnedSubagents, (current) => {
                     const withLink = withLinkedChildThreadId(current, event.subagent.childThreadId);
                     const subagents = new Map(withLink.subagents);

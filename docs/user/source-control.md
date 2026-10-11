@@ -43,6 +43,13 @@ If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
 over that choice; a host turned off stays off either way.
 
+Older GitHub and Bitbucket settings migrate into the shared host configuration. Existing
+host and token choices, including explicitly cleared tokens, take precedence; missing
+legacy entries are adopted independently. Adopted credentials are copied to their new
+secret-store names before the old copies are retired. If copying or retirement fails,
+the original settings remain available for retry instead of dropping credential recovery
+state. Clearing a migrated token does not leave an adopted legacy copy behind.
+
 ## What you can do
 
 ### Start projects from anywhere
@@ -179,18 +186,18 @@ The `T3CODE_` variable prefix below is a retained upstream compatibility
 identifier. It does not send credentials to T3, but changing the prefix would
 break existing configurations and requires a separate migration.
 
-Open **Settings → Source Control**, expand **Bitbucket**, and choose how to sign in:
+Open **Settings → Source Control**, expand **Bitbucket**, and enter one of:
 
 - **Access token**: a token created for one repository, project, or workspace. It can only reach
   what it was created for.
-- **API token**: an Atlassian API token for your account, used with your account email. It can
+- **Atlassian account email** and **API token**: an Atlassian API token for your account. It can
   reach every repository you can. Give it read/write access to repositories and pull requests, plus
   user read access (`read:user:bitbucket`).
 
-Choose **Save**; the change applies right away and replaces any credential saved with the other
-method. Credentials are stored on the environment's server, so select a remote environment to
-configure it. Saved tokens can't be viewed again: enter a new one to replace it, or choose
-**Remove**.
+A field saves when you leave it, and applies right away. The access token wins when both are saved.
+Credentials are saved on the environment's server, so select a remote environment to configure
+it. Saved tokens can't be viewed again; enter a new one to replace it, or choose **Remove** to clear
+everything saved for Bitbucket.
 
 If no credentials are saved, Scient falls back to these environment variables on the machine running
 the environment. Restart the Scient environment after changing them:
@@ -229,8 +236,10 @@ bun install -g @gitcafe/cli
 cafe auth login --host https://git.cafe/api
 ```
 
-Alternatively, set `CAFE_TOKEN` in the server's environment and restart it. The token is only
-sent to the host `CAFE_HOST` names, which is `git.cafe` unless you set it. Repositories on
+Alternatively, open **Settings → Source Control**, expand **GitCafe**, and enter a token. It is
+kept in the server's secret store, applies right away, and is used before `CAFE_TOKEN` and the
+`cafe` login. Or set `CAFE_TOKEN` in the server's environment and restart it. Both tokens are only
+sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories on
 `staging.git.cafe` need their own login with `--host https://staging.git.cafe/api`.
 
 Line comments, reviewer requests, and labels are not available for GitCafe pull requests yet.
