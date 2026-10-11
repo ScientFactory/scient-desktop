@@ -259,7 +259,10 @@ export function classifyToolActivity(input: {
     kind === "edit" ||
     kind === "move" ||
     kind === "delete" ||
-    kind === "write"
+    kind === "write" ||
+    toolName === "edit" ||
+    toolName === "write" ||
+    toolName === "multiedit"
   ) {
     return "file_change";
   }

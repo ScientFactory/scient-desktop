@@ -29,9 +29,10 @@ import {
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
-import { ComputerUseAppIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
+import { TracePathLabel } from "./TracePathLabel";
+import { TracePathTooltipEnabled } from "./TracePathLabel.context";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -151,35 +152,42 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
-import { ScientSymbol, ScientSymbolMono } from "../ScientSymbol";
+import { ScientTraceSymbol, ScientTraceSymbolMono } from "./ScientTraceSymbol";
+import "../../scient/presentation/scient-reasoning-trace.css";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
 
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
+  BookOpenIcon,
   BotIcon,
-  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ChevronUpIcon,
   CircleAlertIcon,
+  CircleXIcon,
+  CloudIcon,
   DownloadIcon,
   EyeIcon,
+  FolderOpenIcon,
   GitForkIcon,
   GlobeIcon,
+  ImageIcon,
+  LayersIcon,
   type LucideIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
   Redo2Icon,
-  Minimize2Icon,
+  PencilIcon,
+  ScanTextIcon,
   SearchIcon,
+  ShieldCheckIcon,
   SmartphoneIcon,
-  SquarePenIcon,
-  TerminalIcon,
+  SquareMousePointerIcon,
   Undo2Icon,
   HammerIcon,
   WrenchIcon,
@@ -187,6 +195,11 @@ import {
   ZapIcon,
   RotateCcwIcon,
 } from "lucide-react";
+import {
+  SquareTerminalLowered,
+  TRACE_ICON_STROKE,
+  traceIconOverride,
+} from "../../scient/presentation/traceIcons";
 import { ChevronDown, ChevronRight } from "lucide";
 import type {
   ComposerContextId,
@@ -255,6 +268,7 @@ import {
   threadReadTargetTitle,
   toolGroupAction,
   workEntryDisplayLabel,
+  workEntryPathPresentation,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   worktreeSetupAgentStarted,
@@ -2664,13 +2678,13 @@ function ContextCompactionTimelineRow({
         className="relative shrink-0 overflow-hidden"
       >
         <span className={cn("flex items-center gap-1.5", sweeping && "live-activity-rest")}>
-          <Minimize2Icon aria-hidden="true" className="size-3" />
+          <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
           {row.label}
         </span>
         {sweeping ? (
           <ActivityShimmerOverlay>
             <span className="flex items-center gap-1.5">
-              <Minimize2Icon aria-hidden="true" className="size-3" />
+              <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
               {row.label}
             </span>
           </ActivityShimmerOverlay>
@@ -4273,14 +4287,16 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
   return (
-    <span
-      aria-hidden
-      className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
-    >
-      <span className="live-activity-focus-counter block">
-        <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+    <TracePathTooltipEnabled value={false}>
+      <span
+        aria-hidden
+        className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
+      >
+        <span className="live-activity-focus-counter block">
+          <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+        </span>
       </span>
-    </span>
+    </TracePathTooltipEnabled>
   );
 }
 
@@ -4393,7 +4409,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
 function CompactingLabel() {
   return (
     <span className="inline-flex items-center gap-1.5">
-      <Minimize2Icon aria-hidden="true" className="size-3" />
+      <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
       Compacting…
     </span>
   );
@@ -4519,7 +4535,7 @@ function LiveActivityContent({
             <ToolActivityIconView
               icon={toolIcon}
               fallbackName={iconName}
-              className="block size-4 shrink-0 stroke-2"
+              className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
               muted={!highlighted}
             />
           </span>
@@ -4538,7 +4554,10 @@ function LiveActivityContent({
       }
       trailing={
         showTrailingFailureMark ? (
-          <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+          <CircleXIcon
+            aria-hidden
+            className={cn("size-3 shrink-0", TRACE_ICON_STROKE, failedToolIconClassName)}
+          />
         ) : null
       }
     />
@@ -4600,6 +4619,9 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     ? getQuestionTextPreview(row.entry.questionAnswer)
     : "";
   const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const pathLabel = (
+    <TracePathLabel text={label} path={workEntryPathPresentation(row.entry, ctx.workspaceRoot)} />
+  );
   const threadLabel = threadReadLabel(label, threadTarget);
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
@@ -4667,7 +4689,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             </ReactMarkdown>
           ) : row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
             <span className="flex min-w-0">
-              <span className="min-w-0 truncate">{label}</span>
+              <span className="min-w-0 truncate">{pathLabel}</span>
               <LiveStepElapsed startedAt={row.entry.createdAt} />
             </span>
           ) : threadLabel ? (
@@ -4677,7 +4699,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
               linked={false}
             />
           ) : (
-            label
+            pathLabel
           )
         }
         iconName={workEntryIconName(row.entry)}
@@ -4722,7 +4744,7 @@ function toolGroupSummaryIconName(
     case "other":
       return "wrench";
     case "dynamic-tool":
-      return "scient-mono";
+      return "wrench";
     case "reasoning":
       return "brain";
     case "agent-tool":
@@ -4744,7 +4766,12 @@ function WorkGroupToggleTimelineRow({
   return (
     <WorkGroupHeader
       label={row.summary}
-      iconName={row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
+      iconName={
+        row.summaryTraceIcon ??
+        row.summaryToolIcon ??
+        row.toolSurface ??
+        toolGroupSummaryIconName(row.summaryKind)
+      }
       toolIcon={row.toolIcon}
       failed={row.hasFailure}
       expanded={row.expanded}
@@ -4776,7 +4803,7 @@ function WorkGroupHeader(props: {
         <ToolActivityIconView
           icon={props.toolIcon}
           fallbackName={props.iconName}
-          className="size-4 shrink-0 stroke-2 text-icon-muted"
+          className={cn("size-4 shrink-0 text-icon-muted", TRACE_ICON_STROKE)}
           muted
         />
       }
@@ -5591,10 +5618,14 @@ type WorkEntryIconName =
   | "computer"
   | "device"
   | "eye"
+  | "folder"
   | "globe"
   | "hammer"
+  | "image"
   | "message-circle"
   | "search"
+  | "shield"
+  | "skill"
   | "square-pen"
   | "terminal"
   | "pull-request"
@@ -5762,6 +5793,7 @@ function ToolActivityImageIcon(props: {
   );
 }
 
+/** Scient's trace icon set: each action name maps to its Lucide drawing. */
 function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className: string }) {
   switch (name) {
     case "pull-request":
@@ -5769,24 +5801,32 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "bot":
       return <BotIcon className={className} aria-hidden />;
     case "brain":
-      return <BrainIcon className={className} aria-hidden />;
+      return <CloudIcon className={className} aria-hidden />;
     case "browser":
-      return <GlobeIcon className={className} aria-hidden />;
+      return <SquareMousePointerIcon className={className} aria-hidden />;
     case "computer":
-      return <ComputerUseAppIcon className={className} />;
+      return <MousePointerClickIcon className={className} aria-hidden />;
     case "device":
       return <SmartphoneIcon className={className} aria-hidden />;
     case "t3-code":
     case "scient":
-      return <ScientSymbol className={className} />;
+      return <ScientTraceSymbol className={className} />;
     case "scient-mono":
-      return <ScientSymbolMono className={className} />;
+      return <ScientTraceSymbolMono className={className} />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":
       return <CircleAlertIcon className={className} aria-hidden />;
     case "eye":
-      return <EyeIcon className={className} aria-hidden />;
+      return <BookOpenIcon className={className} aria-hidden />;
+    case "folder":
+      return <FolderOpenIcon className={className} aria-hidden />;
+    case "image":
+      return <ImageIcon className={className} aria-hidden />;
+    case "shield":
+      return <ShieldCheckIcon className={className} aria-hidden />;
+    case "skill":
+      return <LayersIcon className={className} aria-hidden />;
     case "globe":
       return <GlobeIcon className={className} aria-hidden />;
     case "hammer":
@@ -5796,13 +5836,13 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "message-circle":
       return <MessageCircleIcon className={className} aria-hidden />;
     case "square-pen":
-      return <SquarePenIcon className={className} aria-hidden />;
+      return <PencilIcon className={className} aria-hidden />;
     case "terminal":
-      return <TerminalIcon className={className} aria-hidden />;
+      return <SquareTerminalLowered className={className} aria-hidden />;
     case "wrench":
       return <WrenchIcon className={className} aria-hidden />;
     case "x":
-      return <XIcon className={className} aria-hidden />;
+      return <CircleXIcon className={className} aria-hidden />;
     case "zap":
       return <ZapIcon className={className} aria-hidden />;
   }
@@ -5929,10 +5969,11 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
         return "zap";
     }
   }
-  if (workEntry.itemType === "user_input_request" || workEntry.itemType === "approval_request") {
-    return "message-circle";
-  }
+  if (workEntry.itemType === "approval_request") return "shield";
+  if (workEntry.itemType === "user_input_request") return "message-circle";
   if (workEntry.toolSurface) return workEntry.toolSurface;
+  const override = traceIconOverride(workEntry);
+  if (override) return override;
   const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
   if (toolPresentation) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
@@ -5940,7 +5981,7 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
 
   switch (workEntry.itemType) {
     case "dynamic_tool":
-      return "scient-mono";
+      return "wrench";
     case "subagent":
       return "bot";
   }
@@ -5976,7 +6017,7 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
   return (
-    <WorkLogDetails>
+    <WorkLogDetails kind="reasoning">
       {entries.map((entry) => (
         <ChatMarkdown
           key={entry.id}
@@ -6267,7 +6308,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           <ToolActivityIconView
             icon={entryToolIcon}
             fallbackName={entryIconName}
-            className="block size-4 shrink-0 stroke-2"
+            className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
             muted
           />
         </span>
@@ -6297,7 +6338,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   linked
                 />
               ) : (
-                previewText
+                <TracePathLabel
+                  text={previewText}
+                  path={workEntryPathPresentation(workEntry, workspaceRoot)}
+                />
               )}
             </span>
             {answerPreview ? (
@@ -6348,7 +6392,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
-            <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+            <CircleXIcon
+              aria-hidden
+              className={cn("size-3 shrink-0", TRACE_ICON_STROKE, failedToolIconClassName)}
+            />
           ) : null}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
           <span

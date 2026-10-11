@@ -45,7 +45,7 @@ import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon"
 import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { Button, InlineButton } from "../ui/button";
-import { ScientSymbolMono } from "../ScientSymbol";
+import { ScientTraceSymbolMono } from "./ScientTraceSymbol";
 
 const LIFECYCLE_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "run_interrupt_request",
@@ -196,7 +196,7 @@ export function V2LifecycleRow(props: {
     return (
       <WorkLogRow
         data-v2-item-type={item.type}
-        icon={<ScientSymbolMono className="size-4 text-icon-muted" />}
+        icon={<ScientTraceSymbolMono className="size-4 text-icon-muted" />}
         label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
         trailing={
           <InlineButton
