@@ -13,7 +13,7 @@ import {
   resolveServerInstallation,
 } from "./invocation.ts";
 
-const nativePlatform = Effect.runSync(HostProcess.Platform);
+const nativePlatform = HostProcess.Platform.defaultValue();
 
 it.layer(NodeServices.layer)("operational CLI commands", (it) => {
   const fixture = Effect.gen(function* () {

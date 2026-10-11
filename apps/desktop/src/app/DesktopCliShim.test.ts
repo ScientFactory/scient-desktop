@@ -4,13 +4,12 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Effect from "effect/Effect";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { type CliShimTarget, renderCliShim } from "./DesktopCliShim.ts";
 
-const nativePlatform = Effect.runSync(HostProcess.Platform);
+const nativePlatform = HostProcess.Platform.defaultValue();
 
 const directories: Array<string> = [];
 afterEach(() => {

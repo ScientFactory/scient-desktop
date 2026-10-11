@@ -18,7 +18,7 @@ import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
-const nativePlatform = Effect.runSync(HostProcess.Platform);
+const nativePlatform = HostProcess.Platform.defaultValue();
 
 const environmentFor = (
   path: Path.Path,
