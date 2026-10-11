@@ -327,7 +327,7 @@ describe("formatting menu focus", () => {
     expect(
       directionItems.find((node) => node.textContent?.trim() === "Auto — detect from table"),
     ).toBeDefined();
-    const rtl = directionItems.find((node) => node.textContent?.trim() === "Right-to-left")!;
+    const rtl = directionItems.find((node) => node.getAttribute("aria-label") === "Right-to-left")!;
     await act(() => rtl.click());
     await vi.waitFor(() => expect(controller.getSnapshot().textDirection).toBe("rtl"));
     expect(view.state.selection).toBeInstanceOf(CellSelection);
