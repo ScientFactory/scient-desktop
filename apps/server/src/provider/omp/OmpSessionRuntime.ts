@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
@@ -1141,18 +1142,37 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const id = subagentId(event) ?? "activity";
         const status = subagentStatus(event);
         const previous = subagentStatuses.get(id);
-        if (previous && previous !== "inProgress") return;
-        subagentStatuses.set(id, status);
+        const terminal = previous !== undefined && previous !== "inProgress";
+        if (terminal && (input.target.driverKind !== "scient" || status !== previous)) return;
+        if (status !== previous) subagentStatuses.set(id, status);
         if (input.target.driverKind === "scient") {
           const observed = parseScientSubagent(event, status !== "inProgress");
           const prior = scientSubagents.get(id);
           const title = prior?.title ?? observed.title;
           const prompt = observed.prompt ?? prior?.prompt;
           const observation = {
+            ...prior,
             ...observed,
+            presentation:
+              prior === undefined
+                ? observed.presentation
+                : {
+                    ...prior.presentation,
+                    ...observed.presentation,
+                    ...(observed.presentation.usage === undefined
+                      ? {}
+                      : {
+                          usage: {
+                            ...prior.presentation.usage,
+                            ...observed.presentation.usage,
+                          },
+                        }),
+                  },
             ...(title === undefined ? {} : { title }),
             ...(prompt === undefined ? {} : { prompt }),
           };
+          // Terminal progress precedes lifecycle artifacts; unchanged repeats are still ignored.
+          if (terminal && Equal.equals(prior, observation)) return;
           scientSubagents.set(id, observation);
           yield* publish({
             ...observation,

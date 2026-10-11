@@ -3295,12 +3295,19 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           yield* h.takeUntil((event) => event.type === "turn.terminal");
           yield* peer.emit([
             {
+              type: "subagent_progress",
+              payload: { progress: { id: "scient-child", status: "completed" } },
+            },
+            {
               type: "subagent_lifecycle",
               payload: { id: "scient-child", status: "completed", output: "Observed two issues." },
             },
           ]);
           const completed = yield* h.takeUntil(
-            (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.status === "completed" &&
+              event.subagent.result === "Observed two issues.",
           );
           if (completed.type !== "subagent.updated") return yield* Effect.die("Missing completion");
           assert.equal(completed.subagent.title, "Review files");
@@ -3369,12 +3376,19 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               },
             },
             {
+              type: "subagent_progress",
+              payload: { progress: { id: "redacted-child", status: "failed" } },
+            },
+            {
               type: "subagent_lifecycle",
               payload: { id: "redacted-child", status: "failed", error: `Failure ${secret}` },
             },
           ]);
           yield* h.takeUntil(
-            (event) => event.type === "subagent.updated" && event.subagent.status === "failed",
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.status === "failed" &&
+              event.subagent.result === "Failure [REDACTED]",
           );
           const projected = encodeDiagnostic(h.recorded);
           assert.notInclude(projected, secret);

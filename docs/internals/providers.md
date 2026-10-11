@@ -833,8 +833,11 @@ Scient Agent.
   `contextTokens`; missing observations stay missing, including a missing terminal result.
   Sparse updates retain known metadata without changing child identity or the original
   background launch's ownership. Native read-only child conversations project the supplied
-  assignment and terminal result as stable message artifacts. Subscription remains
-  `progress`: this does not ingest a full native tool/thinking transcript. Scient chat groups
+  assignment and terminal result as stable message artifacts.
+  Terminal progress can precede the closing lifecycle frame. Matching terminal frames
+  enrich retained metadata and any supplied result or error without reopening the child;
+  identical repeats are ignored.
+  Subscription remains `progress`: this does not ingest a full native tool/thinking transcript. Scient chat groups
   reuse the shared member presentation with bounded labels and child navigation inside the
   disclosure, including historical oversized titles and temporarily missing roster entries.
   Codex, Claude and external Oh My Pi keep their existing behavior.
