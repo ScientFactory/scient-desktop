@@ -3,10 +3,14 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { type CliShimTarget, renderCliShim } from "./DesktopCliShim.ts";
+
+const nativePlatform = Effect.runSync(HostProcess.Platform);
 
 const directories: Array<string> = [];
 afterEach(() => {
@@ -71,7 +75,7 @@ const fakeAppImage = (canMount = true) => {
   return { root, image, appImage, shim };
 };
 
-describe.skipIf(process.platform === "win32")("renderCliShim Unix execution", () => {
+describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () => {
   it("runs the AppImage's bundled CLI with every argument and unmounts after", () => {
     const { root, image, shim } = fakeAppImage();
     const result = run(shim, ["browser", "setup", "a b"]);
@@ -154,7 +158,7 @@ describe.skipIf(process.platform === "win32")("renderCliShim Unix execution", ()
   });
 });
 
-describe.skipIf(process.platform !== "win32")("renderCliShim Windows execution", () => {
+describe.skipIf(nativePlatform !== "win32")("renderCliShim Windows execution", () => {
   const runWindows = (shim: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv = {}) => {
     const quoted = args.map((argument) => `"${argument.replaceAll('"', '\\"')}"`).join(" ");
     return NodeChildProcess.spawnSync(

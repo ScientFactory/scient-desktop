@@ -13,6 +13,8 @@ import {
   resolveServerInstallation,
 } from "./invocation.ts";
 
+const nativePlatform = Effect.runSync(HostProcess.Platform);
+
 it.layer(NodeServices.layer)("operational CLI commands", (it) => {
   const fixture = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -48,7 +50,7 @@ it.layer(NodeServices.layer)("operational CLI commands", (it) => {
     return { fs, path, root, runtime, run };
   });
 
-  it.effect.skipIf(process.platform === "win32")(
+  it.effect.skipIf(nativePlatform === "win32")(
     "executes the running global or cached package with private Node and no CLI or npm on PATH",
     () =>
       Effect.gen(function* () {
@@ -93,7 +95,7 @@ it.layer(NodeServices.layer)("operational CLI commands", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(process.platform === "win32")(
+  it.effect.skipIf(nativePlatform === "win32")(
     "executes canonical and legacy packaged launchers instead of an unrelated PATH command",
     () =>
       Effect.gen(function* () {
@@ -115,7 +117,7 @@ it.layer(NodeServices.layer)("operational CLI commands", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(process.platform === "win32")(
+  it.effect.skipIf(nativePlatform === "win32")(
     "falls back from a stale or unusable launcher and restores Electron Node mode under sudo",
     () =>
       Effect.gen(function* () {
@@ -146,7 +148,7 @@ it.layer(NodeServices.layer)("operational CLI commands", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(process.platform === "win32")(
+  it.effect.skipIf(nativePlatform === "win32")(
     "executes a standalone installation's own binary",
     () =>
       Effect.gen(function* () {
@@ -164,7 +166,7 @@ it.layer(NodeServices.layer)("operational CLI commands", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(process.platform !== "win32")(
+  it.effect.skipIf(nativePlatform !== "win32")(
     "executes direct and packaged commands through native PowerShell with quoted profile paths",
     () =>
       Effect.gen(function* () {

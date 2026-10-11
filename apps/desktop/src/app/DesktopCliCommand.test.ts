@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, beforeEach, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -16,6 +17,8 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+
+const nativePlatform = Effect.runSync(HostProcess.Platform);
 
 const environmentFor = (
   path: Path.Path,
@@ -137,7 +140,7 @@ const executeShortcut = Effect.fnUntraced(function* (
   launcher: string,
   args: ReadonlyArray<string>,
 ) {
-  if (process.platform === "win32") {
+  if ((yield* HostProcess.Platform) === "win32") {
     const quoted = args.map((argument) => `"${argument.replaceAll('"', '\\"')}"`).join(" ");
     const result = yield* Effect.sync(() =>
       NodeChildProcess.spawnSync(
@@ -159,7 +162,7 @@ const executeShortcut = Effect.fnUntraced(function* (
 });
 
 it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
-  const unix = it.effect.skipIf(process.platform === "win32");
+  const unix = it.effect.skipIf(nativePlatform === "win32");
   unix(
     "executes the installed scient and upgraded t3 shortcuts with the same profile and arguments",
     () =>
@@ -882,7 +885,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.skipIf(process.platform !== "win32")(
+  it.effect.skipIf(nativePlatform !== "win32")(
     "executes installed Windows scient and legacy launchers through update, profile, and removal cycles",
     () =>
       Effect.gen(function* () {
