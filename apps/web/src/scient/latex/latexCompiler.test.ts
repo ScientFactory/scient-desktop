@@ -34,6 +34,66 @@ describe("document compiler directives", () => {
       `% !TEX program = xelatex\r\n${body}`,
     );
   });
+
+  it.each([
+    ["% !TEX program = PDFTeX", "pdflatex"],
+    ["%% !tex TS-program = XeTeX", "xelatex"],
+    ["\t% !TEX program = LuaTeX --shell-escape", "lualatex"],
+  ] as const)("recognizes the complete supported engine token in %s", (source, compiler) => {
+    expect(declaredLatexCompiler(source)).toBe(compiler);
+  });
+
+  it.each(["xelatex-custom", "xelatex2", "pdflatex.exe", "luatex-next"])(
+    "does not mistake unsupported engine %s for a supported prefix",
+    (engine) => {
+      const source = `% !TEX program = ${engine}\n${body}`;
+      expect(latexCompilerDeclaration(source)).toBe(engine);
+      expect(declaredLatexCompiler(source)).toBeNull();
+    },
+  );
+
+  it("removes an EOF declaration without adding or stripping a body newline", () => {
+    const source = "\\documentclass{article}\n% !TEX TS-program = xelatex";
+    expect(updateLatexCompilerSource(source, "automatic")).toBe("\\documentclass{article}\n");
+    expect(updateLatexCompilerSource(source, "pdflatex")).toBe(
+      "% !TEX program = pdflatex\n\\documentclass{article}\n",
+    );
+  });
+
+  it.each(["", "\\documentclass{article}", "\\documentclass{article}\r\n"])(
+    "preserves the exact body when inserting and removing a directive in %j",
+    (source) => {
+      const changed = updateLatexCompilerSource(source, "lualatex");
+      expect(updateLatexCompilerSource(changed, "automatic")).toBe(source);
+      expect(updateLatexCompilerSource(changed, "lualatex")).toBe(changed);
+    },
+  );
+
+  it("leaves root, near-match comments, and executable body text untouched", () => {
+    const source = [
+      "% !TEX root = main.tex",
+      "% !TEX programmer = xelatex",
+      "% TEX program = lualatex",
+      "\\verb|% !TEX program = pdflatex|",
+      "\\documentclass{article}",
+    ].join("\n");
+    expect(updateLatexCompilerSource(source, "automatic")).toBe(source);
+    expect(updateLatexCompilerSource(source, "xelatex")).toBe(
+      `% !TEX program = xelatex\n${source}`,
+    );
+  });
+
+  it("recognizes and replaces a BOM-prefixed declaration without moving the BOM into the body", () => {
+    const source = `\uFEFF% !TEX program = pdflatex\r\n% !TEX root = main.tex\r\n${body}`;
+    expect(latexCompilerDeclaration(source)).toBe("pdflatex");
+    expect(declaredLatexCompiler(source)).toBe("pdflatex");
+    expect(updateLatexCompilerSource(source, "xelatex")).toBe(
+      `\uFEFF% !TEX program = xelatex\r\n% !TEX root = main.tex\r\n${body}`,
+    );
+    expect(updateLatexCompilerSource(source, "automatic")).toBe(
+      `\uFEFF% !TEX root = main.tex\r\n${body}`,
+    );
+  });
 });
 
 it("keeps Tectonic's XeTeX path usable without claiming standalone compilers are installed", () => {

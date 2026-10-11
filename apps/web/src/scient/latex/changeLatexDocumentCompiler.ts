@@ -36,6 +36,8 @@ export async function changeLatexDocumentCompiler(input: {
   if (!ownsRoot()) return refuse("Open the root document to change its compiler.");
   if (input.blocked())
     return refuse("Resolve recovery or the document's save notice before changing its compiler.");
+  if (lease.getSnapshot().editingBlocked)
+    return refuse("Finish the document's pending operation before changing its compiler.");
   const before = await input.prepare();
   if (!before?.isCurrent() || !canEdit())
     return refuse("Finish or resolve the document's pending edits before changing its compiler.");

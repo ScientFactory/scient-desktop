@@ -38,7 +38,7 @@ export interface LatexEngineSupported {
 export interface LatexEngineUnsupported {
   readonly supported: false;
   readonly requiredEngine: LatexRequiredEngine;
-  /** The exact source line that gave it away, trimmed but otherwise verbatim. */
+  /** The directive or package declaration that identified the requirement. */
   readonly evidence: string;
   /** User-facing: names what Scient found and what engine it asks for. */
   readonly message: string;
@@ -65,7 +65,8 @@ const SUPPORTED_VERDICT: LatexEngineSupported = { supported: true };
  * every editor that writes these is inconsistent about casing and the
  * convention itself never was case-sensitive.
  */
-const MAGIC_COMMENT_PATTERN = /^\s*%+\s*!\s*TEX\s+(?:program|TS-program)\s*=\s*([A-Za-z]+)/iu;
+const MAGIC_COMMENT_PATTERN =
+  /^\s*%+\s*!\s*TEX\s+(?:program|TS-program)\s*=\s*([A-Za-z]+)(?=\s|$)/iu;
 
 /**
  * `\usepackage{fontspec}`, `\RequirePackage[no-math]{unicode-math}`, and a
@@ -134,41 +135,32 @@ function magicCommentVerdict(text: string): LatexEngineUnsupported | null {
  * note to a co-author cannot switch the refusal off.
  */
 function hasEngineConditional(text: string): boolean {
-  for (const rawLine of text.split(/\r?\n/u)) {
-    const strippedLine = stripLatexComments(rawLine);
-    if (strippedLine.trim().length === 0) continue;
-    if (ENGINE_CONDITIONAL_PATTERN.test(strippedLine)) return true;
-    PACKAGE_LOAD_PATTERN.lastIndex = 0;
-    for (const match of strippedLine.matchAll(PACKAGE_LOAD_PATTERN)) {
-      const names = (match[1] ?? "").split(",").map((name) => name.trim().toLowerCase());
-      if (names.some((name) => ENGINE_GUARD_PACKAGES.has(name))) return true;
-    }
+  const stripped = stripLatexComments(text);
+  if (ENGINE_CONDITIONAL_PATTERN.test(stripped)) return true;
+  PACKAGE_LOAD_PATTERN.lastIndex = 0;
+  for (const match of stripped.matchAll(PACKAGE_LOAD_PATTERN)) {
+    const names = (match[1] ?? "").split(",").map((name) => name.trim().toLowerCase());
+    if (names.some((name) => ENGINE_GUARD_PACKAGES.has(name))) return true;
   }
   return false;
 }
 
 function packageLoadVerdict(text: string): LatexEngineUnsupported | null {
-  for (const rawLine of text.split(/\r?\n/u)) {
-    const strippedLine = stripLatexComments(rawLine);
-    if (strippedLine.trim().length === 0) continue;
-    PACKAGE_LOAD_PATTERN.lastIndex = 0;
-    for (const match of strippedLine.matchAll(PACKAGE_LOAD_PATTERN)) {
-      const names = (match[1] ?? "").split(",").map((name) => name.trim());
-      const hit = names.find((name) => ENGINE_ONLY_PACKAGES.has(name));
-      if (hit === undefined) continue;
-      const evidence = rawLine.trim();
-      // fontspec and unicode-math both run under either non-pdfLaTeX engine;
-      // nothing in the package load names which one the author meant, so
-      // xelatex — the more common choice for either package — is reported as
-      // the representative answer while the message names both by name.
-      const requiredEngine: LatexRequiredEngine = "xelatex";
-      return {
-        supported: false,
-        requiredEngine,
-        evidence,
-        message: `This document loads "${hit}" (found: ${evidence}), which needs XeLaTeX or LuaLaTeX; pdfLaTeX cannot process it. Add % !TEX program = lualatex or % !TEX program = xelatex to select the compiler.`,
-      };
-    }
+  PACKAGE_LOAD_PATTERN.lastIndex = 0;
+  for (const match of stripLatexComments(text).matchAll(PACKAGE_LOAD_PATTERN)) {
+    const names = (match[1] ?? "").split(",").map((name) => name.trim());
+    const hit = names.find((name) => ENGINE_ONLY_PACKAGES.has(name));
+    if (hit === undefined) continue;
+    const evidence = match[0].trim();
+    // These packages support either Unicode engine; the load itself does not
+    // declare one, so report XeLaTeX as the representative choice.
+    const requiredEngine: LatexRequiredEngine = "xelatex";
+    return {
+      supported: false,
+      requiredEngine,
+      evidence,
+      message: `This document loads "${hit}" (found: ${evidence}), which needs XeLaTeX or LuaLaTeX; pdfLaTeX cannot process it. Add % !TEX program = lualatex or % !TEX program = xelatex to select the compiler.`,
+    };
   }
   return null;
 }

@@ -11,7 +11,7 @@ export const LATEX_COMPILER_CHOICES: readonly { id: LatexCompilerChoice; name: s
 ];
 
 const COMPILER_DIRECTIVE =
-  /^[\t ]*%+[\t ]*![\t ]*TEX[\t ]+(?:program|TS-program)[\t ]*=[\t ]*([^\r\n]*)/imu;
+  /^(?:\uFEFF)?[\t ]*%+[\t ]*![\t ]*TEX[\t ]+(?:program|TS-program)[\t ]*=[\t ]*([^\r\n]*)/imu;
 const ALL_COMPILER_DIRECTIVES =
   /^[\t ]*%+[\t ]*![\t ]*TEX[\t ]+(?:program|TS-program)[\t ]*=[^\r\n]*(?:\r?\n|$)/gimu;
 
@@ -27,7 +27,9 @@ export function latexCompilerDeclaration(source: string): string | null {
 }
 
 export function declaredLatexCompiler(source: string): LatexCompiler | null {
-  const token = /^[A-Za-z]+/u.exec(latexCompilerDeclaration(source) ?? "")?.[0]?.toLowerCase();
+  const token = /^[A-Za-z]+(?=\s|$)/u
+    .exec(latexCompilerDeclaration(source) ?? "")?.[0]
+    ?.toLowerCase();
   if (token === "pdflatex" || token === "pdftex") return "pdflatex";
   if (token === "xelatex" || token === "xetex") return "xelatex";
   if (token === "lualatex" || token === "luatex") return "lualatex";
@@ -36,10 +38,11 @@ export function declaredLatexCompiler(source: string): LatexCompiler | null {
 
 /** A deliberate document edit replaces every conflicting engine directive, never the body. */
 export function updateLatexCompilerSource(source: string, compiler: LatexCompilerChoice): string {
-  const withoutDirective = source.replace(ALL_COMPILER_DIRECTIVES, "");
-  if (compiler === "automatic") return withoutDirective;
+  const bom = source.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const withoutDirective = source.slice(bom.length).replace(ALL_COMPILER_DIRECTIVES, "");
+  if (compiler === "automatic") return `${bom}${withoutDirective}`;
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
-  return `% !TEX program = ${compiler}${eol}${withoutDirective}`;
+  return `${bom}% !TEX program = ${compiler}${eol}${withoutDirective}`;
 }
 
 export function latexCompilerAvailabilityLabel(

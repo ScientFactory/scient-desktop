@@ -6,8 +6,10 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -378,6 +380,309 @@ describe("LatexToolchain", () => {
         );
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps the system distribution active when a managed installation also exists", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* harness(
+        (command) => {
+          if (command === "latexmk") return Effect.succeed(output(LATEXMK_BANNER));
+          if (command === "pdflatex") return Effect.succeed(output(PDFLATEX_BANNER));
+          if (command === "xelatex" || command === "lualatex") return spawnFailure(command);
+          return onlyManagedResponds(command);
+        },
+        { managedInstall: true },
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        const status = yield* toolchain.probe(false);
+        expect(status).toMatchObject({
+          kind: "latexmk",
+          executable: "latexmk",
+          source: "system",
+        });
+        expect(status.compilers).toEqual([
+          { compiler: "pdflatex", available: true, executable: "pdflatex", version: "1.40.28" },
+          { compiler: "xelatex", available: false, executable: null, version: null },
+          { compiler: "lualatex", available: false, executable: null, version: null },
+        ]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "prefers system Tectonic over managed latexmk without advertising managed compilers",
+    () =>
+      Effect.gen(function* () {
+        const { layer } = yield* harness(
+          (command) => {
+            if (command === "latexmk") return spawnFailure(command);
+            if (command === "tectonic") return Effect.succeed(output(TECTONIC_BANNER));
+            return onlyManagedResponds(command);
+          },
+          { managedInstall: true },
+        );
+        yield* Effect.gen(function* () {
+          const toolchain = yield* LatexToolchain;
+          const status = yield* toolchain.probe(false);
+          expect(status).toMatchObject({
+            kind: "tectonic",
+            executable: "tectonic",
+            source: "system",
+          });
+          expect(status.compilers).toEqual(
+            COMPILER_NAMES.map((compiler) => ({
+              compiler,
+              available: false,
+              executable: null,
+              version: null,
+            })),
+          );
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("resolves managed compilers ahead of working but different system compilers", () =>
+    Effect.gen(function* () {
+      const { layer, managedExecutable } = yield* harness(
+        (command) => {
+          if (COMPILER_NAMES.some((compiler) => compiler === command)) {
+            return Effect.succeed(output("system compiler 9.9.9"));
+          }
+          return onlyManagedResponds(command);
+        },
+        { managedInstall: true },
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        const status = yield* toolchain.probe(false);
+        expect(status.source).toBe("scient-managed");
+        expect(status.compilers).toEqual(
+          COMPILER_NAMES.map((compiler, index) => ({
+            compiler,
+            available: true,
+            executable: managedExecutable.replace(/latexmk\.exe$/u, `${compiler}.exe`),
+            version: ["1.40.28", "0.999997", "1.22.0"][index],
+          })),
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  const failures = [
+    { name: "nonzero exit", code: 1, timedOut: false, stderr: "" },
+    { name: "timeout despite a successful exit", code: 0, timedOut: true, stderr: "" },
+    {
+      name: "Windows missing-command shim",
+      code: 9009,
+      timedOut: false,
+      stderr: "'latexmk' is not recognized as an internal or external command.",
+    },
+  ];
+  it.effect.each(failures)(
+    "rejects a driver with $name even when it prints a valid banner",
+    (failure) =>
+      Effect.gen(function* () {
+        const { layer } = yield* harness((command) =>
+          command === "latexmk"
+            ? Effect.succeed({
+                ...output(LATEXMK_BANNER),
+                code: ChildProcessSpawner.ExitCode(failure.code),
+                timedOut: failure.timedOut,
+                stderr: failure.stderr,
+              })
+            : Effect.succeed(output(TECTONIC_BANNER)),
+        );
+        yield* Effect.gen(function* () {
+          const toolchain = yield* LatexToolchain;
+          expect(yield* toolchain.probe(false)).toMatchObject({
+            kind: "tectonic",
+            executable: "tectonic",
+            version: "0.15.0",
+            source: "system",
+          });
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect.each(failures)("does not advertise a managed distribution with $name", (failure) =>
+    Effect.gen(function* () {
+      const { layer } = yield* harness(
+        (command) =>
+          command === "latexmk" || command === "tectonic"
+            ? spawnFailure(command)
+            : Effect.succeed({
+                ...output(LATEXMK_BANNER),
+                code: ChildProcessSpawner.ExitCode(failure.code),
+                timedOut: failure.timedOut,
+                stderr: failure.stderr,
+              }),
+        { managedInstall: true },
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        const status = yield* toolchain.probe(false);
+        expect(status).toMatchObject({ kind: null, executable: null, version: null });
+        expect(status.source).toBeUndefined();
+        expect(status.compilers.every((compiler) => !compiler.available)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "rejects failed compiler banners while retaining successful unversioned compilers",
+    () =>
+      Effect.gen(function* () {
+        const { layer } = yield* harness((command) => {
+          if (command === "latexmk") return Effect.succeed(output(LATEXMK_BANNER));
+          if (command === "pdflatex") {
+            return Effect.succeed({
+              ...output(PDFLATEX_BANNER),
+              code: ChildProcessSpawner.ExitCode(1),
+            });
+          }
+          if (command === "xelatex") {
+            return Effect.succeed({
+              ...output(XELATEX_BANNER),
+              code: ChildProcessSpawner.ExitCode(9009),
+              stderr: "'xelatex' is not recognized as an internal or external command.",
+            });
+          }
+          return Effect.succeed(output("Custom Lua compiler, version unavailable"));
+        });
+        yield* Effect.gen(function* () {
+          const toolchain = yield* LatexToolchain;
+          const status = yield* toolchain.probe(false);
+          expect(status.kind).toBe("latexmk");
+          expect(status.compilers).toEqual([
+            { compiler: "pdflatex", available: false, executable: null, version: null },
+            { compiler: "xelatex", available: false, executable: null, version: null },
+            { compiler: "lualatex", available: true, executable: "lualatex", version: null },
+          ]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("reads driver and compiler versions from stderr-only successful probes", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* harness((command) => {
+        const banner =
+          command === "latexmk"
+            ? LATEXMK_BANNER
+            : command === "pdflatex"
+              ? PDFLATEX_BANNER
+              : command === "xelatex"
+                ? XELATEX_BANNER
+                : LUALATEX_BANNER;
+        return Effect.succeed({ ...output(""), stderr: banner });
+      });
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        const status = yield* toolchain.probe(false);
+        expect(status.version).toBe("4.79");
+        expect(status.compilers).toEqual([
+          { compiler: "pdflatex", available: true, executable: "pdflatex", version: "1.40.28" },
+          { compiler: "xelatex", available: true, executable: "xelatex", version: "0.999997" },
+          { compiler: "lualatex", available: true, executable: "lualatex", version: "1.22.0" },
+        ]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "publishes refreshed driver and compiler facts together rather than a partial snapshot",
+    () =>
+      Effect.gen(function* () {
+        const refreshing = yield* Ref.make(false);
+        const compilerStarted = yield* Deferred.make<void>();
+        const releaseCompiler = yield* Deferred.make<void>();
+        const { layer, calls } = yield* harness((command) =>
+          Effect.gen(function* () {
+            const isRefreshing = yield* Ref.get(refreshing);
+            if (command === "latexmk") {
+              return output(isRefreshing ? LATEXMK_BANNER.replace("4.79", "4.80") : LATEXMK_BANNER);
+            }
+            if (!isRefreshing) return yield* spawnFailure(command);
+            if (command === "xelatex") {
+              yield* Deferred.succeed(compilerStarted, undefined);
+              yield* Deferred.await(releaseCompiler);
+              return output(XELATEX_BANNER);
+            }
+            return yield* spawnFailure(command);
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const toolchain = yield* LatexToolchain;
+          const initial = yield* toolchain.probe(false);
+          yield* TestClock.adjust(Duration.millis(5 * 60 * 1_000 - 1));
+          yield* Ref.set(refreshing, true);
+          const refresh = yield* Effect.forkChild(toolchain.probe(true));
+          yield* Deferred.await(compilerStarted);
+          const duringRefresh = yield* toolchain.probe(false);
+          expect(duringRefresh).toEqual(initial);
+          expect(duringRefresh.compilers.every((compiler) => !compiler.available)).toBe(true);
+          yield* TestClock.adjust(Duration.millis(1));
+          const waitingForRefresh = yield* Effect.forkChild(toolchain.probe(false));
+          yield* Effect.yieldNow;
+          expect(waitingForRefresh.pollUnsafe()).toBeUndefined();
+          yield* Deferred.succeed(releaseCompiler, undefined);
+          const completed = yield* Fiber.join(refresh);
+          expect(completed.version).toBe("4.80");
+          expect(completed.compilers).toEqual([
+            { compiler: "pdflatex", available: false, executable: null, version: null },
+            { compiler: "xelatex", available: true, executable: "xelatex", version: "0.999997" },
+            { compiler: "lualatex", available: false, executable: null, version: null },
+          ]);
+          expect(yield* toolchain.probe(false)).toEqual(completed);
+          expect(yield* Fiber.join(waitingForRefresh)).toEqual(completed);
+          expect(yield* Ref.get(calls)).toEqual([
+            "latexmk",
+            ...COMPILER_NAMES,
+            "latexmk",
+            ...COMPILER_NAMES,
+          ]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "expires a cached absence at the TTL boundary and shares one complete rediscovery",
+    () =>
+      Effect.gen(function* () {
+        const installed = yield* Ref.make(false);
+        const { layer, calls } = yield* harness((command) =>
+          Effect.gen(function* () {
+            if (!(yield* Ref.get(installed))) return yield* spawnFailure(command);
+            yield* Effect.yieldNow;
+            if (command === "latexmk") return output(LATEXMK_BANNER);
+            if (command === "pdflatex") return output(PDFLATEX_BANNER);
+            if (command === "xelatex") return output(XELATEX_BANNER);
+            return output(LUALATEX_BANNER);
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const toolchain = yield* LatexToolchain;
+          const absent = yield* toolchain.probe(false);
+          expect(absent.kind).toBeNull();
+          yield* Ref.set(installed, true);
+          yield* TestClock.adjust(Duration.millis(5 * 60 * 1_000 - 1));
+          expect(yield* toolchain.probe(false)).toEqual(absent);
+          yield* TestClock.adjust(Duration.millis(1));
+          const [first, second] = yield* Effect.all(
+            [toolchain.probe(false), toolchain.probe(false)],
+            { concurrency: "unbounded" },
+          );
+          expect(second).toEqual(first);
+          expect(first).toMatchObject({ kind: "latexmk", source: "system" });
+          expect(first.compilers.every((compiler) => compiler.available)).toBe(true);
+          expect(yield* Ref.get(calls)).toEqual([
+            "latexmk",
+            "tectonic",
+            "latexmk",
+            ...COMPILER_NAMES,
+          ]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("serves a cached answer inside the TTL and re-probes once it lapses", () =>

@@ -1047,11 +1047,13 @@ Use `xelatex` or `pdflatex` to select those engines instead. TeXShop's
 `TS-program` spelling is also recognized. A root directive takes precedence
 over directives in included preambles. The selected engine must be supported
 by the TeX toolchain used by Scient.
+Only complete supported engine names select a compiler; other declarations remain
+visible as unsupported. Compiler changes preserve the source's line endings.
 
 **Automatic** removes root compiler directives rather than storing a device-only
 override. Included files display the root's choice and offer **Open root**;
 they never receive their own compiler directive through this control. Resolve
-recovery or save conflicts before changing the compiler.
+recovery or save conflicts, and finish an active rename, before changing the compiler.
 
 **Settings > Documents > Default compiler for new documents** only affects
 new documents. A template's compiler declaration takes precedence over the
@@ -1071,6 +1073,8 @@ XeTeX-compatible fallback: it can build XeLaTeX-style Hebrew documents without a
 standalone XeLaTeX installation, but cannot satisfy explicit LuaLaTeX or pdfLaTeX
 requests. The availability display distinguishes that compatibility from an
 installed compiler binary.
+Package declarations can span multiple lines; commented-out loads do not select
+an engine.
 
 Engine-aware documents that load packages only in the appropriate conditional
 branch are allowed to build normally.
