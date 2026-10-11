@@ -178,15 +178,26 @@ in the root takes precedence over declarations in included preambles. Only
 fixed compiler names are accepted; source text never supplies executable paths
 or additional command arguments.
 
+`latexCompiler.ts` supplies the web's shared choice/directive model. The device's
+`scient.newDocumentCompiler` preference only affects new documents, yields to
+template declarations, and never forces Hebrew onto pdfLaTeX. The document's
+Compiler menu instead edits the resolved root through its existing persistence
+lease: settle all pending document fields, apply an expected-text/edit-version
+checked directive patch, save, and rebuild only while the owner is still current.
+Included files offer root navigation rather than acquiring another root writer.
+Automatic removes root engine declarations; unknown declarations stay observable
+until a deliberate selection replaces them.
+
 `latexCommand.ts` maps the selection to `latexmk -lualatex`, `-xelatex`, or
 `-pdf`. The existing subprocess environment, shell-escape restriction, isolated
 output directory, recorder, retries, diagnostics and publication path remain in
 use. The selected compiler must exist in the resolved distribution. Tectonic
 keeps its XeTeX-based invocation and rejects explicit LuaLaTeX/pdfLaTeX requests.
 
-Without a directive, latexmk defaults to pdfLaTeX. A load of `fontspec` or
-`unicode-math` prompts the author to select LuaLaTeX or XeLaTeX. This package
-inference is suppressed whenever the document
+Without a directive, latexmk defaults to pdfLaTeX. An unguarded load of `fontspec`
+or `unicode-math` selects XeLaTeX automatically; an explicit pdfLaTeX request
+still receives compatibility guidance. This package inference is suppressed
+whenever the document
 shows an engine-conditional idiom: a load of `iftex`, `ifxetex` or `ifluatex`,
 or a use of `\ifPDFTeX`/`\ifxetex`/`\ifluatex`/`\iftutex` in any of the casings
 those get written in. That suppression exists because Pandoc's default template
@@ -537,6 +548,17 @@ cache is filled behind a single-permit `Semaphore`: one fiber runs the actual
 subprocess probe, and every fiber that arrives while it is in flight reads the
 answer that fiber leaves behind instead of shelling out again.
 
+The same cached observation independently probes `pdflatex`, `xelatex`, and
+`lualatex` with bounded `--version` processes when the active driver is latexmk.
+The toolchain endpoint's required `compilers` array reports each binary's
+availability, resolved executable, and parsed version. Driver readiness alone
+does not imply any compiler is installed. Managed probes use the same managed
+bin-directory/PATH environment as builds. Build snapshots retain the existing
+driver-only status shape. Tectonic reports no standalone compiler binaries;
+the web separately preserves its existing XeTeX-compatible build path while
+disabling incompatible explicit pdfLaTeX/LuaLaTeX choices. Offline and failed
+checks are shown as Offline/Not checked rather than successful probes.
+
 **Managed TinyTeX install.** `tinytexManifest.ts` pins exactly one TinyTeX
 release, `v2026.08`, by hand-verified SHA-256 and exact byte size — nothing
 resolves a "latest" pointer at install time. Windows x64, Linux x64, and the
@@ -589,8 +611,9 @@ gate rather than leaving the state saying an install is forever in flight.
 **Eagerly installed collections.** Promotion is not the last step. Once the
 state file names the new root — that is, once the engine is installed and
 discoverable — the run enters the `installing-packages` phase and asks
-`LatexPackageInstaller` for `collection-latexrecommended` and
-`collection-fontsrecommended` under a 15-minute bound. Source navigation is
+`LatexPackageInstaller` for `collection-latexrecommended`,
+`collection-fontsrecommended`, `collection-xetex`, `fontspec`, `polyglossia`,
+and `bidi` under a 15-minute bound. Source navigation is
 not a TinyTeX package and does not add an install-time network dependency: the
 application ships the same verified helper for managed TinyTeX, system TeX,
 and Tectonic. The base set

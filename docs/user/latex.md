@@ -35,13 +35,14 @@ offline, including saved personal templates with a captured first page.
 **Settings > Documents** keeps these choices in one place:
 
 - **LaTeX**: the LaTeX installation on the server (with **Install TinyTeX**
-  when none is found), **Templates** (the default and the full list to arrange,
-  hide, show again, rename, or delete your own), the language for new
-  documents, and the view LaTeX files open in.
+  when none is found), the available compilers, **Templates** (the default and
+  the full list to arrange, hide, show again, rename, or delete your own), the
+  language and default compiler for new documents, and the view LaTeX files open in.
 - **Markdown**: whether Markdown files open Rich or as Source.
 - **Word**: the Pandoc converter that Word export uses, and its install.
 
-Template, language, and view choices stay on this device. The installs belong
+Template, language, default-compiler, and view choices stay on this device.
+The installs belong
 to the server shown at the top of the page; with that server offline, they
 read **Offline**. The view a file opens in is the one you last used, in
 Settings or in the editor.
@@ -60,8 +61,8 @@ including `\textenglish`, `\texthebrew`, `\LR`, `\RL` and
 `\foreignlanguage`. Existing language wrappers survive supported edits.
 Document fonts and standard abstract, contents and caption labels follow the
 root's language setup. Custom or unsupported setups remain accessible in Source;
-the compiled PDF is authoritative. Language, compiler and font configuration
-is edited in Source; no new language or direction menu is required.
+the compiled PDF is authoritative. Language and font configuration is edited in
+Source; use **Compiler** beside **Rebuild** for the document's compiler.
 
 ## Write visually, verify with TeX
 
@@ -1024,8 +1025,10 @@ badge tells you so.
 
 ## Choose a LaTeX engine
 
-Scient uses `latexmk` when available and defaults to pdfLaTeX. A compiler
-directive in the root document selects an installed engine:
+The **Compiler** menu beside **Rebuild** offers **Automatic**, **pdfLaTeX**,
+**XeLaTeX** (recommended for Hebrew), and **LuaLaTeX**. On narrow panes it moves
+into **More**. Choosing an engine first saves pending document edits, updates
+the root's portable compiler directive, saves it, and rebuilds:
 
 ```latex
 % !TEX program = lualatex
@@ -1033,13 +1036,32 @@ directive in the root document selects an installed engine:
 
 Use `xelatex` or `pdflatex` to select those engines instead. TeXShop's
 `TS-program` spelling is also recognized. A root directive takes precedence
-over directives in included preambles. The selected compiler must be available
-in the TeX distribution used by Scient.
+over directives in included preambles. The selected engine must be supported
+by the TeX toolchain used by Scient.
 
-Without a directive, an unconditional `fontspec` or `unicode-math` load produces
-guidance to select LuaLaTeX or XeLaTeX. Tectonic remains the fallback toolchain;
-it uses a XeTeX-based engine and cannot satisfy an explicit LuaLaTeX or pdfLaTeX
-request. Such requests explain which toolchain is needed before compilation.
+**Automatic** removes root compiler directives rather than storing a device-only
+override. Included files display the root's choice and offer **Open root**;
+they never receive their own compiler directive through this control. Resolve
+recovery or save conflicts before changing the compiler.
+
+**Settings > Documents > Default compiler for new documents** only affects
+new documents. A template's compiler declaration takes precedence over the
+device preference. New Hebrew documents use XeLaTeX unless LuaLaTeX is selected;
+a pdfLaTeX preference cannot put a new Hebrew document onto an incompatible engine.
+Existing documents are not rewritten.
+
+Compiler availability comes from the selected server and its active TeX
+distribution, not the browser's operating system. Missing compilers are unavailable
+in the document menu; failed checks read **Not checked**, disconnected servers
+read **Offline**, and source saves remain separate from compiler availability.
+
+With latexmk, Automatic uses pdfLaTeX unless unguarded `fontspec` or
+`unicode-math` requires XeLaTeX. An explicit pdfLaTeX directive with those
+packages instead produces compatibility guidance. Tectonic remains a separate
+XeTeX-compatible fallback: it can build XeLaTeX-style Hebrew documents without a
+standalone XeLaTeX installation, but cannot satisfy explicit LuaLaTeX or pdfLaTeX
+requests. The availability display distinguishes that compatibility from an
+installed compiler binary.
 
 Engine-aware documents that load packages only in the appropriate conditional
 branch are allowed to build normally.
