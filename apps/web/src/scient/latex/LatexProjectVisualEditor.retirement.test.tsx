@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { createTestCheckpointStore } from "~/scient/markdownEditor/persistence/markdownDraftCheckpointTestkit";
+import type * as MarkdownCheckpointModule from "~/scient/markdownEditor/persistence/markdownDraftCheckpoint";
 import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { act, useMemo, useRef, useSyncExternalStore } from "react";
@@ -63,6 +65,10 @@ vi.mock("~/components/files/projectFilesQueryState", () => ({
 vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceTransport", () => ({
   createMarkdownPersistenceTransport: vi.fn(),
 }));
+vi.mock("~/scient/markdownEditor/persistence/markdownDraftCheckpoint", async (importOriginal) => {
+  const actual = await importOriginal<typeof MarkdownCheckpointModule>();
+  return { ...actual, indexedDbMarkdownDrafts: createTestCheckpointStore() };
+});
 vi.mock("./LatexVisualEditor", () => ({
   LatexVisualEditor: (props: NonNullable<typeof visual.props>) => {
     visual.props = props;
@@ -111,7 +117,22 @@ describe("retiring the project's recovery copy", () => {
   let containers: HTMLDivElement[];
   let roots: ReturnType<typeof createRoot>[];
   let leases: MarkdownPersistenceLease[];
-  let acknowledge: () => void;
+  let completeWrite: (() => void) | null;
+  let writeStarted: Promise<void>;
+  let announceWrite: () => void;
+  const resetWriteReceipt = () => {
+    const receipt = Promise.withResolvers<void>();
+    writeStarted = receipt.promise;
+    announceWrite = receipt.resolve;
+  };
+  const acknowledge = async () => {
+    await writeStarted;
+    const complete = completeWrite;
+    if (complete === null) throw new Error("No native publication to acknowledge");
+    completeWrite = null;
+    resetWriteReceipt();
+    complete();
+  };
   let writes: number;
   let writePaths: string[];
 
@@ -247,6 +268,8 @@ describe("retiring the project's recovery copy", () => {
     leases = [];
     writes = 0;
     writePaths = [];
+    completeWrite = null;
+    resetWriteReceipt();
     vi.mocked(createMarkdownPersistenceTransport).mockImplementation((target) => ({
       write: (intent: MarkdownSaveIntent) =>
         new Promise((resolve, reject) => {
@@ -259,11 +282,12 @@ describe("retiring the project's recovery copy", () => {
           }
           writes += 1;
           writePaths.push(target.relativePath);
-          acknowledge = () => {
+          completeWrite = () => {
             const revision = `saved-${writes}`;
             disk.set(target.relativePath, { source: intent.source, revision });
             resolve({ revision });
           };
+          announceWrite();
         }),
       read: async () => disk.get(target.relativePath)!,
       classifyFailure: (error) => (error === "conflict" ? "conflict" : "terminal"),
@@ -341,7 +365,7 @@ describe("retiring the project's recovery copy", () => {
     await act(async () => {
       expect(replaceVisualText(visual.props!.source, "original", "published").accepted).toBe(true);
       const saved = selected.flushNow();
-      acknowledge();
+      await acknowledge();
       expect(await saved).toBe(true);
     });
     expect(writePaths).toEqual(["renamed.tex"]);
@@ -424,7 +448,7 @@ describe("retiring the project's recovery copy", () => {
       accepted = replaceVisualText(visual.props!.source, "original", "edited");
       expect(accepted.accepted).toBe(true);
       const saved = selected.flushNow();
-      acknowledge();
+      await acknowledge();
       expect(await saved).toBe(true);
     });
     if (!accepted.accepted) throw new Error("Owned history edit refused");
@@ -452,7 +476,7 @@ describe("retiring the project's recovery copy", () => {
       expect(restored.inverseEdit.physical![0]!.path).toBe("history-renamed.tex");
       expect(restored.inverseEdit.physical![0]!.documentId).toBe(selected.documentId);
       const saved = selected.flushNow();
-      acknowledge();
+      await acknowledge();
       expect(await saved).toBe(true);
     });
     expect(selected.getSnapshot().draftSource).toBe(original);
@@ -510,7 +534,7 @@ describe("retiring the project's recovery copy", () => {
     expect(writes).toBe(1);
     expect(completed).toBe(false);
     await act(async () => {
-      acknowledge();
+      await acknowledge();
       expect(await confirmation).toBe(true);
     });
     expect(completed).toBe(true);
@@ -532,7 +556,7 @@ describe("retiring the project's recovery copy", () => {
       flushed = visual.props!.flushReferenceEdits();
     });
     await act(async () => {
-      acknowledge();
+      await acknowledge();
       expect(await flushed).toBe(true);
     });
     expect(visual.props!.confirmedReferenceSource()).toContain("Entry A");
@@ -541,7 +565,7 @@ describe("retiring the project's recovery copy", () => {
     expect(visual.props!.confirmedReferenceSource()).toContain("Root intro.");
     await act(async () => {
       const saved = selected.flushNow();
-      acknowledge();
+      await acknowledge();
       expect(await saved).toBe(true);
     });
     expect(visual.props!.confirmedReferenceSource()).toContain("Changed root.");
@@ -571,7 +595,7 @@ describe("retiring the project's recovery copy", () => {
     });
     expect(writes).toBe(1);
     await act(async () => {
-      acknowledge();
+      await acknowledge();
       expect(await flushed).toBe(true);
     });
     const published = visual.props!.confirmedReferenceSource();
@@ -696,7 +720,7 @@ describe("retiring the project's recovery copy", () => {
       expect(writes).toBe(1);
       expect(completed).toBe(false);
       await act(async () => {
-        acknowledge();
+        await acknowledge();
         expect(await confirmation).toBe(true);
       });
       expect(disk.get("chapter.tex")?.source).toBe("Updated chapter.\n");

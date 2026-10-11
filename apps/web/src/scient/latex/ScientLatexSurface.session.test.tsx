@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { createTestCheckpointStore } from "~/scient/markdownEditor/persistence/markdownDraftCheckpointTestkit";
+import type * as MarkdownCheckpointModule from "~/scient/markdownEditor/persistence/markdownDraftCheckpoint";
 import { sha256 } from "@noble/hashes/sha2";
 import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
@@ -76,6 +78,10 @@ vi.mock("~/components/files/FilePreviewPanel", () => ({
 vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceTransport", () => ({
   createMarkdownPersistenceTransport: vi.fn(),
 }));
+vi.mock("~/scient/markdownEditor/persistence/markdownDraftCheckpoint", async (importOriginal) => {
+  const actual = await importOriginal<typeof MarkdownCheckpointModule>();
+  return { ...actual, indexedDbMarkdownDrafts: createTestCheckpointStore() };
+});
 vi.mock("~/scient/pdf/ScientPdfReader", async () => {
   const { useContext } = await import("react");
   const { ReaderBarHostContext } = await import("../writing/readerBarHost");
@@ -247,6 +253,7 @@ describe("the LaTeX surface on a document session", () => {
     reader.host = null;
     disk = { source: BASE, revision: revisionOf(BASE) };
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       debounceMs: 250,
       reconcile: documentReconcileStrategy,
       createTransport: () => ({
