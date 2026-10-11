@@ -348,10 +348,14 @@ const LatexSourceAttributes = Extension.create({
           sourceId: { default: null, rendered: false },
           latexCommand: {
             default: null,
-            renderHTML: (attributes: Record<string, unknown>) =>
-              attributes.latexCommand
-                ? { "data-latex-command": String(attributes.latexCommand) }
-                : {},
+            renderHTML: (attributes: Record<string, unknown>) => {
+              // Live conversions have no parsed command, and changing a heading
+              // level can retain its old one. Render the level saved to LaTeX.
+              const command = LATEX_HEADING_STYLES.find(
+                (style) => style.level === attributes.level,
+              )?.command;
+              return command ? { "data-latex-command": command } : {};
+            },
           },
           unnumbered: {
             default: false,

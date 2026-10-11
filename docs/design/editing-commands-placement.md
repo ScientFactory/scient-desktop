@@ -159,8 +159,13 @@ object names, explanatory paragraphs, or select/delete-object actions.
 
 Caption and title actions focus editing on paper. Clearing a float caption removes
 its number/label; both can be added again. An extra delete in an empty caption or
-title returns to the body. Printed-title clicks retain the clicked caret position;
-Statement Title enters at the beginning. Listing/float labels share validation,
+title returns to the body.
+In a standard document title field, an extra Backspace/Delete when empty removes
+the entire printed title block and returns the caret to body text. This is a
+separate document undo step; title, author and date declarations stay in source
+so **Document → Title & authors → Add a title** can restore the block.
+Printed-title clicks retain the clicked caret position; Statement Title enters
+at the beginning. Listing/float labels share validation,
 single-file reference renaming and navigation. Retain statement footer context
 after title removal and app focus changes.
 Label fields keep one visible line without a native scrollbar, retain a usable

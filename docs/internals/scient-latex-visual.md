@@ -565,6 +565,10 @@ unsupported title formatting remain source-owned. Standard article/report/book
 classes can be selected in Document settings; incompatible switches and custom
 classes stay protected.
 
+Heading styling and numbering derive from the live heading level, matching the
+LaTeX serializer. Converting text to a heading or changing its level renders
+immediately, without reopening the document or relying on parsed source metadata.
+
 Document has Title & authors, Document settings, References, Find and replace
 (when editable), Export (when hosted) and Keyboard shortcuts. Document settings opens one card showing
 the current values read by `latexVisualLayoutProfile`, with a draft of changes only, explicit Apply/Cancel, and a source snapshot checked again

@@ -322,6 +322,21 @@ describe("transcriptFailureDiagnostic", () => {
       "The LaTeX engine was stopped before it reported anything.",
     );
   });
+
+  it("reports a filename failure instead of latexmk's trailing help suggestion", () => {
+    expect(
+      transcriptFailureDiagnostic({
+        transcript: [
+          "Latexmk: Wildcards in file names didn't match any files",
+          "Use",
+          "   latexmk -help",
+          "to get usage information",
+          "Reverting Windows console CPs to (in,out) = (437,65001)",
+        ].join("\n"),
+        exitCode: 10,
+      }).message,
+    ).toBe("Latexmk: Wildcards in file names didn't match any files");
+  });
 });
 
 describe("summarizeLatexFailure", () => {

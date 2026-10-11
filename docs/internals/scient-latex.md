@@ -644,7 +644,15 @@ workspace. Every compile writes into
 Build-input evidence is the only other per-document state this lane keeps, one
 JSON file per document under `<latexDir>/evidence/` keyed by the same digest.
 The workspace directory the user edits never receives compiler output, and
-neither does the agent's own checkpoint history. The managed TinyTeX
+neither does the agent's own checkpoint history. On Windows, a Unicode root
+filename uses a private UTF-8 `scient-unicode-root.tex` entry point in this work
+directory. `latexmk` receives its ASCII filename, while TeX reads the original
+root from the original working directory. Source filenames, relative inputs
+and recorder evidence stay attached to the original files; only the private
+output basename changes. SyncTeX is still requested, but TeX distributions that
+encode its input paths through a Windows code page may lose Unicode characters
+there, so successful compilation does not establish Unicode source navigation.
+The managed TinyTeX
 distribution lives under a separate
 `<latexDir>/managed` root, entirely apart from build work directories. Published
 navigation indexes live under

@@ -468,7 +468,8 @@ export const make = Effect.gen(function* () {
   const packageInstaller = yield* LatexPackageInstaller;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const hostEnvironment = yield* HostProcessEnvironment;
-  const pathDelimiter = (yield* HostProcessPlatform) === "win32" ? ";" : ":";
+  const windows = (yield* HostProcessPlatform) === "win32";
+  const pathDelimiter = windows ? ";" : ":";
   const entriesRef = yield* Ref.make(new Map<string, LatexBuildEntry>());
   const evidenceRef = yield* Ref.make(new Map<string, LatexEvidenceCacheEntry>());
   // Monotonic across the process; only `requestBuild` hands one out.
@@ -1490,6 +1491,9 @@ export const make = Effect.gen(function* () {
         return;
       }
 
+      // Keep the original cwd even when a Windows Unicode root needs a private
+      // ASCII entry point: relative inputs, assets and source navigation use it.
+      const compileDirectory = path.dirname(rootAbsolutePath);
       const invocation = buildLatexInvocation({
         engine: compiler.engine,
         toolchain: {
@@ -1499,6 +1503,8 @@ export const make = Effect.gen(function* () {
         },
         rootFileName: path.basename(rootAbsolutePath),
         workDirectory,
+        windows,
+        relativeWorkDirectory: path.relative(compileDirectory, workDirectory) || ".",
         // The work directory outlives a build and `latexmk` keeps its own
         // decision state in it, which is state about a run whose inputs this
         // service has since changed underneath it. Every build here is a build
@@ -1507,11 +1513,16 @@ export const make = Effect.gen(function* () {
         forceReprocess: true,
       });
       candidatePdfPath = invocation.pdfPath;
+      if (invocation.inputWrapper !== undefined) {
+        yield* fileSystem.writeFileString(
+          invocation.inputWrapper.path,
+          invocation.inputWrapper.contents,
+        );
+      }
 
       // TeX resolves `\input{sections/intro}` against the working directory,
       // not against the root document, so a root under `paper/` only builds
       // when the engine runs from `paper/`.
-      const compileDirectory = path.dirname(rootAbsolutePath);
       // Non-null only for the distribution Scient installed, which is the only
       // one it may extend: `tlmgr` lives beside the engine in that tree.
       const managedBinDirectory =

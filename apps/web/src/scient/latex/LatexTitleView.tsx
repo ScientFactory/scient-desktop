@@ -13,7 +13,8 @@ import {
   type KeyboardEvent,
 } from "react";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
-import { Selection } from "@tiptap/pm/state";
+import { closeHistory } from "@tiptap/pm/history";
+import { Selection, TextSelection } from "@tiptap/pm/state";
 import { preserveLatexCaret } from "./latexObjectCaret";
 import { LatexTextField } from "./LatexTextField";
 
@@ -66,6 +67,39 @@ export function LatexTitleView({
       editor.state.tr.setSelection(Selection.near(editor.state.doc.resolve(boundary), direction)),
     );
     editor.commands.focus(undefined, { scrollIntoView: false });
+    setActive(false);
+  };
+  const removeEmptyTitle = () => {
+    if (!editable || !editor.isEditable || editor.isDestroyed) return;
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const current = editor.state.doc.nodeAt(position);
+    if (
+      !current ||
+      current.type !== node.type ||
+      current.attrs.kind !== "title" ||
+      current.attrs.sourceMeta?.titleEditable === false
+    )
+      return;
+    // Settle a just-cleared field before removing its block, so Undo restores
+    // the empty title even when the typing publication has not run yet.
+    if (current.attrs.title !== "") updateAttributes({ title: "" });
+    const cleared = editor.state.doc.nodeAt(position);
+    if (!cleared || cleared.attrs.title !== "") return;
+    const transaction = closeHistory(editor.state.tr).delete(position, position + cleared.nodeSize);
+    const boundary = Math.min(position, transaction.doc.content.size);
+    const caret =
+      Selection.findFrom(transaction.doc.resolve(boundary), 1, true) ??
+      Selection.findFrom(transaction.doc.resolve(boundary), -1, true);
+    if (caret) transaction.setSelection(caret);
+    else {
+      transaction.insert(boundary, editor.schema.nodes.paragraph!.create());
+      transaction.setSelection(TextSelection.create(transaction.doc, boundary + 1));
+    }
+    editor.view.dispatch(transaction.scrollIntoView());
+    if (!editor.state.doc.eq(transaction.doc)) return;
+    editor.view.dispatch(closeHistory(editor.state.tr));
+    editor.view.focus();
     setActive(false);
   };
   const activate = () => {
@@ -165,6 +199,7 @@ export function LatexTitleView({
         draftKey={draftKey ? `${draftKey}:title` : undefined}
         value={String(node.attrs.title ?? "")}
         onValueChange={(title) => updateAttributes({ title })}
+        onRemoveEmpty={removeEmptyTitle}
       />
       {showAuthor ? (
         <LatexTextField

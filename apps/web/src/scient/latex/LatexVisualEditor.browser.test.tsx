@@ -15,6 +15,7 @@ vi.mock("~/assets/assetUrls", () => ({
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { clearVisualDraft } from "./visualDrafts";
 import { pdfFitWidthScale } from "../pdf/pdfReaderModel";
+import { createNewDocumentSource } from "../documents/documentTemplates";
 import "./scient-latex.css";
 
 const source = `\\documentclass[10pt,letterpaper]{article}
@@ -81,6 +82,80 @@ The boundaries between areas are flexible.
 describe("visual LaTeX page layout", () => {
   let container: HTMLDivElement;
   let root: Root;
+
+  it.each(["english", "hebrew"] as const)(
+    "renders a new %s document's section immediately and updates imported heading levels",
+    async (language) => {
+      let current = createNewDocumentSource({ format: "latex", template: "blank", language })
+        .replace("\\title{}", "\\title{New document}")
+        .replace("\\par", "test\n\n\\section{Existing}");
+      function Harness() {
+        const [source, setSource] = useState(current);
+        return (
+          <LatexVisualEditor
+            draftKey="browser-statement-test"
+            fileRevision="r1"
+            source={source}
+            disabled={false}
+            onEditingChange={() => {}}
+            onOpenSource={() => {}}
+            onEdit={(expected, next) => {
+              if (expected !== current) return false;
+              current = next;
+              setSource(next);
+              return true;
+            }}
+          />
+        );
+      }
+      root.render(<Harness />);
+      await expect
+        .poll(() => container.querySelector(".scient-latex-visual-document"))
+        .toBeTruthy();
+      const document = container.querySelector<HTMLElement>(".scient-latex-visual-document")!;
+      const editor = (document as HTMLElement & { editor: Editor }).editor;
+      const selectText = (text: string) => {
+        editor.state.doc.descendants((node, position) => {
+          if (node.isTextblock && node.textContent === text)
+            editor.commands.setTextSelection(position + 1);
+        });
+      };
+      selectText("test");
+      await page.getByRole("button", { name: "Text", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Paragraph style", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: /^Section(?:\s|$)/u }).click();
+      await expect.poll(() => current).toContain("\\section{test}");
+      const section = [...document.querySelectorAll("h1")].find(
+        (heading) => heading.textContent === "test",
+      )!;
+      expect(section.getAttribute("data-latex-command")).toBe("section");
+      expect(getComputedStyle(section).fontWeight).toBe("700");
+      expect(parseFloat(getComputedStyle(section).fontSize)).toBeGreaterThan(
+        parseFloat(getComputedStyle(document).fontSize),
+      );
+      expect(getComputedStyle(section, "::before").content).toContain("counter(scient-section)");
+      editor.commands.updateAttributes("heading", { unnumbered: true });
+      await expect.poll(() => current).toContain("\\section*{test}");
+      expect(getComputedStyle(section, "::before").content).toBe("none");
+
+      // A parsed heading still carries its original command after setNode.
+      selectText("Existing");
+      editor.commands.setNode("heading", { level: 2 });
+      await expect.poll(() => current).toContain("\\subsection{Existing}");
+      const subsection = document.querySelector("h2")!;
+      expect(subsection.getAttribute("data-latex-command")).toBe("subsection");
+      expect(getComputedStyle(subsection, "::before").content).toContain(
+        "counter(scient-subsection)",
+      );
+      editor.commands.setNode("paragraph");
+      await expect.poll(() => current).not.toContain("\\subsection{Existing}");
+      expect(
+        [...document.querySelectorAll("p")]
+          .find((paragraph) => paragraph.textContent === "Existing")!
+          .hasAttribute("data-latex-command"),
+      ).toBe(false);
+    },
+  );
 
   it("offers an accepted checkpoint before an outside update when recovery storage is occupied", async () => {
     const key = "browser-statement-test";
