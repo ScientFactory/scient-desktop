@@ -118,6 +118,15 @@ divergence.
 - Bootstrap evidence: [Scient Next D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md)
 - Authoritative migration policy: `Scient/docs/planning/t3-foundation-migration-plan.md`
 
+Scient's public desktop CLI command is `scient`: Settings, the PATH installer,
+root CLI help/version output, and public command suggestions use this name.
+`SCIENT_DESKTOP_IDENTITY.cliCommandName` owns the executable name. Existing
+Scient-written `t3` launchers are refreshed for compatibility; new installs do
+not add a `t3` shortcut, and removal only removes Scient-owned shortcuts.
+Preserve the old launcher ownership marker, internal package names, environment
+variables, and `scient-next` state paths. This product rename does not enable
+the inherited standalone install/update/service lifecycle or Connect.
+
 The D4 bootstrap integration base was
 `a2ca89aa10f13a2222e08afd98c66285121d5ba2`, selected from freshly fetched
 official `main` only after its untouched baseline passed. That historical

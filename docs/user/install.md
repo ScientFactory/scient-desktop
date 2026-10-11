@@ -45,6 +45,23 @@ Download the x64 AppImage, make it executable if your file manager did not do
 so, and open it. Keep the AppImage in a permanent location if you want Scient's
 built-in desktop updater to continue finding it.
 
+## Use Scient from a terminal
+
+In **Settings → General → About**, install the **scient command** to put the
+desktop app's bundled CLI on your terminal's PATH. Open a new terminal after
+installation. If Settings reports that the installation folder is outside PATH,
+add that folder to your shell's PATH.
+
+Run `scient --help` to see the available commands. With the desktop app already
+running, `scient app /path/to/project` opens a project in it; `scient app` uses
+the current directory. `scient start` and `scient serve` start a backend server,
+so use `scient app` to open a project in the running desktop application.
+
+Existing Scient-installed `t3` shortcuts keep working after an update. Install
+**scient command** to add the canonical name. **Remove** removes Scient-owned
+terminal shortcuts, including the old `t3` shortcut, and leaves unrelated
+commands alone. The internal bundled launchers remain available to the app.
+
 ## Start using Scient
 
 If the app shows **Scient could not load**, check your connection and select

@@ -2,19 +2,20 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
-// A desktop install puts no `t3` on PATH, so commands the server asks a person
-// to run (`sudo t3 browser setup`) had nothing to call. The app keeps a small
-// launcher for its bundled CLI in the T3 home, which is never on PATH and so
-// never shadows another `t3`, and the server names it by absolute path in those
+// A desktop install puts no `scient` on PATH, so commands the server asks a person
+// to run (`sudo scient browser setup`) had nothing to call. The app keeps a small
+// launcher for its bundled CLI in the Scient home, which is never on PATH and so
+// never shadows another command, and the server names it by absolute path in those
 // commands through T3CODE_CLI_PATH. An AppImage mounts somewhere new each run,
 // so its launcher mounts the AppImage itself instead of pointing into it.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
-// SCIENT-FORK: Bundled CLI launcher messages use Scient product identity.
+// SCIENT-FORK: Keep this ownership marker stable so older Scient launchers remain recognizable.
 export const MARKER = "Written by Scient: runs the desktop app's bundled t3 CLI.";
 
 /** Server entry inside the app, relative to its server root (an asar archive when packaged). */
@@ -36,7 +37,7 @@ export type CliShimTarget =
 /**
  * The launcher script. Electron runs the server as plain Node with
  * `ELECTRON_RUN_AS_NODE`, which reads the entry from inside the asar archive.
- * The launcher's own path and the app's T3 home are written in, so the command
+ * The launcher's own path and the app's Scient home are written in, so the command
  * the server shows is absolute and `sudo`, which clears the environment, still
  * runs against this install's home.
  */
@@ -131,16 +132,16 @@ export const renderCliShim = (input: {
   ].join("\n");
 };
 
-/** Where the packaged app keeps its launcher: `<T3 home>/bin/t3`, `t3.cmd` on Windows. */
+/** Where the packaged app keeps its Scient launcher. */
 export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment["Service"]) =>
   environment.path.join(
     environment.baseDir,
     "bin",
-    environment.platform === "win32" ? "t3.cmd" : "t3",
+    `${SCIENT_DESKTOP_IDENTITY.cliCommandName}${environment.platform === "win32" ? ".cmd" : ""}`,
   );
 
 /**
- * Writes the packaged app's launcher to `<T3 home>/bin` and returns its path
+ * Writes the packaged app's launcher to `<Scient home>/bin` and returns its path
  * for the backend's T3CODE_CLI_PATH. Development builds run from a checkout
  * and get none.
  */
@@ -163,30 +164,50 @@ export const install = Effect.gen(function* () {
         // macOS and .deb installs live at a fixed path, so the launcher runs the app directly.
         onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
       });
-  const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
+  const writeLauncher = Effect.fnUntraced(function* (launcher: string, legacy = false) {
+    // A symlink (including a broken one) is not an app-owned launcher file.
+    if (Option.isSome(yield* fs.readLink(launcher).pipe(Effect.option))) return false;
+    const info = yield* fs.stat(launcher).pipe(Effect.option);
+    if (Option.isSome(info) && (info.value.type !== "File" || Number(info.value.size) > 16_384)) {
+      return false;
+    }
+    const existing = yield* fs.readFileString(launcher).pipe(Effect.option);
+    // Only refresh a legacy launcher that Scient already owns; fresh installs expose scient.
+    if (legacy && Option.isNone(existing)) return false;
+    if (Option.isNone(existing) && (yield* fs.exists(launcher))) return false;
+    if (Option.isSome(existing) && !existing.value.includes(MARKER)) {
+      yield* logWarning("leaving a CLI launcher the app did not write", { shimPath: launcher });
+      return false;
+    }
+    const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
+    if (Option.getOrUndefined(existing) !== content) {
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      // Rename beside the launcher so an invocation never reads half a file.
+      const staging = `${launcher}.${process.pid}.tmp`;
+      yield* fs.writeFileString(staging, content, { mode: 0o755 });
+      yield* fs.rename(staging, launcher);
+      yield* logInfo("installed CLI launcher", { shimPath: launcher });
+    }
+    return true;
+  });
 
   return yield* Effect.gen(function* () {
-    const existing = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    if (Option.isSome(existing) && !existing.value.includes(MARKER)) {
-      // Someone else's file; leave it, and let commands fall back to plain `t3`.
-      yield* logWarning("leaving a t3 launcher the app did not write", { shimPath });
-      return Option.none<string>();
-    }
-    if (Option.getOrUndefined(existing) !== content) {
-      yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
-      // Written beside the launcher and renamed over it, so a running `t3` never reads half a file.
-      const staging = `${shimPath}.${process.pid}.tmp`;
-      yield* fs.writeFileString(staging, content, { mode: 0o755 });
-      yield* fs.rename(staging, shimPath);
-      yield* logInfo("installed t3 launcher", { shimPath });
-    }
+    if (!(yield* writeLauncher(shimPath))) return Option.none<string>();
+    // Existing PATH links still point here. Refresh them after app moves/updates,
+    // while directing generated commands to the canonical Scient launcher.
+    yield* writeLauncher(path.join(path.dirname(shimPath), windows ? "t3.cmd" : "t3"), true).pipe(
+      Effect.catchCause((cause) =>
+        logWarning("could not refresh legacy Scient launcher", { cause: Cause.pretty(cause) }),
+      ),
+    );
     return Option.some(shimPath);
   }).pipe(
-    // Best-effort: nothing here may block the backend's start; commands then fall back to plain `t3`.
+    // Best-effort: nothing here may block the backend's start; commands then fall back to plain `scient`.
     Effect.catchCause((cause) =>
-      logWarning("could not install t3 launcher", { shimPath, cause: Cause.pretty(cause) }).pipe(
-        Effect.as(Option.none<string>()),
-      ),
+      logWarning("could not install Scient launcher", {
+        shimPath,
+        cause: Cause.pretty(cause),
+      }).pipe(Effect.as(Option.none<string>())),
     ),
     Effect.withSpan("desktop.cliShim.install"),
   );

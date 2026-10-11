@@ -13,6 +13,7 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import { isCommandAvailable } from "@t3tools/shared/shell";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -141,11 +142,15 @@ export function formatCliCommand(input: {
 /** `formatCliCommand` against this process's real entry path and version. */
 export const resolveCliCommand = (subcommand: string) =>
   Effect.map(HostProcessArguments, (processArguments) =>
-    formatCliCommand({
-      subcommand,
-      entryPath: processArguments[1] ?? "",
-      version: packageJson.version,
-    }),
+    // Scient ships its CLI with the desktop app; inherited npm package names
+    // remain compatibility identifiers, not instructions to install upstream T3.
+    SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
+      ? `${SCIENT_DESKTOP_IDENTITY.cliCommandName} ${subcommand}`
+      : formatCliCommand({
+          subcommand,
+          entryPath: processArguments[1] ?? "",
+          version: packageJson.version,
+        }),
   );
 
 /** Quotes `value` for a POSIX shell when it needs it. */
@@ -177,6 +182,13 @@ const resolveInstallLauncher = Effect.gen(function* () {
 const resolveHostCliCommand = (subcommand: string) =>
   Effect.gen(function* () {
     const command = yield* resolveCliCommand(subcommand);
+    if (SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled) {
+      const launcher = yield* resolveInstallLauncher;
+      // Prefer this install's launcher over an unrelated command on PATH.
+      return Option.isSome(launcher)
+        ? { command: `${shellWord(launcher.value)} ${subcommand}`, launcher: true }
+        : { command, launcher: false };
+    }
     if (command !== `t3 ${subcommand}`) return { command, launcher: false };
     if (yield* isCommandAvailable("t3")) return { command, launcher: false };
     const launcher = yield* resolveInstallLauncher;
