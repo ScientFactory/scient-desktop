@@ -83,4 +83,24 @@ describe("useLatexDocumentResolution across an in-place rename", () => {
     await act(async () => root.render(<Probe path="b.tex" />));
     expect(seen.at(-1)).toMatchObject({ pending: true, result: null });
   });
+  it("retries failed discovery after recovery without changing the file revision", async () => {
+    mocks.resolve.mockRejectedValueOnce(new Error("Workspace publication needs recovery."));
+    await act(async () => root.render(<Probe path="paper.tex" />));
+    expect(seen.at(-1)).toMatchObject({
+      pending: false,
+      result: null,
+      error: "Workspace publication needs recovery.",
+    });
+    mocks.resolve.mockResolvedValueOnce(resolvedAt("paper.tex"));
+    await act(async () => seen.at(-1)!.retry());
+    expect(seen.at(-1)).toMatchObject({
+      pending: false,
+      error: null,
+      result: resolvedAt("paper.tex"),
+    });
+    expect(mocks.resolve.mock.calls.at(-1)?.[1]).toEqual({
+      workspaceRoot: "/w",
+      sourceRelativePath: "paper.tex",
+    });
+  });
 });

@@ -1624,6 +1624,43 @@ mounted. Print preparation mounts all eligible content. Geometry is published on
 after a current natural-flow pass, and a bounded cache reuses it across openings
 with matching source, typography, references and math setup. Cold unmeasured blocks
 use temporary height estimates while small background batches establish geometry.
+Opening readiness is independent of document-wide preparation. The paper is
+revealed after the intended viewport's reading fonts, previews and measured layout
+are ready. A new document starts at its first page; reopening during the renderer
+session restores the last compatible source-block anchor. Navigation during
+preparation supersedes that opening target. Parsing still prepares the complete
+source-backed model; far page numbers remain provisional until preceding geometry
+is known. Static opening feedback does not expose an estimated page as finished.
+
+The bundled reading font pool and the resolved prose family are prepared before
+accepting geometry. A failed or stalled font admits fallback metrics after a bounded
+two-second wait. Only relevant font dependencies enter the geometry key; unrelated
+UI font completion does not invalidate the editor. Later real metrics, source,
+macro, reference, ancestor or typography changes still invalidate incompatible
+geometry. Retention never grants validity to an old measurement.
+
+Recent viewport blocks remain mounted under a 128-block, 4 MiB estimated
+source/DOM admission budget, without a time expiry. Visible, selected and active
+blocks retain their separate admission rules. Geometry and passive formula markup
+have independent bounded caches; background scan results are evicted before
+recently read results. DOM eviction preserves compatible geometry and markup.
+Scroll direction and velocity enlarge forward overscan temporarily. Visible demand
+preempts idle preparation, admitting at most eight blocks per paint and measuring
+up to 32 required units separately from background cohorts of up to 64. Typing,
+composition and active scrolling defer background admission. Reading feedback
+reflects missing visible content rather than distant unfinished work.
+
+Ready math markup appears immediately on cache hits. Prepared geometry remains
+in force while a cache miss renders, and unchanged remounts reuse natural units
+without triggering a full measurement pass. Viewport metadata changes and page-map
+publication preserve the latest visible source-block anchor, including an opaque
+block about to be mounted. A guarded correction after paint accounts for delayed
+browser layout without overriding newer navigation, selection or source changes.
+Cold mounted blocks reserve estimated boxes until geometry is ready; clicking a
+prose placeholder reveals it before native caret hit testing. Active prose and math
+editors retain natural layout. Measurement, thumbnails and print use natural
+content. Snapshot construction yields by time and operation count, never moving
+the editable document or its native selection.
 Run-in heading pairs and multi-column/minipage layouts retain their existing DOM.
 Complex containers and individual browser layout calls are not yet bounded by this
 adapter; production opening/typing targets still require qualification. Passive
@@ -1645,19 +1682,14 @@ exists per pass and is removed on completion or cancellation. Active custom
 editors and multi-column flow retain the existing measurement path; no second
 live editor is constructed. Its temporary switches live on the editor's outer
 container, outside ProseMirror's observed DOM, and are removed before yielding.
-Mounted offscreen paragraphs and display bodies receive their prepared intrinsic
-heights, including a paragraph's internal page gaps. Those units use the current
-measurement rather than a remembered browser size or the generic fallback;
-visible content retains natural layout. This avoids depending on a full pass
-through the live paper to seed Chromium's content-visibility sizing.
-Only prepared mounted units skip offscreen layout. Unprepared units and the
-small-document full-DOM path obtain real geometry; viewport admission bounds
-the number of newly mounted distant units.
-Cold viewport preparation admits at most four new units between paints and
-collects up to sixteen unmeasured units before requesting natural measurement.
-This bounds temporary mounted content while reducing full-document passes.
-Typing and composition pause admission; the final smaller cohort is measured
-without waiting for nonexistent units.
+Mounted paragraphs and display bodies use natural browser layout under the
+bounded viewport admission adapter. There is no second `content-visibility:auto`
+viewport cache: it can change predecessor sizes during anchor restoration. Opaque
+views alone represent distant content using compatible measured heights or cold
+estimates. Layout containment remains identical between reading and measurement.
+Cold viewport preparation prioritizes required content and nearby overscan before
+idle source-order work. Required content does not wait for an unrelated background
+cohort. The final smaller cohort is measured without waiting for nonexistent units.
 Geometry context lookup reuses the immutable document and position within the
 current layout generation. Changes to ancestors, first-child roles, source
 setup or typography invalidate that lookup; only the current document is held.

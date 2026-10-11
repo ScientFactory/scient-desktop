@@ -84,7 +84,7 @@ type PreviewJob = {
 };
 const pending = new Map<number, PreviewJob>();
 const requests = new Map<string, PreviewJob>();
-const markupCache = new Map<string, string>();
+const markupCache = new Map<string, { markup: string; reading: boolean }>();
 let cacheBytes = 0;
 const maximumCacheBytes = 16 * 1024 * 1024;
 const maximumCacheEntries = 512;
@@ -144,19 +144,32 @@ function stopWorker() {
   sentContexts.clear();
 }
 
-function remember(key: string, markup: string) {
+function remember(key: string, markup: string, reading: boolean) {
   const bytes = (key.length + markup.length) * 2;
   if (bytes > maximumCacheBytes) return;
   const previous = markupCache.get(key);
-  if (previous !== undefined) cacheBytes -= (key.length + previous.length) * 2;
+  if (previous !== undefined) cacheBytes -= (key.length + previous.markup.length) * 2;
   markupCache.delete(key);
-  markupCache.set(key, markup);
+  markupCache.set(key, { markup, reading: reading || (previous?.reading ?? false) });
   cacheBytes += bytes;
   while (cacheBytes > maximumCacheBytes || markupCache.size > maximumCacheEntries) {
-    const oldest = markupCache.entries().next().value!;
-    cacheBytes -= (oldest[0].length + oldest[1].length) * 2;
+    const oldest =
+      [...markupCache].find(([, entry]) => !entry.reading) ?? markupCache.entries().next().value!;
+    cacheBytes -= (oldest[0].length + oldest[1].markup.length) * 2;
     markupCache.delete(oldest[0]);
   }
+}
+
+/** A previously offscreen result becomes a reading-cache entry when visited. */
+export function retainMathReadingPreview(
+  source: string,
+  display: boolean,
+  macros: Readonly<Record<string, DocumentMathMacro>>,
+  colors: Readonly<Record<string, string>> | undefined,
+  markup: string,
+) {
+  const context = contextFor(macros, colors);
+  remember(JSON.stringify([context.id, display, source]), markup, true);
 }
 
 function deliver(job: PreviewJob, markup: string | null) {
@@ -178,7 +191,12 @@ function finish(markup: string | null) {
   active = undefined;
   try {
     if (job) {
-      if (markup !== null) remember(job.key, markup);
+      if (markup !== null)
+        remember(
+          job.key,
+          markup,
+          [...job.subscribers.values()].some((subscriber) => subscriber.priority() >= 2),
+        );
       deliver(job, markup);
     }
   } finally {
@@ -278,16 +296,17 @@ export function mathReadingPreview(
   display: boolean,
   macros: Readonly<Record<string, DocumentMathMacro>>,
   colors: Readonly<Record<string, string>> | undefined,
-  complete: (markup: string | null) => void,
+  complete: (markup: string | null, cached?: boolean) => void,
   priority: () => number = () => 0,
 ) {
   const context = contextFor(macros, colors);
   const key = JSON.stringify([context.id, display, source]);
   const cached = markupCache.get(key);
   if (cached !== undefined) {
+    cached.reading ||= priority() >= 2;
     markupCache.delete(key);
     markupCache.set(key, cached);
-    complete(cached);
+    complete(cached.markup, true);
     return () => {};
   }
   let job = requests.get(key);

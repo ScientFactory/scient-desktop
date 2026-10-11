@@ -219,7 +219,13 @@ describe("retiring the project's recovery copy", () => {
     );
   }
   /** A surface whose open file is fixed text, for tests that only vary its includes. */
-  function FixedSurface(props: { source: string; onEdit?: () => boolean }) {
+  function FixedSurface(props: {
+    source: string;
+    onEdit?: () => boolean;
+    resolutionError?: string;
+    retry?: () => void;
+    resolving?: boolean;
+  }) {
     const sourceSnapshot = useMemo(
       () => createLatexEditorSourceSnapshot(props.source),
       [props.source],
@@ -229,7 +235,10 @@ describe("retiring the project's recovery copy", () => {
         environmentId={environmentId}
         cwd={cwd}
         relativePath={path}
-        rootRelativePath={path}
+        rootRelativePath={props.resolutionError ? null : path}
+        rootResolutionMessage={props.resolutionError}
+        onRetryRootResolution={props.retry}
+        rootResolutionPending={props.resolving}
         source={props.source}
         sourceSnapshot={sourceSnapshot}
         fileRevision="r1"
@@ -990,5 +999,31 @@ describe("retiring the project's recovery copy", () => {
     expect(selected.getSnapshot().draftSource).toBe(root);
     expect(disk.get("chapter.tex")!.source).toBe("Read-only chapter.\n");
     expect(writes).toBe(0);
+  });
+  it("shows failed root discovery and retries without claiming files are still loading", async () => {
+    const retry = vi.fn();
+    const render = await mount(
+      <FixedSurface
+        source="body"
+        resolutionError="Workspace publication needs recovery."
+        retry={retry}
+      />,
+    );
+    const container = containers.at(-1)!;
+    expect(container.textContent).toContain("Workspace publication needs recovery.");
+    expect(container.textContent).not.toContain("Loading the document");
+    const button = container.querySelector<HTMLButtonElement>("button")!;
+    expect(button.textContent).toBe("Retry opening document");
+    await act(async () => button.click());
+    expect(retry).toHaveBeenCalledOnce();
+    await render(
+      <FixedSurface
+        source="body"
+        resolutionError="Workspace publication needs recovery."
+        retry={retry}
+        resolving
+      />,
+    );
+    expect(container.querySelector<HTMLButtonElement>("button")!.disabled).toBe(true);
   });
 });

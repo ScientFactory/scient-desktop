@@ -52,6 +52,9 @@ interface Props extends LatexVisualEditorProps {
   cwd: string;
   relativePath: string;
   rootRelativePath: string | null;
+  rootResolutionMessage?: string | null | undefined;
+  onRetryRootResolution?: (() => void) | undefined;
+  rootResolutionPending?: boolean | undefined;
   /** The open file is unsaved, saving, or waiting on a conflict or a failed save. */
   selectedPending: boolean;
   fileTruncated: boolean;
@@ -686,7 +689,22 @@ export function LatexProjectVisualEditor(props: Props) {
         />
       ) : (
         <div className="scient-latex-placeholder" role="status">
-          {readError ?? document?.errors[0] ?? "Loading the document and its included files…"}
+          <span>
+            {(root === null ? props.rootResolutionMessage : null) ??
+              readError ??
+              document?.errors[0] ??
+              "Loading the document and its included files…"}
+          </span>
+          {root === null && props.onRetryRootResolution ? (
+            <button
+              type="button"
+              className="scient-latex-mode-button"
+              onClick={props.onRetryRootResolution}
+              disabled={props.rootResolutionPending}
+            >
+              Retry opening document
+            </button>
+          ) : null}
         </div>
       )}
     </>

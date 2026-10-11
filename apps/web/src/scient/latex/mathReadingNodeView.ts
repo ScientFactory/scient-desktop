@@ -8,6 +8,7 @@ import {
   mathReadingPreview,
   mathReadingPreviewContextId,
   mathReadingPreviewReady,
+  retainMathReadingPreview,
 } from "./mathReadingPreview";
 import {
   mathReadingPriority,
@@ -47,6 +48,7 @@ export function mathReadingNodeView(
   let disposed = false;
   let epoch = 0;
   let signature = "";
+  let renderedMarkup: string | null = null;
   let numberSignature = "";
   let cancelPreview: (() => void) | undefined;
   let cancelNumbers: (() => void) | undefined;
@@ -75,7 +77,17 @@ export function mathReadingNodeView(
   field.append(preview);
   wrapper.append(field);
   dom.append(wrapper);
-  const stopObserving = observeMathReadingPriority(field);
+  const stopObserving = observeMathReadingPriority(field, () => {
+    if (renderedMarkup === null || disposed || full) return;
+    const configuration = context();
+    retainMathReadingPreview(
+      sourceFor(props.node),
+      display,
+      configuration.macros ?? noMacros,
+      configuration.colors,
+      renderedMarkup,
+    );
+  });
   const priority = () => mathReadingPriority(field);
   const owner = owners.get(props.editor) ?? createOwner(props.editor, props.view.dom);
   owners.set(props.editor, owner);
@@ -127,19 +139,27 @@ export function mathReadingNodeView(
     ]);
     if (next === signature) return;
     signature = next;
+    renderedMarkup = null;
     const version = ++epoch;
     cancelPreview?.();
     queued?.cancel();
     delete content.dataset.mathPreviewReady;
     preview.setAttribute("aria-label", value);
-    const apply = (markup: string | null) => {
-      queued = scheduleMathFieldMount(() => {
+    const apply = (markup: string | null, cached = false) => {
+      const present = () => {
         if (disposed || full || version !== epoch) return;
         if (markup === null) content.textContent = value;
         else content.innerHTML = markup;
+        renderedMarkup = markup;
         content.dataset.mathPreviewReady = "true";
-        field.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
-      }, priority);
+        field.dispatchEvent(
+          new CustomEvent("scient-latex-math-preview", { bubbles: true, detail: { cached } }),
+        );
+      };
+      // Admission already bounds node-view construction. Ready markup can be
+      // published synchronously; a cache hit must not paint an empty formula.
+      if (cached) present();
+      else queued = scheduleMathFieldMount(present, priority);
     };
     try {
       cancelPreview = mathReadingPreview(

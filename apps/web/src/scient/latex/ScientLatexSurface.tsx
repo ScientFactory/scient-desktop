@@ -1884,6 +1884,13 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                         )
                       }
                       rootRelativePath={resolvedRootRelativePath}
+                      rootResolutionMessage={
+                        resolution.pending
+                          ? "Finding the document…"
+                          : (resolution.error ?? "Choose the document to compile in the toolbar.")
+                      }
+                      onRetryRootResolution={resolution.error ? resolution.retry : undefined}
+                      rootResolutionPending={resolution.pending}
                       compiledBibliography={
                         build.snapshot?.rootRelativePath === resolvedRootRelativePath &&
                         build.snapshot.state === "succeeded" &&

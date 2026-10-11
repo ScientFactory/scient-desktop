@@ -123,3 +123,35 @@ it("does not remove a newer retry when a failed conversion's remaining view is c
   cancelFirstRetry();
   cancelSecondRetry();
 });
+
+it("keeps recently read markup when background scanning exceeds the cache budget", async () => {
+  const { mathReadingPreview, retainMathReadingPreview } = await import("./mathReadingPreview");
+  const macros = {};
+  const complete = vi.fn();
+  mathReadingPreview("reading", false, macros, undefined, complete, () => 0);
+  const worker = PreviewWorker.instances[0]!;
+  worker.receive({ ready: true });
+  worker.receive({ id: worker.messages.at(-1)!.id, markup: "ready reading" });
+  // Visit an already-rendered background result without reconstructing its view.
+  retainMathReadingPreview("reading", false, macros, undefined, "ready reading");
+  for (let i = 0; i < 520; i++) {
+    mathReadingPreview(
+      `background-${i}`,
+      false,
+      macros,
+      undefined,
+      () => {},
+      () => 0,
+    );
+    worker.receive({ id: worker.messages.at(-1)!.id, markup: `ready background-${i}` });
+  }
+  const before = worker.messages.length;
+  mathReadingPreview("reading", false, macros, undefined, complete, () => 2);
+  expect(complete).toHaveBeenLastCalledWith("ready reading", true);
+  expect(worker.messages).toHaveLength(before);
+  const evicted = vi.fn();
+  const cancel = mathReadingPreview("background-0", false, macros, undefined, evicted);
+  expect(evicted).not.toHaveBeenCalled();
+  expect(worker.messages).toHaveLength(before + 1);
+  cancel();
+});

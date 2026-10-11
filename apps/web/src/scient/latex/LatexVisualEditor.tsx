@@ -51,7 +51,7 @@ import {
   scientificStatementNodeView,
   type ScientificStatementViewProps,
 } from "./scientificStatementNodeView";
-import { LatexViewport, latexViewportNodeView } from "./latexViewport";
+import { LatexViewport, latexViewportNodeView, navigateLatexViewport } from "./latexViewport";
 import {
   Fragment,
   createContext,
@@ -6012,6 +6012,8 @@ function LatexVisualEditorReady(
     () => JSON.stringify([completionContext.current.macros, completionContext.current.colors]),
     [],
   );
+  const viewportReadingKey = useRef(props.editorInstanceKey ?? props.draftKey);
+  viewportReadingKey.current = props.editorInstanceKey ?? props.draftKey;
 
   const guardedExtensions = useMemo(
     () => [
@@ -6033,6 +6035,7 @@ function LatexVisualEditorReady(
       LatexVisualSearch,
       LatexViewport.configure({
         sourceContext: viewportSourceContext,
+        readingKey: () => viewportReadingKey.current,
       }),
       LatexVisualPagination.configure({ onPageCount: setPageCount }),
       richPreviewExtension,
@@ -8760,6 +8763,12 @@ function LatexVisualEditorReady(
       paper.getBoundingClientRect().top -
       scroll.getBoundingClientRect().top +
       (page - 1) * zoom * (pageHeight + pageGap);
+    if (editor)
+      navigateLatexViewport(
+        editor.view,
+        latexPaginationKey.getState(editor.state)?.pages.find((entry) => entry.page === page - 1)
+          ?.position,
+      );
   };
   const overflowInsertActions = insertActions.filter(
     (action) =>
