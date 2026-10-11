@@ -6,14 +6,14 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import { runDesktopSmoke } from "./smoke-test.mjs";
 
 const roots = [];
-const isWindows = Context.get(Context.empty(), HostProcessPlatform) === "win32";
+const isWindows = Context.get(Context.empty(), HostProcess.Platform) === "win32";
 
 function makeFixture() {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-smoke-gate-"));

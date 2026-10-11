@@ -41,7 +41,7 @@ import type {
   ScientLatexResolveResult,
   ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -58,7 +58,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
 import * as ServerConfig from "../../config.ts";
 import {
@@ -467,8 +467,8 @@ export const make = Effect.gen(function* () {
   const syncTex = yield* LatexSyncTex;
   const packageInstaller = yield* LatexPackageInstaller;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
-  const hostEnvironment = yield* HostProcessEnvironment;
-  const windows = (yield* HostProcessPlatform) === "win32";
+  const hostEnvironment = yield* HostProcess.Environment;
+  const windows = (yield* HostProcess.Platform) === "win32";
   const pathDelimiter = windows ? ";" : ":";
   const entriesRef = yield* Ref.make(new Map<string, LatexBuildEntry>());
   const evidenceRef = yield* Ref.make(new Map<string, LatexEvidenceCacheEntry>());

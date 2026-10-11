@@ -1,4 +1,7 @@
 import { setUnreadAnswerCount } from "../scient/answerAttention/ipc.ts";
+// SCIENT-FORK:START — spelling dictionaries follow the language being written.
+import { noteSpellingSample } from "../scient/spelling/ipc.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — conversation files the OS opened with Scient.
 import {
   cancelOpenedConversationFileUpload,
@@ -87,6 +90,7 @@ import {
 import * as PreviewIpc from "./methods/preview.ts";
 import * as VoiceIpc from "./methods/voice.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
+import * as WebLinksIpc from "./methods/webLinks.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 import {
   getCliCommandState,
@@ -100,6 +104,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(setUnreadAnswerCount);
+  // SCIENT-FORK:START — spelling dictionaries follow the language being written.
+  yield* ipc.handle(noteSpellingSample);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — conversation files the OS opened with Scient.
   yield* ipc.handle(takeOpenedConversationFiles);
   yield* ipc.handle(uploadOpenedConversationFile);
@@ -108,6 +115,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   // SCIENT-FORK:END
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
+  yield* ipc.handle(WebLinksIpc.setReady);
 
   yield* ipc.handleSync(getAppBranding);
   yield* ipc.handleSync(getSystemLocale);

@@ -203,7 +203,7 @@ export function FileRenameButton(props: FileRenameButtonProps) {
           <button
             type="button"
             aria-label={`Rename ${props.label}`}
-            className="group/file-name -mx-1 inline-flex max-w-48 items-center gap-1 rounded-sm px-1 py-0.5 font-medium text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-70"
+            className="group/file-name -mx-1 inline-flex max-w-48 items-center gap-1 rounded-sm px-1 py-0.5 font-medium text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:opacity-70"
             disabled={props.disabled}
           >
             <span className="truncate">{props.label}</span>

@@ -79,7 +79,8 @@ export function createScientDocumentHostRequestConsumerAtom<E>(options: {
       !disposed && active === generation && !generation.controller.signal.aborted;
     const consume = (result: AsyncResult.AsyncResult<ScientDocumentHostStreamEvent, E>) => {
       if (disposed) return;
-      if (!AsyncResult.isSuccess(result) || result.waiting) {
+      // An open stream marks every emission as waiting; only a non-success ends the generation.
+      if (!AsyncResult.isSuccess(result)) {
         retire();
         return;
       }

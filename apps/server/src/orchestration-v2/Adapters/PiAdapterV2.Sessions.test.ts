@@ -9,8 +9,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
-import { handoffBudget } from "../ContextHandoffBudget.ts";
-import { PI_PROVIDER } from "./PiAdapterV2.ts";
+import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
+import { PI_PROVIDER } from "@t3tools/provider-pi/testing";
 import {
   testLayer,
   PI_INSTANCE_ID,

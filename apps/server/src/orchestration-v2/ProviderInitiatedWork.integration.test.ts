@@ -48,19 +48,16 @@ import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import {
-  ProviderContinuationRequests,
-  type ProviderContinuationRequest,
-} from "./ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Event,
-  type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const driver = ProviderDriverKind.make("pi");
 const instanceId = ProviderInstanceId.make("pi-initiated-fixture");
@@ -73,8 +70,13 @@ const projectId = ProjectId.make("project:provider-initiated");
 const expectedNativePrompt = (text: string) =>
   `${text}\n\n[Scient skill scope for this turn is complete and empty (0 skills). No Scient-managed skills are available in this scope; no \`scient_skills_list\` call is needed. Provider-native skills are separate.]`;
 
-type WorkOverrides = Omit<Partial<ProviderContinuationRequest>, "initiated"> & {
-  initiated?: Partial<NonNullable<ProviderContinuationRequest["initiated"]>>;
+type WorkOverrides = Omit<
+  Partial<ProviderContinuationRequests.ProviderContinuationRequest>,
+  "initiated"
+> & {
+  initiated?: Partial<
+    NonNullable<ProviderContinuationRequests.ProviderContinuationRequest["initiated"]>
+  >;
 };
 
 type Offer = { input: ProviderAdapterV2TurnInput; finish: Effect.Effect<void> };
@@ -158,8 +160,8 @@ const withInitiatedWork = <A, E, R>(
         );
       const registry = makeLayerEffect(
         Effect.gen(function* () {
-          const continuations = yield* ProviderContinuationRequests;
-          const adapter: ProviderAdapterV2Shape = {
+          const continuations = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
             instanceId,
             driver,
             mcpSessionInjection: true,
@@ -385,7 +387,7 @@ const withInitiatedWork = <A, E, R>(
         { name: "provider-initiated-work" },
         registry,
         {
-          layerDatabase: database,
+          databaseLayer: database,
           runtimePolicyLayer,
           runContinuationWorker: true,
           configureMcp: true,
@@ -1056,7 +1058,9 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
           const observed = yield* Queue.unbounded<void>();
           const observedNoncurrent = yield* Deferred.make<void>();
           let current = true;
-          const guard: NonNullable<ProviderContinuationRequest["dispatchIfCurrent"]> = (dispatch) =>
+          const guard: NonNullable<
+            ProviderContinuationRequests.ProviderContinuationRequest["dispatchIfCurrent"]
+          > = (dispatch) =>
             Effect.suspend(() => {
               if (!current) {
                 return Deferred.succeed(observedNoncurrent, undefined).pipe(

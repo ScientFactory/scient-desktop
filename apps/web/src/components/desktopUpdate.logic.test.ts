@@ -229,6 +229,15 @@ describe("desktop update UI helpers", () => {
     );
   });
 
+  it("links Beta release notes and history to the isolated repository", () => {
+    expect(getDesktopUpdateReleaseUrl("0.6.23-beta.20261010.1")).toBe(
+      "https://github.com/ScientFactory/scient-desktop-beta/releases/tag/v0.6.23-beta.20261010.1",
+    );
+    expect(getDesktopUpdateReleaseHistoryUrl("beta")).toBe(
+      "https://github.com/ScientFactory/scient-desktop-beta/releases",
+    );
+  });
+
   it("omits the release URL when the updater does not report a version", () => {
     expect(getDesktopUpdateReleaseUrl(null)).toBeNull();
     expect(getDesktopUpdateReleaseUrl("  ")).toBeNull();

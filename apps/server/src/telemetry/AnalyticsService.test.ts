@@ -6,14 +6,10 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 
 import * as ServerConfig from "../config.ts";
@@ -35,35 +31,6 @@ it("restricts the optional analytics QA destination to literal loopback ingestio
     assert.throws(() => AnalyticsService.localAnalyticsTestEndpoint(url));
   }
 });
-
-const SentBatch = Schema.fromJsonString(
-  Schema.Struct({
-    batch: Schema.Array(Schema.Struct({ uuid: Schema.String })),
-  }),
-);
-
-/**
- * HTTP client that reads each batch, then fails as if the connection dropped
- * before the response arrived. PostHog stores these batches, so the server
- * must not send them forever.
- */
-const layerAcceptThenFailClient = (batches: Array<ReadonlyArray<{ readonly uuid: string }>>) =>
-  Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) =>
-      Effect.gen(function* () {
-        if (request.body._tag === "Uint8Array") {
-          const body = yield* Schema.decodeEffect(SentBatch)(
-            new TextDecoder().decode(request.body.body),
-          ).pipe(Effect.orDie);
-          batches.push(body.batch);
-        }
-        return yield* new HttpClientError.HttpClientError({
-          reason: new HttpClientError.TransportError({ request, cause: "connection reset" }),
-        });
-      }),
-    ),
-  );
 
 it.effect("the disabled adapter retains Scient consent controls without collecting events", () =>
   Effect.gen(function* () {
@@ -183,8 +150,8 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         Layer.provide(layerConfig),
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(HostProcessPlatform, "linux"),
-            Layer.succeed(HostProcessArchitecture, "arm64"),
+            Layer.succeed(HostProcess.Platform, "linux"),
+            Layer.succeed(HostProcess.Architecture, "arm64"),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),

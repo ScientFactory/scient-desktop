@@ -24,6 +24,7 @@ import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
 import type * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
@@ -41,7 +42,7 @@ import * as EffectOutbox from "../EffectOutbox.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
@@ -49,7 +50,7 @@ import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderAuthService from "../../provider/ProviderAuthService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
-import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
@@ -80,7 +81,10 @@ import {
   type OrchestratorV2Scenario,
   type OrchestratorV2ScenarioResult,
 } from "./OrchestratorScenario.ts";
-import { makeProviderReplayGate, type ProviderReplayGate } from "./ProviderReplayGate.testkit.ts";
+import {
+  makeProviderReplayGate,
+  type ProviderReplayGate,
+} from "@t3tools/provider-testing/replayGate";
 
 export function makeReplayServerConfig(
   scenario: string,
@@ -192,7 +196,11 @@ export interface OrchestratorV2ProviderReplayHarness<
   readonly makeProviderAdapterRegistryLayer: (
     transcript: Transcript,
     options?: { readonly replayGate?: ProviderReplayGate },
-  ) => Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2, Error>;
+  ) => Layer.Layer<
+    ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+    Error,
+    McpProviderSessions.McpProviderSessions
+  >;
 }
 
 export function runOrchestratorV2ProviderReplayScenario<
@@ -202,7 +210,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   scenario: OrchestratorV2ProviderReplayScenario<Transcript>,
   harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>,
   options: {
-    readonly layerDatabase?: Layer.Layer<
+    readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
       | PlatformError.PlatformError
@@ -214,6 +222,7 @@ export function runOrchestratorV2ProviderReplayScenario<
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    readonly mcpProviderSessionsLayer?: Layer.Layer<McpProviderSessions.McpProviderSessions>;
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
@@ -261,7 +270,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   scenario: OrchestratorV2ProviderReplayScenario<Transcript>,
   harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>,
   options: {
-    readonly layerDatabase?: Layer.Layer<
+    readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
       | PlatformError.PlatformError
@@ -273,6 +282,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    readonly mcpProviderSessionsLayer?: Layer.Layer<McpProviderSessions.McpProviderSessions>;
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     // Start continuation runs for provider wake turns, as the live runtime does.
@@ -300,6 +310,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
+  | McpProviderSessions.McpProviderSessions
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService,
   | Error
@@ -318,7 +329,11 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
 
 export function layerWithRegistry<Error>(
   scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
-  registryLayer: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2, Error>,
+  registryLayer: Layer.Layer<
+    ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+    Error,
+    McpProviderSessions.McpProviderSessions
+  >,
   options: {
     /** Preserve one disposable profile across file-backed restart and recovery tests. */
     readonly layerServerConfig?: Layer.Layer<ServerConfig.ServerConfig>;
@@ -336,7 +351,7 @@ export function layerWithRegistry<Error>(
     readonly decorateForkCheckpointBaseline?: (
       baseline: ScientForkCheckpointBaselineShape,
     ) => ScientForkCheckpointBaselineShape;
-    readonly layerDatabase?: Layer.Layer<
+    readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
       | PlatformError.PlatformError
@@ -360,6 +375,7 @@ export function layerWithRegistry<Error>(
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    readonly mcpProviderSessionsLayer?: Layer.Layer<McpProviderSessions.McpProviderSessions>;
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
@@ -391,6 +407,7 @@ export function layerWithRegistry<Error>(
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
+  | McpProviderSessions.McpProviderSessions
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService,
   | Error
@@ -413,7 +430,7 @@ export function layerWithRegistry<Error>(
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
           Layer.provide(RuntimePolicy.layer),
         ));
-  const layerDatabase = options.layerDatabase ?? SqlitePersistence.layerMemory;
+  const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   const layerThreadCommandExecutor = ThreadCommandExecutor.layer;
   // One queue shared by the adapters, the orchestrator, and the worker, like
   // layerRuntime.ts; layer memoization keeps it a single instance.
@@ -725,6 +742,7 @@ export function layerWithRegistry<Error>(
     ),
     Layer.provide(layerThreadCommandExecutor),
     Layer.provide(NodeServices.layer),
+    Layer.provideMerge(options.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
   );
 
   // Build the daemon from the exact worker instance exposed alongside the

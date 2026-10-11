@@ -9,7 +9,7 @@ import {
   workflowAgentStatus,
 } from "../Adapters/ClaudeSubagentPresentation.ts";
 import { mergeSubagentPresentation } from "../Adapters/SubagentPresentation.ts";
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 
 /** Pure native workflow observation; the registry below owns updates and emission. */
 function claudeWorkflowMemberObservation({

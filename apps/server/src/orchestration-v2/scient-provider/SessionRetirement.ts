@@ -12,7 +12,7 @@ import {
   ProviderAdapterInterruptError,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2InterruptInput,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 
 type PumpOwner = {
   readonly runtime: ProviderAdapterV2SessionRuntime;
@@ -79,14 +79,15 @@ export const makeSessionRetirement = <
     readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
     readonly requestEventPermit: Semaphore.Semaphore;
   },
+  E,
   Input extends {
     readonly providerSessionId: ProviderSessionId;
     readonly reason: string;
     readonly cancelIdleFiber?: boolean;
     readonly gracefulSubscribers?: boolean;
     readonly detail?: string;
+    readonly onFirstRecordsAttempt?: (exit: Exit.Exit<void, E>) => Effect.Effect<void>;
   },
-  E,
 >(steps: {
   readonly closeTimeoutMs: number;
   readonly reclaimCredential: (threadId: ThreadId, credentialId: string) => Effect.Effect<void, E>;
@@ -132,7 +133,8 @@ export const makeSessionRetirement = <
             });
           yield* steps.releaseConsumer(entry);
           yield* retireCredentials;
-          yield* Effect.all(
+          let firstRecordsAttempt = true;
+          const recordAttempt = Effect.all(
             [
               Effect.exit(steps.writeSession(entry, input)),
               Effect.exit(
@@ -154,22 +156,34 @@ export const makeSessionRetirement = <
                       ),
                   );
             }),
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.failCause(cause)
-                : Effect.logWarning("orchestration-v2.provider-session-release-records-failed", {
+          );
+          yield* Effect.suspend(() =>
+            Effect.exit(recordAttempt).pipe(
+              Effect.tap((exit) => {
+                if (!firstRecordsAttempt) return Effect.void;
+                firstRecordsAttempt = false;
+                return input.onFirstRecordsAttempt?.(exit) ?? Effect.void;
+              }),
+              Effect.flatMap((exit): Effect.Effect<void, E | Cause.Cause<E>> => {
+                if (Exit.isSuccess(exit)) return Effect.void;
+                if (Cause.hasInterruptsOnly(exit.cause)) return Effect.failCause(exit.cause);
+                return Effect.logWarning(
+                  "orchestration-v2.provider-session-release-records-failed",
+                  {
                     providerSessionId: input.providerSessionId,
-                    cause,
-                  }).pipe(Effect.andThen(Effect.failCause(cause))),
-            ),
-            Effect.retry({
-              schedule: Schedule.exponential("1 second").pipe(
-                Schedule.modifyDelay(({ duration }) =>
-                  Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                    cause: exit.cause,
+                  },
+                ).pipe(Effect.andThen(Effect.fail(exit.cause)));
+              }),
+              Effect.retry({
+                schedule: Schedule.exponential("1 second").pipe(
+                  Schedule.modifyDelay(({ duration }) =>
+                    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                  ),
                 ),
-              ),
-            }),
-            Effect.orDie,
+              }),
+              Effect.orDie,
+            ),
           );
           // A timeout retires logical authority; this same physical close remains owned.
           const result = Option.isSome(observed)

@@ -8,6 +8,8 @@ import {
   ServerSettingsPatch,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
+  requiredScopesForProjectMutation,
+  ProjectMutation,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
@@ -91,6 +93,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverCommitDesktopUpdate]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
+  [WS_METHODS.serverGetStorageCleanupReport]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
 
@@ -155,6 +158,7 @@ export const RPC_REQUIRED_SCOPES = {
   // Read scope like the reads it un-caches: refreshing is part of reading, and a read-only
   // client pressing refresh must not be told it may not look again.
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsReportState]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
   // The candidate list is a read like the detail beside it; asking somebody for a review is a
   // write like every other one.
@@ -178,11 +182,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.filesystemPrepareFileOpen]: AuthFilesystemReadScope,
   [WS_METHODS.filesystemResolveFileLink]: AuthFilesystemReadScope,
   [WS_METHODS.filesystemSubscribeFileChanges]: AuthFilesystemReadScope,
-  [WS_METHODS.sourceControlCloneRepository]: AuthOrchestrationOperateScope,
-  [WS_METHODS.sourceControlPublishRepository]: AuthOrchestrationOperateScope,
-  [WS_METHODS.projectCloneStart]: AuthOrchestrationOperateScope,
-  [WS_METHODS.projectCloneCancel]: AuthOrchestrationOperateScope,
-  [WS_METHODS.projectCloneRetry]: AuthOrchestrationOperateScope,
   [WS_METHODS.analysisInspectRuntimes]: AuthOrchestrationReadScope,
   [WS_METHODS.analysisConfigureRuntime]: AuthOrchestrationOperateScope,
   [WS_METHODS.analysisVerifyRuntime]: AuthOrchestrationOperateScope,
@@ -211,6 +210,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.computeListExecutions]: AuthOrchestrationReadScope,
   [WS_METHODS.computeListOutputs]: AuthOrchestrationReadScope,
   [WS_METHODS.computeInspectVariables]: AuthOrchestrationOperateScope,
+  [WS_METHODS.filesystemGetMetadata]: AuthFilesystemReadScope,
   [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
   [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
@@ -263,6 +263,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   [WS_METHODS.previewList]: AuthOrchestrationReadScope,
   [WS_METHODS.previewClearProfile]: AuthPreviewOperateScope,
+  [WS_METHODS.previewReportProfiles]: AuthPreviewOperateScope,
   [WS_METHODS.previewReportStatus]: AuthPreviewOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,
@@ -313,6 +314,8 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
     : [...new Set([...scopes, AuthProvidersManageScope])];
 };
 
+const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+
 const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
@@ -334,6 +337,9 @@ const requiredScopesForRpcCall = (
     ];
   }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  if (method === WS_METHODS.projectsMutate) {
+    return requiredScopesForProjectMutation(decodeProjectMutation(payload));
+  }
   const guarded = clientRpcRequiredScopes(method, payload);
   if (guarded.length > 0) return guarded;
   return [requiredScopeForRpcMethod(method)];

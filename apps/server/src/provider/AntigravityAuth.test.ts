@@ -17,7 +17,15 @@ import {
   type AntigravityAuth,
   type AntigravityAuthRuntime,
 } from "./AntigravityAuth.ts";
-import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { makeAntigravityConnectionActionsFromController } from "./AntigravityLifecycleBridge.ts";
+import {
+  ANTIGRAVITY_AUTH_BROWSER_MARKER,
+  ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE,
+  ANTIGRAVITY_LINK_CAPTURE_FAILED_MESSAGE,
+  ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE,
+  makeAntigravityStderrHandler,
+} from "./antigravityAuthSupport.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-auth-test");
 const owner = "t3-auth-session-owner";
@@ -31,7 +39,7 @@ const initialized = {
   authMethods: [{ id: "oauth-personal", name: "Log in with Google" }],
   agentCapabilities: { auth: { logout: {} } },
 } satisfies AcpSchema.InitializeResponse;
-const started: AcpSessionRuntimeStartResult = {
+const started: AcpSessionRuntime.AcpSessionRuntimeStartResult = {
   sessionId: "native-session",
   initializeResult: initialized,
   sessionSetupResult: {
@@ -58,11 +66,15 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
+    readonly beforeAuthorizationUrl?: Effect.Effect<void, AcpErrors.AcpError>;
+    readonly runtimePreparation?: Effect.Effect<void, AcpErrors.AcpError | ProviderSetupError>;
+    readonly usesBrowser?: boolean;
   } = {},
 ) {
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
   const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
+  const enteringStartup = yield* Deferred.make<void>();
   const events: string[] = [];
   let receiveAuthorizationUrl:
     | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
@@ -81,6 +93,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
             yield* Deferred.succeed(closed, undefined);
           }),
         );
+        yield* options.runtimePreparation ?? Effect.void;
         return {
           initialize: () =>
             Effect.gen(function* () {
@@ -93,6 +106,8 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
           start: () =>
             Effect.gen(function* () {
               events.push("authenticate");
+              yield* Deferred.succeed(enteringStartup, undefined);
+              yield* options.beforeAuthorizationUrl ?? Effect.void;
               if (options.interactive !== false && input.onAuthorizationUrl) {
                 for (const url of options.authorizationUrls ?? [authorizationUrl]) {
                   yield* input.onAuthorizationUrl(url);
@@ -123,12 +138,14 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
       Effect.sync(() => {
         forwarded += 1;
       }),
+    ...(options.usesBrowser === undefined ? {} : { usesBrowser: options.usesBrowser }),
   });
   return {
     auth,
     authenticated,
     discovered,
     closed,
+    enteringStartup,
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
@@ -142,6 +159,254 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
 });
 
 it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
+  it.effect("keeps bridge startup alive for a Google link arriving after 45 seconds", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ beforeAuthorizationUrl: Effect.sleep("45 seconds") });
+      const actions = makeAntigravityConnectionActionsFromController({
+        instanceId,
+        authMethod: "oauth-personal",
+        controller: harness.auth.controller,
+        stopSessions: Effect.void,
+        randomOwnerId: Effect.succeed("delayed-owner"),
+      });
+      const opening = yield* actions.start("antigravity_google").pipe(Effect.forkScoped);
+      yield* Deferred.await(harness.enteringStartup);
+      yield* TestClock.adjust("31 seconds");
+      const starting = yield* harness.auth.controller
+        .subscribe("scient-provider-lifecycle-delayed-owner")
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      assert.equal(starting.phase, "starting");
+      assert.isNull(starting.authorizationUrl);
+      assert.notInclude(harness.events, "process-close");
+
+      yield* TestClock.adjust("14 seconds");
+      const attempt = yield* Fiber.join(opening);
+      assert.equal(attempt.authorizationUrl, authorizationUrl);
+      assert.equal(attempt.initialStatus, "waiting_for_browser");
+      if (!attempt.submitAuthorizationCode)
+        return yield* Effect.die("Expected a callback handoff.");
+      yield* attempt.submitAuthorizationCode(callbackUrl);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* attempt.waitForCompletion;
+      yield* Deferred.await(harness.closed);
+      assert.deepEqual(harness.catalog(), ["gemini-test"]);
+    }),
+  );
+
+  it.effect("expires stalled bridge startup at 300 seconds and closes its runtime", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ beforeAuthorizationUrl: Effect.never });
+      const actions = makeAntigravityConnectionActionsFromController({
+        instanceId,
+        authMethod: "oauth-personal",
+        controller: harness.auth.controller,
+        stopSessions: Effect.void,
+        randomOwnerId: Effect.succeed("stalled-owner"),
+      });
+      const opening = yield* actions
+        .start("antigravity_google")
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(harness.enteringStartup);
+      yield* TestClock.adjust("299 seconds");
+      assert.notInclude(harness.events, "process-close");
+      yield* TestClock.adjust("1 second");
+      const failed = yield* phase(
+        harness.auth,
+        "failed",
+        "scient-provider-lifecycle-stalled-owner",
+      );
+      assert.include(failed.message ?? "", "expired");
+      assert.isNull(failed.authorizationUrl);
+      assert.isNull(failed.expiresAt);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(opening)));
+      yield* Deferred.await(harness.closed);
+      yield* harness.receiveAuthorizationUrl(authorizationUrl);
+      assert.equal(
+        (yield* phase(harness.auth, "failed", "scient-provider-lifecycle-stalled-owner")).flowId,
+        failed.flowId,
+      );
+      assert.deepEqual(harness.catalog(), ["previous-account-model"]);
+    }),
+  );
+
+  it.effect("cancels bridge startup before a late URL without resurrecting the flow", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ beforeAuthorizationUrl: Effect.sleep("45 seconds") });
+      const attemptScope = yield* Scope.make();
+      yield* Effect.addFinalizer(() => Scope.close(attemptScope, Exit.void));
+      const actions = makeAntigravityConnectionActionsFromController({
+        instanceId,
+        authMethod: "oauth-personal",
+        controller: harness.auth.controller,
+        stopSessions: Effect.void,
+        randomOwnerId: Effect.succeed("cancelled-owner"),
+      });
+      const opening = yield* actions
+        .start("antigravity_google")
+        .pipe(Scope.provide(attemptScope), Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(harness.enteringStartup);
+      yield* TestClock.adjust("10 seconds");
+      yield* Scope.close(attemptScope, Exit.void);
+      yield* Deferred.await(harness.closed);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(opening)));
+      yield* TestClock.adjust("45 seconds");
+      yield* harness.receiveAuthorizationUrl(authorizationUrl);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      const cancelled = yield* phase(
+        harness.auth,
+        "cancelled",
+        "scient-provider-lifecycle-cancelled-owner",
+      );
+      assert.isNull(cancelled.authorizationUrl);
+      assert.isNull(cancelled.expiresAt);
+      assert.notInclude(harness.events, "catalog-published");
+      assert.deepEqual(harness.catalog(), ["previous-account-model"]);
+    }),
+  );
+
+  it.effect("publishes safe helper, runtime, and link-capture failures and closes each flow", () =>
+    Effect.gen(function* () {
+      const sensitive = `/private/profile/secret-key ${authorizationUrl} ${callbackUrl}`;
+      const cases = [
+        {
+          options: {
+            runtimePreparation: Effect.fail(
+              new AcpErrors.AcpTransportError({
+                detail: "Antigravity browser suppression could not be verified.",
+                cause: new Error(sensitive),
+              }),
+            ),
+          },
+          message: ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE,
+        },
+        {
+          options: {
+            runtimePreparation: Effect.fail(
+              new AcpErrors.AcpSpawnError({ command: sensitive, cause: new Error(sensitive) }),
+            ),
+          },
+          message: ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE,
+        },
+        {
+          options: {
+            beforeAuthorizationUrl: Effect.fail(
+              new AcpErrors.AcpProcessExitedError({ code: 1, stderr: sensitive }),
+            ),
+          },
+          message: ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE,
+        },
+        {
+          options: {
+            beforeAuthorizationUrl: makeAntigravityStderrHandler({
+              onAuthorizationUrl: () => Effect.void,
+            })(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}"https://example.invalid/secret-key"\n`),
+          },
+          message: ANTIGRAVITY_LINK_CAPTURE_FAILED_MESSAGE,
+        },
+      ];
+      for (const scenario of cases) {
+        const harness = yield* makeHarness(scenario.options);
+        yield* harness.auth.controller.start(owner);
+        const failed = yield* phase(harness.auth, "failed");
+        assert.equal(failed.message, scenario.message);
+        assert.notInclude(failed.message ?? "", "secret-key");
+        assert.isNull(failed.authorizationUrl);
+        assert.isNull(failed.expiresAt);
+        yield* Deferred.await(harness.closed);
+        assert.deepEqual(harness.catalog(), ["previous-account-model"]);
+      }
+    }),
+  );
+
+  it.effect(
+    "sanitizes unknown provider setup and transport payloads instead of relaying them",
+    () =>
+      Effect.gen(function* () {
+        const sensitive = `/private/profile/secret-key ${authorizationUrl} ${callbackUrl}`;
+        const failures = [
+          Effect.fail(
+            new ProviderSetupError({
+              instanceId,
+              operation: "start",
+              detail: sensitive,
+              cause: new Error(sensitive),
+            }),
+          ),
+          Effect.fail(
+            new AcpErrors.AcpTransportError({ detail: sensitive, cause: new Error(sensitive) }),
+          ),
+          Effect.fail(
+            new AcpErrors.AcpTransportError({
+              detail: `Antigravity browser suppression could not be verified. ${sensitive}`,
+              cause: new Error(sensitive),
+            }),
+          ),
+          Effect.fail(AcpErrors.AcpRequestError.internalError(sensitive)),
+          Effect.die(new Error(sensitive)),
+        ];
+        for (const failure of failures) {
+          const harness = yield* makeHarness({ runtimePreparation: failure });
+          yield* harness.auth.controller.start(owner);
+          const failed = yield* phase(harness.auth, "failed");
+          assert.equal(failed.message, "Google sign-in failed. Start sign-in again.");
+          assert.isNull(failed.authorizationUrl);
+          yield* Deferred.await(harness.closed);
+        }
+      }),
+  );
+
+  it.effect("does not label a post-browser runtime exit as a startup failure", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpProcessExitedError({ code: 1, stderr: `/private/key ${callbackUrl}` }),
+      );
+      assert.equal(
+        (yield* phase(harness.auth, "failed")).message,
+        "Google sign-in failed. Start sign-in again.",
+      );
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect("preserves eligible-subscription guidance without exposing the provider payload", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.fail(
+        harness.authenticated,
+        AcpErrors.AcpRequestError.internalError(`SUBSCRIPTION_REQUIRED ${callbackUrl}`),
+      );
+      assert.equal(
+        (yield* phase(harness.auth, "failed")).message,
+        "Google requires an eligible Antigravity subscription for this account.",
+      );
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect("keeps configured-credential rejection distinct from Google sign-in", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false, usesBrowser: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.fail(
+        harness.authenticated,
+        AcpErrors.AcpRequestError.invalidParams("sensitive-api-key /private/profile"),
+      );
+      assert.equal(
+        (yield* phase(harness.auth, "failed")).message,
+        "Antigravity rejected the configured credentials. Check the provider settings.",
+      );
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
   it.effect("accepts the same authorization URL from stderr and stdout", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

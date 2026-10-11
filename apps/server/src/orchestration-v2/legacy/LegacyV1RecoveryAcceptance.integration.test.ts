@@ -31,13 +31,13 @@ import { legacyQueueFilePath } from "../../scient/threadQueue/Store.ts";
 import { readQueue } from "./LegacyQueueLedger.ts";
 import { runOrderedV2StartupPhases } from "../../serverRuntimeStartup.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import { makeNativeSessionAdapterV2 } from "../Adapters/NativeSessionAdapterV2.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import { EventSinkV2 } from "../EventSink.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
-import type { ProviderAdapterV2TurnInput } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProviderRecovery from "../ProviderRuntimeRecoveryService.ts";
@@ -46,7 +46,7 @@ import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { cutOverLegacyQueues } from "./LegacyQueueCutover.ts";
 import { LegacyV1ThreadImporter } from "./LegacyV1ThreadImporter.ts";
 
@@ -282,7 +282,7 @@ it.live(
             { name: "migration-recovery-acceptance", runtimePolicyOverride: { cwd } },
             makeLayer([adapter]),
             {
-              layerDatabase: databaseLayer,
+              databaseLayer: databaseLayer,
               layerServerConfig: configLayer,
               runEffectWorker: false,
             },

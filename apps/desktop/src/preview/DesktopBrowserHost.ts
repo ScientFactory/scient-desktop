@@ -27,6 +27,11 @@ import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
+const decodeCdpCommand = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ method: Schema.String, params: Schema.optional(Schema.Unknown) }),
+  ),
+);
 const lineEncoder = new TextEncoder();
 
 export interface DesktopBrowserTabKey {
@@ -50,6 +55,14 @@ interface AttachedTab {
   downloadDirectory: string | null;
   /** The guid CDP gave the download that is about to start. */
   pendingDownloadGuid: string | null;
+  /** Last actor to interact with the page, consumed when CDP starts a download. */
+  lastInputActor: "human" | "agent" | null;
+  /** CDP input dispatches whose trusted DOM events can still reach the preload. */
+  pendingAgentInput: { pointer: number; key: number };
+  /** Prevents a late reply from a released CDP session clearing newer input. */
+  agentInputGeneration: number;
+  /** Actor captured for the download identified by `pendingDownloadGuid`. */
+  pendingDownloadWasHuman: boolean;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -72,6 +85,15 @@ export class DesktopBrowserHost extends Context.Service<
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     /** Withdraws it: closed, swapped, crashed, or devtools needs the debugger. */
     readonly detach: (key: DesktopBrowserTabKey) => void;
+    /** Records trusted input from the person for an attached server tab. */
+    readonly noteHumanInput: (source: Electron.WebContents) => void;
+    /** Lets the preload avoid reporting a CDP-dispatched trusted DOM event as human. */
+    readonly canReportHumanInput: (
+      source: Electron.WebContents,
+      kind: "pointer" | "key",
+    ) => boolean;
+    /** Whether the pending CDP download was preceded by trusted human input. */
+    readonly pendingDownloadWasHuman: (source: Electron.WebContents) => boolean;
     /** Points a server tab's download at the server; false for any other download. */
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     /** The agent's cursor positions for attached tabs, keyed by their server tab. */
@@ -95,6 +117,22 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const tabs = new Map<string, AttachedTab>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
+
+  const isAgentActionCommand = (method: string): boolean =>
+    method.startsWith("Input.") ||
+    method === "Page.navigate" ||
+    method === "Runtime.evaluate" ||
+    method === "Runtime.callFunctionOn";
+
+  const agentInputKind = (method: string, params: unknown): "pointer" | "key" | null => {
+    if (typeof params !== "object" || params === null || !("type" in params)) return null;
+    const type = params.type;
+    if (method === "Input.dispatchMouseEvent" && type === "mousePressed") return "pointer";
+    if (method === "Input.dispatchTouchEvent" && type === "touchStart") return "pointer";
+    if (method === "Input.dispatchKeyEvent" && (type === "keyDown" || type === "rawKeyDown"))
+      return "key";
+    return null;
+  };
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
@@ -139,6 +177,7 @@ export const make = Effect.gen(function* () {
     if (!tab?.downloadDirectory || !tab.pendingDownloadGuid) return false;
     item.setSavePath(NodePath.join(tab.downloadDirectory, tab.pendingDownloadGuid));
     tab.pendingDownloadGuid = null;
+    tab.pendingDownloadWasHuman = false;
     return true;
   };
 
@@ -161,10 +200,16 @@ export const make = Effect.gen(function* () {
       relay: null,
       downloadDirectory: null,
       pendingDownloadGuid: null,
+      lastInputActor: null,
+      pendingAgentInput: { pointer: 0, key: 0 },
+      agentInputGeneration: 0,
+      pendingDownloadWasHuman: false,
       onMessage: (_event, method, params, sessionId) => {
         if (method === "Browser.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;
           tab.pendingDownloadGuid = typeof guid === "string" ? guid : null;
+          tab.pendingDownloadWasHuman = tab.lastInputActor === "human";
+          tab.lastInputActor = null;
         }
         tab.relay?.event(method, params, sessionId);
       },
@@ -188,10 +233,44 @@ export const make = Effect.gen(function* () {
       if (command.value.type === "release") {
         // A new server connection starts with a fresh relay and fresh sessions.
         tab.relay = null;
+        tab.agentInputGeneration += 1;
+        tab.pendingAgentInput.pointer = 0;
+        tab.pendingAgentInput.key = 0;
         return;
       }
-      relayFor(tab).receive(command.value.message);
+      const decoded = decodeCdpCommand(command.value.message);
+      const inputKind = Option.isSome(decoded)
+        ? agentInputKind(decoded.value.method, decoded.value.params)
+        : null;
+      if (Option.isSome(decoded) && isAgentActionCommand(decoded.value.method)) {
+        tab.lastInputActor = "agent";
+      }
+      if (inputKind) tab.pendingAgentInput[inputKind] += 1;
+      const inputGeneration = tab.agentInputGeneration;
+      relayFor(tab).receive(command.value.message, () => {
+        if (inputKind && tab.agentInputGeneration === inputGeneration) {
+          tab.pendingAgentInput[inputKind] = Math.max(0, tab.pendingAgentInput[inputKind] - 1);
+        }
+      });
     });
+
+  const noteHumanInput = (source: Electron.WebContents) => {
+    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
+    if (tab) tab.lastInputActor = "human";
+  };
+
+  const canReportHumanInput = (source: Electron.WebContents, kind: "pointer" | "key") => {
+    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
+    // Tabs outside the server-driven CDP host have no agent input to suppress.
+    return tab === undefined || tab.pendingAgentInput[kind] === 0;
+  };
+
+  const pendingDownloadWasHuman = (source: Electron.WebContents) => {
+    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
+    return tab?.pendingDownloadGuid !== null && tab?.pendingDownloadGuid !== undefined
+      ? tab.pendingDownloadWasHuman
+      : false;
+  };
 
   // Read when a backend starts, not when the host is built.
   const announceAll = Effect.suspend(() =>
@@ -219,6 +298,9 @@ export const make = Effect.gen(function* () {
     attach,
     detach,
     placeDownload,
+    noteHumanInput,
+    canReportHumanInput,
+    pendingDownloadWasHuman,
   });
 });
 

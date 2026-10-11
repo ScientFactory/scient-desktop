@@ -21,7 +21,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 // SCIENT-FORK:END
 
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { CustomModelReasoning } from "../../customModelCapabilities.ts";
 import type { DroidRequestLimitBreach } from "../droid/DroidKeyBroker.ts";
 

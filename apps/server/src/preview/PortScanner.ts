@@ -5,8 +5,9 @@
  * stable line-prefixed field format; this is the only `lsof` flag set we rely
  * on).
  *
- * Enumeration is passive metadata only. A listening socket, even one owned by
- * a Scient terminal, is not evidence that it speaks HTTP.
+ * Linux without lsof: reads listening sockets from `/proc/net/tcp{,6}` and
+ * finds their processes through `/proc/<pid>/fd`. This is passive metadata:
+ * discovered listeners never authorize protocol probes on their own.
  *
  * Explicit web URLs are published only after a bounded, declared-protocol probe finds a
  * successful HTML document or a redirect to one.
@@ -22,22 +23,26 @@ import {
   ThreadId,
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isLoopbackHost, LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+// SCIENT-FORK:START compute-endpoint-authority
 import { OwnedLocalEndpointRegistry } from "../localEndpoints/OwnedLocalEndpointRegistry.ts";
+// SCIENT-FORK:END compute-endpoint-authority
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -68,6 +73,10 @@ export class PortDiscovery extends Context.Service<
 
 const POLL_INTERVAL = Duration.seconds(3);
 const LSOF_TIMEOUT_MS = 5_000;
+/** File descriptors one `/proc` walk may read before it stops looking for socket owners. */
+const PROC_FD_WALK_LIMIT = 50_000;
+/** Scans that retry the fd walk for a listening socket whose owner was not found. */
+const SOCKET_OWNER_ATTEMPTS = 3;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
 const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
@@ -201,14 +210,20 @@ const parseLsofOutput = (
       if (portMatch == null) continue;
       const url = `http://localhost:${portMatch}`;
       const key = `localhost:${portMatch}`;
-      if (seen.has(key)) continue;
+      const terminal = pid === null ? null : (terminalByProcessId.get(pid) ?? null);
+      const existing = seen.get(key);
+      // Shared listeners do not provide unambiguous terminal ownership metadata.
+      if (existing) {
+        if (terminal === null) seen.set(key, { ...existing, terminal: null });
+        continue;
+      }
       seen.set(key, {
         host: "localhost",
         port: portMatch,
         url,
         processName,
         pid,
-        terminal: pid === null ? null : (terminalByProcessId.get(pid) ?? null),
+        terminal,
       });
     }
   }
@@ -244,17 +259,59 @@ const parseWindowsListenerOutput = (
     const pid = Number(pidRaw);
     if (!Number.isInteger(port) || port <= 0 || port >= 65536) continue;
     const normalizedPid = Number.isInteger(pid) && pid > 0 ? pid : null;
-    if (seen.has(port)) continue;
+    const terminal =
+      normalizedPid === null ? null : (terminalByProcessId.get(normalizedPid) ?? null);
+    const existing = seen.get(port);
+    if (existing) {
+      if (terminal === null) seen.set(port, { ...existing, terminal: null });
+      continue;
+    }
     seen.set(port, {
       host: "localhost",
       port,
       url: `http://localhost:${port}`,
       processName: processNameRaw?.trim() || null,
       pid: normalizedPid,
-      terminal: normalizedPid === null ? null : (terminalByProcessId.get(normalizedPid) ?? null),
+      terminal,
     });
   }
   return [...seen.values()].toSorted((left, right) => left.port - right.port);
+};
+
+/** `/proc/net/tcp` state for a listening socket. */
+const PROC_TCP_LISTEN = "0A";
+
+/**
+ * Whether a `/proc/net/tcp{,6}` address is one the preview can reach on
+ * loopback: the wildcard or a loopback address, as `lsof` parsing accepts.
+ * Each 32-bit word of the hex address is little-endian.
+ */
+const procLocalAddress = (hex: string): boolean => {
+  if (hex.length === 8) {
+    return hex === "00000000" || hex.endsWith("7F");
+  }
+  if (hex.length !== 32) return false;
+  if (hex === "0".repeat(32) || hex === `${"0".repeat(24)}01000000`) return true;
+  // IPv4-mapped (::ffff:a.b.c.d): wildcard or 127.0.0.0/8.
+  return hex.startsWith(`${"0".repeat(16)}FFFF0000`) && procLocalAddress(hex.slice(24));
+};
+
+/** Listening loopback ports in `/proc/net/tcp{,6}` content, with their socket inodes. */
+const parseProcNetTcp = (
+  raw: string,
+): ReadonlyArray<{ readonly port: number; readonly inode: string }> => {
+  const listeners: Array<{ port: number; inode: string }> = [];
+  for (const line of raw.split("\n").slice(1)) {
+    const fields = line.trim().split(/\s+/);
+    const [address, portHex] = fields[1]?.split(":") ?? [];
+    if (fields[3] !== PROC_TCP_LISTEN || !address || !portHex) continue;
+    if (!procLocalAddress(address.toUpperCase())) continue;
+    const port = Number.parseInt(portHex, 16);
+    const inode = fields[9];
+    if (!Number.isInteger(port) || port <= 0 || port >= 65536 || !inode) continue;
+    listeners.push({ port, inode });
+  }
+  return listeners;
 };
 
 const serversEqual = (
@@ -281,11 +338,17 @@ const serversEqual = (
   return true;
 };
 
+const isCommandNotFound = (error: ProcessRunner.ProcessSpawnError): boolean =>
+  PlatformError.isPlatformError(error.cause) && error.cause.reason._tag === "NotFound";
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const hostPlatform = yield* HostProcessPlatform;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const hostPlatform = yield* HostProcess.Platform;
+  // SCIENT-FORK:START compute-endpoint-authority
   const ownedLocalEndpoints = yield* OwnedLocalEndpointRegistry;
+  // SCIENT-FORK:END compute-endpoint-authority
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -294,10 +357,111 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   });
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
   const scanSemaphore = yield* Semaphore.make(1);
+  const lsofMissingRef = yield* Ref.make(false);
+  /** Confirmed owners of listening socket inodes. */
+  const socketOwnersRef = yield* Ref.make<
+    ReadonlyMap<string, { readonly pid: number; readonly processName: string | null }>
+  >(new Map());
+  /** Fd walks that found no owner, per socket inode; retried up to `SOCKET_OWNER_ATTEMPTS`. */
+  const socketOwnerMissesRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+
+  /** Maps socket inodes to the processes holding them, by `/proc/<pid>/fd`. */
+  const findSocketOwners = Effect.fn("PortDiscovery.findSocketOwners")(function* (
+    inodes: ReadonlySet<string>,
+  ) {
+    const owners = new Map<string, { pid: number; processName: string | null }>();
+    const pids = (yield* fileSystem
+      .readDirectory("/proc")
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((entry) =>
+      /^\d+$/.test(entry),
+    );
+    let budget = PROC_FD_WALK_LIMIT;
+    for (const pidText of pids) {
+      if (owners.size === inodes.size || budget <= 0) break;
+      // Other users' fds are unreadable; their ports still list, without a pid.
+      const fds = yield* fileSystem
+        .readDirectory(`/proc/${pidText}/fd`)
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      const walked = fds.slice(0, budget);
+      budget -= walked.length;
+      const links = yield* Effect.forEach(
+        walked,
+        (fd) =>
+          fileSystem.readLink(`/proc/${pidText}/fd/${fd}`).pipe(Effect.orElseSucceed(() => "")),
+        { concurrency: 16 },
+      );
+      const held = links.flatMap((link) => /^socket:\[(\d+)\]$/.exec(link)?.[1] ?? []);
+      const matched = held.filter((inode) => inodes.has(inode) && !owners.has(inode));
+      if (matched.length === 0) continue;
+      const processName = yield* fileSystem.readFileString(`/proc/${pidText}/comm`).pipe(
+        Effect.map((name) => name.trim() || null),
+        Effect.orElseSucceed(() => null),
+      );
+      for (const inode of matched) owners.set(inode, { pid: Number(pidText), processName });
+    }
+    return owners;
+  });
+
+  /**
+   * Linux listeners from `/proc/net/tcp{,6}`, for hosts without `lsof`. Null
+   * when neither file is readable, so only configured URLs are probed.
+   */
+  const scanProcListeners = Effect.fn("PortDiscovery.scanProcListeners")(function* (
+    terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner>,
+  ) {
+    if (hostPlatform !== "linux") return null;
+    const tables = yield* Effect.forEach(["/proc/net/tcp", "/proc/net/tcp6"], (path) =>
+      fileSystem.readFileString(path).pipe(Effect.option),
+    );
+    if (tables.every(Option.isNone)) return null;
+    const listeners = tables.flatMap((table) =>
+      Option.isSome(table) ? parseProcNetTcp(table.value) : [],
+    );
+    const known = yield* Ref.get(socketOwnersRef);
+    const knownMisses = yield* Ref.get(socketOwnerMissesRef);
+    const inodes = new Set(listeners.map((listener) => listener.inode));
+    // Listeners rarely change, so the fd walk runs only for sockets without a
+    // confirmed owner, and gives up on one after a few walks miss it (another
+    // user's process, or one that exited mid-walk).
+    const unseen = new Set(
+      [...inodes].filter(
+        (inode) => !known.has(inode) && (knownMisses.get(inode) ?? 0) < SOCKET_OWNER_ATTEMPTS,
+      ),
+    );
+    const found = unseen.size === 0 ? new Map() : yield* findSocketOwners(unseen);
+    const owners = new Map([...known, ...found].filter(([inode]) => inodes.has(inode)));
+    const misses = new Map([...knownMisses].filter(([inode]) => inodes.has(inode)));
+    for (const inode of unseen) {
+      if (!found.has(inode)) misses.set(inode, (misses.get(inode) ?? 0) + 1);
+    }
+    yield* Ref.set(socketOwnersRef, owners);
+    yield* Ref.set(socketOwnerMissesRef, misses);
+    const seen = new Map<number, DiscoveredLocalServer>();
+    for (const { port, inode } of listeners) {
+      const owner = owners.get(inode) ?? null;
+      const terminal = owner === null ? null : (terminalByProcessId.get(owner.pid) ?? null);
+      const existing = seen.get(port);
+      if (existing && (existing.pid !== null || owner === null)) {
+        if (terminal === null) seen.set(port, { ...existing, terminal: null });
+        continue;
+      }
+      seen.set(port, {
+        host: "localhost",
+        port,
+        url: `http://localhost:${port}`,
+        processName: owner?.processName ?? null,
+        pid: owner?.pid ?? null,
+        // A replaced listener had no known owner, so the port stays unowned.
+        terminal: existing ? null : terminal,
+      });
+    }
+    return [...seen.values()].toSorted((left, right) => left.port - right.port);
+  });
 
   const probeWebUrl = Effect.fn("PortDiscovery.probeWebUrl")(function* (url: string) {
     const parsed = new URL(url);
     const port = urlPort(parsed);
+    // SCIENT-FORK:START compute-endpoint-authority — hold revocation guard across HTTP traffic.
     const probe = yield* ownedLocalEndpoints.runLoopbackTcpProbe(
       port,
       Effect.gen(function* () {
@@ -334,6 +498,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }),
     );
     return probe._tag === "protected" ? null : probe.value;
+    // SCIENT-FORK:END compute-endpoint-authority
   });
 
   const makeWebProbeGroups = (
@@ -379,9 +544,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const ownershipAtStart = yield* ownedLocalEndpoints.snapshot;
     const cached = yield* Ref.get(webProbeCacheRef);
     const authorizedKeys = new Set(configuredUrls.map(webProbeCacheKey));
+    // SCIENT-FORK:START explicit-url-authority — passive ownership is metadata, not permission.
     const groups = makeWebProbeGroups(servers, configuredUrls).filter(
       (group) => !ownershipAtStart.protectedLoopbackTcpPorts.has(group.server.port),
     );
+    // SCIENT-FORK:END explicit-url-authority
     const getProbe = Effect.fn("PortDiscovery.getProbe")(function* (
       url: string,
       pid: number | null,
@@ -457,10 +624,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const scanUnlocked = Effect.fn("PortDiscovery.scanUnlocked")(function* (
     configuredUrls: ReadonlyArray<string>,
   ) {
+    // SCIENT-FORK:START explicit-url-authority
     // Positive authority: no URL means no traffic, on any platform. In
     // particular, another Scient instance's private sockets cannot be inferred
     // from this backend's in-memory registry. Do not probe unknown listeners.
     if (configuredUrls.length === 0) return yield* probeWebServers([], []);
+    // SCIENT-FORK:END explicit-url-authority
     const state = yield* Ref.get(stateRef);
     const terminalByProcessId = new Map<number, TerminalProcessOwner>();
     for (const registration of state.terminalProcesses.values()) {
@@ -478,7 +647,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           args: ["-NoProfile", "-NonInteractive", "-Command", command],
           timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
           maxOutputBytes: 1024 * 1024,
-          outputMode: "truncate",
         })
         .pipe(
           Effect.map((result) => parseWindowsListenerOutput(result.stdout, terminalByProcessId)),
@@ -494,18 +662,26 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       return yield* probeWebServers([], configuredUrls);
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
+    if (yield* Ref.get(lsofMissingRef)) {
+      const fromProc = yield* scanProcListeners(terminalByProcessId);
+      return yield* probeWebServers(fromProc ?? [], configuredUrls);
+    }
     const lsofResult = yield* processRunner
       .run({
         command: "lsof",
         args: ["-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "pcn"],
         timeout: Duration.millis(LSOF_TIMEOUT_MS),
+        // Partial output could hide another app's listener on an owned port.
         maxOutputBytes: 1024 * 1024,
-        outputMode: "truncate",
       })
       .pipe(
         Effect.map((result) => parseLsofOutput(result.stdout, terminalByProcessId)),
         Effect.catchTags({
-          ProcessSpawnError: recoverLsofProbeFailure,
+          // A missing lsof stays missing; later scans skip straight to the fallback.
+          ProcessSpawnError: (error) =>
+            (isCommandNotFound(error) ? Ref.set(lsofMissingRef, true) : Effect.void).pipe(
+              Effect.andThen(recoverLsofProbeFailure(error)),
+            ),
           ProcessStdinError: recoverLsofProbeFailure,
           ProcessOutputLimitError: recoverLsofProbeFailure,
           ProcessReadError: recoverLsofProbeFailure,
@@ -513,7 +689,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         }),
       );
     if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
-    return yield* probeWebServers([], configuredUrls);
+    const fromProc = yield* scanProcListeners(terminalByProcessId);
+    return yield* probeWebServers(fromProc ?? [], configuredUrls);
   });
 
   const scanSnapshot = Effect.fn("PortDiscovery.scanSnapshot")(

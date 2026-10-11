@@ -7,6 +7,7 @@ import {
   type HTMLAttributes,
 } from "react";
 
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
 import {
@@ -187,7 +188,7 @@ export const VegaLiteView = forwardRef<VegaLiteViewController, VegaLiteViewProps
 
     useEffect(() => {
       const container = containerRef.current;
-      if (container == null || !renderPlan.responsive || typeof ResizeObserver === "undefined") {
+      if (container == null || !renderPlan.responsive) {
         return;
       }
 
@@ -213,10 +214,9 @@ export const VegaLiteView = forwardRef<VegaLiteViewController, VegaLiteViewProps
         });
       };
 
-      const observer = new ResizeObserver(scheduleResize);
-      observer.observe(container);
+      const stopResize = observeResize(container, scheduleResize);
       return () => {
-        observer.disconnect();
+        stopResize();
         observedWidthRef.current = null;
         if (resizeFrameRef.current != null) cancelAnimationFrame(resizeFrameRef.current);
         resizeFrameRef.current = null;

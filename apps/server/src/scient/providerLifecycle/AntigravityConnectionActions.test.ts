@@ -18,7 +18,7 @@ import {
   officialAntigravityAccountEnvironment,
   withAntigravitySessionShutdown,
 } from "./AntigravityConnectionActions.ts";
-import type { PtyProcess } from "../../terminal/PtyAdapter.ts";
+import type { PtyProcess } from "@t3tools/shared/PtyAdapter";
 
 describe("officialAntigravityAccountEnvironment", () => {
   it("keeps host and browser essentials while excluding provider secrets", () => {

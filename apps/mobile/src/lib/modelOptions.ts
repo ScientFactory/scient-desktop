@@ -34,12 +34,20 @@ export type ModelOption = {
   readonly isUnavailable?: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
+  readonly providerUpdateRequired?: ProviderUpdateRequired;
 };
+
+type ProviderUpdateRequired = Pick<
+  T3ServerConfig["providers"][number],
+  "driver" | "updateRequiredModels"
+>;
 
 export type ProviderGroup = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
+  /** The provider fields that name announced models its CLI is too old to run. */
+  readonly updateRequired?: ProviderUpdateRequired;
 };
 
 function providerDisplayLabel(provider: {
@@ -193,6 +201,9 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const updateRequired = provider.updateRequiredModels?.length
+      ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
+      : undefined;
     const hiddenModels = new Set(getDefaultHiddenAgentModels(provider.driver, provider.models));
     const reasoningGroups = getAntigravityModelGroups(provider.driver, provider.models);
     const automaticModel = resolveAutomaticModel(
@@ -219,6 +230,7 @@ export function buildModelOptions(
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isDefault: model.slug === automaticModel,
         isLegacy: model.isLegacy === true,
+        ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -268,6 +280,9 @@ export function buildModelOptions(
         displayName: provider?.displayName ?? instanceConfig?.displayName,
         instanceId: fallbackModelSelection.instanceId,
       });
+      const updateRequired = provider?.updateRequiredModels?.length
+        ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
+        : undefined;
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
@@ -277,9 +292,11 @@ export function buildModelOptions(
         providerDriver,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
-        ...(isModelSelectionUnavailable(config, fallbackModelSelection)
+        ...(isModelSelectionUnavailable(config, fallbackModelSelection) ||
+        provider?.updateRequiredModels?.some((gated) => gated.slug === fallbackModelSelection.model)
           ? { isUnavailable: true }
           : {}),
+        ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
         capabilities: model?.capabilities ?? null,
         selection: fallbackModelSelection,
       });
@@ -316,15 +333,24 @@ export function groupModelOptionsForDisplay(
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
-  const groups = new Map<string, { providerLabel: string; models: ModelOption[] }>();
+  const groups = new Map<
+    string,
+    {
+      providerLabel: string;
+      models: ModelOption[];
+      updateRequired: ProviderUpdateRequired | undefined;
+    }
+  >();
   for (const option of options) {
     const existing = groups.get(option.providerKey);
     if (existing) {
       existing.models.push(option);
+      existing.updateRequired ??= option.providerUpdateRequired;
     } else {
       groups.set(option.providerKey, {
         providerLabel: option.providerLabel,
         models: [option],
+        updateRequired: option.providerUpdateRequired,
       });
     }
   }
@@ -333,6 +359,7 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerKey,
     providerLabel: group.providerLabel,
     models: group.models,
+    ...(group.updateRequired ? { updateRequired: group.updateRequired } : {}),
   }));
 }
 

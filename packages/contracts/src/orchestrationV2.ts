@@ -458,6 +458,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Manual wakes restart inactivity without changing the sidebar's sort position. */
+  lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -641,6 +643,8 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  /** The delegated task this run answers, including a follow-up in an existing child thread. */
+  delegatedTaskId: Schema.optional(NodeId),
   /**
    * Set on wake runs (background notifications, delegated task results,
    * restart continuations): when the work they continue started. Read it
@@ -1200,6 +1204,8 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
+    /** The application itself, such as a restart continuing an interrupted turn. */
+    Schema.Struct({ kind: Schema.Literal("system") }),
     // SCIENT-FORK: provider work and cut-short responses are Scient notification kinds.
     ...ScientNotificationSources,
   ],
@@ -2130,6 +2136,7 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
@@ -3065,6 +3072,14 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
   }),
+  /** Stops one provider-native child while its owning run keeps working. */
+  Schema.Struct({
+    type: Schema.Literal("subagent.stop"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    subagentId: NodeId,
+  }),
   Schema.Struct({
     type: Schema.Literal("run.interrupt"),
     commandId: CommandId,
@@ -3266,6 +3281,14 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
+    /** A released native session settles only this captured task, never its owner or siblings. */
+    subagent: Schema.optional(
+      Schema.Struct({
+        id: NodeId,
+        nativeTaskId: TrimmedNonEmptyString,
+        providerSessionId: ProviderSessionId,
+      }),
+    ),
   }),
   /**
    * Stop for one thread, whatever it is doing: interrupts its running turn, holds its queue,

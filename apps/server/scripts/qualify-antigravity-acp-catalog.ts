@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { resolveAntigravityAcpCatalogAsset } from "@scientfactory/provider-runtime";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -32,8 +32,8 @@ const main = Effect.gen(function* () {
   const catalog = yield* fs
     .readFileString(catalogPath)
     .pipe(Effect.flatMap(decodeBoundedCatalogJson));
-  const platform = yield* HostProcessPlatform;
-  const arch = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const arch = yield* HostProcess.Architecture;
   const asset = resolveAntigravityAcpCatalogAsset(catalog, platform, arch);
   if (!asset) return yield* fail(`No approved Antigravity ACP artifact for ${platform}-${arch}.`);
   const baseDir = yield* makeInstallerFilesystem(fs, platform).makeTempDirectoryScoped({

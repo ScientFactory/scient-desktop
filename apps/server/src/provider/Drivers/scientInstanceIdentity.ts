@@ -1,7 +1,7 @@
 import type { ProviderConnectionMethod, ServerProvider } from "@t3tools/contracts";
 
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 /**
  * Upstream's instance identity stamp plus Scient's connection state: the

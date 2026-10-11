@@ -128,6 +128,7 @@ import { markdownImageGallery, markdownImageItems } from "./chat/markdownImageGa
 import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
+import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import {
   revealInFileExplorerLabelForKind,
@@ -829,6 +830,7 @@ function MarkdownDetails({
 }
 
 interface MarkdownFileLinkProps {
+  environmentId: EnvironmentId | null;
   href: string;
   targetPath: string;
   iconPath: string;
@@ -1463,15 +1465,79 @@ function handleMarkdownFragmentClick(event: ReactMouseEvent<HTMLAnchorElement>, 
     return;
   }
 
-  const target = findMarkdownFragmentTarget(event.currentTarget, href);
-  if (!target) return;
-
+  // Never let the browser follow the fragment or write it to the URL: desktop keeps
+  // its route in the hash, so replacing the hash navigates away from the thread.
   event.preventDefault();
-  const nextUrl = new URL(window.location.href);
-  nextUrl.hash = href.slice(1);
-  window.history.pushState(window.history.state, "", nextUrl);
-  target.scrollIntoView({ block: "nearest" });
+  findMarkdownFragmentTarget(event.currentTarget, href)?.scrollIntoView({ block: "start" });
 }
+
+type HeadingHastNode = {
+  type?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HeadingHastNode[];
+};
+
+/** GitHub's heading anchor slug, so `[Setup](#setup)` table-of-contents links find their heading. */
+function githubHeadingSlug(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
+    .replace(/ /g, "-");
+}
+
+/**
+ * Gives headings without an authored id GitHub's slug id, deduplicated per document. Like the
+ * sanitizer's ids, they carry the `user-content-` prefix so they cannot clobber app element ids;
+ * fragment lookup strips it.
+ */
+function rehypeHeadingIds() {
+  return (tree: HeadingHastNode) => {
+    // Every id already in the document, authored or assigned, so a suffix never
+    // lands on one that exists: `Setup`, `Setup`, `Setup-1` get three distinct ids.
+    const taken = new Set<string>();
+    const collect = (node: HeadingHastNode) => {
+      const id = node.properties?.id;
+      if (typeof id === "string") taken.add(id);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    const nextSuffix = new Map<string, number>();
+    const visit = (node: HeadingHastNode) => {
+      if (node.type === "element" && node.tagName && /^h[1-6]$/.test(node.tagName)) {
+        const slug = githubHeadingSlug(hastPlainTextDeep(node));
+        if (node.properties?.id === undefined && slug) {
+          let count = nextSuffix.get(slug) ?? 0;
+          let id = `${SANITIZED_FRAGMENT_PREFIX}${slug}`;
+          while (taken.has(id)) {
+            count += 1;
+            id = `${SANITIZED_FRAGMENT_PREFIX}${slug}-${count}`;
+          }
+          nextSuffix.set(slug, count);
+          taken.add(id);
+          node.properties = { ...node.properties, id };
+        }
+        return;
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+// Heading ids are added after sanitizing, which would prefix them a second time.
+const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
+  ...CHAT_MARKDOWN_REHYPE_PLUGINS,
+  rehypeHeadingIds,
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
+  // SCIENT-FORK:START — retain safe scientific images without opting into raw HTML.
+  ...CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
+  // SCIENT-FORK:END
+  rehypeHeadingIds,
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 function MarkdownExternalLinkContent({
   host,
@@ -1524,6 +1590,7 @@ function MarkdownExternalLinkContent({
 }
 
 const MarkdownFileLink = memo(function MarkdownFileLink({
+  environmentId,
   href,
   targetPath,
   iconPath,
@@ -1812,7 +1879,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               }}
               onContextMenu={handleContextMenu}
             >
-              <FileTagChipContent path={iconPath} label={label} theme={theme} />
+              <FileTagChipContent
+                path={iconPath}
+                environmentId={environmentId}
+                label={label}
+                theme={theme}
+              />
             </ContextChip>
           ) : (
             <ContextChip
@@ -1825,7 +1897,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               onClick={handleContextMenu}
               onContextMenu={handleContextMenu}
             >
-              <FileTagChipContent path={iconPath} label={label} theme={theme} />
+              <FileTagChipContent
+                path={iconPath}
+                environmentId={environmentId}
+                label={label}
+                theme={theme}
+              />
             </ContextChip>
           )
         }
@@ -1834,7 +1911,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         {/* The full path: the chip already shows the shortened form, and a link
             to the workspace root collapses to a bare label that repeats it. */}
         <div className="scient-file-link-tooltip overflow-x-auto leading-tight whitespace-nowrap scrollbar-thumb-border/78 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/78 [&::-webkit-scrollbar-track]:bg-transparent">
-          {targetPath}
+          <WorkspaceEntryTooltip path={iconPath} label={targetPath} environmentId={environmentId} />
         </div>
       </TooltipPopup>
     </Tooltip>
@@ -1850,6 +1927,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
     previous.relativeCopyPath === next.relativeCopyPath &&
+    previous.environmentId === next.environmentId &&
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&
@@ -2051,8 +2129,8 @@ function useChatMarkdownState({
       const meta = resolveMarkdownFileLinkMeta(
         normalizedHref,
         cwd,
-        fileLinkWorkspaceRoot,
         imageBaseDir ?? cwd,
+        fileLinkWorkspaceRoot,
       );
       if (meta) {
         metaByHref.set(lookupKey, meta);
@@ -2067,8 +2145,8 @@ function useChatMarkdownState({
       const meta = resolveInlineCodeFileLinkMeta(
         span,
         cwd,
-        fileLinkWorkspaceRoot,
         imageBaseDir ?? cwd,
+        fileLinkWorkspaceRoot,
       );
       if (meta) {
         metaByText.set(span, meta);
@@ -2178,7 +2256,7 @@ function useChatMarkdownState({
     [canOperatePreview, openPreview, threadRef],
   );
   const openMarkdownFileInPreview = useCallback(
-    (path: string, workspaceRelativePath: string) => {
+    (path: string) => {
       if (!threadRef || !cwd || !canOperatePreview || preparedConnection._tag === "None") {
         return Promise.resolve(
           AsyncResult.failure<void, BrowserPreviewUnavailableError>(
@@ -2193,7 +2271,6 @@ function useChatMarkdownState({
       return openFileInPreview({
         threadRef,
         workspaceRoot: cwd,
-        relativePath: workspaceRelativePath,
         filePath: path,
         httpBaseUrl: preparedConnection.value.httpBaseUrl,
         createAssetUrl,
@@ -2290,6 +2367,7 @@ function useChatMarkdownState({
 
       return (
         <MarkdownFileLink
+          environmentId={environmentId}
           href={fileLinkMeta.targetPath}
           targetPath={fileLinkMeta.targetPath}
           iconPath={fileLinkMeta.filePath}
@@ -2342,6 +2420,7 @@ function useChatMarkdownState({
     [
       canUseShellActions,
       canOperatePreview,
+      environmentId,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openHomeRelativeLinkInPanel,
@@ -2810,12 +2889,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
         resolveMarkdownFileLinkMeta(
           normalizedHref,
           cwd,
-          fileLinkWorkspaceRoot,
           imageBaseDir ?? cwd,
+          fileLinkWorkspaceRoot,
         ))
       : null;
     if (!fileLinkMeta) {
       const faviconHost = resolveExternalWebLinkHost(href);
+      const hasText = hastHasText(node);
       const pullRequestAutolink = String(
         (props as Record<string, unknown>)["data-pull-request-autolink"] ?? "",
       );
@@ -2847,6 +2927,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           {...props}
           className={cn(props.className, pullRequestAutolink === "commit" && "font-mono")}
           data-markdown-copy={pullRequestCopy}
+          data-markdown-image-link={!hasText || undefined}
           href={href}
           target={isSameDocumentLink ? undefined : "_blank"}
           rel={isSameDocumentLink ? undefined : "noopener noreferrer"}
@@ -2966,7 +3047,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             });
           }}
         >
-          {faviconHost && hastHasText(node) && !isPullRequestAutolink ? (
+          {faviconHost && hasText && !isPullRequestAutolink ? (
             <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
               {linkChildren}
             </MarkdownExternalLinkContent>
@@ -3052,7 +3133,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
         inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
-        resolveInlineCodeFileLinkMeta(codeText, cwd, fileLinkWorkspaceRoot, imageBaseDir ?? cwd);
+        resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd, fileLinkWorkspaceRoot);
       if (fileLinkMeta) {
         return fileLinkChip(
           fileLinkMeta,
@@ -3211,11 +3292,9 @@ function ChatMarkdown(props: ChatMarkdownProps) {
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
           rehypePlugins={[
-            // T3 owns HTML security: raw parsing and sanitization follow parseRawHtml.
-            // Scient BiDi is independent and always runs after that optional stack.
             ...(parseRawHtml
-              ? CHAT_MARKDOWN_REHYPE_PLUGINS
-              : CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW),
+              ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
+              : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS),
             [
               rehypeScientBidi,
               {

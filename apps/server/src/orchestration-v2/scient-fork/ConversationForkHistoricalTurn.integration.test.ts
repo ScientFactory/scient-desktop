@@ -23,7 +23,7 @@ import * as ProjectionStore from "../ProjectionStore.ts";
 import * as LegacyImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };

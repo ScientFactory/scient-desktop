@@ -3,6 +3,7 @@ import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-pres
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import {
   assistantCitationLabel,
@@ -70,14 +71,16 @@ import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
-import { formatWorkspaceRelativePath } from "../../filePathDisplay";
-import { compactPathLabel } from "../../scient/presentation/compactPathLabel";
 import {
-  collectToolFilePaths,
-  formatReadToolLabel,
-  formatSearchToolLabel,
-} from "@t3tools/shared/toolActivity";
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+  compactPathLabel,
+  compactPathPresentation,
+  tracePathPresentation,
+} from "../../scient/presentation/compactPathLabel";
+import {
+  groupTraceIconOverride,
+  type TraceIconOverride,
+} from "../../scient/presentation/traceIcons";
+import { collectToolFilePaths, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { computeElapsedMs } from "@scientfactory/conversation/work-log-grouping";
 // SCIENT-FORK:START — historical turns group inert presentation.
 import { timelineEntryHistoryKey } from "../../scient/fork/historicalTimelineTurns";
@@ -174,10 +177,37 @@ function workEntryReadRawPaths(entry: WorkLogEntry): readonly string[] {
   return collectToolFilePaths(workEntryToolDataRecord(entry));
 }
 
-function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefined): string[] {
-  return workEntryReadRawPaths(entry).map((filePath) =>
-    formatWorkspaceRelativePath(filePath, workspaceRoot),
-  );
+/** The path that owns a trace heading, with its surrounding action text. */
+export function workEntryPathPresentation(entry: WorkLogEntry, workspaceRoot: string | undefined) {
+  if (entry.itemType === "reasoning" || entry.tone === "thinking" || entry.command?.trim()) {
+    return undefined;
+  }
+  const action = toolGroupAction(entry);
+  const paths = action === "read" ? workEntryReadRawPaths(entry) : (entry.changedFiles ?? []);
+  const detail = entry.detail?.trim();
+  const providerRetry =
+    entry.projectedItem?.item.type === "error" && entry.projectedItem.item.retry !== undefined;
+  const item = entry.structuredPayload;
+  if (
+    action !== "read" &&
+    item?.type === "dynamic_tool" &&
+    dynamicToolTitle(item.toolName, item.input)
+  ) {
+    return undefined;
+  }
+  const path =
+    action !== "read" && detail && !providerRetry
+      ? compactPathPresentation(detail, workspaceRoot)
+      : paths[0]
+        ? tracePathPresentation(paths[0], workspaceRoot)
+        : undefined;
+  if (!path) return undefined;
+  const prefix = action === "read" ? "Read " : "";
+  const suffix =
+    paths.length > 1 && (action === "read" || !detail || providerRetry)
+      ? ` +${paths.length - 1} more`
+      : "";
+  return { ...path, prefix, suffix, text: `${prefix}${path.label}${suffix}` };
 }
 
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
@@ -202,10 +232,8 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
         : formatSearchToolLabel(workEntryToolDataRecord(entry));
     if (searchLabel) return searchLabel;
   }
-  const readPaths = action === "read" ? workEntryReadPaths(entry, workspaceRoot) : [];
-  if (action === "read" && readPaths[0]) {
-    return formatReadToolLabel(readPaths[0], readPaths.length - 1);
-  }
+  const path = workEntryPathPresentation(entry, workspaceRoot);
+  if (path) return path.text;
   // Retrying providers keep their progress label; other diagnostics expose
   // the retained message instead of a generic error heading. File bodies
   // are never a compact read label.
@@ -219,13 +247,6 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
     (action === "code-search" || action === "search") && /[\r\n]/.test(compactDetail ?? "");
   if (compactDetail && !providerRetry && action !== "read" && !detailIsSearchOutput) {
     return compactPathLabel(compactDetail, workspaceRoot);
-  }
-  const [firstPath] = entry.changedFiles ?? [];
-  if (firstPath) {
-    const path = compactPathLabel(firstPath, workspaceRoot);
-    return entry.changedFiles!.length === 1
-      ? path
-      : `${path} +${entry.changedFiles!.length - 1} more`;
   }
   if (action === "read" && !entry.viewedImagePath) {
     return "Read file";
@@ -274,15 +295,7 @@ export function workEntryReadOutput(
   const paths = [
     ...new Set(
       workEntryReadRawPaths(entry as WorkLogEntry)
-        .map((path) => {
-          const trimmed = path.trim().replaceAll("\\", "/");
-          if (!workspaceRoot || trimmed.startsWith("/") || isWindowsAbsolutePath(trimmed)) {
-            return trimmed;
-          }
-          const root = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
-          const relative = trimmed.replace(/^\.\//, "").replace(/^\/+/, "");
-          return `${root}/${relative}`;
-        })
+        .map((path) => tracePathPresentation(path, workspaceRoot).fullPath)
         .filter((path) => path.length > 0),
     ),
   ];
@@ -612,6 +625,7 @@ type MessagesTimelineRowContent =
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
       summaryToolIcon?: "browser" | "device" | "scient" | "t3-code" | "pull-request";
+      summaryTraceIcon?: TraceIconOverride;
       hasFailure: boolean;
     }
   | {
@@ -789,7 +803,52 @@ interface SupersededAttemptFold {
 }
 
 /**
- * Groups only provider output owned by an explicitly superseded V2 attempt.
+ * Final replies of superseded attempts that finished before the steer replaced
+ * them. A steer stamps the attempt's completedAt when it is dispatched, and the
+ * provider closes a reply it cut off only after that, so a reply whose item
+ * completed earlier was whole. Item status alone cannot tell: an interrupted
+ * stream also closes as `completed`. The reply must be the attempt's last
+ * output; trailing tool or reasoning work means the attempt was still going.
+ */
+function completeSupersededReplyEntryIds(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+): ReadonlySet<string> {
+  const lastOutputByAttemptId = new Map<RunAttemptId, TimelineEntry>();
+  for (const entry of timelineEntries) {
+    if (
+      entry.attempt?.status !== "superseded" ||
+      (entry.kind === "message" && entry.message.role === "user") ||
+      (entry.kind === "work" &&
+        (entry.entry.itemType === "system_notice" || entry.entry.itemType === "notification")) ||
+      (entry.kind !== "message" && entry.kind !== "work")
+    ) {
+      continue;
+    }
+    lastOutputByAttemptId.set(entry.attempt.id, entry);
+  }
+  const replyEntryIds = new Set<string>();
+  for (const entry of lastOutputByAttemptId.values()) {
+    const supersededAt = entry.attempt?.completedAt ?? null;
+    const item = entry.kind === "message" ? entry.projectedItem?.item : undefined;
+    if (
+      entry.kind === "message" &&
+      !entry.message.streaming &&
+      item?.type === "assistant_message" &&
+      item.status === "completed" &&
+      item.completedAt !== null &&
+      supersededAt !== null &&
+      DateTime.isLessThan(item.completedAt, supersededAt)
+    ) {
+      replyEntryIds.add(entry.id);
+    }
+  }
+  return replyEntryIds;
+}
+
+/**
+ * Groups only provider output owned by an explicitly superseded V2 attempt
+ * that the steer cut off. An attempt that had already finished its reply is
+ * left in the timeline like any other turn output.
  * User messages remain visible because they are inputs to the logical run,
  * including the steer message that started the replacement attempt.
  */
@@ -797,11 +856,18 @@ function deriveSupersededAttemptFolds(
   timelineEntries: ReadonlyArray<TimelineEntry>,
   unfoldedRunIds: ReadonlySet<RunId>,
   liveSubagentEntryIds: ReadonlySet<string>,
+  completeReplyEntryIds: ReadonlySet<string>,
 ): ReadonlyMap<string, SupersededAttemptFold> {
+  const completeAttemptIds = new Set(
+    timelineEntries.flatMap((entry) =>
+      entry.attempt !== undefined && completeReplyEntryIds.has(entry.id) ? [entry.attempt.id] : [],
+    ),
+  );
   const entriesByAttemptId = new Map<RunAttemptId, TimelineEntry[]>();
   for (const entry of timelineEntries) {
     if (
       entry.attempt?.status !== "superseded" ||
+      completeAttemptIds.has(entry.attempt.id) ||
       unfoldedRunIds.has(entry.attempt.runId) ||
       (entry.kind === "message" && entry.message.role === "user") ||
       // A published page stays visible, as it does when its turn folds.
@@ -1003,6 +1069,8 @@ function deriveTurnFolds(input: {
   /** Keeps the latest runless response open; V2 work must not reopen imported turns. */
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
+  /** Finished replies a steer superseded; they answer their prompt, so they stay out. */
+  completeSupersededReplyEntryIds: ReadonlySet<string>;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
   for (const entry of input.timelineEntries) {
@@ -1143,7 +1211,8 @@ function deriveTurnFolds(input: {
       // launching run and stay visible after the surrounding work folds.
       if (
         timelineEntryIsPersistentResourceCard(entry) ||
-        input.liveSubagentEntryIds.has(entry.id)
+        input.liveSubagentEntryIds.has(entry.id) ||
+        input.completeSupersededReplyEntryIds.has(entry.id)
       ) {
         continue;
       }
@@ -1390,6 +1459,7 @@ function deriveTimelineTurnFolds(
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
+    completeSupersededReplyEntryIds: completeSupersededReplyEntryIds(timelineEntries),
   });
 }
 
@@ -1456,10 +1526,12 @@ export function deriveMessagesTimelineRows(input: {
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
+  const completeSupersededReplyIds = completeSupersededReplyEntryIds(timelineEntries);
   const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
     timelineEntries,
     failedRunIds,
     liveSubagentEntryIds,
+    completeSupersededReplyIds,
   );
   const activeVisualResponseRunIds = deriveActiveVisualResponseRunIds({
     timelineEntries: timelineEntries,
@@ -1474,6 +1546,7 @@ export function deriveMessagesTimelineRows(input: {
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive,
     liveSubagentEntryIds,
+    completeSupersededReplyEntryIds: completeSupersededReplyIds,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -1847,6 +1920,7 @@ export function deriveMessagesTimelineRows(input: {
           const summaryToolIcon = usesSingleToolCallLabel
             ? resolveWorkEntryToolPresentation(singleEntry, "completed")?.icon
             : undefined;
+          const summaryTraceIcon = groupTraceIconOverride(visibleGroupedEntries);
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -1864,6 +1938,7 @@ export function deriveMessagesTimelineRows(input: {
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
             ...(summaryToolIcon ? { summaryToolIcon } : {}),
+            ...(summaryTraceIcon ? { summaryTraceIcon } : {}),
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
@@ -2476,6 +2551,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.expanded === bw.expanded &&
         a.summary === bw.summary &&
         a.summaryKind === bw.summaryKind &&
+        a.summaryToolIcon === bw.summaryToolIcon &&
+        a.summaryTraceIcon === bw.summaryTraceIcon &&
         a.toolSurface === bw.toolSurface &&
         Equal.equals(a.toolIcon, bw.toolIcon) &&
         a.hasFailure === bw.hasFailure

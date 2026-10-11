@@ -82,6 +82,25 @@ describe("toolActivity", () => {
     );
   });
 
+  it.each(["Edit", "Write", "MultiEdit", "edit", "write", "multi_edit"])(
+    "classifies native %s tools without edit-kind metadata",
+    (toolName) => {
+      expect(
+        classifyToolActivity({
+          itemType: "dynamic_tool_call",
+          data: { toolName, rawInput: { file_path: "src/example.ts" } },
+        }),
+      ).toBe("file_change");
+    },
+  );
+
+  it("keeps namespaced edit tools and edit-like titles generic", () => {
+    for (const toolName of ["github.edit", "mcp__other__Write", "other/MultiEdit", "EditReport"]) {
+      expect(classifyToolActivity({ data: { toolName } })).toBe("other");
+    }
+    expect(classifyToolActivity({ title: "Edit", data: {} })).toBe("other");
+  });
+
   it("formats read and search labels from structured input", () => {
     expect(formatReadToolLabel("src/env.ts")).toBe("Read src/env.ts");
     expect(formatReadToolLabel("src/env.ts", 2)).toBe("Read src/env.ts +2 more");

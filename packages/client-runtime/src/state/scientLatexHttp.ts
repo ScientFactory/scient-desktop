@@ -12,7 +12,7 @@ import type {
 } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -88,7 +88,7 @@ export const getEnvironmentLatexResolution = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/resolve"),
+    url: (urls) => urls.resolve(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientLatex",
     request: ({ client, headers }) =>
@@ -112,7 +112,7 @@ export const getEnvironmentLatexBuild = Effect.fn("clientRuntime.state.getEnviro
       signer,
       remoteAuthorization,
       method: "POST",
-      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/build"),
+      url: (urls) => urls.build(),
       timeoutMs: REQUEST_TIMEOUT_MS,
       group: "scientLatex",
       request: ({ client, headers }) =>
@@ -140,7 +140,7 @@ export const getEnvironmentLatexStatus = Effect.fn("clientRuntime.state.getEnvir
       signer,
       remoteAuthorization,
       method: "POST",
-      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/status"),
+      url: (urls) => urls.status(),
       timeoutMs: REQUEST_TIMEOUT_MS,
       group: "scientLatex",
       request: ({ client, headers }) =>
@@ -168,7 +168,7 @@ export const getEnvironmentLatexCancel = Effect.fn("clientRuntime.state.getEnvir
       signer,
       remoteAuthorization,
       method: "POST",
-      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/cancel"),
+      url: (urls) => urls.cancel(),
       timeoutMs: REQUEST_TIMEOUT_MS,
       group: "scientLatex",
       request: ({ client, headers }) =>
@@ -196,7 +196,7 @@ export const getEnvironmentLatexForwardSync = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/synctex/forward"),
+    url: (urls) => urls.forwardSync(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientLatex",
     request: ({ client, headers }) =>
@@ -220,7 +220,7 @@ export const getEnvironmentLatexInverseSync = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/synctex/inverse"),
+    url: (urls) => urls.inverseSync(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientLatex",
     request: ({ client, headers }) =>
@@ -241,8 +241,7 @@ export const getEnvironmentLatexInstallToolchain = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/toolchain/install"),
+    url: (urls) => urls.installToolchain(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientLatex",
     request: ({ client, headers }) =>
@@ -265,7 +264,7 @@ export const getEnvironmentLatexToolchain = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/toolchain"),
+    url: (urls) => urls.toolchain(),
     timeoutMs: TOOLCHAIN_TIMEOUT_MS,
     group: "scientLatex",
     request: ({ client, headers }) =>

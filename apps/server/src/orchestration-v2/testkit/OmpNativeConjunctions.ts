@@ -31,14 +31,18 @@ import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sq
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { makeOmpAdapterV2 } from "../Adapters/OmpAdapterV2.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { EffectOutboxV2, type OrchestrationEffectV2 } from "../EffectOutbox.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
-import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -338,7 +342,8 @@ const nativeFixture = Effect.fnUntraced(function* (
         }),
       ),
   };
-  const adapter = makeOmpAdapterV2({
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const adapter = yield* makeOmpAdapterV2({
     target: ompTarget,
     instanceId,
     settings: { binaryPath: "synthetic-omp", homePath: home },
@@ -440,11 +445,12 @@ const nativeFixture = Effect.fnUntraced(function* (
       }),
   });
   const database = makeSqlitePersistenceLive(config.dbPath).pipe(Layer.provide(NodeServices.layer));
-  const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
+  const runtime = ProviderReplayHarness.layerWithRegistry(
     { name, runtimePolicyOverride: { cwd } },
     makeLayer([adapter]),
     {
-      layerDatabase: database,
+      mcpProviderSessionsLayer: Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
+      databaseLayer: database,
       layerServerConfig: Layer.succeed(ServerConfig.ServerConfig, config),
       configureMcp: false,
       runEffectWorker: false,
@@ -600,6 +606,7 @@ const withNative = <A, E, R>(
         Layer.mergeAll(
           NodeServices.layer,
           idAllocatorLayer,
+          McpProviderSessions.layer,
           ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-conjunction-" }).pipe(
             Layer.provide(NodeServices.layer),
           ),

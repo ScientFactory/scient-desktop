@@ -81,6 +81,8 @@ import {
   HostPowerSnapshot,
 } from "./background.ts";
 import {
+  FilesystemGetMetadataInput,
+  FilesystemGetMetadataResult,
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -186,6 +188,7 @@ import {
   PullRequestDiffFileContentsResult,
   PullRequestFilesViewedResult,
   PullRequestInvalidateInput,
+  PullRequestReportStateInput,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestListStatsInput,
@@ -287,6 +290,7 @@ import {
   PreviewListResult,
   PreviewClearProfileError,
   PreviewClearProfileInput,
+  PreviewReportProfilesInput,
   PreviewNavigateInput,
   PreviewOpenInput,
   PreviewRefreshInput,
@@ -347,7 +351,12 @@ import {
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
-import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import {
+  StorageCleanupReport,
+  ServerSettings,
+  ServerSettingsError,
+  ServerSettingsPatch,
+} from "./settings.ts";
 import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
@@ -480,6 +489,7 @@ export const WS_METHODS = {
   // SCIENT-FORK:START — Scient file opening methods.
   ...SCIENT_FILE_OPENING_WS_METHODS,
   // SCIENT-FORK:END
+  filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
@@ -552,6 +562,7 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewClearProfile: "preview.clearProfile",
+  previewReportProfiles: "preview.reportProfiles",
   previewReportStatus: "preview.reportStatus",
 
   // Device methods
@@ -577,6 +588,8 @@ export const WS_METHODS = {
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
+  serverRunStorageCleanup: "server.runStorageCleanup",
+  serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetSettings: "server.getSettings",
   // SCIENT-FORK:START — Scient custom model methods.
   ...SCIENT_CUSTOM_MODEL_WS_METHODS,
@@ -650,6 +663,7 @@ export const WS_METHODS = {
   pullRequestsSetThreadResolution: "pullRequests.setThreadResolution",
   pullRequestsSetReaction: "pullRequests.setReaction",
   pullRequestsInvalidate: "pullRequests.invalidate",
+  pullRequestsReportState: "pullRequests.reportState",
   pullRequestsSubscribeRefreshes: "pullRequests.subscribeRefreshes",
   pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
@@ -849,6 +863,18 @@ const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUp
   payload: DesktopUpdateCommitInput,
   success: ServerSelfUpdateResult,
   error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
+});
+
+const WsServerRunStorageCleanupRpc = Rpc.make(WS_METHODS.serverRunStorageCleanup, {
+  payload: Schema.Struct({}),
+  success: StorageCleanupReport,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+const WsServerGetStorageCleanupReportRpc = Rpc.make(WS_METHODS.serverGetStorageCleanupReport, {
+  payload: Schema.Struct({}),
+  success: Schema.NullOr(StorageCleanupReport),
+  stream: true,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
@@ -1195,6 +1221,12 @@ const WsPullRequestsInvalidateRpc = Rpc.make(WS_METHODS.pullRequestsInvalidate, 
   error: PullRequestRpcError,
 });
 
+const WsPullRequestsReportStateRpc = Rpc.make(WS_METHODS.pullRequestsReportState, {
+  payload: PullRequestReportStateInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
 const WsPullRequestsSubscribeRefreshesRpc = Rpc.make(WS_METHODS.pullRequestsSubscribeRefreshes, {
   payload: Schema.Struct({}),
   success: NonNegativeInt,
@@ -1358,6 +1390,12 @@ const WsProjectsCreateNewRpc = Rpc.make(WS_METHODS.projectsCreateNew, {
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
+});
+
+const WsFilesystemGetMetadataRpc = Rpc.make(WS_METHODS.filesystemGetMetadata, {
+  payload: FilesystemGetMetadataInput,
+  success: FilesystemGetMetadataResult,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
@@ -1626,6 +1664,11 @@ const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
 const WsPreviewClearProfileRpc = Rpc.make(WS_METHODS.previewClearProfile, {
   payload: PreviewClearProfileInput,
   error: Schema.Union([PreviewClearProfileError, EnvironmentAuthorizationError]),
+});
+
+const WsPreviewReportProfilesRpc = Rpc.make(WS_METHODS.previewReportProfiles, {
+  payload: PreviewReportProfilesInput,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
@@ -2048,6 +2091,8 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerCommitDesktopUpdateRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
+  WsServerRunStorageCleanupRpc,
+  WsServerGetStorageCleanupReportRpc,
   WsServerGetSettingsRpc,
   WsServerSaveCustomModelRpc,
   WsServerRemoveCustomModelRpc,
@@ -2099,6 +2144,7 @@ export const WsRepositoryRpcGroup = RpcGroup.make(
   WsPullRequestsSetThreadResolutionRpc,
   WsPullRequestsSetReactionRpc,
   WsPullRequestsInvalidateRpc,
+  WsPullRequestsReportStateRpc,
   WsPullRequestsSubscribeRefreshesRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
@@ -2147,6 +2193,7 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsDocumentsReleaseDocumentPdfRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
+  WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
@@ -2191,6 +2238,7 @@ export const WsInteractiveRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewClearProfileRpc,
+  WsPreviewReportProfilesRpc,
   WsPreviewReportStatusRpc,
   WsSubscribePreviewEventsRpc,
 );

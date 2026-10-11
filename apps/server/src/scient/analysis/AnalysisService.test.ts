@@ -156,6 +156,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
       }),
   };
   const workspaceFileSystem = WorkspaceFileSystem.WorkspaceFileSystem.of({
+    getMetadata: () => Effect.die("getMetadata is not used by the analysis service test"),
     replaceFileRetained: () => Effect.die("Unexpected retained mutation"),
     removeFileRetained: () => Effect.die("Unexpected retained removal"),
     createBinaryFile: () => Effect.die("createBinaryFile is not used by the analysis service test"),

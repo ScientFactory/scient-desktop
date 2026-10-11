@@ -39,22 +39,21 @@ The current release-note format contains:
 - the exact semantic application version that owns the note;
 - an ISO calendar publication date;
 - one short headline;
-- one to seven stable, uniquely identified paragraphs for the main user-facing
+- one to nine stable, uniquely identified paragraphs for the main user-facing
   improvements; and
 - one required, unnumbered final `Also included` paragraph for smaller
   improvements that do not have a dedicated paragraph above.
 
 `Also included` is not a recap of the main paragraphs. Do not repeat their
-content there. The complete visible note is limited to 1,600 characters. A
+content there. The complete visible note is limited to 4,000 characters. A
 headline is limited to 80 characters, paragraph titles to 72, paragraph bodies
-to 240, and `Also included` to 320. These bounds keep the note readable while
+to 500, and `Also included` to 400. These bounds keep the note readable while
 leaving enough room for a release with several meaningful improvements.
 
-Scient 0.6.22 has an explicitly approved extended note: up to nine highlights,
-500 characters per description, 400 for `Also included`, and 4,000 characters
-of complete visible copy. Headline and title limits stay unchanged. This
-exception is keyed to that exact version in the shared validator, which both
-the app and release preflight use; all other releases retain the normal limits.
+These limits apply to every paragraph-format release note through the shared
+validator used by both the app and release preflight. No version-specific
+size exception is required. Historical legacy-format notes retain their
+existing five-highlight limit and original presentation.
 
 Descriptions may contain blank lines to separate paragraphs within a highlight.
 The app renders each paragraph separately, and release preflight indents the

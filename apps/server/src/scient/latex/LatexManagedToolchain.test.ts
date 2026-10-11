@@ -4,7 +4,7 @@ import * as NodeHttp from "node:http";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -262,8 +262,8 @@ const makeHarness = (input: {
       ),
       Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
       Layer.provideMerge(NodeServices.layer),
-      Layer.provide(Layer.succeed(HostProcessPlatform, input.platform ?? "win32")),
-      Layer.provide(Layer.succeed(HostProcessArchitecture, input.arch ?? "x64")),
+      Layer.provide(Layer.succeed(HostProcess.Platform, input.platform ?? "win32")),
+      Layer.provide(Layer.succeed(HostProcess.Architecture, input.arch ?? "x64")),
       Layer.provide(Layer.succeed(TinyTexManifestRef, input.manifest)),
     );
 

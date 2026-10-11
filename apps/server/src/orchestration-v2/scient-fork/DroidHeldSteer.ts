@@ -28,7 +28,7 @@ import type {
   OrchestrationEffectRequestV2,
   PendingOrchestrationEffectV2,
 } from "../EffectOutbox.ts";
-import type { IdAllocatorV2Shape } from "../IdAllocator.ts";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type {
   OrchestratorDispatchError,
   OrchestratorProjectionError,
@@ -40,7 +40,7 @@ import type {
   ProjectionRecords,
   ProjectionStoreV2Shape,
 } from "../ProjectionStore.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderSessionManagerV2Shape } from "../ProviderSessionManager.ts";
 import type { RuntimePolicyV2Shape } from "../RuntimePolicy.ts";
 
@@ -119,7 +119,7 @@ export const makeDroidHeldSteer = ({
   dispatchWithReceipt,
 }: {
   readonly DispatchError: typeof OrchestratorDispatchError;
-  readonly idAllocator: Pick<IdAllocatorV2Shape, "derive">;
+  readonly idAllocator: Pick<IdAllocator.IdAllocatorV2["Service"], "derive">;
   readonly projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">;
   readonly providerSessions: Pick<ProviderSessionManagerV2Shape, "get">;
   readonly runtimePolicy: Pick<RuntimePolicyV2Shape, "resolve">;

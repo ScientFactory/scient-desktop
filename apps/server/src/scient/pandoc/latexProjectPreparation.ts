@@ -11,7 +11,7 @@
  */
 import { parse } from "@unified-latex/unified-latex-util-parse";
 import type { DocumentWarning } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -154,7 +154,7 @@ export const prepareLatexProject = Effect.fn("scient.pandoc.prepareLatexProject"
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const workspace = path.resolve(workspaceRoot);
   const realWorkspace = yield* fs.realPath(workspace);
   const root = path.dirname(path.resolve(rootFile));

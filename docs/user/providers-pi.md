@@ -37,6 +37,18 @@ tested against Pi 0.85.1 and requires 0.84.4 or newer. The managed installer cov
 and Intel macOS, ARM64 and x64 Windows, and ARM64 and x64 glibc Linux. Musl Linux and other
 operating-system or architecture targets require a separately installed runtime.
 
+System Pi installations require Node.js 22.19 or newer. For an npm installation, use:
+
+```sh
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+```
+
+Run `pi`, then `/login` on the execution machine to connect your model provider.
+On a remote or headless server, connect over SSH and open the authorization URL on
+your own computer. If the callback cannot reach the server, paste the final redirect
+URL or authorization code back into Pi when prompted. Provider API-key environment
+variables can also be set in the Pi instance's settings; mark secret values as sensitive.
+
 Provider environment variables and launch arguments are available for installations that need a
 custom agent directory, endpoint, or model configuration. `--provider` must be paired with
 `--model`. Scient rejects launch arguments that change Pi's execution mode or select a session,
@@ -81,6 +93,11 @@ If discovery cannot complete, Scient keeps Pi available with the `Pi default` mo
 to let the interactive Pi session handle any startup prompt. The context meter appears once Pi
 reports usage for the thread, so it can wait for the first reply when a model provider reports
 usage only when a response completes.
+
+The thinking picker marks the discovered active model's configured level as its
+default without overriding it. Other models keep their Pi defaults when no level
+is selected. Extension dialogs appear in the composer; timed dialogs expire rather
+than accept a late answer. Native Pi sessions also contribute to usage reports.
 
 You can still configure models and API keys, or complete Pi's supported `/login` flow, in Pi itself
 on the execution machine. Refresh the provider catalog afterward. There is no universal **Sign in to Pi** or

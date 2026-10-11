@@ -6,7 +6,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   makeCodexReplayTranscript,
   codexReplayPreamble,
@@ -117,7 +118,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.continuationRequests, 0);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -365,7 +370,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           assert.lengthOf(harness.terminalEvents(), 1);
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 });

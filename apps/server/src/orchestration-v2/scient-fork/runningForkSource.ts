@@ -15,7 +15,7 @@ import {
   type ProviderTextSnapshotConsumerOwner,
   type ProviderTextSnapshotOwner,
   type ProviderTextSnapshotProjection,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderEventIngestorV2Shape } from "../ProviderEventIngestor.ts";
 import type * as ProjectionStore from "../ProjectionStore.ts";
 import type * as ProjectStore from "../ProjectStore.ts";

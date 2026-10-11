@@ -17,6 +17,8 @@ import {
   PDFViewer,
 } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
 
+import { observeResize } from "~/lib/observeResize";
+
 import { createPdfResizeSettlement } from "./pdfResizeSettlement";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -161,13 +163,16 @@ export function createPdfRuntime(input: {
     if (!destroyed) resizeSettlement.schedule();
   };
   let observedWidth = input.container.getBoundingClientRect().width;
-  const resizeObserver = new ResizeObserver(() => {
-    const nextWidth = input.container.getBoundingClientRect().width;
-    if (Math.abs(nextWidth - observedWidth) < 0.5) return;
-    observedWidth = nextWidth;
-    refreshForContainerSize();
-  });
-  resizeObserver.observe(input.container, { box: "border-box" });
+  const stopResize = observeResize(
+    input.container,
+    () => {
+      const nextWidth = input.container.getBoundingClientRect().width;
+      if (Math.abs(nextWidth - observedWidth) < 0.5) return;
+      observedWidth = nextWidth;
+      refreshForContainerSize();
+    },
+    { box: "border-box" },
+  );
 
   return {
     document: input.document,
@@ -182,7 +187,7 @@ export function createPdfRuntime(input: {
       if (destroyed) return;
       destroyed = true;
       viewerLifetime.abort();
-      resizeObserver.disconnect();
+      stopResize();
       resizeSettlement.cancel();
       viewer.cleanup();
       // PDF.js supports null to reset/cancel its page views; its declaration

@@ -7,7 +7,7 @@ import {
   isValidModelSegment,
   splitAgentModelSlug,
   thinkingLevelCapabilities,
-} from "../agentModel.ts";
+} from "@t3tools/provider-core/server/agentModel";
 
 export interface PiDiscoveredModel {
   readonly provider: string;

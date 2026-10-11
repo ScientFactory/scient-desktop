@@ -436,7 +436,7 @@ export function AnalysisArtifactStrip(props: {
       <div className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
         <button
           type="button"
-          className="flex min-w-0 items-center gap-1.5 rounded-sm font-medium text-foreground outline-none hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex min-w-0 items-center gap-1.5 rounded-sm font-medium text-foreground outline-none hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           aria-expanded={expanded}
           onClick={() => {
             setChoiceMenu(null);
@@ -475,7 +475,7 @@ export function AnalysisArtifactStrip(props: {
                 >
                   <button
                     type="button"
-                    className="block w-full cursor-pointer text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                    className="block w-full cursor-pointer text-left outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
                     disabled={(!card.preview && !card.interactive) || pendingAction !== null}
                     onPointerDown={(event) =>
                       beginArtifactDrag(event, card.artifact, card.preview, thumbnailUrl)

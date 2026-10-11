@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import { ExecutionRunId } from "@scientfactory/execution";
 import type { ScientLatexArtworkRequest, ScientLatexArtworkResult } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -49,8 +49,8 @@ const make = Effect.gen(function* () {
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const toolchains = yield* LatexToolchain;
   const packages = yield* LatexPackageInstaller;
-  const hostEnvironment = yield* HostProcessEnvironment;
-  const platform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
   const delimiter = platform === "win32" ? ";" : ":";
   const resolveExecutable = yield* SpawnExecutableResolution;
   const gate = yield* Semaphore.make(2);

@@ -27,17 +27,21 @@ describe("deferred Codex subscription sharing", () => {
     expect(decode({ setupMode: "existing" }).setupMode).toBe("existing");
     expect(decode({ setupMode: "managed" }).setupMode).toBe("managed");
   });
-  it("blocks new instance and legacy-settings activation", () => {
+  it("blocks new default and named instance activation", () => {
     expect(newlyRequestedCodexSubscriptionSharing(DEFAULT_SERVER_SETTINGS, managed)).toBe(id);
-    expect(
-      newlyRequestedCodexSubscriptionSharing(DEFAULT_SERVER_SETTINGS, {
-        ...DEFAULT_SERVER_SETTINGS,
-        providers: {
-          ...DEFAULT_SERVER_SETTINGS.providers,
-          codex: { ...DEFAULT_SERVER_SETTINGS.providers.codex, setupMode: "managed" },
+    const managedDefault = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        ...DEFAULT_SERVER_SETTINGS.providerInstances,
+        [ProviderInstanceId.make("codex")]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { setupMode: "managed" },
         },
-      }),
-    ).toBe("codex");
+      },
+    };
+    expect(newlyRequestedCodexSubscriptionSharing(DEFAULT_SERVER_SETTINGS, managedDefault)).toBe(
+      ProviderInstanceId.make("codex"),
+    );
   });
   it("allows unrelated updates, native configuration, and recovery from a saved unsupported mode", () => {
     expect(

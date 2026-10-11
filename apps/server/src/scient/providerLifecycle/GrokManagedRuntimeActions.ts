@@ -5,8 +5,8 @@ import {
   managedRuntimeTargetKey,
   resolveReviewedGrokArtifact,
 } from "@scientfactory/provider-runtime";
-import type { GrokSettings } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import type { GrokSettings } from "@t3tools/provider-grok/settings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -36,8 +36,8 @@ export const makeGrokManagedRuntimeResolution = Effect.fn("GrokManagedRuntime.ma
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly managedInstallationAllowed: boolean;
   }): Effect.fn.Return<GrokManagedRuntimeResolution, never> {
-    const platform = yield* HostProcessPlatform;
-    const arch = yield* HostProcessArchitecture;
+    const platform = yield* HostProcess.Platform;
+    const arch = yield* HostProcess.Architecture;
     const target = detectTargetSafely({ platform, arch });
     const artifact = target ? resolveReviewedGrokArtifact(target) : undefined;
     const targetLabel = target ? managedRuntimeTargetKey(target) : `${platform}-${arch}`;

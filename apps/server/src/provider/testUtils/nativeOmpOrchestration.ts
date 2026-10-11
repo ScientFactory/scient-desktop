@@ -18,14 +18,18 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import { ompTarget } from "../omp/OmpTarget.ts";
 import { scriptedOmpRpc } from "./scriptedOmpRpc.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { layerFromAdaptersEffect as makeLayerEffect } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
-import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import {
+  makeOmpAdapterV2,
+  type OmpAdapterV2Options,
+} from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
 
 /** Real native RPC, continuation worker and durable projection share one provider session. */
 export const nativeOmpOrchestration = Effect.fnUntraced(function* (
@@ -34,13 +38,13 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
     readonly eventQueueByteLimit?: number;
     readonly stateDir?: string;
     readonly attachmentsDir?: string;
-    readonly target?: Parameters<typeof makeOmpAdapterV2>[0]["target"];
+    readonly target?: OmpAdapterV2Options["target"];
     readonly instanceId?: ProviderInstanceId;
     readonly threadId?: ThreadId;
     readonly modelSelection?: ModelSelection;
     readonly environment?: NodeJS.ProcessEnv;
     readonly binaryPath?: string;
-    readonly makeProcess?: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
+    readonly makeProcess?: OmpAdapterV2Options["makeProcess"];
     readonly receiptTimeoutMs?: number;
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: NonNullable<
@@ -55,6 +59,7 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
   } = {},
 ) {
   const originalConfig = yield* ServerConfig.ServerConfig;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const config = {
     ...originalConfig,
     ...(input.stateDir ? { stateDir: input.stateDir } : {}),
@@ -73,7 +78,7 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
   const registry = makeLayerEffect(
     Effect.gen(function* () {
       return [
-        makeOmpAdapterV2({
+        yield* makeOmpAdapterV2({
           target: input.target ?? ompTarget,
           ...(input.eventQueueByteLimit === undefined
             ? {}
@@ -88,7 +93,7 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
           idAllocator: allocator,
           serverConfig: config,
           makeProcess: input.makeProcess ?? peer.makeProcess,
-          continuations: yield* ProviderContinuationRequests,
+          continuations: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         }),
       ];
     }),
@@ -98,6 +103,7 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
     registry,
     {
       configureMcp: input.configureMcp ?? false,
+      mcpProviderSessionsLayer: Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
       ...(input.mcpSessionRegistryLayer
         ? { mcpSessionRegistryLayer: input.mcpSessionRegistryLayer }
         : {}),

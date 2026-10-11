@@ -140,11 +140,11 @@ const makeRuntime = (
       runEffectWorker: false,
       configureMcp: false,
       forkGitWorkflowLayer: workflow,
-      layerDatabase: SqlitePersistenceMemory,
+      databaseLayer: SqlitePersistenceMemory,
       ...options,
     },
   ).pipe(
-    Layer.provideMerge(options.layerDatabase ?? SqlitePersistenceMemory),
+    Layer.provideMerge(options.databaseLayer ?? SqlitePersistenceMemory),
     Layer.provideMerge(vcsLayer),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -747,7 +747,7 @@ it.live.each(
           return { command, pending, commits, head };
         }).pipe(
           Effect.provide(
-            makeRuntime(gitLayer, { layerServerConfig: configLayer, layerDatabase: database }),
+            makeRuntime(gitLayer, { layerServerConfig: configLayer, databaseLayer: database }),
           ),
         ),
       );
@@ -783,7 +783,7 @@ it.live.each(
           Effect.provide(
             makeRuntime(gitLayer, {
               layerServerConfig: configLayer,
-              layerDatabase: database,
+              databaseLayer: database,
               runEffectWorker: true,
               recoverOnStartup: true,
             }),

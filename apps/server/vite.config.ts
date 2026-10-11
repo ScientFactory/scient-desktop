@@ -23,7 +23,11 @@ import { CLI_BUNDLE_ALIASES } from "../../scripts/lib/cli-bundle-aliases.ts";
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
-const cliBuildChannel = packageJson.version.includes("-nightly.") ? "nightly" : "latest";
+const cliBuildChannel = packageJson.version.includes("-beta.")
+  ? "beta"
+  : packageJson.version.includes("-nightly.")
+    ? "nightly"
+    : "latest";
 
 export default mergeConfig(
   baseConfig,
