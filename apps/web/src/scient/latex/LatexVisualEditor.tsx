@@ -1,4 +1,5 @@
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
+import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
 import { LatexStructuredSelection } from "./latexStructuredSelection";
 import { latexSelectionCommand, runLatexSelectionCommand } from "./latexSelectionSession";
 import { installLatexTextSelectionSession } from "./latexTextSelectionSession";
@@ -8149,6 +8150,14 @@ function LatexVisualEditorReady(
   const writingTextContents = {
     paragraphStyle: writingStyleItems,
     formatting: writingFormattingItems,
+    direction: (
+      <LatexDirectionMenuItems
+        editor={editor}
+        disabled={textReadOnly || editingTarget !== editor}
+        setup={mathSetupSource}
+        getSource={() => currentSource.current}
+      />
+    ),
     alignment: textBlockItems(["left-text", "right-text"]),
     commandScope: "latex",
   };

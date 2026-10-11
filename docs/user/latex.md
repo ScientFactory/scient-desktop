@@ -59,6 +59,13 @@ flow; formulas and source fields retain left-to-right entry. Supported English,
 Hebrew, LTR and RTL environments and inline language switches remain editable,
 including `\textenglish`, `\texthebrew`, `\LR`, `\RL` and
 `\foreignlanguage`. Existing language wrappers survive supported edits.
+In Visual, **Text > Direction** offers compact **LTR** and **RTL** controls for
+the current paragraph or selected paragraphs. They save explicit `LTR`/`RTL`
+environments, preserving inline formatting and math, and support Undo. Existing
+language blocks retain their language and font when a paragraph's direction is
+overridden. These controls require bidi support in the root (provided by the
+standard Hebrew Polyglossia setup or an explicit `bidi` package); they are
+disabled in object fields and unsupported paragraph containers.
 Document fonts and standard abstract, contents and caption labels follow the
 root's language setup. Custom or unsupported setups remain accessible in Source;
 the compiled PDF is authoritative. Language and font configuration is edited in
