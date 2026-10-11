@@ -12,6 +12,7 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { makeDesktopVoiceBridge } from "./scient/voice/preloadBridge.ts";
+import { installSpellingSampler, type SampleOutcome } from "./scient/spelling/preloadSampler.ts";
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -34,6 +35,18 @@ exposeClerkBridge({ passkeys: true });
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
 const clientPlatform = process.platform;
+
+// SCIENT-FORK:START — spelling dictionaries follow the language being written.
+if (clientPlatform !== "darwin") {
+  const spellingSampler = installSpellingSampler((sample): Promise<SampleOutcome> =>
+    ipcRenderer
+      .invoke(IpcChannels.NOTE_SPELLING_SAMPLE_CHANNEL, sample)
+      .then((outcome: SampleOutcome) => outcome)
+      .catch(() => "failed"),
+  );
+  ipcRenderer.on(IpcChannels.SPELLING_DICTIONARY_READY_CHANNEL, spellingSampler.dictionaryReady);
+}
+// SCIENT-FORK:END
 
 if (clientPlatform === "darwin") {
   // Native window buttons do not scale with Chromium zoom. Keep their reserved
