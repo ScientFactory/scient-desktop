@@ -31,14 +31,9 @@ export function LatexDirectionMenuItems({
           key={direction}
           value={direction}
           aria-label={direction === "ltr" ? "Left to right" : "Right to left"}
-          title={
-            !language.bidi
-              ? "Paragraph direction requires bidi support in the document root."
-              : undefined
-          }
-          disabled={disabled || !editor?.isEditable || !selected || !language.bidi}
+          disabled={disabled || !editor?.isEditable || !selected}
           onClick={() => {
-            if (!editor || disabled || !editor.isEditable || !language.bidi) return;
+            if (!editor || disabled || !editor.isEditable) return;
             if (
               setLatexParagraphDirection(
                 editor.state,

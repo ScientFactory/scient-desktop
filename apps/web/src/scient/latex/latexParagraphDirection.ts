@@ -1,11 +1,7 @@
 import type { EditorState, Transaction } from "@tiptap/pm/state";
 import { TextSelection } from "@tiptap/pm/state";
 import { closeHistory } from "@tiptap/pm/history";
-import {
-  latexDirectionOpening,
-  latexDocumentLanguage,
-  type LatexTextDirection,
-} from "./latexLanguage";
+import { latexDirectionOpening, type LatexTextDirection } from "./latexLanguage";
 import { projectLatexVisualDocument, serializeLatexVisualBlock } from "./latexVisualDocument";
 
 function paragraphs(state: EditorState) {
@@ -85,8 +81,7 @@ export function setLatexParagraphDirection(
   source: string,
   setup: string,
 ): boolean {
-  if (!latexDocumentLanguage(setup).bidi || !latexParagraphDirection(state, direction))
-    return false;
+  if (!latexParagraphDirection(state, direction)) return false;
   const type = state.schema.nodes.latexScientific;
   if (!type) return false;
   const environment = direction === "rtl" ? "RTL" : "LTR";

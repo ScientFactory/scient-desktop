@@ -51,8 +51,8 @@ const setup =
   "\\documentclass{article}\n\\usepackage{polyglossia}\n\\setdefaultlanguage{hebrew}\n\\setotherlanguage{english}\n";
 const document = (body: string) => setup + "\\begin{document}\n" + body + "\n\\end{document}\n";
 
-function fixture(body: string) {
-  const source = document(body);
+function fixture(body: string, rootSetup = setup) {
+  const source = rootSetup + "\\begin{document}\n" + body + "\n\\end{document}\n";
   const projection = projectLatexVisualDocument(source);
   let state = EditorState.create({
     schema,
@@ -65,7 +65,7 @@ function fixture(body: string) {
   const select = (from: number, to = from) =>
     dispatch(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
   const set = (direction: "ltr" | "rtl") => {
-    const result = setLatexParagraphDirection(state, dispatch, direction, source, setup);
+    const result = setLatexParagraphDirection(state, dispatch, direction, source, rootSetup);
     dispatch(closeHistory(state.tr));
     return result;
   };
@@ -84,6 +84,21 @@ function fixture(body: string) {
 }
 
 describe("LaTeX paragraph direction", () => {
+  it("enables direction on a plain English document and saves the necessary setup", () => {
+    const test = fixture(
+      "Text \\textbf{bold} $x^2$.\n\nNeighbour.",
+      "\\documentclass{article}\n\\usepackage{hyperref}\n",
+    );
+    test.select(3);
+    expect(test.set("rtl")).toBe(true);
+    expect(test.output()).toBe(
+      "% !TEX program = xelatex\n\\documentclass{article}\n\\usepackage{hyperref}\n\\usepackage{bidi}\n\\begin{document}\n\\begin{RTL}\nText \\textbf{bold} $x^2$.\n\\end{RTL}\n\nNeighbour.\n\\end{document}\n",
+    );
+    expect(undo(test.state, test.dispatch)).toBe(true);
+    expect(test.state.doc.firstChild?.type.name).toBe("paragraph");
+    expect(test.state.doc.textContent).toBe("Text bold .Neighbour.");
+  });
+
   it("retains command spelling, comments and CRLF inside the selected paragraph", () => {
     const test = fixture("A \\emph{word} % retained comment\r\nand text.");
     test.select(2);
@@ -164,22 +179,12 @@ describe("LaTeX paragraph direction", () => {
     );
   });
 
-  it("refuses objects, ranges containing headings, and setups without bidi", () => {
+  it("refuses objects and ranges containing headings", () => {
     const test = fixture("Text.\n\n\\section{Heading}\n\nEnd.");
     test.dispatch(test.state.tr.setSelection(NodeSelection.create(test.state.doc, 0)));
     expect(test.set("ltr")).toBe(false);
     test.select(2, test.state.doc.content.size - 2);
     expect(test.set("ltr")).toBe(false);
-    test.select(2);
-    expect(
-      setLatexParagraphDirection(
-        test.state,
-        test.dispatch,
-        "rtl",
-        test.source,
-        "\\documentclass{article}",
-      ),
-    ).toBe(false);
     expect(test.output()).toBe(test.source);
   });
 });

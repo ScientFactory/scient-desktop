@@ -1,4 +1,9 @@
 import type { JSONContent } from "@tiptap/core";
+import {
+  introducesLatexParagraphDirection,
+  latexParagraphDirectionSupported,
+  prepareLatexParagraphDirectionSetup,
+} from "./latexParagraphDirectionSetup";
 import { latexDirectionMark } from "./latexLanguage";
 import { latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
 import { setLatexEnvironmentOption } from "./latexObjectProperties";
@@ -6695,7 +6700,10 @@ export function applyLatexVisualDocumentChange(
     ...newMathSymbolPackages(activeLatexSource(previousSource), activeLatexSource(replacement)),
     ...newLatexCommandPackages(activeLatexSource(previousSource), activeLatexSource(replacement)),
   ]);
-  if (addedEnvironments.size || requiredPackages.size) {
+  const needsDirectionSetup =
+    introducesLatexParagraphDirection(previousNodes, newChanged) &&
+    !latexParagraphDirectionSupported(ownPreamble ? source : (context?.rootSource ?? ""));
+  if (addedEnvironments.size || requiredPackages.size || needsDirectionSetup) {
     if (!root || findDelimiter(root, "\\begin{document}", 0) < 0) {
       context?.onMissingRequirement?.(
         "Choose the root document before inserting content that needs LaTeX packages or declarations.",
@@ -6706,6 +6714,11 @@ export function applyLatexVisualDocumentChange(
     prepared = ensureLatexMenuColors(prepared, replacement, eol);
     prepared = ensureMathSymbolDefinitions(prepared, replacement, eol);
     prepared = ensureScientificEnvironmentDeclarations(prepared, addedEnvironments, eol);
+    if (needsDirectionSetup) {
+      const directionSetup = prepareLatexParagraphDirectionSetup(prepared);
+      if (!directionSetup) return null;
+      prepared = directionSetup.source;
+    }
     if (!ownPreamble && prepared !== root && !context?.allowRootUpdates) {
       context?.onMissingRequirement?.(
         "This insertion needs packages or declarations in the root document. Add them in the root's Source view, then try again.",

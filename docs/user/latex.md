@@ -63,9 +63,11 @@ In Visual, **Text > Direction** offers compact **LTR** and **RTL** controls for
 the current paragraph or selected paragraphs. They save explicit `LTR`/`RTL`
 environments, preserving inline formatting and math, and support Undo. Existing
 language blocks retain their language and font when a paragraph's direction is
-overridden. These controls require bidi support in the root (provided by the
-standard Hebrew Polyglossia setup or an explicit `bidi` package); they are
-disabled in object fields and unsupported paragraph containers.
+overridden. If the root has no bidi support, the first direction action adds
+`bidi` and selects XeLaTeX, or adds `luabidi` when LuaLaTeX is already selected.
+The document's language and fonts are retained. Controls are disabled in object
+fields and unsupported paragraph containers; a separate root must be editable
+when its setup needs updating.
 Document fonts and standard abstract, contents and caption labels follow the
 root's language setup. Custom or unsupported setups remain accessible in Source;
 the compiled PDF is authoritative. Language and font configuration is edited in

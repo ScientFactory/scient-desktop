@@ -32,6 +32,7 @@ function MenuPopup({
   collisionAvoidance,
   keepMounted = false,
   padding = "default",
+  width = "default",
   "data-writing-menu-owner": explicitOwner,
   ...props
 }: MenuPrimitive.Popup.Props & {
@@ -43,6 +44,7 @@ function MenuPopup({
   collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
   keepMounted?: boolean;
   padding?: "default" | "compact";
+  width?: "default" | "compact";
   "data-writing-menu-owner"?: string;
 }) {
   const inheritedOwner = useContext(MenuOwnerContext);
@@ -67,7 +69,10 @@ function MenuPopup({
             // the topmost row would stay unhoverable without this opt-out.
             "[-webkit-app-region:no-drag]",
             // Menus size to their content from one minimum, never past the viewport.
-            "min-w-[min(10rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
+            "max-w-[calc(100vw-2rem)]",
+            width === "compact"
+              ? "min-w-[min(8rem,calc(100vw-2rem))]"
+              : "min-w-[min(10rem,calc(100vw-2rem))]",
             className,
           )}
           data-slot="menu-popup"
@@ -384,6 +389,7 @@ function MenuSubPopup({
   align = "start",
   side = "inline-end",
   collisionAvoidance,
+  width = "default",
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -391,11 +397,13 @@ function MenuSubPopup({
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
   collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
+  width?: "default" | "compact";
 }) {
   const defaultAlignOffset = align !== "center" ? -5 : undefined;
 
   return (
     <MenuPopup
+      width={width}
       align={align}
       alignOffset={alignOffset ?? defaultAlignOffset}
       className={className}
