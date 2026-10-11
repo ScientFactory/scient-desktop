@@ -244,6 +244,7 @@ export function dismissContextMenu(): void {
 export function showContextMenuFallback<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },
+  selectionOwnerId?: string,
 ): Promise<T | null> {
   return new Promise<T | null>((resolve) => {
     const previouslyFocusedElement =
@@ -322,6 +323,7 @@ export function showContextMenuFallback<T extends string>(
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
+      if (selectionOwnerId) menu.dataset.writingMenuOwner = selectionOwnerId;
 
       const inner = document.createElement("div");
       inner.className =

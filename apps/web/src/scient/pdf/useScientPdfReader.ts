@@ -553,24 +553,30 @@ export function useScientPdfReader(input: {
         runtime.viewer.currentPageNumber = page;
         return;
       }
+      const { pageWidth, pageX, pageY } = pageView.viewport.rawDims;
+      const pdfX = Math.max(pageX, Math.min(pageX + pageWidth, target.x));
+      const pdfY = Math.max(pageY, Math.min(pageY + pageHeight, pageHeight - target.y));
+      runtime.cancelContainerSizeRefresh();
       runtime.viewer.scrollPageIntoView({
         pageNumber: page,
         // SyncTeX measures from the top-left in 72-dpi big points; PDF
         // destinations measure from the bottom-left in the same unit.
-        destArray: [null, { name: "XYZ" }, target.x, pageHeight - target.y, null],
+        destArray: [null, { name: "XYZ" }, pdfX, pdfY, null],
+        center: "both",
         allowNegativeOffset: true,
         ignoreDestinationZoom: true,
       });
+      // Page-change auto-fit must not restore the previous view over this jump.
+      runtime.viewer.update();
+      runtime.cancelContainerSizeRefresh();
       syncMarkerFrameRef.current = requestAnimationFrame(() => {
         syncMarkerFrameRef.current = null;
+        if (runtimeRef.current !== runtime) return;
         const pageElement = presentationRef.current?.container.querySelector<HTMLElement>(
           `.page[data-page-number="${page}"]`,
         );
         if (pageElement === undefined || pageElement === null) return;
-        const [rawLeft, rawTop] = pageView.viewport.convertToViewportPoint(
-          target.x,
-          pageHeight - target.y,
-        );
+        const [rawLeft, rawTop] = pageView.viewport.convertToViewportPoint(pdfX, pdfY);
         const marker = document.createElement("span");
         marker.className = "scient-pdf-sync-marker";
         marker.setAttribute("aria-hidden", "true");

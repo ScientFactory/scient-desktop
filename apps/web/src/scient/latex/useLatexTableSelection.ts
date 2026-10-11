@@ -137,6 +137,17 @@ export function useLatexTableSelection(props: {
         if (!range) return null;
         const node = current.current.editor.state.doc.nodeAt(current.current.getPos() ?? -1);
         return {
+          get content() {
+            return {
+              text: current.current.onClipboard(range) ?? "",
+              from: 0,
+              to: 1,
+              kind: "cells" as const,
+            };
+          },
+          isCurrent: () =>
+            root.isConnected &&
+            current.current.editor.state.doc.nodeAt(current.current.getPos() ?? -1) === node,
           path: [
             ...latexContainerScope(root),
             "Table",

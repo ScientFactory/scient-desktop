@@ -438,6 +438,11 @@
   overscroll-behavior: contain;
   overflow-anchor: none;
 }
+
+[data-latex-source-sync] {
+  outline: 2px solid color-mix(in srgb, var(--primary) 65%, transparent);
+  outline-offset: 3px;
+}
 .scient-latex-page-zoom-frame {
   position: relative;
   flex: none;
@@ -3029,7 +3034,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   margin-inline: 2.5em;
 }
 .scient-latex-scientific-structure[data-run-in] > .scient-latex-scientific-heading {
-  float: left;
+  float: inline-start;
   margin-inline-end: var(--scient-latex-theorem-head-sep, 0.5em);
   padding: 0;
 }
@@ -3046,7 +3051,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   > [data-node-view-content-react]
   > p:last-child::after {
   content: "";
-  float: right;
+  float: inline-end;
   box-sizing: border-box;
   width: 0.6em;
   height: 0.675em;

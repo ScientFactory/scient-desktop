@@ -45,6 +45,39 @@ describe("SyncTexRuntime", () => {
     expect(syncTexRuntimePlatformKey("win32", "arm64")).toBeNull();
   });
 
+  it.effect("finds a helper staged after an earlier missing-runtime request", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "synctex-runtime-repair-" });
+      const executable = path.join(root, "synctex");
+      yield* Effect.gen(function* () {
+        const runtime = yield* SyncTexRuntime;
+        const missing = yield* Effect.flip(runtime.resolve);
+        expect(missing.reason).toBe("missing");
+
+        const bytes = new TextEncoder().encode("repaired helper");
+        yield* fileSystem.writeFile(executable, bytes);
+        const receipt = yield* encodeUnknownJson({
+          schemaVersion: 1,
+          component: "synctex",
+          cliVersion: "1.7",
+          parserVersion: "1.31",
+          platformKey: "darwin-arm64",
+          files: [
+            {
+              file: "synctex",
+              size: bytes.byteLength,
+              sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+            },
+          ],
+        });
+        yield* fileSystem.writeFileString(path.join(root, "provenance.json"), receipt);
+        expect(yield* runtime.resolve).toEqual({ command: executable, source: "bundled" });
+      }).pipe(Effect.provide(runtimeLayer(executable, root)));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("accepts an exact verified helper and rejects modified bytes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

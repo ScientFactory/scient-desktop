@@ -6055,6 +6055,32 @@ function inlineEditorUnits(nodes: readonly JSONContent[]): JSONContent[] {
   );
 }
 
+/** Exact supported paragraph offsets; callers fall back to the containing source block. */
+export function latexVisualInlineSourceRange(
+  block: LatexVisualSourceBlock,
+  from: number,
+  to: number,
+) {
+  if (block.node.type !== "paragraph" || from < 0 || to < from) return null;
+  const units = inlineSourceUnits(block.source);
+  const nodes = inlineEditorUnits(block.node.content ?? []);
+  if (
+    !units ||
+    units.length !== nodes.length ||
+    units.some((unit, index) => unit.key !== latexVisualNodeSignature(nodes[index]!))
+  )
+    return null;
+  let position = 0;
+  const selected = units.filter((unit) => {
+    const start = position;
+    position += unit.node.type === "text" ? (unit.node.text?.length ?? 0) : 1;
+    return from === to ? start <= from && position > from : position > from && start < to;
+  });
+  return selected.length
+    ? { from: block.from + selected[0]!.from, to: block.from + selected.at(-1)!.to }
+    : null;
+}
+
 /** A paragraph split keeps each surviving token's original TeX spelling. */
 function splitParagraphSource(
   block: LatexVisualSourceBlock,

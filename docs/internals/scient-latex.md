@@ -688,6 +688,12 @@ back to an arbitrary `synctex` on `PATH`. Windows ships its native helper as a
 desktop resource and Linux x64 inside the WSL server sidecar. Remote server
 assets carry every released platform key.
 
+Development servers also resolve the staged helper under the checkout's
+`native/synctex-runtime/<platform-key>/`, whether running from source or a server
+bundle. Failed resolution is retried on the next navigation request, so staging
+or repairing the helper does not leave a running server stuck on an earlier
+missing or damaged result. Successful verification remains cached.
+
 Forward search starts on a plain double-click in the source editor only while
 Split is already open and asks `synctex view` for the current successful
 descriptor's exact artifact/revision. The inherited editor does not expose its
@@ -697,8 +703,10 @@ bidirectional text. It includes the reader's current page as a disambiguation hi
 returns ordered candidates: Scient preserves that order, uses the first valid
 target point (`x`/`y`, not the potentially page-spanning `h`/`v` enclosing box
 reported for some RTL material), converts that top-left big-point coordinate
-into PDF.js's bottom-left coordinate system, scrolls, and briefly marks the
-destination. If an engine records only line-level locations for a source line,
+into PDF.js's bottom-left coordinate system, bounds it to the page and centers
+it in the PDF viewport at the current zoom, then briefly marks the destination.
+The jump cancels pending page-change auto-fit so it cannot restore an earlier
+view over the destination. If an engine records only line-level locations for a source line,
 different columns can legitimately return the same candidates; Scient keeps
 the official first candidate instead of inventing a more precise PDF position.
 

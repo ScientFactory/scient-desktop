@@ -19,6 +19,10 @@ Each menu has the same name, place and order in both editors; each editor lists
 only what its file format can save. The LaTeX bar stays visible and uses More
 when the pane is narrow. Markdown retains its hide-formatting-tools handle.
 
+In LaTeX Split, keep the Visual/PDF switch in its existing location. Order it
+Visual then PDF, matching the regular view selector; the overflow menu uses the
+same order.
+
 ## Command homes
 
 | Command                                     | Home / decision                                                              |
@@ -271,6 +275,36 @@ Detailed placement and implementation remain future work.
   retain existing defaults and provide a reset option for custom bindings.
 
 ## Selection and navigation rules
+
+Visual selection actions reuse Markdown's floating **Ask in chat** control; the
+fixed writing bar stays unchanged. Quotes capture selected prose, clean LaTeX for
+math, and the existing table-cell clipboard representation. Opening the action
+and its question popover retains Visual's selection. In Split with Visual on the
+right, **double-click** reveals the corresponding current draft in
+the source pane, including an included file, while keeping Visual mounted.
+The source pane has no separate path row; document identity stays in the existing header, as in PDF Split.
+Hovering inside the source pane shows no pane-wide tooltip in Source or either Split preview.
+Double-clicking a source line in that Split layout centers its mapped block in
+Visual and briefly marks it, preserving editing focus and selection. Both
+directions use the current draft and include ownership; no PDF build is needed.
+Ctrl/Command-double-click remains available too. Prose clicks map to the clicked
+text's source line; math and structured objects use their containing source block.
+Citation links reopen LaTeX in Split and verify the captured source before
+highlighting it. These paths are implemented; interaction qualification remains
+pending. Source anchors may enclose an equation/block, and selections spanning
+different source files currently require separate quotes.
+
+The same **Ask in chat** action is connected to source selections in the shared
+file editor, including LaTeX Source/Split, ordinary code files, compute source,
+and read-only code previews. Markdown code fences retain their existing selection
+action. Source quotes capture exact code and file/revision coordinates; reopening
+uses Source and verifies a unique current match before selecting it. Existing
+rendered Markdown citations retain their original reopening behavior.
+
+Right-clicking inside math opens the shared editing context menu with Cut, Copy,
+Paste and Select All. Clipboard actions use the existing math handlers, including
+cell rectangles; Select All follows the same scope expansion as Ctrl/Command+A.
+Opening the menu retains the math selection, and stale captures are not replayed.
 
 Symbols opens explicitly from **Math → Symbols** or **Alt+I, then S**.
 The local implementation replaces the Ctrl+Space default and consumes palette

@@ -1488,7 +1488,9 @@ an extra line. Standard theorem/proof spacing uses the document's base font size
 quote wrappers use the standard 2.5em inset. Optional theorem notes remain upright
 and normal weight, and a proof's optional argument replaces its heading.
 The heading and the first paragraph share uncontained inline flow, including in
-windowed reading and measurement. Subsequent lines regain the full body width;
+windowed reading and measurement. Headings float at the local inline start, so
+Hebrew statements begin on the right and English statements begin on the left.
+Subsequent lines regain the full body width;
 the remaining paragraphs and formulas retain viewport containment. Normal-weight
 notes use a tight inline strut so differing bold/regular font metrics cannot make
 a one-line heading indent the second body line. Titles keep the same overlay
@@ -1498,7 +1500,8 @@ the standard half-em gap.
 Adjacent statements combine their natural environment skips using the larger
 value rather than summing both margins, while retaining the document paragraph
 gap. Quotes and other layout containers retain their separate spacing rules.
-Default amsthm proofs show an open square at the right end of the final paragraph,
+Default amsthm proofs show an open square at the inline end of the final paragraph
+(right for LTR, left for RTL),
 or on a following line after a final display/list. This CSS marker does not become
 an editor node, copied content or LaTeX source. Pagination includes its height.
 Custom proof definitions and preamble QED overrides disable this inferred marker.
@@ -1801,6 +1804,57 @@ delayed writer cannot intentionally replace recovery data it did not observe;
 failed writes retain live input and surface a document-level recovery notice.
 These are synchronous identity checks, not an atomic cross-window storage
 transaction. Workspace persistence sessions remain authoritative for disk saves.
+
+## Visual selection navigation and chat citations
+
+`latexSelectionSession` exposes model-owned read-only content and geometry from
+the existing prose, math, textarea and table participants. `latexVisualSelection`
+resolves that capture through the current projection; `LatexProjectVisualEditor`
+maps its source range to an original file and its current draft revision. Supported
+paragraphs reuse the inline token map. Nested math/cell selections quote the exact
+selected content but anchor navigation to their containing source block. Source
+IDs can move after live typing, so the adapter verifies structural position and
+content instead of searching for repeated text.
+
+Double-click in Visual Split uses `LatexVisualSourcePane` to reveal
+the owning file without replacing or blurring Visual. It shares the document's
+persistence lease. `LatexCitationActions` feeds the existing selection toolbar
+and composer callback; portal ownership retains the native editing selection.
+The comment bubble reads model geometry and reuses the selection painter rather
+than highlighting a whole math DOM node. Stale models and unpublished fields
+cannot authorize a citation. A selection crossing different source files currently
+requires separate quotes.
+
+The optional `FileCitation.latex` metadata identifies the root and a hash of the
+source anchor; existing Markdown citations omit it and keep their existing path.
+LaTeX quote coordinates describe the captured fragment, never MathLive source
+offsets. Reopening shows Split, verifies the current draft and source hash, and
+accepts a moved source anchor only when its context identifies one match. An
+unverified quote falls back to its recorded line with a notice and no range fill.
+Static checks cover the new code; browser interaction qualification is pending.
+
+Source selections use the shared file editor's `SourceCitationActions`, also used
+by ordinary code files and compute editors. They capture raw UTF-16 source
+offsets, exact selected code and the current draft hash. `FileCitation.sourceSelection`
+keeps this mapping separate from rendered Markdown positions. Source quotes reopen
+in Source; LaTeX quotes retain the document root when captured from an included
+file. Read-only code previews use verified rendered rows and the same chat action.
+Activating the action validates the captured quote against the current source
+version and owner, independently of editor focus or the live selection. A focus
+handoff to the action retains the quote; a source change requires a new selection.
+
+In Split with Visual, a source double-click reverses the project's include spans
+for the exact displayed draft. It reveals the first mapped Visual block at the
+current zoom and briefly outlines it without changing editing selection or focus.
+The reveal measures after pagination, scrolls only Visual's own pane, and refuses
+stale or unmapped source rather than navigating to unrelated content. Visual's
+double-click uses the same ownership mapping to reveal Source,
+including an included file while keeping the document editor mounted.
+The clicked node-view DOM identifies the source owner, including math shadow
+hosts and virtualized prose. Paragraph pointer coordinates resolve precise
+source lines where the inline map supports them; other objects reveal their
+containing block. Navigation waits for edit publication before resolving the
+current project mapping. Ctrl/Command-double-click remains available too.
 
 ## Adapter direction
 

@@ -1,4 +1,5 @@
 import { Extension } from "@tiptap/core";
+import { observeResize } from "~/lib/observeResize";
 import type { Mark, Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
   AllSelection,
@@ -10,6 +11,7 @@ import {
 import type { EditorView } from "@tiptap/pm/view";
 import { registerLatexSelection } from "./latexSelectionSession";
 import { latexInlineEditingScopes } from "./latexVisualDocument";
+import { latexSelectedDocumentText } from "./latexSelectionContent";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
 import {
   isLatexSelectionObject,
@@ -302,17 +304,15 @@ export const LatexStructuredSelection = Extension.create<{
           },
         },
         view(view) {
-          let observed = new Set<Element>();
+          const observed = new Map<Element, () => void>();
           const refreshGeometry = () => {
             if (!view.dom.hasAttribute("data-scient-active-slot")) {
-              resize?.disconnect();
+              for (const stop of observed.values()) stop();
               observed.clear();
               return;
             }
             session.refresh();
           };
-          const resize =
-            typeof ResizeObserver === "undefined" ? null : new ResizeObserver(refreshGeometry);
           const session = registerLatexSelection({
             element: view.dom,
             enterFrom: (child) => {
@@ -323,10 +323,23 @@ export const LatexStructuredSelection = Extension.create<{
                 view.dispatch(view.state.tr.setSelection(selection));
             },
             capture: () => {
+              const doc = view.state.doc;
+              const { from, to } = view.state.selection;
               bookmark = view.state.selection.getBookmark();
               capturedMarks = view.state.storedMarks;
               const scopes = proseScopes(view, source(view.state.selection.$head.parent));
               return {
+                get content() {
+                  return {
+                    text: latexSelectedDocumentText(doc, from, to),
+                    from,
+                    to,
+                    kind: "prose" as const,
+                  };
+                },
+                isCurrent: () => !view.isDestroyed && view.state.doc === doc,
+                contentRects: () =>
+                  view.state.doc === doc ? documentRangeRects(view, from, to) : [],
                 path: [
                   ...latexContainerScope(view.dom),
                   ...scopes
@@ -350,11 +363,14 @@ export const LatexStructuredSelection = Extension.create<{
                     selection && !selection.empty
                       ? documentRangeRects(view, selection.from, selection.to, measured)
                       : [];
-                  for (const element of observed)
-                    if (!measured.has(element)) resize?.unobserve(element);
+                  for (const [element, stop] of observed)
+                    if (!measured.has(element)) {
+                      stop();
+                      observed.delete(element);
+                    }
                   for (const element of measured)
-                    if (!observed.has(element)) resize?.observe(element);
-                  observed = measured;
+                    if (!observed.has(element))
+                      observed.set(element, observeResize(element, refreshGeometry));
                   return rects;
                 },
                 restore: (focus) => {
@@ -512,7 +528,8 @@ export const LatexStructuredSelection = Extension.create<{
             update: () => session.refresh(),
             destroy: () => {
               mutations.disconnect();
-              resize?.disconnect();
+              for (const stop of observed.values()) stop();
+              observed.clear();
               view.dom.ownerDocument.fonts?.removeEventListener("loadingdone", refreshGeometry);
               session.dispose();
             },

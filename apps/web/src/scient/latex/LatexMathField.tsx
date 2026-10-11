@@ -2,6 +2,10 @@ import { attachShortcutHost } from "../keyboard/host";
 import { getKeyboardPreferences, subscribeKeyboardPreferences } from "../keyboard/preferences";
 import { mathCommand } from "../math/input/catalog";
 import { MathfieldElement, type MacroDictionary } from "mathlive";
+import { readLocalApi } from "~/localApi";
+import { showContextMenuFallback } from "~/contextMenuFallback";
+import { toastManager } from "~/components/ui/toast";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import {
   MATH_FORMATTING_ARGUMENTS,
   enterMathArgument,
@@ -49,7 +53,12 @@ import { mathLiveFontDeclarations } from "./mathLiveFontDeclarations";
 import { installMathCommandCompletion } from "./mathLiveCommandCompletion";
 import { installLatexMathViewport } from "./latexMathViewport";
 import { installMathSelectionSession } from "./mathSelectionSession";
-import { latexSelectionCommand, runLatexSelectionCommand } from "./latexSelectionSession";
+import {
+  latexSelectionCommand,
+  runLatexSelectionCommand,
+  readLatexSelection,
+  retainLatexSelection,
+} from "./latexSelectionSession";
 import {
   createMathSelectionGeometry,
   applyMathSelection,
@@ -620,9 +629,62 @@ export const LatexMathField = forwardRef<
         composing = false;
         if (dirty.current) publication.schedule(publish);
       };
-      const contextMenu = (event: Event) => {
+      const contextMenu = (event: MouseEvent) => {
         event.preventDefault();
         event.stopImmediatePropagation();
+        stopPointerSelection();
+        math.focus();
+        const root = math.closest<HTMLElement>(".scient-latex-visual-workspace") ?? math;
+        const reading = readLatexSelection(root);
+        if (reading?.element !== math) return;
+        const snapshot = reading.snapshot;
+        const selected = Boolean(rectangle) || !math.selectionIsCollapsed;
+        const items = [
+          { id: "cut", label: "Cut", disabled: math.readOnly || !selected },
+          { id: "copy", label: "Copy", disabled: !selected },
+          { id: "paste", label: "Paste", disabled: math.readOnly },
+          { id: "selectAll", label: "Select All", disabled: mathFieldIsEmpty(math) },
+        ] as const;
+        const releaseSelection = retainLatexSelection(root);
+        const position = { x: event.clientX, y: event.clientY };
+        const api = readLocalApi();
+        const menu =
+          window.desktopBridge && api
+            ? api.contextMenu.show(items, position)
+            : showContextMenuFallback(items, position, root.id);
+        void menu
+          .then(async (action) => {
+            releaseSelection?.();
+            if (!action || !snapshot.restore(true)) return;
+            if (action === "selectAll") runLatexSelectionCommand(math, "selectionExpand");
+            else if (action === "copy" || (action === "cut" && !math.readOnly)) {
+              const source = clipboardSource();
+              const selection = selectionKey();
+              const cells = rectangle;
+              const copied = await writeTextToClipboard(source, "math", {
+                "application/x-latex": source,
+              });
+              // Clipboard permissions may take time. Never cut a later selection.
+              if (
+                !copied ||
+                action !== "cut" ||
+                math.readOnly ||
+                snapshot.isCurrent?.() === false ||
+                selectionKey() !== selection ||
+                rectangle !== cells
+              )
+                return;
+              if (cells) {
+                applyingSelection = true;
+                if (clearMathRectangle(math, cells)) rectangle = null;
+                applyingSelection = false;
+              } else math.executeCommand("deleteBackward");
+            } else if (!math.readOnly) math.executeCommand("pasteFromClipboard");
+          })
+          .catch(() => {
+            releaseSelection?.();
+            toastManager.add({ type: "error", title: "Could not complete the editing action" });
+          });
       };
       let previousMode = math.mode;
       const modeChange = () => {
@@ -1195,16 +1257,19 @@ export const LatexMathField = forwardRef<
           else runLatexSelectionCommand(math, "selectionScopeExpand");
         }
       };
-      const copied = (event: ClipboardEvent) => {
-        if (!event.clipboardData) return;
+      const clipboardSource = () => {
         const tex =
           rectangle?.source ??
           (math.selectionIsCollapsed
             ? math.getValue("latex-without-placeholders")
             : math.getValue(math.selection, "latex-without-placeholders"));
-        const source = copyFormat.current(
+        return copyFormat.current(
           mathTextFormattingSource(tex, initialMacros.current, completionContext.current.source),
         );
+      };
+      const copied = (event: ClipboardEvent) => {
+        if (!event.clipboardData) return;
+        const source = clipboardSource();
         event.clipboardData.setData("text/plain", source);
         event.clipboardData.setData("application/x-latex", source);
         event.preventDefault();

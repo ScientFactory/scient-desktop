@@ -1,5 +1,5 @@
 import type { MathfieldElement } from "mathlive";
-import { enterMathArgument } from "./mathTextFormatting";
+import { enterMathArgument, mathTextFormattingSource } from "./mathTextFormatting";
 import { registerLatexSelection } from "./latexSelectionSession";
 import {
   mathEditingGuideRects,
@@ -65,7 +65,21 @@ export function installMathSelectionSession(
         selection.ranges[0]![0] === selectedScope.range[0] &&
         selection.ranges[0]![1] === selectedScope.range[1];
       const scopes = scopeSelected ? candidates.slice(scopeIndex - 1) : mathEditingScopes(math);
+      const ranges = rectangle?.ranges ?? selection.ranges;
       return {
+        get content() {
+          return {
+            text: mathTextFormattingSource(
+              rectangle?.source ?? math.getValue(selection, "latex-without-placeholders"),
+            ),
+            from: Math.min(...ranges.flat()),
+            to: Math.max(...ranges.flat()),
+            kind: "math" as const,
+            selected: Boolean(rectangle) || selection.ranges.some(([from, to]) => from !== to),
+          };
+        },
+        isCurrent: () =>
+          math.isConnected && mathSelectionRevision(math) === revision && math.getValue() === value,
         path: [...latexContainerScope(math), ...scopes.toReversed().map((scope) => scope.label)],
         selectionOverlay: Boolean(rectangle) || selection.ranges.some(([from, to]) => from !== to),
         selectionKind: rectangle ? ("cells" as const) : ("text" as const),

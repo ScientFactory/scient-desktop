@@ -31,6 +31,11 @@ export function isLatexContextEvent(event: Event, toolbar: Element | null): bool
   if (!context) return false;
   if (event.composedPath().includes(context) || isLatexFooterEvent(event, context)) return true;
   const owner = latexSelectEventOwner(event);
+  if (
+    owner === context.closest(".scient-latex-visual-workspace") &&
+    owner?.hasAttribute("data-latex-selection-actions-owner")
+  )
+    return true;
   return Boolean(owner && context.contains(owner));
 }
 
@@ -40,6 +45,7 @@ export function isLatexEditingMenuEvent(event: Event, element: Element): boolean
   if (!workspace) return false;
   if (isLatexFooterEvent(event, element)) return true;
   const owner = latexSelectEventOwner(event);
+  if (owner === workspace && owner.hasAttribute("data-latex-selection-actions-owner")) return true;
   if (
     owner &&
     workspace.contains(owner) &&

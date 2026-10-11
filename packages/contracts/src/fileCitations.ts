@@ -9,7 +9,7 @@ const Path = Schema.String.check(
   Schema.makeFilter((value) => [...value].every((character) => character.charCodeAt(0) >= 32)),
 );
 
-/** A captured Markdown quote, not a request to read a file or an assistant message. */
+/** A captured document quote, not a request to read a file or an assistant message. */
 export const FileCitation = Schema.Struct({
   kind: Schema.Literal("file"),
   version: Schema.Literal(1),
@@ -23,13 +23,23 @@ export const FileCitation = Schema.Struct({
   path: Path,
   revision: Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/)),
   origin: Schema.Literals(["saved", "draft"]),
-  // The enclosing Markdown source blocks, in UTF-16 units. Not an exact
-  // character mapping of rendered text back through Markdown delimiters.
+  /** Exact UTF-16 source selections, distinct from rendered Markdown positions. */
+  sourceSelection: Schema.optional(Schema.Literal(true)),
+  /** Absent on existing Markdown citations. Math model positions are never source offsets. */
+  latex: Schema.optional(
+    Schema.Struct({
+      rootRelativePath: Path,
+      sourceHash: Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/)),
+    }),
+  ),
+  // Source anchors in UTF-16 units. Unsupported fine mappings use enclosing
+  // blocks; these are never MathLive positions or rendered-character offsets.
   sourceStart: Offset,
   sourceEnd: Offset,
   startLine: Offset.check(Schema.isGreaterThan(0)),
   endLine: Offset.check(Schema.isGreaterThan(0)),
-  // ProseMirror document positions are valid only for this exact revision.
+  // Source selections: raw offsets. Rendered Markdown: ProseMirror positions.
+  // Rendered LaTeX: offsets in the captured quote, never MathLive positions.
   from: Offset,
   to: Offset,
   text: AssistantCitation.fields.text,

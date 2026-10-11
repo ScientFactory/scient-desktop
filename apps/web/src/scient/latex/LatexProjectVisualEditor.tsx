@@ -26,6 +26,9 @@ import {
 } from "./latexProjectVisual";
 import { latexPackageInventory } from "./latexPackages";
 import { checkpointVisualDraft, confirmVisualDraft } from "./visualDrafts";
+import type { ResolveLatexSourceOwner } from "./latexVisualSelection";
+import { projectVisualNavigation, type LatexSourceNavigation } from "./latexSourceNavigation";
+import { toastManager } from "~/components/ui/toast";
 
 interface FileState {
   data: VisualProjectFile | null;
@@ -39,6 +42,7 @@ interface FileState {
   persistence?: MarkdownPersistenceLease | undefined;
 }
 interface Props extends LatexVisualEditorProps {
+  sourceNavigation?: LatexSourceNavigation | null | undefined;
   registerSaveProject?: (save: (() => Promise<boolean>) | null) => void;
   environmentId: EnvironmentId;
   cwd: string;
@@ -305,6 +309,29 @@ export function LatexProjectVisualEditor(props: Props) {
   }, [states, props.relativePath, props.source, props.fileRevision, props.fileTruncated]);
   const root = props.rootRelativePath;
   const document = useMemo(() => (root ? assembleVisualProject(root, files) : null), [root, files]);
+  const visualNavigation = useMemo(
+    () =>
+      document && props.sourceNavigation
+        ? projectVisualNavigation(document, files, props.sourceNavigation)
+        : null,
+    [document, files, props.sourceNavigation],
+  );
+  const warnedNavigation = useRef<number | null>(null);
+  useEffect(() => {
+    const request = props.sourceNavigation;
+    if (!document || !request || visualNavigation || warnedNavigation.current === request.requestId)
+      return;
+    if (document.missing.length > 0 || !files.has(request.path)) return;
+    warnedNavigation.current = request.requestId;
+    toastManager.add({
+      type: "warning",
+      title: "Could not locate this source in Visual",
+      description:
+        files.get(request.path)?.contents !== request.source
+          ? "The draft has changed. Double-click the source again."
+          : "This source line has no displayed content in Visual.",
+    });
+  }, [document, files, props.sourceNavigation, visualNavigation]);
   // A document compiled outside this environment still has its last printed
   // bibliography. Read that generated file as presentation, never as a session.
   const bibliography = useProjectFileQuery(
@@ -349,6 +376,33 @@ export function LatexProjectVisualEditor(props: Props) {
   useLayoutEffect(() => {
     snapshot.current = { document, files, states };
   }, [document, files, states]);
+  const resolveSourceOwner = useCallback<ResolveLatexSourceOwner>(
+    (source, from, to) => {
+      const current = snapshot.current;
+      if (!root || current.document?.source !== source || from >= to) return null;
+      const spans = current.document.spans.filter((span) => span.to > from && span.from < to);
+      const first = spans[0],
+        last = spans.at(-1);
+      if (!first?.path || !last || spans.some((span) => span.path !== first.path)) return null;
+      const file = current.files.get(first.path);
+      if (!file) return null;
+      const lease =
+        first.path === props.relativePath
+          ? props.documentPersistence?.find((item) => item.target.relativePath === first.path)
+          : current.states.get(first.path)?.persistence;
+      const state = lease?.getSnapshot();
+      if (state && state.draftSource !== file.contents) return null;
+      return {
+        path: first.path,
+        rootRelativePath: root,
+        source: file.contents,
+        baselineSource: state?.baselineSource ?? file.contents,
+        from: first.sourceFrom + from - first.from,
+        to: last.sourceFrom + to - last.from,
+      };
+    },
+    [root, props.relativePath, props.documentPersistence],
+  );
   const onEdit = useCallback<LatexVisualEditorProps["onEdit"]>(
     (expected, next, _rootUpdate, originOffset) => {
       const current = snapshot.current;
@@ -461,6 +515,7 @@ export function LatexProjectVisualEditor(props: Props) {
       {ready && document ? (
         <LatexVisualEditor
           {...props}
+          sourceNavigationTarget={visualNavigation}
           compiledBibliography={compiledBibliography}
           key={props.editorInstanceKey ?? root}
           source={document.source}
@@ -519,6 +574,7 @@ export function LatexProjectVisualEditor(props: Props) {
             const position = span.sourceFrom + offset - span.from;
             props.onOpenFileSource(span.path, source.slice(0, position).split("\n").length);
           }}
+          resolveSourceOwner={resolveSourceOwner}
           disabled={props.disabled || !!error}
         />
       ) : (

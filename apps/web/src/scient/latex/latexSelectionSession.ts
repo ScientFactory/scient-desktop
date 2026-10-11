@@ -22,6 +22,17 @@ export function latexSelectionCommand(id: string): LatexSelectionCommand | null 
 }
 
 export interface LatexSelectionSnapshot {
+  /** Model-owned content, independent of browser selection and editing guides. */
+  readonly content?: {
+    readonly text: string;
+    readonly from: number;
+    readonly to: number;
+    readonly kind: "prose" | "math" | "source" | "cells";
+    readonly selected?: boolean;
+  };
+  readonly isCurrent?: () => boolean;
+  /** Immutable capture geometry; painters may separately map their live bookmarks. */
+  readonly contentRects?: () => readonly DOMRect[];
   readonly path: readonly string[];
   readonly scopes: () => readonly DOMRect[];
   /** Vacant slots remain identifiable while their contents are selected. */
@@ -294,6 +305,28 @@ function hold() {
     workspace(active)?.setAttribute("data-scient-selection-held", "");
   }
   schedule();
+}
+
+/** Reading a selection never restores it or changes focus, marks, or its scope. */
+export function readLatexSelection(root: HTMLElement) {
+  if (!active || !root.contains(active.element)) return null;
+  const snapshot = held ?? active.capture();
+  if (!snapshot || snapshot.isCurrent?.() === false) return null;
+  return { element: active.element, snapshot };
+}
+
+/** Portal actions retain the same owner as formatting menus. */
+export function retainLatexSelection(root: HTMLElement): (() => void) | null {
+  if (!active || !root.contains(active.element)) return null;
+  hold();
+  const participant = active;
+  const snapshot = held;
+  return () => {
+    if (active !== participant || held !== snapshot) return;
+    release();
+    if (snapshot?.isCurrent?.() !== false) snapshot?.restore(false);
+    schedule();
+  };
 }
 function activate(event: Event) {
   if (active && isLatexEditingMenuEvent(event, active.element)) {

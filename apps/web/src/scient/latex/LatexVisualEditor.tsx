@@ -3,6 +3,16 @@ import { mathColorSource } from "./mathColorSyntax";
 import { LatexStructuredSelection } from "./latexStructuredSelection";
 import { latexSelectionCommand, runLatexSelectionCommand } from "./latexSelectionSession";
 import { installLatexTextSelectionSession } from "./latexTextSelectionSession";
+import { LatexCitationActions } from "./LatexCitationActions";
+import { useLatexSourceNavigation } from "./useLatexSourceNavigation";
+import type { LatexVisualNavigation } from "./latexSourceNavigation";
+import {
+  captureLatexVisualSelection,
+  type ResolveLatexSourceOwner,
+  type LatexSourceOwner,
+} from "./latexVisualSelection";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { latexVisualNodeSignature } from "./latexVisualDocument";
 import { randomUUID } from "~/lib/utils";
 import { LatexMathMenuItems, LATEX_CASES_TEMPLATE } from "./LatexMathMenuItems";
@@ -5195,6 +5205,11 @@ export interface LatexVisualEditorProps {
   readonly onEditingChange: (editing: boolean) => void;
   readonly onOpenSource: () => void;
   readonly onOpenSourceAt?: (offset: number) => void;
+  readonly resolveSourceOwner?: ResolveLatexSourceOwner;
+  readonly onRevealSource?: ((owner: LatexSourceOwner) => void) | undefined;
+  readonly sourceNavigationTarget?: LatexVisualNavigation | null | undefined;
+  readonly citationSource?: (ScopedThreadRef & { cwd: string }) | undefined;
+  readonly onCite?: MarkdownCiteHandler | undefined;
   readonly onOpenFileSource?: (path: string, line?: number) => void;
   readonly referenceFiles?: ReferenceFileCallbacks | undefined;
   readonly sourceError?: string | null;
@@ -5578,6 +5593,40 @@ function LatexVisualEditorReady(
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [navigationTab, setNavigationTab] = useState<"pages" | "outline">("pages");
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const selectionActionOwnerId = useId();
+  const [selectionViewport, setSelectionViewport] = useState<HTMLElement | null>(null);
+  const selectionProps = useRef(props);
+  selectionProps.current = props;
+  const captureSelection = useCallback(
+    (target?: HTMLElement, point?: { left: number; top: number }) => {
+      const view = editorRef.current?.view;
+      const root = workspaceRef.current;
+      const resolveOwner = selectionProps.current.resolveSourceOwner;
+      if (!root || !view || !resolveOwner || pendingFields.current.size > 0) return null;
+      return captureLatexVisualSelection(
+        root,
+        view,
+        projection.current,
+        currentSource.current,
+        resolveOwner,
+        target,
+        point,
+      );
+    },
+    [],
+  );
+  const sourceNavigationFrame = useRef<number | null>(null);
+  const sourceNavigationRequest = useRef(0);
+  useEffect(
+    () => () => {
+      if (sourceNavigationFrame.current !== null)
+        cancelAnimationFrame(sourceNavigationFrame.current);
+    },
+    [],
+  );
+  useLayoutEffect(() => {
+    setSelectionViewport(workspaceRef.current);
+  }, []);
   const readerAction = useRef<(command: string) => boolean>(() => false);
   useEffect(() => {
     const workspace = workspaceRef.current;
@@ -6647,6 +6696,14 @@ function LatexVisualEditorReady(
     localDraftState.version,
   ]);
 
+  useLatexSourceNavigation({
+    editor,
+    target: props.sourceNavigationTarget,
+    projection,
+    source: currentSource,
+    viewport: visualScroll,
+    onUnavailable: setNotice,
+  });
   // Runs after the effect above, so the editor has adopted the source that the
   // stored work is judged against.
   useEffect(() => {
@@ -8640,7 +8697,72 @@ function LatexVisualEditorReady(
                     <LatexDraftContext value={fieldContext}>
                       <div
                         ref={workspaceRef}
+                        id={selectionActionOwnerId}
+                        data-latex-selection-actions-owner=""
                         className="scient-latex-visual-workspace"
+                        onDoubleClickCapture={(event) => {
+                          if (!props.onRevealSource) return;
+                          const target = event.nativeEvent
+                            .composedPath()
+                            .find(
+                              (candidate): candidate is HTMLElement =>
+                                candidate instanceof HTMLElement &&
+                                editorRef.current?.view.dom.contains(candidate) === true,
+                            );
+                          if (
+                            !(target instanceof HTMLElement) ||
+                            target.closest(
+                              "button,[role=button],.scient-latex-writing-toolbar,.scient-latex-reader-footer",
+                            )
+                          )
+                            return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (sourceNavigationFrame.current !== null)
+                            cancelAnimationFrame(sourceNavigationFrame.current);
+                          const request = ++sourceNavigationRequest.current;
+                          const point = { left: event.clientX, top: event.clientY };
+                          const math = activeMath.get();
+                          if (
+                            !flushTypingRef.current() ||
+                            (math && !math.flush()) ||
+                            !flushSourceEditRef.current()
+                          )
+                            return;
+                          // Source publication updates project ownership in React.
+                          // Read it after that commit, retaining the clicked block.
+                          sourceNavigationFrame.current = requestAnimationFrame(() => {
+                            sourceNavigationFrame.current = null;
+                            if (sourceNavigationRequest.current !== request) return;
+                            const currentEditor = editorRef.current;
+                            if (!currentEditor || currentEditor.isDestroyed) return;
+                            const view = currentEditor.view;
+                            const position = target.isConnected
+                              ? null
+                              : view?.posAtCoords(point)?.pos;
+                            const resolved =
+                              position != null && view ? view.state.doc.resolve(position) : null;
+                            const replacement =
+                              resolved && view
+                                ? view.nodeDOM(
+                                    resolved.depth > 0 ? resolved.before(1) : resolved.pos,
+                                  )
+                                : null;
+                            const clicked = target.isConnected
+                              ? target
+                              : replacement instanceof HTMLElement
+                                ? replacement
+                                : null;
+                            const snapshot = clicked ? captureSelection(clicked, point) : null;
+                            const reveal = selectionProps.current.onRevealSource;
+                            if (!reveal) return;
+                            if (snapshot) reveal(snapshot.sourceOwner);
+                            else
+                              setNotice(
+                                "This content could not be mapped to the current source. Try again after finishing the edit.",
+                              );
+                          });
+                        }}
                         onKeyDown={(event) => {
                           if (
                             find.open &&
@@ -8658,6 +8780,15 @@ function LatexVisualEditorReady(
                             props.onEditingChange(false);
                         }}
                       >
+                        {props.citationSource && props.onCite ? (
+                          <LatexCitationActions
+                            viewport={selectionViewport}
+                            ownerId={selectionActionOwnerId}
+                            source={props.citationSource}
+                            capture={captureSelection}
+                            onCite={props.onCite}
+                          />
+                        ) : null}
                         <WritingShortcutsDialog
                           open={shortcutsOpen}
                           onOpenChange={setShortcutsOpen}
