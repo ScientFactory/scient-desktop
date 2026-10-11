@@ -16,7 +16,7 @@ import {
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -37,28 +37,31 @@ import { ChildProcessSpawner } from "effect/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ModelManifest from "../ModelManifest.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../../orchestration-v2/ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderEventIngestor from "../../orchestration-v2/ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../ProviderRegistry.ts";
-import { GrokDriver } from "./GrokDriver.ts";
+import { GrokDriver } from "../AppProviderDriverComposition.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const first = ProviderInstanceId.make("grok-shutdown-target");
 const second = ProviderInstanceId.make("grok-shutdown-peer");
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const mockAgentPath = NodePath.join(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../../../scripts/acp-mock-agent.ts",
@@ -99,7 +102,13 @@ const testLayer = ServerConfig.layerTest(process.cwd(), { prefix: "grok-native-s
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
+  Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
   Layer.provideMerge(ServerSettingsService.layerTest()),
+  Layer.provideMerge(
+    TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
+  ),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
       shouldRunScopeWork: () => Effect.succeed(false),
@@ -234,7 +243,7 @@ const harness = Effect.fn("GrokShutdown.harness")(function* () {
   // scope. A scoped private file and defective finalizer exercise that owner,
   // rather than making a fake stopAll counter decide the callback result.
   const loggers = {
-    ...NoOpProviderEventLoggers,
+    ...ProviderEventLoggers.NoOpProviderEventLoggers,
     native: {
       filePath: path.join(root, "native-fixture.ndjson"),
       close: () => Effect.void,
@@ -267,7 +276,7 @@ const harness = Effect.fn("GrokShutdown.harness")(function* () {
     configMap,
   }).pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
-    Effect.provideService(ProviderEventLoggers, loggers),
+    Effect.provideService(ProviderEventLoggers.ProviderEventLoggers, loggers),
   );
   const target = yield* registered.registry.getInstance(first);
   const peer = yield* registered.registry.getInstance(second);
@@ -445,11 +454,12 @@ const managerLayer = Effect.fn("GrokShutdown.managerLayer")(function* (h: Harnes
     ),
   };
 });
-const tokenFor = (threadId: ThreadId) =>
-  McpProviderSession.readMcpProviderSession(threadId)!.authorizationHeader.replace(
-    /^Bearer\s+/,
-    "",
-  );
+const tokenFor = Effect.fn("GrokShutdown.tokenFor")(function* (threadId: ThreadId) {
+  const sessions = yield* McpProviderSessions.McpProviderSessions;
+  const config = yield* sessions.read(threadId);
+  if (!config) return yield* Effect.die("Expected a freshly issued native MCP credential");
+  return config.authorizationHeader.replace(/^Bearer\s+/, "");
+});
 
 it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
   "Grok factory native shutdown",
@@ -465,12 +475,13 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
           const mcp = yield* McpSessionRegistry.McpSessionRegistry;
           yield* Effect.gen(function* () {
             const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+            const sessions = yield* McpProviderSessions.McpProviderSessions;
             const old = yield* manager.open(target.input);
             const other = yield* manager.open(peer.input);
-            const targetToken = tokenFor(target.input.threadId);
-            const peerToken = tokenFor(peer.input.threadId);
+            const targetToken = yield* tokenFor(target.input.threadId);
+            const peerToken = yield* tokenFor(peer.input.threadId);
             for (const seeded of [target, peer]) {
-              const bound = McpProviderSession.readMcpProviderSession(seeded.input.threadId)!;
+              const bound = (yield* sessions.read(seeded.input.threadId))!;
               const created = (yield* h.readRequests(seeded.input.modelSelection.instanceId)).find(
                 (request) => request.method === "session/new",
               );
@@ -556,7 +567,7 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
               owned[0]!.environment.T3_ACP_REQUEST_LOG_PATH,
             );
             expect(yield* freshLaunch.handle.isRunning).toBe(true);
-            expect(yield* mcp.resolve(tokenFor(fresh.input.threadId))).toBeDefined();
+            expect(yield* mcp.resolve(yield* tokenFor(fresh.input.threadId))).toBeDefined();
             expect(
               (yield* h.readRequests(first)).filter(
                 (request) => request.method === "session/prompt",
@@ -585,7 +596,7 @@ it.layer(testLayer.pipe(Layer.provideMerge(ThreadCommandExecutor.layer)))(
             const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
             const opening = yield* manager.open(target.input).pipe(Effect.exit, Effect.forkChild);
             yield* Deferred.await(entered);
-            const token = tokenFor(target.input.threadId);
+            const token = yield* tokenFor(target.input.threadId);
             const mcp = yield* McpSessionRegistry.McpSessionRegistry;
             expect(yield* mcp.resolve(token)).toBeDefined();
             yield* h.target.connectionActions!.disconnect.pipe(Effect.scoped);

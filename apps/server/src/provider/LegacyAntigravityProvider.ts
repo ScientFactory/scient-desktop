@@ -31,7 +31,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 
 import {
   buildSelectOptionDescriptor,
@@ -41,11 +41,12 @@ import {
   providerModelsFromSettings,
   type CommandResult,
   type ServerProviderDraft,
-} from "./providerSnapshot.ts";
+} from "@t3tools/provider-core/server/snapshotProbe";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
-} from "./providerMaintenance.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 
 type LegacyAntigravitySettings = Pick<
   AntigravitySettings,
@@ -555,6 +556,7 @@ export const enrichAntigravitySnapshot = (input: {
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly stampIdentity?: (snapshot: ServerProvider) => ServerProvider;
   readonly httpClient: HttpClient.HttpClient;
+  readonly latestVersions: ProviderLatestVersions.ProviderLatestVersions["Service"];
 }): Effect.Effect<void> => {
   const { snapshot, publishSnapshot } = input;
   const stampIdentity = input.stampIdentity ?? ((value) => value);
@@ -563,6 +565,7 @@ export const enrichAntigravitySnapshot = (input: {
     enableProviderUpdateChecks: input.enableProviderUpdateChecks,
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, input.httpClient),
+    Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, input.latestVersions),
     Effect.flatMap((enrichedSnapshot) =>
       publishSnapshot(stampIdentity(enrichedSnapshot)).pipe(Effect.as(enrichedSnapshot)),
     ),
@@ -571,5 +574,6 @@ export const enrichAntigravitySnapshot = (input: {
         errorTag: causeErrorTag(cause),
       }).pipe(Effect.asVoid),
     ),
+    Effect.asVoid,
   );
 };

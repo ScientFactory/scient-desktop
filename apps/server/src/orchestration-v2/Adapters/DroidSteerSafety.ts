@@ -4,14 +4,17 @@ import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import type * as EffectAcpSchema from "effect-acp/compat";
-import { mergeToolCallState, parseSessionUpdateEvent } from "../../provider/acp/AcpRuntimeModel.ts";
-import type { AcpToolCallState } from "../../provider/acp/AcpRuntimeModel.ts";
+import {
+  mergeToolCallState,
+  parseSessionUpdateEvent,
+} from "@t3tools/provider-acp/server/runtimeModel";
+import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import {
   makeDroidSubagentTracker,
   observeDroidSubagentToolCall,
   droidSubagentActivity,
 } from "../../provider/droid/DroidSubagents.ts";
-import type { ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 
 export class DroidSteerDeferred extends Data.TaggedError("DroidSteerDeferred") {}
 export class DroidSteerUncertain extends Data.TaggedError("DroidSteerUncertain")<{
@@ -51,7 +54,7 @@ export function makeDroidSteerSafety() {
       invalidate();
       returned = true;
     },
-    toolIds: () => Array.from(tools.keys()),
+    toolIds: (): ReadonlyArray<string> => Array.from(tools.keys()),
     batch(phase: "begin" | "end" | "failed") {
       invalidate();
       if (phase === "begin") depth++;

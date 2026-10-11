@@ -119,6 +119,14 @@ export function browserDefaultOpenProfileId(
   return defaults.profileId;
 }
 
+/** Browser profile list and resolved default sent to server-side agent tools. */
+export function browserProfileReportInput(defaults: BrowserDefaults = getBrowserDefaults()) {
+  return {
+    profiles: defaults.profiles,
+    defaultProfileId: browserDefaultOpenProfileId(defaults),
+  };
+}
+
 /**
  * The viewport to switch to when the user turns the device toolbar on for a tab
  * currently in fill mode.

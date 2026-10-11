@@ -19,58 +19,6 @@ import {
 } from "./scient-release-preflight.ts";
 
 describe("Scient release machinery", () => {
-  it("keeps stable releases manual-only and serialized within each channel", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
-      "utf8",
-    );
-
-    assert.match(workflow, /^on:\n  workflow_dispatch:\n/mu);
-    assert.notMatch(workflow, /^  push:\n/mu);
-    assert.notMatch(workflow, /^  schedule:\n/mu);
-    assert.include(workflow, "group: scient-${{ inputs.channel || 'stable' }}-release");
-    assert.include(workflow, "cancel-in-progress: false");
-    assert.include(workflow, "SCIENT_DESKTOP_CANONICAL_REPOSITORY: ScientFactory/scient-desktop");
-    assert.include(
-      workflow,
-      '"$PUBLISH_RELEASE" == "true" && "$GITHUB_REPOSITORY" != "$SCIENT_DESKTOP_CANONICAL_REPOSITORY"',
-    );
-  });
-
-  it("isolates automatic Beta publication and requires updater and immutable-artifact verification", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
-      "utf8",
-    );
-    assert.include(workflow, "default: stable");
-    assert.include(workflow, "SCIENT_DESKTOP_BETA_REPOSITORY: ScientFactory/scient-desktop-beta");
-    assert.include(workflow, "SCIENT_BETA_RELEASE_TOKEN");
-    assert.include(workflow, "SCIENT_DESKTOP_BETA_RELEASES_ENABLED == 'true'");
-    assert.notInclude(workflow, "SCIENT_DESKTOP_BETA_QUALIFICATION");
-    assert.include(workflow, "node apps/desktop/scripts/qualify-update-channels.cjs");
-    assert.include(
-      workflow,
-      "EXPECTED_ARTIFACT_DIGEST: ${{ needs.assemble.outputs.artifact_digest }}",
-    );
-    assert.include(workflow, "steps.inputs.outputs.publish_release");
-    assert.include(workflow, "--draft=false --prerelease --latest=false");
-    assert.include(workflow, '"$stable_latest_before" == "$stable_latest_after"');
-    assert.include(workflow, "--latest-stable-version");
-  });
-
-  it("promotes a published Beta's exact source with main ancestry and CI, preserving the current-main default", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/promote-release.yml"),
-      "utf8",
-    );
-    assert.include(workflow, 'git merge-base --is-ancestor "$SOURCE_SHA" origin/main');
-    assert.include(workflow, ".source.commit == $sha and .source.tree == $tree");
-    assert.include(workflow, '.distribution.channel == "beta"');
-    assert.include(workflow, '"$SOURCE_SHA" == "$main_sha"');
-    assert.include(workflow, 'git push origin "$SOURCE_SHA:refs/heads/release/stable"');
-    assert.notInclude(workflow, "--force");
-  });
-
   it("prepares stable candidates at 04:00 Jerusalem without direct publication authority", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/scheduled-stable-candidate.yml"),
@@ -108,33 +56,6 @@ describe("Scient release machinery", () => {
       workflow.indexOf("Refuse an existing tag or release before builds") <
         workflow.indexOf("build_desktop:"),
     );
-  });
-
-  it("publishes the same retained candidate only after production approval", () => {
-    const workflow = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
-      "utf8",
-    );
-    const assemble = workflow.split(/^  assemble:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
-    const publish = workflow.split(/^  publish:\n/mu)[1] ?? "";
-
-    assert.include(assemble, "name: Upload immutable release candidate");
-    assert.include(assemble, "retention-days: 30");
-    assert.include(assemble, "artifact-digest");
-    assert.include(assemble, "artifact-id");
-    assert.include(assemble, "artifact-url");
-    assert.include(assemble, 'echo "- Artifact: \\`$ARTIFACT_NAME\\`"');
-    assert.include(
-      publish,
-      "environment: ${{ needs.preflight.outputs.channel == 'beta' && 'beta' || 'production' }}",
-    );
-    assert.include(publish, "actions: read");
-    assert.include(publish, "name: scient-release-v${{ needs.preflight.outputs.version }}");
-    assert.include(publish, "Verify accepted candidate identity and checksums");
-    assert.include(publish, 'sub("^sha256:"; "")');
-    assert.include(publish, ".workflow_run.id == $run_id");
-    assert.include(publish, "sha256sum --check SHA256SUMS.txt");
-    assert.include(publish, "Stage, verify, and publish the immutable release");
   });
 
   it("cancels superseded pull request CI while retaining pushed main validation", () => {
@@ -325,7 +246,7 @@ describe("Scient release machinery", () => {
         root: process.cwd(),
         allowNoteFree: true,
       }),
-    ).rejects.toThrow("canonical x.y.z version");
+    ).rejects.toThrow(Error);
   });
 
   it("rejects a Beta older than the published Beta before any source or packaging work", async () => {

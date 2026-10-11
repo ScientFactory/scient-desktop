@@ -19,28 +19,33 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import * as ProviderAdapter from "../ProviderAdapter.ts";
-import { makePiAdapterV2, type PiAdapterV2Options } from "./PiAdapterV2.ts";
+import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makePiAdapterV2, type PiAdapterV2Options } from "@t3tools/provider-pi/testing";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 export const binary = process.env.SCIENT_PI_TEST_BINARY;
 export const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 export const decodeRecord = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
-export const layer = Layer.mergeAll(
+const fixtureServices = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-pi-real-v2-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
 );
+export const layer = ScientTestProviderHost.layer.pipe(Layer.provideMerge(fixtureServices));
 
 export const fixture = Effect.fnUntraced(function* (suffix: string, workspace?: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const root = workspace ?? (yield* fs.makeTempDirectoryScoped({ prefix: "scient-pi-real-v2-" }));
   const profile = path.join(root, "profile");
   yield* fs.makeDirectory(profile);
@@ -63,13 +68,8 @@ export const fixture = Effect.fnUntraced(function* (suffix: string, workspace?: 
       PI_SKIP_VERSION_CHECK: "1",
       PI_OFFLINE: "1",
     },
-    spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-    fileSystem: fs,
-    path,
-    idAllocator: yield* IdAllocator.IdAllocatorV2,
-    serverConfig: yield* ServerConfig.ServerConfig,
   };
-  const adapter = makePiAdapterV2(adapterOptions);
+  const adapter = yield* makePiAdapterV2(adapterOptions);
   const open = (initialNativeThreadId?: string) =>
     adapter.openSession({
       threadId,
@@ -170,6 +170,8 @@ export const fixture = Effect.fnUntraced(function* (suffix: string, workspace?: 
     policy,
     adapter,
     adapterOptions,
+    serverConfig,
+    idAllocator,
     open,
     send,
     models,

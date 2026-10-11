@@ -23,11 +23,11 @@ import {
   ProviderRegistryRefreshError,
   type ProviderRegistryShape,
 } from "../../provider/ProviderRegistry.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import type {
   ProviderConnectionActions,
   ProviderVoiceTranscriptCorrection,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import {
   ProviderSessionCloseError,

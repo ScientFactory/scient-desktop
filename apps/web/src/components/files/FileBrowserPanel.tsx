@@ -43,6 +43,7 @@ import { useProjectPathSearch } from "~/state/queries";
 import { pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import { resolveFileBrowserSearchValue } from "./fileBrowserSearch";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import {
   refreshProjectEntriesQuery,
@@ -85,6 +86,10 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
   );
 }
 
+function areSamePaths(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  return left.size === right.size && [...left].every((path) => right.has(path));
+}
+
 export default function FileBrowserPanel({
   environmentId,
   cwd,
@@ -109,11 +114,14 @@ export default function FileBrowserPanel({
     ...lazyTree
   } = useScientLazyWorkspaceTree(directoryView);
   // SCIENT-FORK:END
+  const loadingDirectoriesRef = useRef(treeSnapshot.loadingDirectories);
+  loadingDirectoriesRef.current = treeSnapshot.loadingDirectories;
   const [searchValue, setSearchValue] = useState("");
-  const normalizedSearchValue = searchValue.trim();
+  const { query: searchQuery, normalizedQuery: normalizedSearchValue } =
+    resolveFileBrowserSearchValue(searchValue);
   const isSearching = normalizedSearchValue.length > 0;
   const pathSearch = useProjectPathSearch(
-    { environmentId, cwd, query: searchValue },
+    { environmentId, cwd, query: searchQuery },
     FILE_SEARCH_LIMIT,
   );
   const hasCurrentSearch = pathSearch.searchedQuery === normalizedSearchValue;
@@ -265,12 +273,20 @@ export default function FileBrowserPanel({
       }
     },
     paths: [],
-    // SCIENT-FORK:START — read-only rows carry a lock
-    renderRowDecoration: scientReadOnlyRowDecoration(treeEntriesRef),
+    // SCIENT-FORK:START — preserve upstream first-load feedback and read-only locks
+    renderRowDecoration: scientReadOnlyRowDecoration(treeEntriesRef, loadingDirectoriesRef),
     // SCIENT-FORK:END
     search: false,
     unsafeCSS: SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS,
   });
+  const previousLoadingDirectoriesRef = useRef(treeSnapshot.loadingDirectories);
+  useEffect(() => {
+    const previous = previousLoadingDirectoriesRef.current;
+    const next = treeSnapshot.loadingDirectories;
+    if (areSamePaths(previous, next)) return;
+    previousLoadingDirectoriesRef.current = next;
+    model.setComposition(model.getComposition());
+  }, [model, treeSnapshot.loadingDirectories]);
   const treeSearch = useFileTreeSearch(model);
   const allLoadedDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
     areAllDirectoriesExpanded(currentModel, loadedDirectoryPaths),

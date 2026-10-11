@@ -11,10 +11,9 @@ import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as TestClock from "effect/testing/TestClock";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { PI_PROVIDER } from "./PiAdapterV2.ts";
-import { makePiRpcConnection, PiRpcError, type PiRpcRecord } from "./PiRpc.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { PI_PROVIDER } from "@t3tools/provider-pi/testing";
+import { makePiRpcConnection, PiRpcError, type PiRpcRecord } from "@t3tools/provider-pi/testing";
 import {
   testLayer,
   PI_INSTANCE_ID,
@@ -136,7 +135,7 @@ describe("PiAdapterV2", () => {
       const fake = yield* makeFakePi;
       yield* openRuntime(fake);
       const spawn = fake.lastSpawn();
-      assert.equal(spawn.env.SCIENT_PI_AWARENESS, buildScientAwareness());
+      assert.notInclude(spawn.env.PI_RUNTIME_GUIDANCE, "preview_status");
       assert.isUndefined(spawn.env.T3_MCP_URL);
       assert.isTrue(spawn.args.includes("--extension"));
       assert.isTrue(spawn.args.some((arg) => arg.endsWith("pi-t3-mcp-extension.ts")));
@@ -145,15 +144,19 @@ describe("PiAdapterV2", () => {
 
   it.effect("injects the T3 MCP extension and bearer when a session exists", () =>
     Effect.gen(function* () {
-      McpProviderSession.setMcpProviderSession({
-        environmentId: EnvironmentId.make("environment-pi-mcp"),
-        threadId: THREAD_ID,
-        providerSessionId: "mcp-session-pi",
-        providerInstanceId: PI_INSTANCE_ID,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer secret-pi-token",
-        capabilities: new Set(["preview"] as const),
-      });
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.acquireRelease(
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-pi-mcp"),
+          threadId: THREAD_ID,
+          providerSessionId: "mcp-session-pi",
+          providerInstanceId: PI_INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-pi-token",
+          capabilities: new Set(["preview"] as const),
+        }),
+        () => mcpSessions.clear(THREAD_ID),
+      );
       const fake = yield* makeFakePi;
       yield* openRuntime(fake);
       const spawn = fake.lastSpawn();
@@ -166,12 +169,8 @@ describe("PiAdapterV2", () => {
       assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
       assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
-      assert.equal(spawn.env.SCIENT_PI_AWARENESS, buildScientAwareness(new Set(["preview"])));
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
-      Effect.scoped,
-      Effect.provide(testLayer),
-    ),
+      assert.include(spawn.env.PI_RUNTIME_GUIDANCE, "preview_status");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect.each(

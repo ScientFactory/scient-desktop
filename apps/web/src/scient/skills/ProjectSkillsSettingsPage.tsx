@@ -33,7 +33,7 @@ export function ProjectSkillsSettingsPage() {
         variant="plain"
       >
         <Link
-          className="group mb-2 ms-1 inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.035] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:ms-2"
+          className="group mb-2 ms-1 inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.035] hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:ms-2"
           to="/settings/skills"
         >
           <ArrowLeftIcon className="size-3.5 transition-transform group-hover:-translate-x-0.5" />

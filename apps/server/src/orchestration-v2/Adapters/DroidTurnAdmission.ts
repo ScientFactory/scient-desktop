@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import { AcpRequestError } from "effect-acp/errors";
-import type { ProviderAdapterV2TurnInput } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 
 /** Revalidate the owning Scient attempt after Droid settings preparation. */
 export const confirmDroidTurnAdmission = Effect.fnUntraced(function* (

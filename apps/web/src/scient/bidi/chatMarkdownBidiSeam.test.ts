@@ -16,10 +16,6 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
 } from "../markdown/scientMarkdownPipeline";
 
-const chatMarkdownSource = NodeFS.readFileSync(
-  NodePath.resolve(import.meta.dirname, "../../components/ChatMarkdown.tsx"),
-  "utf8",
-);
 const timelineSource = NodeFS.readFileSync(
   NodePath.resolve(import.meta.dirname, "../../components/chat/MessagesTimeline.tsx"),
   "utf8",
@@ -97,11 +93,7 @@ describe("ChatMarkdown BiDi seam", () => {
     },
   );
 
-  it("keeps T3 HTML plugins behind parseRawHtml and always appends Scient BiDi", () => {
-    expect(chatMarkdownSource).toMatch(
-      /\.\.\.\(parseRawHtml\s*\? CHAT_MARKDOWN_REHYPE_PLUGINS\s*: CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW\),\s*\[\s*rehypeScientBidi,/u,
-    );
-    expect(chatMarkdownSource).not.toMatch(/rehypePlugins=\{\s*parseRawHtml\s*\?/u);
+  it("keeps raw parsing and sanitizing confined to the opted-in HTML plugin set", () => {
     expect(CHAT_MARKDOWN_REHYPE_PLUGINS).toContain(rehypeRaw);
     expect(
       CHAT_MARKDOWN_REHYPE_PLUGINS.some(

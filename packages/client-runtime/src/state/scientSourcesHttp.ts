@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -29,7 +29,7 @@ export const getEnvironmentScientSourcesOverview = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/overview"),
+    url: (urls) => urls.overview(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -54,7 +54,7 @@ export const getEnvironmentScientSourceDetail = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/detail"),
+    url: (urls) => urls.detail(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -80,8 +80,7 @@ export const getEnvironmentScientSourceAttachmentPreview = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/attachments/preview"),
+    url: (urls) => urls.attachmentPreview(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -110,7 +109,7 @@ export const getEnvironmentScientSourceJournalIcon = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/journal-icon"),
+    url: (urls) => urls.journalIcon(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -138,8 +137,7 @@ export const updateEnvironmentScientSourceMetadata = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/metadata/update"),
+    url: (urls) => urls.updateMetadata(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -173,8 +171,7 @@ export const refreshEnvironmentScientSourceMetadata = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/metadata/refresh"),
+    url: (urls) => urls.refreshMetadata(),
     timeoutMs: METADATA_REFRESH_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -205,7 +202,7 @@ export const updateEnvironmentScientSourceNote = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/note/update"),
+    url: (urls) => urls.updateNote(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -236,7 +233,7 @@ export const removeEnvironmentScientSource = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/remove"),
+    url: (urls) => urls.remove(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -266,7 +263,7 @@ export const updateEnvironmentScientSourceReview = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/review/update"),
+    url: (urls) => urls.updateReview(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -292,7 +289,7 @@ export const getEnvironmentZoteroStatus = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/zotero/status"),
+    url: (urls) => urls.zoteroStatus(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) => client.zoteroStatus({ headers, payload: {} }),
@@ -315,7 +312,7 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/zotero/library"),
+    url: (urls) => urls.zoteroLibrary(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -341,8 +338,7 @@ export const listEnvironmentZoteroCollections = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/zotero/collections"),
+    url: (urls) => urls.zoteroCollections(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) => client.zoteroCollections({ headers, payload: {} }),
@@ -363,8 +359,7 @@ export const preflightEnvironmentZoteroImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/preflight"),
+    url: (urls) => urls.preflight(),
     timeoutMs: IMPORT_STEP_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -391,7 +386,7 @@ export const beginEnvironmentZoteroImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/begin"),
+    url: (urls) => urls.beginImport(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -422,8 +417,7 @@ export const beginEnvironmentZoteroScopedImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/zotero/import-scope/begin"),
+    url: (urls) => urls.beginScopedImport(),
     timeoutMs: IMPORT_STEP_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -456,8 +450,7 @@ export const uploadEnvironmentLocalSourcePdf = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/local-files/upload"),
+    url: (urls) => urls.localPdfUpload(),
     timeoutMs: IMPORT_STEP_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -484,8 +477,7 @@ export const beginEnvironmentLocalSourceImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/local-files/import/begin"),
+    url: (urls) => urls.localBeginImport(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -515,8 +507,7 @@ export const discardEnvironmentLocalSourcePdfs = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/local-files/discard"),
+    url: (urls) => urls.localDiscard(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -541,7 +532,7 @@ export const advanceEnvironmentScientSourcesImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/advance"),
+    url: (urls) => urls.advanceImport(),
     timeoutMs: IMPORT_STEP_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -566,7 +557,7 @@ export const cancelEnvironmentScientSourcesImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/cancel"),
+    url: (urls) => urls.cancelImport(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
@@ -592,7 +583,7 @@ export const retryEnvironmentScientSourcesImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/retry"),
+    url: (urls) => urls.retryImport(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>

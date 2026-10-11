@@ -55,13 +55,14 @@ import {
 // SCIENT-FORK:END
 
 import { ServerConfig } from "../config.ts";
-import { validateProviderCurrentInput } from "./AttachmentPrompt.ts";
+import { validateProviderCurrentInput } from "./ScientCurrentInput.ts";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import { prepareScientV2SkillScope } from "../scient/skills/ScientV2SkillTurn.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -71,18 +72,13 @@ import {
   contextUsageForHandoff,
   historicalMessage,
   latestNativeContextUsage,
-} from "./ContextHandoffBudget.ts";
+} from "./ScientHistoricalContext.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
-import {
-  ProviderAdapterTurnStartError,
-  type ProviderAdapterV2Error,
-  type ProviderAdapterV2HistoricalContext,
-  type ProviderAdapterV2SessionRuntime,
-} from "./ProviderAdapter.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import { makeProviderFailure } from "./ProviderFailure.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import {
@@ -141,6 +137,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | McpProviderSessions.McpProviderSessions
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -156,6 +153,7 @@ export const layer: Layer.Layer<
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const skillPlanner = yield* ScientSkillSessionPlanner;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
@@ -245,15 +243,15 @@ export const layer: Layer.Layer<
     // SCIENT-FORK:END
 
     const makeDeliverySession = (
-      session: ProviderAdapterV2SessionRuntime,
+      session: ProviderAdapter.ProviderAdapterV2SessionRuntime,
       startWithHandoffs: (
-        input: Parameters<ProviderAdapterV2SessionRuntime["startTurn"]>[0],
+        input: Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>[0],
         compact?: boolean,
-      ) => ReturnType<ProviderAdapterV2SessionRuntime["startTurn"]>,
+      ) => ReturnType<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>,
     ) => {
       let deliver: typeof startWithHandoffs | undefined = startWithHandoffs;
       const start = (
-        input: Parameters<ProviderAdapterV2SessionRuntime["startTurn"]>[0],
+        input: Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>[0],
         compact = false,
       ) =>
         Effect.suspend(() => {
@@ -746,7 +744,7 @@ export const layer: Layer.Layer<
       // Native load failures settle the final start attempt separately from
       // portable-history preparation. Other binding failures keep typed errors.
       const loadFromProvider = (
-        load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>,
+        load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,
       ) =>
         Effect.gen(function* () {
           const loaded = yield* Effect.result(load);
@@ -859,7 +857,7 @@ export const layer: Layer.Layer<
         const resumed = yield* Effect.result(
           uncertainDelivery || removedDelivery
             ? Effect.fail(
-                new ProviderAdapterTurnStartError({
+                new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
@@ -1208,7 +1206,10 @@ export const layer: Layer.Layer<
           records: message.context?.records ?? [],
         }),
         selectedScientSkillNames: message.selectedScientSkillNames ?? [],
-      }).pipe(Effect.provideService(ScientSkillSessionPlanner, skillPlanner));
+      }).pipe(
+        Effect.provideService(ScientSkillSessionPlanner, skillPlanner),
+        Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
+      );
       const userText = preparedSkills.text;
       // SCIENT-FORK:END
       // Delivered once: this run's provider turn marks the work as told. A
@@ -1431,7 +1432,7 @@ export const layer: Layer.Layer<
               ...(session.injectHistory === undefined
                 ? {}
                 : {
-                    inject: (history: ProviderAdapterV2HistoricalContext) =>
+                    inject: (history: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
                       session.injectHistory!({
                         providerThread: runningProviderThread,
                         ...history,
@@ -1473,7 +1474,7 @@ export const layer: Layer.Layer<
             }),
           );
           if (!(yield* shouldStartProviderTurn()))
-            return yield* new ProviderAdapterTurnStartError({
+            return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
               driver: session.driver,
               threadId: projection.thread.id,
               providerThreadId: providerThread.id,
@@ -1526,7 +1527,7 @@ export const layer: Layer.Layer<
           Effect.mapError((cause) =>
             cause._tag === "ProviderAdapterTurnStartError"
               ? cause
-              : new ProviderAdapterTurnStartError({
+              : new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,

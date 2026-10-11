@@ -937,6 +937,47 @@ describe("rightPanelStore", () => {
   });
 
   it.each([
+    {
+      kind: "workspace file",
+      surfaceId: "file:src/index.ts",
+      open: () => useRightPanelStore.getState().openFile(refA, "src/index.ts"),
+    },
+    {
+      kind: "attachment",
+      surfaceId: "attachment:report",
+      open: () =>
+        useRightPanelStore.getState().openAttachment(refA, {
+          type: "file",
+          id: "report",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 42,
+        }),
+    },
+  ])("replaces a dragged explorer with its $kind in the same slot", ({ surfaceId, open }) => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.openBrowser(refA, "tab-a");
+    store.open(refA, "diff");
+    store.open(refA, "files");
+    const revision = store.getUserActionRevision(refA);
+    store.moveSurface(refA, "files", 1);
+    expect(store.getUserActionRevision(refA)).toBe(revision);
+
+    open();
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "terminal:term-1",
+      surfaceId,
+      "browser:tab-a",
+      "diff",
+    ]);
+    expect(state.activeSurfaceId).toBe(surfaceId);
+    expect(store.getUserActionRevision(refA)).toBe(revision + 1);
+  });
+
+  it.each([
     ["generated\\", "generated"],
     ["notes/meeting ", "notes/meeting"],
     [" notes/meeting", "notes/meeting"],
@@ -1702,5 +1743,110 @@ describe("rightPanelStore", () => {
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
     ).toEqual([{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }]);
+  });
+
+  it.each(["creation-first", "snapshot-first"])(
+    "replaces a dragged browser placeholder in the same slot with %s delivery",
+    (delivery) => {
+      const store = useRightPanelStore.getState();
+      store.openTerminal(refA, "term-1");
+      store.openFile(refA, "README.md");
+      store.open(refA, "diff");
+      store.openBrowser(refA, null);
+      const revision = store.getUserActionRevision(refA);
+      store.moveSurface(refA, "browser:new", 1);
+      expect(store.getUserActionRevision(refA)).toBe(revision);
+      if (delivery === "snapshot-first") {
+        store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
+        expect(store.getUserActionRevision(refA)).toBe(revision);
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)
+            .activeSurfaceId,
+        ).toBe("browser:tab-a");
+      }
+
+      store.openBrowser(refA, "tab-a");
+      store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
+
+      const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+      expect(state.surfaces.map((surface) => surface.id)).toEqual([
+        "terminal:term-1",
+        "browser:tab-a",
+        "file:README.md",
+        "diff",
+        "browser:tab-b",
+      ]);
+      expect(state.activeSurfaceId).toBe("browser:tab-a");
+      expect(store.getUserActionRevision(refA)).toBe(revision + 1);
+    },
+  );
+
+  it("replaces a browser placeholder from a snapshot without stealing another surface's focus", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.openBrowser(refA, null);
+    store.open(refA, "diff");
+    store.moveSurface(refA, "browser:new", 0);
+    const revision = store.getUserActionRevision(refA);
+
+    store.reconcileBrowserSurfaces(refA, ["tab-a"]);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "browser:tab-a",
+      "terminal:term-1",
+      "diff",
+    ]);
+    expect(state.activeSurfaceId).toBe("diff");
+    expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+
+  it.each(["browser", "file"])(
+    "keeps an already-open %s destination in place when removing its dragged placeholder",
+    (kind) => {
+      const store = useRightPanelStore.getState();
+      const destinationId = kind === "browser" ? "browser:tab-a" : "file:README.md";
+      if (kind === "browser") store.openBrowser(refA, "tab-a");
+      else store.openFile(refA, "README.md");
+      store.openTerminal(refA, "term-1");
+      store.open(refA, "diff");
+      if (kind === "browser") store.openBrowser(refA, null);
+      else store.open(refA, "files");
+      store.moveSurface(refA, kind === "browser" ? "browser:new" : "files", 1);
+
+      if (kind === "browser") store.openBrowser(refA, "tab-a");
+      else store.openFile(refA, "README.md");
+
+      const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+      expect(state.surfaces.map((surface) => surface.id)).toEqual([
+        destinationId,
+        "terminal:term-1",
+        "diff",
+      ]);
+      expect(state.activeSurfaceId).toBe(destinationId);
+    },
+  );
+
+  it("moves a surface to a new index and keeps it there through browser reconciliation", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.openBrowser(refA, "tab-a");
+    store.open(refA, "diff");
+    const revision = store.getUserActionRevision(refA);
+    const surfaceIds = () =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      );
+
+    store.moveSurface(refA, "browser:tab-a", 0);
+    expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff"]);
+    store.moveSurface(refA, "browser:tab-a", 2);
+    expect(surfaceIds()).toEqual(["terminal:term-1", "diff", "browser:tab-a"]);
+    store.moveSurface(refA, "browser:tab-a", 0);
+
+    store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
+    expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
+    // Reordering is not a choice about what the panel shows.
+    expect(store.getUserActionRevision(refA)).toBe(revision);
   });
 });

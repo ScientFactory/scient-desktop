@@ -14,31 +14,60 @@ import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import { CodexAppServerClientFactory } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ClaudeAgentSdkQueryRunner } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import { CursorAgentSdkRunner } from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
+import { CursorAgentSdkRunner } from "@t3tools/provider-cursor/server/CursorAgentSdk";
+import { Agent } from "@cursor/sdk";
+import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
+import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ClaudeDriver } from "./ClaudeDriver.ts";
 import { CodexDriver } from "./CodexDriver.ts";
-import { CursorDriver } from "./CursorDriver.ts";
+import { CursorDriver } from "@t3tools/provider-cursor/server";
 import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import { PtyAdapter } from "@t3tools/shared/PtyAdapter";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
-import { PiDriver } from "./PiDriver.ts";
+import { PiDriver } from "@t3tools/provider-pi/server";
 import { OmpDriver } from "./OmpDriver.ts";
 import { ScientAgentDriver } from "./ScientAgentDriver.ts";
 import { DroidDriver } from "./DroidDriver.ts";
 import { LegacyAntigravityDriver } from "./LegacyAntigravityDriver.ts";
+import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
 const noProcess = () => Effect.die("Continuation identity must not start a provider process");
 const baseLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-native-continuation-identity-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
-const testLayer = baseLayer.pipe(
-  Layer.provideMerge(IdAllocator.layer),
-  Layer.provideMerge(ProviderContinuationRequests.layer),
+const providerDependenciesLayer = baseLayer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      IdAllocator.layer,
+      ProviderContinuationRequests.layer,
+      ProviderLatestVersions.layer,
+      McpProviderSessions.layer,
+    ),
+  ),
+  Layer.provideMerge(
+    Layer.succeed(CursorKeychain.CursorKeychain, {
+      accessToken: Effect.die("Continuation identity must not read real Keychain credentials"),
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.succeed(CursorSdk.CursorSdk, {
+      Agent: new Proxy(Agent, {
+        get() {
+          throw new Error("Continuation identity must not call the real SDK");
+        },
+      }),
+      createAgentPlatform: () => {
+        throw new Error("Continuation identity must not create a real SDK platform");
+      },
+    }),
+  ),
   Layer.provideMerge(OmpExecutableGate.layer),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(baseLayer))),
@@ -57,7 +86,12 @@ const testLayer = baseLayer.pipe(
       getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000007")),
     }),
   ),
-  Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+  Layer.provideMerge(
+    Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
+  ),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy)({ shouldRunScopeWork: () => Effect.succeed(false) }),
   ),
@@ -66,6 +100,9 @@ const testLayer = baseLayer.pipe(
   Layer.provideMerge(
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, ChildProcessSpawner.make(noProcess)),
   ),
+);
+const testLayer = layerConfigConsistentTestProviderHost.pipe(
+  Layer.provideMerge(providerDependenciesLayer),
 );
 
 const input = (kind: string, ordinal: number) => ({

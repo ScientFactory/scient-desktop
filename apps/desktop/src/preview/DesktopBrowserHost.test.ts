@@ -6,6 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeEvents from "node:events";
+import { vi } from "vite-plus/test";
 
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 
@@ -117,6 +118,115 @@ describe("DesktopBrowserHost", () => {
       debuggee.emit("Browser.downloadWillBegin", { guid: "guid-1", suggestedFilename: "r.csv" });
       expect(host.placeDownload(debuggee.tab.webContents, item)).toBe(true);
       expect(paths).toEqual(["/srv/downloads/guid-1"]);
+    }),
+  );
+
+  it.effect("attributes only the next download to explicit human input", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson({
+            id: 1,
+            method: "Input.dispatchMouseEvent",
+            params: { type: "mousePressed", x: 1, y: 1 },
+          }),
+        }),
+      );
+      debuggee.emit("Browser.downloadWillBegin", { guid: "agent-download" });
+      expect(host.pendingDownloadWasHuman(debuggee.tab.webContents)).toBe(false);
+
+      host.noteHumanInput(debuggee.tab.webContents);
+      debuggee.emit("Browser.downloadWillBegin", { guid: "human-download" });
+      expect(host.pendingDownloadWasHuman(debuggee.tab.webContents)).toBe(true);
+
+      debuggee.emit("Browser.downloadWillBegin", { guid: "unattributed-download" });
+      expect(host.pendingDownloadWasHuman(debuggee.tab.webContents)).toBe(false);
+
+      host.noteHumanInput(debuggee.tab.webContents);
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: JSON.stringify(
+            {
+              id: 2,
+              method: "Runtime.evaluate",
+              params: { expression: "downloadReport()" },
+            },
+            null,
+            2,
+          ),
+        }),
+      );
+      debuggee.emit("Browser.downloadWillBegin", { guid: "delayed-agent-download" });
+      expect(host.pendingDownloadWasHuman(debuggee.tab.webContents)).toBe(false);
+    }),
+  );
+
+  it.effect("blocks CDP pointer events from the preload human-input and Downloads path", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      const webContents = debuggee.tab.webContents;
+      host.attach(key, debuggee.tab);
+      const encodeCommand = (message: unknown) =>
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson(message),
+        });
+      yield* host.handleCommandLine(
+        encodeCommand({
+          id: 1,
+          method: "Browser.setDownloadBehavior",
+          params: { behavior: "allowAndName", downloadPath: "/srv/downloads" },
+        }),
+      );
+      debuggee.release();
+      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+
+      yield* host.handleCommandLine(
+        encodeCommand({
+          id: 2,
+          method: "Input.dispatchMouseEvent",
+          params: { type: "mousePressed", x: 10, y: 20, button: "left" },
+          sessionId: "t3-preview-page",
+        }),
+      );
+      yield* host.handleCommandLine(
+        encodeCommand({
+          id: 3,
+          method: "Input.dispatchKeyEvent",
+          params: { type: "keyDown", key: "Enter", code: "Enter" },
+          sessionId: "t3-preview-page",
+        }),
+      );
+      // The preload's synchronous permission check rejects this trusted DOM
+      // event while the matching agent CDP command is still dispatching.
+      expect(host.canReportHumanInput(webContents, "pointer")).toBe(false);
+      expect(host.canReportHumanInput(webContents, "key")).toBe(false);
+
+      const paths: Array<string> = [];
+      const item = {
+        setSavePath: (path: string) => void paths.push(path),
+      } as unknown as Electron.DownloadItem;
+      debuggee.emit("Browser.downloadWillBegin", { guid: "agent-download" });
+      expect(host.pendingDownloadWasHuman(webContents)).toBe(false);
+      expect(host.placeDownload(webContents, item)).toBe(true);
+      expect(paths).toEqual(["/srv/downloads/agent-download"]);
+
+      debuggee.release();
+      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      expect(host.canReportHumanInput(webContents, "pointer")).toBe(true);
+
+      host.noteHumanInput(webContents);
+      debuggee.emit("Browser.downloadWillBegin", { guid: "human-download" });
+      expect(host.pendingDownloadWasHuman(webContents)).toBe(true);
     }),
   );
 });

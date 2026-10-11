@@ -158,6 +158,9 @@ thread is deleted, including archived threads and worktrees left by earlier dele
 server waits for sessions and terminals to stop and retries skipped worktrees after restart.
 Existing prompts for deleting a worktree manually remain available when this policy is off.
 
+Choose **Delete now** to run the enabled rules immediately. The latest results show which
+worktrees were removed or kept and why, plus any failures.
+
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 

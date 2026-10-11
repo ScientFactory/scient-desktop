@@ -11,6 +11,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon } from "lucide-react";
 import {
   Fragment,
+  useCallback,
   useEffect,
   useEffectEvent,
   useRef,
@@ -38,6 +39,7 @@ import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { observeResize } from "~/lib/observeResize";
 
 export function AssistantCitationChip({
   citation,
@@ -344,21 +346,22 @@ function FileCitationHoverCard({
 
 function AssistantCitationQuote({ citation }: { citation: ComposerCitation }) {
   const [fade, setFade] = useState({ top: false, bottom: false });
-  const updateFade = (element: HTMLElement) => {
+  const updateFade = useCallback((element: HTMLElement) => {
     const top = element.scrollTop > 1;
     const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
     setFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
-  };
+  }, []);
+  // Stable so a fade update during resize delivery does not resubscribe the element.
+  const observeFade = useCallback(
+    (element: HTMLDivElement | null) =>
+      element ? observeResize(element, () => updateFade(element)) : undefined,
+    [updateFade],
+  );
   return (
     <div
-      ref={(element) => {
-        if (!element) return;
-        const observer = new ResizeObserver(() => updateFade(element));
-        observer.observe(element);
-        return () => observer.disconnect();
-      }}
+      ref={observeFade}
       onScroll={(event) => updateFade(event.currentTarget)}
       className={cn(
         "max-h-64 min-h-0 space-y-3 self-stretch overflow-y-auto whitespace-pre-wrap wrap-break-word",

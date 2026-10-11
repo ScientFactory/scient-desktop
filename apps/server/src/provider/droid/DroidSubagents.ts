@@ -23,7 +23,7 @@
  *   timeout }` waits, silently, for up to `timeout` milliseconds.
  */
 import * as Predicate from "effect/Predicate";
-import type { AcpToolCallState } from "../acp/AcpRuntimeModel.ts";
+import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
 interface DroidSubagentLinkage {
   readonly taskId: string;

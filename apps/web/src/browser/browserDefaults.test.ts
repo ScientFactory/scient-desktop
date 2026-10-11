@@ -11,7 +11,8 @@ vi.mock("~/hooks/useSettings", () => ({
   ensureClientSettingsHydrated: vi.fn(async () => undefined),
 }));
 
-const { getBrowserDefaults, resolveBrowserDefaults } = await import("./browserDefaults");
+const { browserProfileReportInput, getBrowserDefaults, resolveBrowserDefaults } =
+  await import("./browserDefaults");
 
 const withDefaultProfile = (browserDefaultProfileId: string) => {
   settings.current = {
@@ -41,6 +42,15 @@ describe("getBrowserDefaults profile resolution", () => {
     expect(withDefaultProfile(INCOGNITO_BROWSER_PROFILE_ID).profileId).toBe(
       DEFAULT_BROWSER_PROFILE_ID,
     );
+  });
+
+  it("reports the same persistent default used by local browser opens", () => {
+    const defaults = withDefaultProfile(INCOGNITO_BROWSER_PROFILE_ID);
+
+    expect(browserProfileReportInput(defaults)).toEqual({
+      profiles: defaults.profiles,
+      defaultProfileId: DEFAULT_BROWSER_PROFILE_ID,
+    });
   });
 });
 

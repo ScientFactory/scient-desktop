@@ -1,7 +1,7 @@
 import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { AcpToolCallState } from "../acp/AcpRuntimeModel.ts";
+import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import {
   droidSubagentActivity,
   endDroidSubagents,

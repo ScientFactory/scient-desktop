@@ -3,7 +3,7 @@ import { ProviderSessionId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
-import { type ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
+import { type ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   testLayer,
   THREAD_ID,

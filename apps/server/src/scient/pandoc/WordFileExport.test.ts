@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -427,7 +427,7 @@ describe("WordFileExport", () => {
               relativePath: "notes/report.md",
               revision: yield* revisionOf("notes/report.md"),
             })
-            .pipe(Effect.provideService(HostProcessPlatform, "win32"));
+            .pipe(Effect.provideService(HostProcess.Platform, "win32"));
           expect(produced.fileName).toBe("report.docx");
           expect(seen[0]?.bundle.markdown).toContain("See [@local].");
           expect(seen[0]?.bibliographySources).toEqual([]);
@@ -532,7 +532,7 @@ describe("WordFileExport", () => {
                   rootRelativePath: relativePath,
                   revision: yield* revisionOf(relativePath),
                 });
-              }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+              }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
 
             yield* exportOnWindows("single.tex");
             expect(seen[0]?.latex?.source).toBe("Single body.");
@@ -551,7 +551,7 @@ describe("WordFileExport", () => {
                 relativePath: "notes/report.md",
                 revision: yield* revisionOf("notes/report.md"),
               })
-              .pipe(Effect.provideService(HostProcessPlatform, "win32"));
+              .pipe(Effect.provideService(HostProcess.Platform, "win32"));
             // The Markdown file still exports; its image is left out, as in PDF on Windows.
             expect(seen[1]?.bundle.markdown).toContain("# Report");
             expect(seen[1]?.imageSnapshot?.get("plot.png")).toEqual({

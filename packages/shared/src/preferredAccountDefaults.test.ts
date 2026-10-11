@@ -27,25 +27,26 @@ const reasoning = (id: string, levels = ["low", "medium", "high"]) => ({
   ],
 });
 const cases = [
-  ["scient", "openai-codex/gpt-6.1-sol", "openai-codex/gpt-6-astra", "thinkingLevel"],
-  ["scient", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5", "thinkingLevel"],
-  ["scient", "cursor/grok-4.7-high", "cursor/claude-opus-5-high", "thinkingLevel"],
+  ["scient", "openai-codex/gpt-6.1-sol", "openai-codex/gpt-6-astra", "thinkingLevel", "medium"],
+  ["scient", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5", "thinkingLevel", "medium"],
+  ["scient", "cursor/grok-4.7-high", "cursor/claude-opus-5-high", "thinkingLevel", "high"],
   [
     "scient",
     "google-antigravity/gemini-3.8-flash",
     "google-antigravity/gemini-3.1-pro",
     "thinkingLevel",
+    "high",
   ],
-  ["cursor", "grok-4.7", "auto", "reasoning"],
-  ["antigravity", "gemini-3.8-flash", "gemini-3.1-pro", "reasoningEffort"],
-  ["codex", "gpt-6.1-sol", "gpt-6-astra", "reasoningEffort"],
-  ["claudeAgent", "claude-opus-5-5", "claude-sonnet-5-5", "effort"],
+  ["cursor", "grok-4.7", "auto", "reasoning", "high"],
+  ["antigravity", "gemini-3.8-flash", "gemini-3.1-pro", "reasoningEffort", "high"],
+  ["codex", "gpt-6.1-sol", "gpt-6-astra", "reasoningEffort", "medium"],
+  ["claudeAgent", "claude-opus-5-5", "claude-sonnet-5-5", "effort", "medium"],
 ] as const;
 
 describe("preferred account defaults", () => {
   it.each(cases)(
-    "prefers %s %s at high without replacing explicit choices",
-    (kind, preferred, previous, id) => {
+    "prefers %s %s with %s reasoning without replacing explicit choices",
+    (kind, preferred, previous, id, reasoningDefault) => {
       const driver = ProviderDriverKind.make(kind);
       const input = [
         model(previous, { isDefault: true }),
@@ -57,7 +58,7 @@ describe("preferred account defaults", () => {
         preferred,
       ]);
       const descriptor = projected[1]!.capabilities!.optionDescriptors![0]!;
-      expect(getProviderOptionCurrentValue(descriptor)).toBe("high");
+      expect(getProviderOptionCurrentValue(descriptor)).toBe(reasoningDefault);
       expect(
         getProviderOptionCurrentValue(
           getProviderOptionDescriptors({
@@ -96,7 +97,7 @@ describe("preferred account defaults", () => {
     expect(resolveAutomaticModel(driver, [codex, anthropic])).toBe(codex.slug);
   });
 
-  it("keeps custom reasoning defaults and unsupported high levels", () => {
+  it("keeps custom reasoning defaults and unsupported medium levels", () => {
     const driver = ProviderDriverKind.make("scient");
     for (const entry of [
       model("openai-codex/gpt-6.1-sol", {
@@ -104,13 +105,23 @@ describe("preferred account defaults", () => {
         capabilities: reasoning("thinkingLevel"),
       }),
       model("anthropic/claude-opus-5-5", {
-        capabilities: reasoning("thinkingLevel", ["low", "medium"]),
+        capabilities: reasoning("thinkingLevel", ["low", "high"]),
       }),
     ]) {
       expect(applyAutomaticModelDefaults(driver, [entry])[0]!.capabilities).toEqual(
         entry.capabilities,
       );
     }
+  });
+
+  it("keeps the provider default when the chosen reasoning level is unavailable", () => {
+    const driver = ProviderDriverKind.make("codex");
+    const entry = model("gpt-6.1-sol", {
+      capabilities: reasoning("reasoningEffort", ["low", "high"]),
+    });
+    expect(applyAutomaticModelDefaults(driver, [entry])[0]!.capabilities).toEqual(
+      entry.capabilities,
+    );
   });
 
   it("prefers exact high native variants and preserves parameterized Cursor IDs", () => {

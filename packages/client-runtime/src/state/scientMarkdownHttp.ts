@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -18,8 +18,6 @@ export const uploadEnvironmentMarkdownImage = Effect.fn(
   readonly fileName: string;
   readonly assetDirectory?: string | undefined;
 }) {
-  const path = "/api/scient/markdown/images/upload";
-
   const payload = new FormData();
   payload.append("cwd", input.cwd);
   payload.append("documentRelativePath", input.documentRelativePath);
@@ -32,7 +30,7 @@ export const uploadEnvironmentMarkdownImage = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, path),
+    url: (urls) => urls.imageUpload(),
     timeoutMs: IMAGE_UPLOAD_TIMEOUT_MS,
     group: "scientMarkdown",
     request: ({ client, headers }) => client.imageUpload({ headers, payload }),

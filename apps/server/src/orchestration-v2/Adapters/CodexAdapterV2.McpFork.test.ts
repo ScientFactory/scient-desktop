@@ -14,12 +14,12 @@ import { it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterRollbackThreadError,
   ProviderAdapterForkThreadError,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
   makeCodexReplayTranscript,
@@ -73,6 +73,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "uses the Scient MCP namespace and exact thread credential for native start, resume and fork",
     () =>
       Effect.gen(function* () {
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
         const scenario = "scient-mcp-native-lifecycle";
         const threadId = ThreadId.make(`thread-${scenario}`);
         const targetThreadId = ThreadId.make("scient-mcp-fork-target");
@@ -83,7 +84,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           [threadId, "synthetic-source-token"],
           [targetThreadId, "synthetic-target-token"],
         ] as const) {
-          McpProviderSession.setMcpProviderSession({
+          yield* sessions.set({
             environmentId: EnvironmentId.make("scient-mcp-native-test"),
             threadId: id,
             providerSessionId: `mcp-${id}`,
@@ -94,10 +95,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           });
         }
         yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            McpProviderSession.clearMcpProviderSession(threadId);
-            McpProviderSession.clearMcpProviderSession(targetThreadId);
-          }),
+          sessions.clear(threadId).pipe(Effect.andThen(sessions.clear(targetThreadId))),
         );
         const sourceConfig = {
           "tools.update_plan.enabled": true,
@@ -199,10 +197,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(forked.appThreadId, targetThreadId);
         assert.equal(forked.forkedFrom?.providerThreadId, resumed.id);
         assert.equal(
-          McpProviderSession.readMcpProviderSession(threadId)?.authorizationHeader,
+          (yield* sessions.read(threadId))?.authorizationHeader,
           "Bearer synthetic-source-token",
         );
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   const codexReplaySourceTurn = (input: {
@@ -310,7 +313,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         "thread/rollback",
         "thread/rollback must not be sent to a legacy Codex thread",
       );
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect("refuses a source-ID native fork before reading or reverting source history", () =>
@@ -385,7 +393,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         "A source-ID response must not authorize read/revert/resume/start of its source",
       );
       assert.equal(encodeUnknownJson(h.providerThread), sourceBefore);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect(
@@ -524,7 +537,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.notEqual(forkedProviderThread.id, harness.providerThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, firstTurn.id);
         assert.deepEqual(outbound.slice(-2), ["thread/turns/list", "thread/revert"]);
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   it.effect(
@@ -626,7 +644,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           "thread/rollback",
           "thread/rollback must not be sent to a legacy Codex fork",
         );
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   it.effect("propagates native thread/fork failures as typed fork errors", () =>
@@ -682,6 +705,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
       assert.instanceOf(error, ProviderAdapterForkThreadError);
       assert.include(errorCauseChainText(error), "fork exploded");
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 });

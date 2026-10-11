@@ -9,9 +9,10 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
-import { ProviderContinuationRequests } from "../ProviderContinuationRequests.ts";
-import { piContinuationRequestsIfProvided } from "./PiAdapterV2.ts";
-import { makePiRpcConnection } from "./PiRpc.ts";
+import { ProviderContinuationRequests } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { piContinuationRequestsIfProvided } from "@t3tools/provider-pi/testing";
+import { makePiRpcConnection } from "@t3tools/provider-pi/testing";
 import {
   testLayer,
   THREAD_ID,
@@ -27,10 +28,7 @@ describe("Pi captured work admission fences", () => {
   it.effect("propagates permanent native owner refusal without a producer-local retry", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
-      const offered =
-        yield* Queue.unbounded<
-          import("../ProviderContinuationRequests.ts").ProviderContinuationRequest
-        >();
+      const offered = yield* Queue.unbounded<ProviderContinuationRequest>();
       const { runtime } = yield* openRuntime(
         fake,
         "default",
@@ -124,10 +122,7 @@ describe("Pi captured work admission fences", () => {
   )("$caseTitle", ({ stopped }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
-      const offered =
-        yield* Queue.unbounded<
-          import("../ProviderContinuationRequests.ts").ProviderContinuationRequest
-        >();
+      const offered = yield* Queue.unbounded<ProviderContinuationRequest>();
       const { runtime, observed, takeEvent } = yield* openRuntime(
         fake,
         "default",
@@ -231,10 +226,7 @@ it.effect("refuses an ordinary prompt when native work races its correlated prep
     const fake = yield* makeFakePi;
     const entered = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
-    const offered =
-      yield* Queue.unbounded<
-        import("../ProviderContinuationRequests.ts").ProviderContinuationRequest
-      >();
+    const offered = yield* Queue.unbounded<ProviderContinuationRequest>();
     let selectionStarted = false;
     let held = false;
     const { runtime } = yield* openRuntime(

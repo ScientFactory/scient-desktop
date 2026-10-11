@@ -6,8 +6,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   makeWakeHarness,
   claudeSdkFrame,
@@ -82,7 +83,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.take(harness.terminalReceipts);
       assert.lengthOf(notices(), 3);
       assert.notEqual(notices()[0]?.id, notices()[2]?.id);
-    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect("keeps usage warnings and provisioned overage silent", () =>
@@ -129,7 +134,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
         ),
       );
-    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect.each([
@@ -197,7 +206,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       );
       assert.equal(closeCount, 1);
-    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect.each([
@@ -266,7 +279,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(harness.terminalEvents().length, 2);
         assert.equal(closeCount, 0);
         assert.isFalse(harness.events.some((event) => event.type === "authentication.invalidated"));
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   it.effect("names an expired Claude login instead of the terminal API error", () =>
@@ -311,7 +328,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.include(terminal.failure.message, configDir);
       assert.include(terminal.failure.message, cwd);
       assert.notInclude(terminal.failure.message, "repeated API errors");
-    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect.each([
@@ -365,7 +386,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.include(terminal.failure.message, expected);
       assert.equal(terminal.failure.class, recovered ? "provider_error" : "usage_limit");
-    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect.each([
@@ -425,7 +450,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ? "Claude usage limit reached. Send the message again once the limit resets."
           : "Claude gave up after repeated API errors.",
       );
-    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect.each([429, 401, 529])(
@@ -469,7 +498,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         if (apiErrorStatus !== 429)
           assert.notInclude(terminal.failure.message.toLowerCase(), "usage limit");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   it.effect("resolves API retries on resumed assistant activity", () =>
@@ -542,7 +575,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "recovered Claude turn");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -596,7 +633,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         assert.isDefined(terminal.retryStartedAt);
         assert.equal(terminal.failure.code, "api_error_529");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -665,7 +706,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           terminal.failure.code,
           terminalReason === "overloaded_status" ? "api_error_529" : terminalReason,
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

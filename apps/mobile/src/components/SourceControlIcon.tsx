@@ -1,9 +1,15 @@
-import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from "react-native-svg";
+import Svg, { Circle, Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
 
-export type SourceControlIconKind = "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops";
+export type SourceControlIconKind =
+  | "github"
+  | "gitlab"
+  | "forgejo"
+  | "bitbucket"
+  | "azure-devops"
+  | "gitcafe";
 
 export function SourceControlIcon(props: {
   readonly kind: SourceControlIconKind;
@@ -14,6 +20,12 @@ export function SourceControlIcon(props: {
   const size = props.size ?? 18;
 
   switch (props.kind) {
+    case "gitcafe":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 64 64">
+          <Rect x={4.8} y={4.8} width={54.4} height={54.4} fill="#a78bfa" />
+        </Svg>
+      );
     case "forgejo":
       // Official two-color mark from https://forgejo.org/favicon.svg.
       return (

@@ -1,3 +1,5 @@
+import { observeResize } from "~/lib/observeResize";
+
 type Position = { x: number; y: number };
 
 const CARD_INSET = 4;
@@ -25,7 +27,7 @@ export function attachVisualCardToolbarDrag(
     resetOnClick: boolean;
   } | null = null;
   let frame: number | null = null;
-  let observer: ResizeObserver | null = null;
+  let stopResize: (() => void) | null = null;
   let suppressClick = false;
   const listeners = new AbortController();
 
@@ -49,18 +51,16 @@ export function attachVisualCardToolbarDrag(
     position = clamped;
     if (position.x === 0 && position.y === 0) {
       toolbar.style.removeProperty("translate");
-      observer?.disconnect();
-      observer = null;
+      stopResize?.();
+      stopResize = null;
       return;
     }
     toolbar.style.translate = `${position.x}px ${position.y}px`;
 
     // Default/unmoved cards incur no observation work. Re-clamp a moved toolbar
     // if the panel, image, source disclosure, or toolbar itself changes size.
-    if (!observer && typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(() => move(position));
-      observer.observe(card);
-      observer.observe(toolbar);
+    if (!stopResize) {
+      stopResize = observeResize([card, toolbar], () => move(position));
     }
   };
 
@@ -92,8 +92,8 @@ export function attachVisualCardToolbarDrag(
     endDrag(false);
     position = { x: 0, y: 0 };
     toolbar.style.removeProperty("translate");
-    observer?.disconnect();
-    observer = null;
+    stopResize?.();
+    stopResize = null;
   }
 
   function beginDrag(event: PointerEvent, resetOnClick: boolean) {

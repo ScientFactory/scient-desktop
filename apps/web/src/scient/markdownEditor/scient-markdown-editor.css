@@ -649,7 +649,7 @@
 
 .scient-markdown-table-select:focus-visible {
   outline: 2px solid var(--ring);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 
 .scient-markdown-document table {
@@ -830,7 +830,7 @@ sup.scient-markdown-reference {
 
 .scient-markdown-footnote-marker:focus-visible {
   outline: 1px solid color-mix(in oklab, var(--muted-foreground) 55%, transparent);
-  outline-offset: 1px;
+  outline-offset: -1px;
 }
 
 .scient-markdown-reference.is-missing .scient-markdown-footnote-marker {
@@ -942,7 +942,7 @@ sup.scient-markdown-reference {
 
 .scient-markdown-footnote-backlink:focus-visible {
   outline: 1px solid color-mix(in oklab, var(--muted-foreground) 55%, transparent);
-  outline-offset: 1px;
+  outline-offset: -1px;
 }
 
 .scient-markdown-footnote-definition textarea.scient-markdown-reference-source {
@@ -1292,7 +1292,7 @@ textarea.scient-markdown-math-source {
 
 .scient-markdown-reference-source:focus-visible {
   outline: 2px solid color-mix(in oklab, var(--primary) 55%, transparent);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 
 .scient-markdown-reference[data-scient-markdown-reference="citation"]
@@ -1311,7 +1311,7 @@ textarea.scient-markdown-math-source {
 
 .scient-markdown-document .ProseMirror-selectednode {
   outline: 2px solid color-mix(in oklab, var(--primary) 55%, transparent);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 .scient-markdown-document .scient-markdown-math.ProseMirror-selectednode {

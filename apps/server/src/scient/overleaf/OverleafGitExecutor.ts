@@ -13,7 +13,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -374,8 +374,8 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const hostEnvironment = yield* HostProcess.Environment;
   const windows = platform === "win32";
   const systemRoot = hostEnvironment.SystemRoot ?? hostEnvironment.SYSTEMROOT ?? "C:\\Windows";
   const systemDrive = hostEnvironment.SystemDrive ?? "C:";
