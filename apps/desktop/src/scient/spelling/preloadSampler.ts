@@ -86,6 +86,16 @@ function typingSample(field: EditableField): string {
   return isCheckedWithin(block, field) ? checkedText(block, SAMPLE_LENGTH) : "";
 }
 
+/** A text field at its maximum length refuses typed text unless some is selected. */
+function isFull(field: EditableField): boolean {
+  return (
+    (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) &&
+    field.maxLength >= 0 &&
+    field.value.length >= field.maxLength &&
+    field.selectionStart === field.selectionEnd
+  );
+}
+
 /** What the main process did with a sample. */
 export type SampleOutcome = "added" | "unchanged" | "failed";
 
@@ -114,10 +124,11 @@ export interface SpellingSampler {
  * detects the language itself.
  *
  * A field whose language was just added is rechecked when the user next
- * edits it, never before: its marks are cleared just ahead of that edit,
- * which is what makes Chromium check the field again. Clearing them at any
- * other moment, including on a key that changes nothing, would hide real
- * typos until the user typed again.
+ * types into it: its marks are cleared just ahead of text that is certain to
+ * be inserted, which is what makes Chromium check the field again. Clearing
+ * them before anything that might change nothing (a modifier key, Backspace
+ * at the start, a cancelled edit) would hide real typos until the user typed
+ * again, so the field simply stays marked until then.
  */
 export function installSpellingSampler(
   send: (sample: string) => Promise<SampleOutcome>,
@@ -129,12 +140,16 @@ export function installSpellingSampler(
   const stale = new WeakSet<Element>();
   /** Fields a dictionary was added for, rechecked again once it has loaded. */
   const addedFor = new Set<Element>();
+  const forgetClosedFields = () => {
+    for (const field of addedFor) if (!field.isConnected) addedFor.delete(field);
+  };
   const dispatch = (field: EditableField, sample: string) => {
     const trimmed = sample.trim();
     if (trimmed.length < MIN_SAMPLE_LENGTH || trimmed === lastSample) return;
     lastSample = trimmed;
     void send(trimmed).then((outcome) => {
-      if (outcome === "added") {
+      if (outcome === "added" && field.isConnected) {
+        forgetClosedFields();
         stale.add(field);
         addedFor.add(field);
       } else if (outcome === "failed" && lastSample === trimmed) {
@@ -153,29 +168,31 @@ export function installSpellingSampler(
     // @effect-diagnostics-next-line globalTimers:off - The preload runs plain DOM code, outside any Effect runtime.
     typingTimer = setTimeout(() => dispatch(field, typingSample(field)), TYPING_PAUSE_MS);
   };
+  // Listens after the editor's own handlers, so an edit it cancels is seen as cancelled.
   const onBeforeInput = (event: Event) => {
-    // Clearing marks in the middle of an input method composition could disturb it.
-    if ((event as InputEvent).isComposing) return;
+    const input = event as InputEvent;
+    // Typed text always changes the field, unless cancelled, still being
+    // composed by an input method, or refused by a full field.
+    if (input.inputType !== "insertText" || !input.data || input.isComposing) return;
+    if (input.defaultPrevented) return;
     const field = spellcheckedField(event.target);
-    if (field === null || !stale.has(field)) return;
+    if (field === null || !stale.has(field) || isFull(field)) return;
     stale.delete(field);
     clearSpellingMarks(field);
   };
   target.addEventListener("focusin", onFocus, true);
   target.addEventListener("input", onInput, true);
-  target.addEventListener("beforeinput", onBeforeInput, true);
+  target.addEventListener("beforeinput", onBeforeInput);
   return {
     dictionaryReady: () => {
-      for (const field of addedFor) {
-        if (field.isConnected) stale.add(field);
-        else addedFor.delete(field);
-      }
+      forgetClosedFields();
+      for (const field of addedFor) stale.add(field);
     },
     uninstall: () => {
       clearTimeout(typingTimer);
       target.removeEventListener("focusin", onFocus, true);
       target.removeEventListener("input", onInput, true);
-      target.removeEventListener("beforeinput", onBeforeInput, true);
+      target.removeEventListener("beforeinput", onBeforeInput);
     },
   };
 }

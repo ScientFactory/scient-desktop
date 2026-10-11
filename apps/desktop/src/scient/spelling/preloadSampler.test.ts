@@ -29,11 +29,12 @@ function focus(element: Element) {
   element.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
 }
 
-/** The event that precedes the user typing into a field. */
-function edit(element: Element, options: { isComposing?: boolean } = {}) {
+/** The event that precedes the user editing a field; by default, typing one letter. */
+function edit(element: Element, options: InputEventInit = {}) {
   element.dispatchEvent(
     new InputEvent("beforeinput", {
       bubbles: true,
+      cancelable: true,
       inputType: "insertText",
       data: "a",
       ...options,
@@ -125,6 +126,47 @@ describe("installSpellingSampler", () => {
     edit(field);
     await vi.runAllTimersAsync();
     expect(values).toEqual([null, "false"]);
+  });
+
+  it("does not clear marks before edits that may change nothing", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea maxlength="${FRENCH.length}">${FRENCH}</textarea>`;
+    const [field, full] = document.querySelectorAll("textarea");
+    const values = watchSpellcheck(field!);
+    const fullValues = watchSpellcheck(full!);
+    send.mockResolvedValue("added");
+    focus(field!);
+    focus(full!);
+    await vi.runAllTimersAsync();
+    edit(field!, { inputType: "deleteContentBackward", data: null });
+    edit(field!, { inputType: "historyUndo", data: null });
+    field!.addEventListener("beforeinput", (event) => event.preventDefault(), { once: true });
+    edit(field!);
+    full!.setSelectionRange(FRENCH.length, FRENCH.length);
+    edit(full!);
+    await vi.runAllTimersAsync();
+    expect(values).toEqual([]);
+    expect(fullValues).toEqual([]);
+    edit(field!);
+    await vi.runAllTimersAsync();
+    expect(values).toEqual([null, "false"]);
+  });
+
+  it("forgets a field once it is closed", async () => {
+    document.body.innerHTML = `<textarea>${FRENCH}</textarea><textarea>${GERMAN}</textarea>`;
+    const [closed, open] = document.querySelectorAll("textarea");
+    const closedValues = watchSpellcheck(closed!);
+    send.mockResolvedValue("added");
+    focus(closed!);
+    await vi.runAllTimersAsync();
+    edit(closed!);
+    closed!.remove();
+    focus(open!);
+    await vi.runAllTimersAsync();
+    document.body.append(closed!);
+    sampler.dictionaryReady();
+    edit(closed!);
+    await vi.runAllTimersAsync();
+    expect(closedValues).toEqual([null, "false"]);
   });
 
   it("rechecks every field a dictionary was added for once it finishes loading", async () => {
