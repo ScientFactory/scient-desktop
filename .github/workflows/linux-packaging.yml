@@ -70,7 +70,9 @@ jobs:
           assert.equal(pkg.build.files.filter(file => filters.has(file)).length, 10);
           pkg.build.files = pkg.build.files.filter(file => !filters.has(file));
           const config = path.join(process.env.STAGE_PARENT, 'baseline-config.json');
-          pkg.build.directories.output = path.join(process.env.RUNNER_TEMP, 'linux-baseline');
+          // Keep the production output directory: electron-builder excludes it
+          // from input automatically, including artifacts from the first build.
+          assert.equal(pkg.build.directories.output, 'dist');
           pkg.build.npmRebuild = false;
           fs.writeFileSync(config, JSON.stringify(pkg.build, null, 2));
           fs.appendFileSync(process.env.GITHUB_OUTPUT, 'stage=' + stage + '\n');
@@ -82,6 +84,8 @@ jobs:
           vp exec --filter @t3tools/desktop -- electron-builder \
             --projectDir "${{ steps.baseline.outputs.stage }}" --linux AppImage --x64 --publish never \
             --config "${{ steps.baseline.outputs.config }}"
+          mkdir -p "${{ runner.temp }}/linux-baseline"
+          cp "${{ steps.baseline.outputs.stage }}"/dist/*.AppImage "${{ runner.temp }}/linux-baseline/"
       - name: Extract both actual AppImages
         run: |
           set -euo pipefail
