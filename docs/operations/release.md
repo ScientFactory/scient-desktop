@@ -45,8 +45,11 @@ the stable scheduler and production gate.
   remains a separate workflow/manifest check.
 - The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
   packages; their Linux variants remain, and the Windows sidecar is separate.
-  Windows Packaging also executes that exact packaged archive on Linux without
-  installing replacement dependencies, checking native loads, terminals, CLI,
+  WSL installation restores execute permissions for Cursor's Linux `rg` and
+  `cursorsandbox` helpers in the verified cache because Windows-created archives
+  lose those permissions. Windows Packaging runs the same install script and
+  executes that exact packaged archive on Linux without installing replacement
+  dependencies, checking native loads, terminals, CLI,
   HTTP startup, and shutdown. This qualifies the Linux payload; WSL distro and
   Windows/Linux interoperability acceptance remain separate platform checks.
 - Windows loose-file validation retains an 80-file core budget. Pinned voice
