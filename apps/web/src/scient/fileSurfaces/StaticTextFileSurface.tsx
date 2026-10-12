@@ -11,6 +11,7 @@ import type { ScopedThreadRef, FileCitation } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { SourceCitationActions } from "./SourceCitationActions";
 import { resolveSourceCitation } from "./sourceCitation";
+import { sourcePosition } from "../math/input/sourceAdapter";
 
 const citationReady = () => true;
 
@@ -57,8 +58,8 @@ export function StaticTextFileSurface(props: {
     const match = resolveSourceCitation(props.contents, props.citationReveal);
     return match
       ? {
-          start: props.contents.slice(0, match.from).split(/\r\n|[\r\n]/u).length,
-          end: props.contents.slice(0, match.to - 1).split(/\r\n|[\r\n]/u).length,
+          start: sourcePosition(props.contents, match.from).line + 1,
+          end: sourcePosition(props.contents, match.to - 1).line + 1,
         }
       : null;
   }, [props.contents, props.citationReveal]);

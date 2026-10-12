@@ -74,6 +74,7 @@ async function mount(input: string, name: string) {
       `${name}.txt`,
       reveal ? source.slice(0, reveal.from).split("\n").length : null,
       reveal?.requestId ?? -1,
+      undefined,
       false,
     );
     return (

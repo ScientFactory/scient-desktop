@@ -1,3 +1,32 @@
+import type { FileCitation } from "@t3tools/contracts";
+import { resolveSourceCitation } from "~/scient/fileSurfaces/sourceCitation";
+import { sourcePosition } from "~/scient/math/input/sourceAdapter";
+
+/** The rendered source owns the reveal target; the recorded line is only a fallback. */
+export function resolveFileRevealLine(
+  contents: string,
+  requestedLine: number | null,
+  citation?: FileCitation,
+): number | null {
+  if (citation?.sourceSelection) {
+    const match = resolveSourceCitation(contents, citation);
+    if (match) return sourcePosition(contents, match.from).line + 1;
+  }
+  const fallbackLine = citation?.sourceSelection ? citation.startLine : requestedLine;
+  if (fallbackLine === null) return null;
+  let lineCount = 1;
+  for (let index = 0; index < contents.length; index += 1) {
+    const character = contents.charCodeAt(index);
+    if (character === 10) {
+      lineCount += 1;
+    } else if (character === 13) {
+      lineCount += 1;
+      if (contents.charCodeAt(index + 1) === 10) index += 1;
+    }
+  }
+  return Math.min(Math.max(1, fallbackLine), lineCount);
+}
+
 interface LineGeometry {
   readonly top: number;
   readonly height: number;

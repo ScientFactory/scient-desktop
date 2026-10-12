@@ -2,7 +2,7 @@ import { FileCitation, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
-import { sourceOffset } from "../math/input/sourceAdapter";
+import { sourceOffset, sourcePosition } from "../math/input/sourceAdapter";
 
 export type SourceCitationTarget = ScopedThreadRef & {
   cwd: string;
@@ -10,7 +10,7 @@ export type SourceCitationTarget = ScopedThreadRef & {
   latexRootRelativePath?: string | undefined;
 };
 const revisions = new Map<string, string>();
-export function sourceCitationRevision(source: string) {
+function sourceCitationRevision(source: string) {
   const existing = revisions.get(source);
   if (existing) return existing;
   const revision = `sha256:${bytesToHex(sha256(new TextEncoder().encode(source)))}`;
@@ -52,8 +52,8 @@ export function createSourceCitation(
     sourceEnd: to,
     from,
     to,
-    startLine: source.slice(0, from).split(/\r\n|[\r\n]/u).length,
-    endLine: source.slice(0, to - 1).split(/\r\n|[\r\n]/u).length,
+    startLine: sourcePosition(source, from).line + 1,
+    endLine: sourcePosition(source, to - 1).line + 1,
     text,
     prefix: [...source.slice(Math.max(0, from - 33), from)].slice(-16).join(""),
     suffix: [...source.slice(to, to + 33)].slice(0, 16).join(""),
@@ -132,7 +132,7 @@ export function sourceCitationRects(root: HTMLElement, source: string, from: num
 
 export function staticSourceSelection(root: HTMLElement, source: string) {
   const selection = root.ownerDocument.getSelection();
-  if (!selection || selection.isCollapsed) return null;
+  if (!selection) return null;
   const shadows = [...root.querySelectorAll("*")].flatMap((element) =>
     element.shadowRoot ? [element.shadowRoot] : [],
   );
@@ -141,8 +141,17 @@ export function staticSourceSelection(root: HTMLElement, source: string) {
       getComposedRanges?: (options: { shadowRoots: ShadowRoot[] }) => StaticRange[];
     }
   ).getComposedRanges?.({ shadowRoots: shadows });
-  const range = composed?.[0] ?? (selection.rangeCount === 1 ? selection.getRangeAt(0) : null);
-  if (!range) return null;
+  // Native endpoints are retargeted at a shadow host. Only the composed range
+  // can establish whether the source selection is actually collapsed.
+  const range =
+    composed === undefined
+      ? selection.rangeCount === 1
+        ? selection.getRangeAt(0)
+        : null
+      : composed.length === 1
+        ? composed[0]
+        : null;
+  if (!range || range.collapsed) return null;
   const offset = (node: Node, at: number) => {
     const row = (node instanceof Element ? node : node.parentElement)?.closest<HTMLElement>(
       "[data-content] > [data-line]",

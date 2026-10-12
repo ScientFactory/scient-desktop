@@ -107,6 +107,7 @@ export function LatexVisualSourcePane(
     reveal.path,
     reveal.citation || navigationMarked ? line : null,
     reveal.requestId,
+    reveal.citation,
     !!reveal.citation,
   );
   const selectionReveal = useMemo(

@@ -34,6 +34,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
+import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   ForwardCompatibleNullable,
@@ -1642,8 +1643,15 @@ export const ServerSettingsPatch = Schema.Struct({
         decode: SchemaGetter.transform(
           (raw: unknown) => raw as Readonly<Record<ProviderDriverKind, unknown>> | undefined,
         ),
-        encode: SchemaGetter.forbidden(
-          () => "The legacy providers patch is accepted from older clients only.",
+        // transformEffect skips absent keys; forbidden also rejects absence.
+        encode: SchemaGetter.transformEffect((value, options) =>
+          Effect.fail(
+            new SchemaIssue.Forbidden(
+              { message: "The legacy providers patch is accepted from older clients only." },
+              value,
+              options,
+            ),
+          ),
         ),
       }),
     ),

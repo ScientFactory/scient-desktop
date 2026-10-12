@@ -198,7 +198,7 @@ import {
   FileSurfaceLoading,
 } from "./fileSurfaceChrome";
 import SourceFilePreview from "./ReadOnlySourcePreview";
-import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
+import { resolveCenteredFileLineScrollTop, resolveFileRevealLine } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
 import { FileBreadcrumbNavigator } from "./FileBreadcrumbNavigator";
@@ -527,20 +527,6 @@ function WorkspaceAudioPreview(props: {
   return <AudioPreview src={url} name={props.name} onError={() => setFailedUrl(url)} />;
 }
 
-function clampFileLine(contents: string, requestedLine: number): number {
-  let lineCount = 1;
-  for (let index = 0; index < contents.length; index += 1) {
-    const character = contents.charCodeAt(index);
-    if (character === 10) {
-      lineCount += 1;
-    } else if (character === 13) {
-      lineCount += 1;
-      if (contents.charCodeAt(index + 1) === 10) index += 1;
-    }
-  }
-  return Math.min(Math.max(1, requestedLine), lineCount);
-}
-
 function updateFileLinkReveal(fileContainer: HTMLElement, line: number | null): void {
   const root = fileContainer.shadowRoot ?? fileContainer;
   for (const element of root.querySelectorAll<HTMLElement>(`[${FILE_LINK_REVEAL_ATTRIBUTE}]`)) {
@@ -581,6 +567,7 @@ export function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
+  citation?: FileCitation,
   markLine = true,
 ): { readonly onPostRender: FilePostRender; readonly move: (from: string, to: string) => void } {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
@@ -623,7 +610,7 @@ export function useFileLineReveal(
 
       const contents = instance.file?.contents;
       const targetLine =
-        revealLine === null || contents === undefined ? null : clampFileLine(contents, revealLine);
+        contents === undefined ? null : resolveFileRevealLine(contents, revealLine, citation);
       updateFileLinkReveal(fileContainer, markLine ? targetLine : null);
 
       if (!(instance instanceof VirtualizedFile)) return;
@@ -634,7 +621,7 @@ export function useFileLineReveal(
         state.handledRequestId = null;
       }
 
-      if (revealLine === null) {
+      if (revealLine === null && !citation?.sourceSelection) {
         cancelPendingReveal();
         fileContainer.style.minHeight = "";
         return;
@@ -736,7 +723,9 @@ export function useFileLineReveal(
           // and wrongly mark the request handled.
           const currentContents = instance.file?.contents;
           const line =
-            currentContents === undefined ? null : clampFileLine(currentContents, revealLine);
+            currentContents === undefined
+              ? null
+              : resolveFileRevealLine(currentContents, revealLine, citation);
           const targetTop = line === null ? null : resolveScrollTarget(line);
           if (line === null || targetTop === null) {
             if (attempt < REVEAL_MAX_ATTEMPTS) scheduleReveal(attempt + 1);
@@ -752,7 +741,7 @@ export function useFileLineReveal(
 
       scheduleReveal(0);
     },
-    [revealStatesByPath, relativePath, revealLine, revealRequestId, markLine],
+    [revealStatesByPath, relativePath, revealLine, revealRequestId, citation, markLine],
   );
   return { onPostRender, move };
 }
@@ -1940,6 +1929,7 @@ export default function FilePreviewPanel({
     relativePath,
     currentRevealLine,
     revealRequestId,
+    citationRevealActive ? fileCitation : undefined,
   );
   // SCIENT-FORK:START — an open Markdown document renames in place, keeping its editor
   const { moveInPlace, surfaceGeneration } = useInPlaceRename({
