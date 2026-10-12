@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderConnectionMethod,
+  type CustomModelSaveInput,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -12,10 +13,20 @@ import {
   __resetClientSettingsPersistenceForTests,
   __setClientSettingsForTests,
 } from "../../hooks/useSettings";
+import { useState, type ReactNode } from "react";
+import { Button } from "../ui/button";
+import { ConnectModelsButton } from "../../scient/providerConnection/ConnectModelsButton";
+import { CustomModelRowActions } from "../settings/CustomModelRowActions";
+import { ModelConnectionEditor } from "../settings/ModelConnectionEditor";
+import { CustomModelConnectionDialog } from "../settings/CustomModelConnectionDialog";
+import { createPortal } from "react-dom";
+import { isInsideRestingComposerControlScope } from "./composerEventScope";
+import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { ModelPickerContent } from "./ModelPickerContent";
+import { ProviderModelPicker } from "./ProviderModelPicker";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   AssistedProviderSetupHost,
@@ -109,6 +120,11 @@ function render(
   options = provider.models,
   locked = false,
   providers = [provider],
+  composed = false,
+  environmentId = EnvironmentId.make("synthetic"),
+  customSetup?: ReactNode,
+  composerOwned = false,
+  resting = true,
 ) {
   if (!host) {
     host = document.createElement("div");
@@ -116,8 +132,12 @@ function render(
     document.body.append(host);
     root = createRoot(host);
   }
-  root.render(
-    <ModelPickerContent
+  const Picker = composed ? ProviderModelPicker : ModelPickerContent;
+  const picker = (
+    <Picker
+      {...(composed
+        ? { triggerAriaLabel: "Choose test model", isComposerOwned: composerOwned }
+        : {})}
       activeInstanceId={provider.instanceId}
       model="model-0"
       lockedProvider={locked ? provider.driver : null}
@@ -130,15 +150,24 @@ function render(
         entry.isAvailable &&
         supportsAssistedProviderSetupSurface(entry.driverKind, "composer")
       }
-      renderProviderSetup={(entry) => (
-        <AssistedProviderSetupHost
-          environmentId={EnvironmentId.make("synthetic")}
-          provider={entry.snapshot}
-          displayName={entry.displayName}
-          surface="composer"
-        />
-      )}
-    />,
+      renderProviderSetup={(entry) =>
+        customSetup ?? (
+          <AssistedProviderSetupHost
+            environmentId={environmentId}
+            provider={entry.snapshot}
+            displayName={entry.displayName}
+            surface="composer"
+          />
+        )
+      }
+    />
+  );
+  root.render(
+    composerOwned ? (
+      <ComposerPortalFixture resting={resting}>{picker}</ComposerPortalFixture>
+    ) : (
+      picker
+    ),
   );
 }
 afterEach(() => {
@@ -146,6 +175,7 @@ afterEach(() => {
   host?.remove();
   host = undefined!;
   root = undefined!;
+  document.documentElement.classList.remove("dark");
   __resetClientSettingsPersistenceForTests();
   vi.clearAllMocks();
 });
@@ -157,10 +187,10 @@ function reachable(button: HTMLElement) {
 async function setupButton() {
   await expect
     .poll(() =>
-      host.querySelector<HTMLElement>("[data-provider-onboarding-view] button:not(:disabled)"),
+      document.querySelector<HTMLElement>("[data-provider-onboarding-view] button:not(:disabled)"),
     )
     .toBeTruthy();
-  const button = host.querySelector<HTMLElement>(
+  const button = document.querySelector<HTMLElement>(
     "[data-provider-onboarding-view] button:not(:disabled)",
   )!;
   await expect.poll(() => reachable(button)).toBe(true);
@@ -366,4 +396,523 @@ describe("actual picker provider setup", () => {
     ).toBeLessThanOrEqual(240);
     await page.viewport(1280, 720);
   });
+});
+
+const saveCustomModel = vi.fn(async (_input: CustomModelSaveInput) => {});
+function NestedCustomSetup({
+  adding = false,
+  removeOpenerOnSave = false,
+}: {
+  adding?: boolean;
+  removeOpenerOnSave?: boolean;
+}) {
+  const [showOpener, setShowOpener] = useState(true);
+  const [managing, setManaging] = useState(false);
+  return (
+    <ConnectModelsButton
+      environmentId={EnvironmentId.make("synthetic")}
+      instanceId={ProviderInstanceId.make("pi_work")}
+      accountContent={
+        <>
+          {showOpener ? (
+            <Button onClick={() => setManaging(true)}>
+              {adding ? "Add synthetic model" : "Manage synthetic connection"}
+            </Button>
+          ) : null}
+          {managing && adding ? (
+            <ModelConnectionEditor
+              settings={{ revision: 1, connections: [] }}
+              target={{}}
+              agents={[
+                {
+                  id: ProviderInstanceId.make("pi_work"),
+                  name: "Pi",
+                  driver: ProviderDriverKind.make("pi"),
+                },
+              ]}
+              defaultInstanceIds={[ProviderInstanceId.make("pi_work")]}
+              onSave={async (input) => {
+                await saveCustomModel(input);
+                if (removeOpenerOnSave) setShowOpener(false);
+              }}
+              onClose={() => setManaging(false)}
+            />
+          ) : managing ? (
+            <CustomModelConnectionDialog
+              connection={{
+                id: "synthetic-connection",
+                name: "Synthetic connection",
+                protocol: "openai-completions",
+                baseUrl: `https://example.test/${"long-endpoint/".repeat(60)}`,
+                credentialId: null,
+                apiKeySuffix: null,
+                models: [],
+              }}
+              revision={1}
+              onSave={saveCustomModel}
+              onDelete={() => {}}
+              onClose={() => setManaging(false)}
+            />
+          ) : null}
+        </>
+      }
+    />
+  );
+}
+function longAccounts(): ServerProvider {
+  const base = snapshot("scient", true);
+  return {
+    ...base,
+    connection: {
+      ...base.connection!,
+      accounts: Array.from({ length: 40 }, (_, i) => ({
+        id: `account-${i}`,
+        name: `Synthetic account ${i}`,
+        kind: i < 25 ? "account" : "key",
+        connected: i === 0,
+        canDisconnect: i === 0,
+      })),
+    },
+  };
+}
+async function openComposed(provider: ServerProvider) {
+  render(provider, provider.models, false, [provider], true);
+  await page.getByRole("button", { name: "Choose test model", exact: true }).click();
+  await setupButton();
+  await page.getByRole("button", { name: "Connect models", exact: true }).click();
+  await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBeTruthy();
+  await expect
+    .poll(() => document.querySelector("[data-slot=dialog-popup]")?.textContent)
+    .toContain(provider.driver === "scient" ? "Model accounts" : "Custom models");
+  return document.querySelector<HTMLElement>("[data-slot=dialog-popup]")!;
+}
+function scrollEvent(target: Element, type: "wheel" | "touchmove") {
+  const event =
+    type === "wheel"
+      ? new WheelEvent(type, { bubbles: true, cancelable: true, deltaY: 120 })
+      : new Event(type, { bubbles: true, cancelable: true });
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+describe("composed picker Connect models overlay", () => {
+  it("allows portaled account scrolling while refusing background wheel and touch", async () => {
+    const dialog = await openComposed(longAccounts());
+    const list = dialog.querySelector<HTMLElement>(
+      "section[aria-label='Model accounts'] .overflow-y-auto",
+    )!;
+    expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+    await userEvent.wheel(list, { delta: { y: 150 } });
+    await expect.poll(() => list.scrollTop).toBeGreaterThan(0);
+    for (const type of ["wheel", "touchmove"] as const) {
+      expect(scrollEvent(host, type)).toBe(true);
+      expect(scrollEvent(list, type)).toBe(false);
+    }
+  });
+  it("keeps the dialog above the parent card and returns focus through nested Escape", async () => {
+    const provider = longAccounts();
+    commands.accountCommand.mockResolvedValue({
+      _tag: "Success",
+      value: { providers: [provider] },
+    });
+    const dialog = await openComposed(provider);
+    const search = dialog.querySelector<HTMLInputElement>("input[type=search]")!;
+    await expect.poll(() => reachable(search)).toBe(true);
+    const close = dialog.querySelector<HTMLElement>("button[aria-label=Close]")!;
+    await expect.poll(() => reachable(close)).toBe(true);
+    const picker = document.querySelector<HTMLElement>("[data-model-picker-content]")!;
+    expect(getComputedStyle(picker).visibility).toBe("hidden");
+    await page
+      .getByRole("searchbox", { name: "Search model accounts" })
+      .fill("Synthetic account 39");
+    expect(commands.accountCommand).not.toHaveBeenCalled();
+    await page.getByRole("button", { name: "Add key", exact: true }).click();
+    expect(commands.accountCommand).toHaveBeenCalledExactlyOnceWith({
+      environmentId: EnvironmentId.make("synthetic"),
+      input: {
+        instanceId: ProviderInstanceId.make("scient_work"),
+        method: "scient_agent_account",
+        account: "account-39",
+      },
+    });
+    await page.getByRole("searchbox", { name: "Search model accounts" }).fill("");
+    await page.getByRole("searchbox", { name: "Search model accounts" }).click();
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBeNull();
+    await expect.poll(() => getComputedStyle(picker).visibility).toBe("visible");
+    await expect.poll(() => document.activeElement?.textContent).toContain("Connect models");
+    await userEvent.keyboard("{Escape}");
+    await expect
+      .poll(() => document.activeElement?.getAttribute("aria-label"))
+      .toBe("Choose test model");
+  });
+  it.each(["pi", "omp", "droid"] as const)(
+    "suspends %s setup through a ready catalog and closes its dialog",
+    async (driver) => {
+      await page.viewport(380, 480);
+      document.documentElement.classList.add("dark");
+      const provider = { ...snapshot(driver, true), auth: { status: "authenticated" as const } };
+      const dialog = await openComposed(provider);
+      const close = dialog.querySelector<HTMLElement>("button[aria-label=Close]")!;
+      await expect.poll(() => reachable(close)).toBe(true);
+      expect(dialog.getBoundingClientRect().width).toBeLessThanOrEqual(380);
+      const ready: ServerProvider = {
+        ...provider,
+        status: "ready",
+        models: [
+          { slug: "custom-model", name: "Custom model", isCustom: true, capabilities: null },
+        ],
+      };
+      render(ready, ready.models, false, [ready], true);
+      await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBe(dialog);
+      await page.getByRole("button", { name: "Close", exact: true }).click();
+      await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBeNull();
+      await expect.poll(() => document.querySelector("[data-model-picker-models]")).toBeTruthy();
+      expect(commands.startConnection).not.toHaveBeenCalled();
+      expect(commands.accountCommand).not.toHaveBeenCalled();
+      await page.viewport(1280, 720);
+    },
+  );
+  it("resets the dialog when execution environment identity changes", async () => {
+    await page.viewport(1280, 720);
+    const provider = longAccounts();
+    await openComposed(provider);
+    await page.getByRole("searchbox", { name: "Search model accounts" }).fill("account 39");
+    render(
+      provider,
+      provider.models,
+      false,
+      [provider],
+      true,
+      EnvironmentId.make("another-synthetic"),
+    );
+    await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBeNull();
+    expect(commands.accountCommand).not.toHaveBeenCalled();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    await expect
+      .poll(
+        () =>
+          document.querySelector<HTMLInputElement>("[data-slot=dialog-popup] input[type=search]")
+            ?.value,
+      )
+      .toBe("");
+  });
+  it("allows a nested production custom-model editor portal without admitting background scrolling", async () => {
+    await page.viewport(380, 480);
+    const provider = snapshot("pi", true);
+    render(
+      provider,
+      [],
+      false,
+      [provider],
+      true,
+      EnvironmentId.make("synthetic"),
+      <NestedCustomSetup />,
+    );
+    await page.getByRole("button", { name: "Choose test model", exact: true }).click();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    await page.getByRole("button", { name: "Manage synthetic connection", exact: true }).click();
+    await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(2);
+    const nested = [...document.querySelectorAll<HTMLElement>("[data-slot=dialog-popup]")].at(-1)!;
+    const viewport = nested.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;
+    expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+    for (const type of ["wheel", "touchmove"] as const) {
+      expect(scrollEvent(viewport, type)).toBe(false);
+      expect(scrollEvent(host, type)).toBe(true);
+    }
+    await userEvent.wheel(viewport, { delta: { y: 150 } });
+    await expect.poll(() => viewport.scrollTop).toBeGreaterThan(0);
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(1);
+    await expect
+      .poll(() => document.activeElement?.textContent)
+      .toContain("Manage synthetic connection");
+    expect(saveCustomModel).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(0);
+    await page.viewport(1280, 720);
+  });
+  it("returns focus to the opener after nested production model editor Escape", async () => {
+    const provider = snapshot("pi", true);
+    render(
+      provider,
+      [],
+      false,
+      [provider],
+      true,
+      EnvironmentId.make("synthetic"),
+      <NestedCustomSetup adding />,
+    );
+    await page.getByRole("button", { name: "Choose test model", exact: true }).click();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    await page.getByRole("button", { name: "Add synthetic model", exact: true }).click();
+    await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(2);
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(1);
+    await expect.poll(() => document.activeElement?.textContent).toContain("Add synthetic model");
+    expect(saveCustomModel).not.toHaveBeenCalled();
+  });
+  it("restores focus to the retained dialog when nested production model save removes its opener", async () => {
+    const provider = snapshot("pi", true);
+    render(
+      provider,
+      [],
+      false,
+      [provider],
+      true,
+      EnvironmentId.make("synthetic"),
+      <NestedCustomSetup adding removeOpenerOnSave />,
+    );
+    await page.getByRole("button", { name: "Choose test model", exact: true }).click();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    const outer = document.querySelector<HTMLElement>("[data-slot=dialog-popup]")!;
+    await page.getByRole("button", { name: "Add synthetic model", exact: true }).click();
+    await page.getByPlaceholder("Model identifier").fill("synthetic-model");
+    await page.getByPlaceholder("API key", { exact: true }).fill("synthetic-answer");
+    await page.getByRole("button", { name: "Save model", exact: true }).click();
+    await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(1);
+    await expect.poll(() => outer.contains(document.activeElement)).toBe(true);
+    expect(saveCustomModel).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).not.toContain("Add synthetic model");
+  });
+  it("retains an operation draft and search across ready snapshot updates", async () => {
+    const base = longAccounts();
+    const provider: ServerProvider = {
+      ...base,
+      connection: {
+        ...base.connection!,
+        accountOperation: {
+          operationId: "synthetic-operation",
+          method: "scient_agent_account",
+          account: "account-39",
+          status: "waiting_for_browser",
+          startedAt: base.checkedAt,
+          finishedAt: null,
+          message: "Synthetic sign-in",
+          acceptsAuthorizationCode: true,
+        },
+      },
+    };
+    const dialog = await openComposed(provider);
+    await page
+      .getByLabelText("Answer for Synthetic account 39", { exact: true })
+      .fill("synthetic-draft");
+    const ready: ServerProvider = {
+      ...provider,
+      status: "ready",
+      auth: { status: "authenticated" },
+      models: [{ slug: "ready-model", name: "Ready model", isCustom: false, capabilities: null }],
+    };
+    const probing = { ...ready, probePending: true };
+    render(probing, probing.models, false, [probing], true);
+    await expect
+      .poll(
+        () =>
+          document.querySelector<HTMLInputElement>("[data-slot=dialog-popup] input[type=password]")
+            ?.value,
+      )
+      .toBe("synthetic-draft");
+    render(ready, ready.models, false, [ready], true);
+    await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBe(dialog);
+    expect(dialog.querySelector<HTMLInputElement>("input[type=password]")?.value).toBe(
+      "synthetic-draft",
+    );
+    expect(commands.accountCommand).not.toHaveBeenCalled();
+    const completed = { ...ready, connection: { ...ready.connection!, accountOperation: null } };
+    render(completed, completed.models, false, [completed], true);
+    await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBe(dialog);
+    await page.getByRole("searchbox", { name: "Search model accounts" }).fill("account 39");
+    render(completed, completed.models, false, [completed], true);
+    expect(dialog.querySelector<HTMLInputElement>("input[type=search]")?.value).toBe("account 39");
+  });
+});
+
+const composerSubmit = vi.fn();
+function ComposerPortalFixture({
+  children,
+  resting = true,
+}: {
+  children: ReactNode;
+  resting?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(resting);
+  const [controls, setControls] = useState<HTMLDivElement | null>(null);
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        composerSubmit();
+      }}
+      onFocusCapture={(event) => {
+        if (!isInsideRestingComposerControlScope(event.target)) setCollapsed(false);
+      }}
+    >
+      <div ref={setControls} data-chat-composer-resting-controls="true" />
+      {collapsed && controls ? createPortal(children, controls) : children}
+    </form>
+  );
+}
+function renderOnboarding(provider: ServerProvider) {
+  if (!host) {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  }
+  const entry = deriveProviderInstanceEntries([provider])[0]!;
+  root.render(
+    <ComposerPortalFixture>
+      <ProviderOnboardingPicker
+        environmentId={EnvironmentId.make("synthetic")}
+        instanceEntries={[entry]}
+        reconnectEntry={entry}
+        autoSelectReadyProvider
+        onInstanceModelChange={selectModel}
+      />
+    </ComposerPortalFixture>,
+  );
+}
+describe("composer-owned setup portals", () => {
+  it("keeps collapsed composer controls mounted when the account dialog takes focus", async () => {
+    await page.viewport(1280, 720);
+    const provider = longAccounts();
+    render(provider, [], false, [provider], true, EnvironmentId.make("synthetic"), undefined, true);
+    await page.getByRole("button", { name: "Choose test model", exact: true }).click();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    await page.getByRole("searchbox", { name: "Search model accounts" }).fill("account 39");
+    const dialog = document.querySelector<HTMLElement>("[data-slot=dialog-popup]")!;
+    expect(dialog.querySelector<HTMLInputElement>("input[type=search]")?.value).toBe("account 39");
+    expect(
+      host.querySelector("[data-chat-composer-resting-controls] [data-chat-provider-model-picker]"),
+    ).toBeTruthy();
+    expect(commands.accountCommand).not.toHaveBeenCalled();
+  });
+  it("submits only the authorization form without submitting the containing composer", async () => {
+    await page.viewport(1280, 720);
+    const base = longAccounts();
+    const provider: ServerProvider = {
+      ...base,
+      connection: {
+        ...base.connection!,
+        accountOperation: {
+          operationId: "composer-form-operation",
+          method: "scient_agent_account",
+          account: "account-39",
+          status: "waiting_for_browser",
+          startedAt: base.checkedAt,
+          finishedAt: null,
+          message: "Synthetic sign-in",
+          acceptsAuthorizationCode: true,
+        },
+      },
+    };
+    commands.accountCommand.mockResolvedValue({
+      _tag: "Success",
+      value: { providers: [provider] },
+    });
+    render(
+      provider,
+      [],
+      false,
+      [provider],
+      true,
+      EnvironmentId.make("synthetic"),
+      undefined,
+      true,
+      false,
+    );
+    await page.getByRole("button", { name: "Choose test model", exact: true }).click();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    await page
+      .getByLabelText("Answer for Synthetic account 39", { exact: true })
+      .fill("synthetic-form-answer");
+    await page.getByRole("button", { name: "Submit", exact: true }).click();
+    expect(commands.accountCommand).toHaveBeenCalledExactlyOnceWith({
+      environmentId: EnvironmentId.make("synthetic"),
+      input: {
+        instanceId: provider.instanceId,
+        operationId: "composer-form-operation",
+        authorizationCode: "synthetic-form-answer",
+      },
+    });
+    expect(composerSubmit).not.toHaveBeenCalled();
+  });
+  it.each(["scient", "pi", "omp", "droid"] as const)(
+    "retains %s onboarding's owned modal until dismissal before choosing ready models",
+    async (driver) => {
+      await page.viewport(1280, 720);
+      const provider = driver === "scient" ? longAccounts() : snapshot(driver, true);
+      renderOnboarding(provider);
+      await page.getByRole("button", { name: `Reconnect ${driver}`, exact: true }).click();
+      await page.getByRole("button", { name: "Connect models", exact: true }).click();
+      await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBeTruthy();
+      const dialog = document.querySelector<HTMLElement>("[data-slot=dialog-popup]")!;
+      const ready: ServerProvider = {
+        ...provider,
+        status: "ready",
+        auth: { status: "authenticated" },
+        models: [{ slug: "ready-model", name: "Ready model", isCustom: false, capabilities: null }],
+      };
+      renderOnboarding(ready);
+      await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBe(dialog);
+      expect(selectModel).not.toHaveBeenCalled();
+      await page.getByRole("button", { name: "Close", exact: true }).click();
+      await expect.poll(() => document.querySelector("[data-slot=dialog-popup]")).toBeNull();
+      await expect.poll(() => selectModel.mock.calls.length).toBe(1);
+      expect(selectModel).toHaveBeenCalledExactlyOnceWith(provider.instanceId, "ready-model");
+      expect(commands.accountCommand).not.toHaveBeenCalled();
+    },
+  );
+});
+
+const testAgent = vi.fn();
+function NestedAgentMenuSetup() {
+  return (
+    <ConnectModelsButton
+      environmentId={EnvironmentId.make("synthetic")}
+      instanceId={ProviderInstanceId.make("pi_work")}
+      accountContent={
+        <CustomModelRowActions
+          busy={false}
+          testing={false}
+          statuses={[]}
+          keyMissing={false}
+          testAgents={Array.from({ length: 40 }, (_, i) => ({
+            id: ProviderInstanceId.make(`pi_review_${i}`),
+            name: `Synthetic agent ${i}`,
+          }))}
+          notice={null}
+          onCheckAgain={() => {}}
+          onReenterKey={() => {}}
+          onTest={testAgent}
+        />
+      }
+    />
+  );
+}
+it("scrolls the owned custom-model agent menu without admitting background events", async () => {
+  await page.viewport(1280, 720);
+  const provider = snapshot("pi", true);
+  render(
+    provider,
+    [],
+    false,
+    [provider],
+    true,
+    EnvironmentId.make("synthetic"),
+    <NestedAgentMenuSetup />,
+  );
+  await page.getByRole("button", { name: "Choose test model", exact: true }).click();
+  await page.getByRole("button", { name: "Connect models", exact: true }).click();
+  await page.getByRole("button", { name: "Test", exact: true }).click();
+  await expect.poll(() => document.querySelector("[data-slot=menu-popup]")).toBeTruthy();
+  const viewport = document.querySelector<HTMLElement>("[data-slot=menu-popup] .overflow-y-auto")!;
+  expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+  await userEvent.wheel(viewport, { delta: { y: 150 } });
+  await expect.poll(() => viewport.scrollTop).toBeGreaterThan(0);
+  for (const type of ["wheel", "touchmove"] as const) {
+    expect(scrollEvent(viewport, type)).toBe(false);
+    expect(scrollEvent(host, type)).toBe(true);
+  }
+  expect(testAgent).not.toHaveBeenCalled();
+  await page.getByRole("menuitem", { name: "Synthetic agent 39", exact: true }).click();
+  expect(testAgent).toHaveBeenCalledExactlyOnceWith(ProviderInstanceId.make("pi_review_39"));
 });

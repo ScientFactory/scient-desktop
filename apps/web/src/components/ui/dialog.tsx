@@ -1,6 +1,8 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { useContext } from "react";
+import { OverlayScrollScope } from "./overlay-scroll-scope";
 import { XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
@@ -80,6 +82,7 @@ function DialogPopup({
   /** Allows feature-owned dialogs to tune the shared backdrop without replacing it. */
   backdropClassName?: string;
 }) {
+  const scrollScope = useContext(OverlayScrollScope);
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
@@ -108,6 +111,8 @@ function DialogPopup({
             bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
             className,
           )}
+          {...scrollScope?.portalProps}
+          data-overlay-scroll-scope={scrollScope?.id}
           data-slot="dialog-popup"
           data-layout={layout}
           {...props}

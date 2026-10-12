@@ -1,6 +1,6 @@
 import type { EnvironmentId, ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import { LoaderIcon, LogOutIcon, PowerIcon, TriangleAlertIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useContext, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -14,6 +14,7 @@ import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { CodexInlineSetup } from "./CodexInlineSetup";
 import { CursorInlineSetup } from "./CursorInlineSetup";
 import { DroidInlineSetup } from "./DroidInlineSetup";
+import { ModelPickerOverlayContext } from "./ModelPickerOverlayContext";
 import { ConnectModelsButton } from "./ConnectModelsButton";
 import { GrokInlineSetup } from "./GrokInlineSetup";
 import { OmpInlineSetup } from "./OmpInlineSetup";
@@ -72,6 +73,7 @@ type AssistedProviderSetupHostProps = AssistedProviderSetupHostBaseProps &
  * construction and the management surface's shared account action.
  */
 export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps) {
+  const overlay = useContext(ModelPickerOverlayContext);
   if (!supportsAssistedProviderSetupSurface(props.provider.driver, props.surface)) return null;
   const displayName =
     props.displayName.trim() || props.provider.displayName?.trim() || String(props.provider.driver);
@@ -84,7 +86,7 @@ export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps)
       />
     );
   }
-  if (props.provider.probePending === true) {
+  if (props.provider.probePending === true && overlay?.instanceId !== props.provider.instanceId) {
     return <ProviderProbePendingSetup displayName={displayName} />;
   }
   return <SupportedAssistedProviderSetupHost {...props} />;

@@ -5,8 +5,10 @@ import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
+import { useContext } from "react";
 
 import { cn } from "~/lib/utils";
+import { OverlayScrollScope } from "./overlay-scroll-scope";
 
 const Select = SelectPrimitive.Root;
 
@@ -154,6 +156,7 @@ function SelectPopup({
   anchor?: SelectPrimitive.Positioner.Props["anchor"];
   collisionBoundary?: SelectPrimitive.Positioner.Props["collisionBoundary"];
 }) {
+  const scrollScope = useContext(OverlayScrollScope);
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
@@ -170,6 +173,8 @@ function SelectPopup({
         <SelectPrimitive.Popup
           className="origin-(--transform-origin) rounded-lg text-foreground outline-none"
           data-slot="select-popup"
+          {...scrollScope?.portalProps}
+          data-overlay-scroll-scope={scrollScope?.id}
           {...props}
         >
           <SelectPrimitive.ScrollUpArrow
