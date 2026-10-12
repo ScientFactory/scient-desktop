@@ -3052,6 +3052,7 @@ interface ClaudeLiveQueryContext {
   // uuid before any echo, so it echoes, but a resume's own turns can still
   // run ahead of that prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
+  preserveWakeForReplacement: boolean;
   // The mode this process was opened in, and the mode the CLI last reported
   // (init and status frames). Claude changes the latter itself through
   // EnterPlanMode.
@@ -3475,6 +3476,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               readonly label: string;
               readonly prompt: string;
               readonly model: string;
+              readonly totalTokens: number | undefined;
+              readonly toolCalls: number | undefined;
               readonly createdAt: DateTime.Utc;
               readonly startedAt: DateTime.Utc | null;
               readonly completedAt: DateTime.Utc | null;
@@ -4712,7 +4715,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               previous?.result !== member.result ||
               previous?.label !== member.label ||
               previous?.prompt !== prompt ||
-              previous?.model !== model;
+              previous?.model !== model ||
+              previous?.totalTokens !== member.totalTokens ||
+              previous?.toolCalls !== member.toolCalls;
             const agentId = member.agentId;
             const readTranscript =
               settled &&
@@ -4923,6 +4928,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 label: member.label,
                 prompt,
                 model,
+                totalTokens: member.totalTokens,
+                toolCalls: member.toolCalls,
                 transcriptAnswerDigest,
                 transcriptReadAttempts:
                   (restarted ? 0 : (previous?.transcriptReadAttempts ?? 0)) +
@@ -6906,9 +6913,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               taskId === undefined
                 ? undefined
                 : workflowRegistry.ownerOf(taskId, liveQuery.nativeThreadId);
+            const observedWorkflowCoordinator = workflowOwner?.context.subagentsByTaskId.get(
+              workflowOwner.taskId,
+            );
             const ownsObservedWorkflowActivation =
               workflowOwner !== undefined &&
-              workflowOwner.context.subagentsByTaskId.get(workflowOwner.taskId) ===
+              (observedWorkflowCoordinator?.task.workflow?.agents.length ?? 0) === 0 &&
+              observedWorkflowCoordinator ===
                 (yield* Ref.get(sessionSubagentsByTaskId)).get(workflowOwner.taskId);
             if (
               ownsObservedWorkflowActivation &&
@@ -8574,248 +8585,272 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // so drop its process-scoped Waiting/wake state immediately. Closing
           // for the same native thread leaves a non-authoritative roster until
           // the replacement open succeeds or fails below.
-          const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
-          if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
-            if (existing.nativeThreadId !== nativeThreadId) {
-              yield* clearWakeStateForNativeThread(existing.nativeThreadId);
-              yield* resetBackgroundTaskStateForNativeThreadProcess(existing.nativeThreadId, {
-                status: "idle",
-              });
+          return yield* Effect.gen(function* () {
+            const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
+            if (existing !== null) {
+              // Same-thread selection changes replay the settled query's reports.
+              // Unexpected EOF and Stop retire them with their captured query.
+              existing.preserveWakeForReplacement = existing.nativeThreadId === nativeThreadId;
+              yield* existing.query.close.pipe(Effect.ignore);
+              if (existing.nativeThreadId !== nativeThreadId) {
+                yield* clearWakeStateForNativeThread(existing.nativeThreadId);
+                yield* resetBackgroundTaskStateForNativeThreadProcess(existing.nativeThreadId, {
+                  status: "idle",
+                });
+              }
             }
-          }
 
-          const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
-          // openedNativeThreads is per session instance and is lost when the
-          // provider session is idle-released. A prior turn on this native id
-          // requires resume; sessionId would fail with "already in use".
-          // A fresh-session fallback keeps provider-thread history but binds
-          // a new native id, which must be created before it can be resumed.
-          const hasPersistedProviderTurn =
-            turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
-          const shouldResume =
-            resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
-          const queryOptions = makeClaudeQueryOptions({
-            modelSelection: turnInput.modelSelection,
-            nativeThreadId,
-            resume: shouldResume,
-            ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
-            cwd: turnInput.runtimePolicy.cwd,
-            attachmentsDir,
-            settings: adapterOptions.settings,
-            environment: adapterOptions.environment,
-            // SCIENT-FORK:START Scient granted query guidance
-            // SCIENT-FORK: deliver the same granted guidance that keys this live query.
-            scientAwareness: mcpOverrides.scientAwareness,
-            // SCIENT-FORK:END Scient granted query guidance
-            tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
-            ...(mcpOverrides.allowedTools === undefined
-              ? {}
-              : { allowedTools: mcpOverrides.allowedTools }),
-            ...(mcpOverrides.mcpServers === undefined
-              ? {}
-              : { mcpServers: mcpOverrides.mcpServers }),
-            permissionMode: queryPolicy.permissionMode,
-            ...(queryPolicy.allowDangerouslySkipPermissions === undefined
-              ? {}
-              : {
-                  allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
-                }),
-            canUseTool,
-            onUserDialog,
-            supportedDialogKinds: ["resume_return"],
-          });
-          const querySession = yield* queryRunner
-            .open({
-              threadId: turnInput.threadId,
-              providerSessionId: input.providerSessionId,
-              options: queryOptions,
-            })
-            .pipe(
-              // An interrupted open leaves the old process just as dead.
-              Effect.onError(() =>
-                // Same-native-thread replacement: the old process is already
-                // dead, so its process-scoped roster is not authoritative.
-                // First-ever failed open (no prior live query) must not invent
-                // native-session reset events.
-                closedExistingNativeThreadId === nativeThreadId
-                  ? Effect.gen(function* () {
-                      yield* clearWakeStateForNativeThread(nativeThreadId);
-                      yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
-                        status: "idle",
-                      });
-                    })
-                  : Effect.void,
+            const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
+            // openedNativeThreads is per session instance and is lost when the
+            // provider session is idle-released. A prior turn on this native id
+            // requires resume; sessionId would fail with "already in use".
+            // A fresh-session fallback keeps provider-thread history but binds
+            // a new native id, which must be created before it can be resumed.
+            const hasPersistedProviderTurn =
+              turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
+            const shouldResume =
+              resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+            const queryOptions = makeClaudeQueryOptions({
+              modelSelection: turnInput.modelSelection,
+              nativeThreadId,
+              resume: shouldResume,
+              ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
+              cwd: turnInput.runtimePolicy.cwd,
+              attachmentsDir,
+              settings: adapterOptions.settings,
+              environment: adapterOptions.environment,
+              // SCIENT-FORK:START Scient granted query guidance
+              // SCIENT-FORK: deliver the same granted guidance that keys this live query.
+              scientAwareness: mcpOverrides.scientAwareness,
+              // SCIENT-FORK:END Scient granted query guidance
+              tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
+              ...(mcpOverrides.allowedTools === undefined
+                ? {}
+                : { allowedTools: mcpOverrides.allowedTools }),
+              ...(mcpOverrides.mcpServers === undefined
+                ? {}
+                : { mcpServers: mcpOverrides.mcpServers }),
+              permissionMode: queryPolicy.permissionMode,
+              ...(queryPolicy.allowDangerouslySkipPermissions === undefined
+                ? {}
+                : {
+                    allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
+                  }),
+              canUseTool,
+              onUserDialog,
+              supportedDialogKinds: ["resume_return"],
+            });
+            const querySession = yield* queryRunner
+              .open({
+                threadId: turnInput.threadId,
+                providerSessionId: input.providerSessionId,
+                options: queryOptions,
+              })
+              .pipe(
+                // An interrupted open leaves the old process just as dead.
+                Effect.onError(() =>
+                  // Same-native-thread replacement: the old process is already
+                  // dead, so its process-scoped roster is not authoritative.
+                  // First-ever failed open (no prior live query) must not invent
+                  // native-session reset events.
+                  closedExistingNativeThreadId === nativeThreadId
+                    ? Effect.gen(function* () {
+                        yield* clearWakeStateForNativeThread(nativeThreadId);
+                        yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
+                          status: "idle",
+                        });
+                      })
+                    : Effect.void,
+                ),
+              );
+            yield* queryOwnership.withPermits(1)(checkStartOwnership(startGeneration));
+            // Marked only after a successful open: a failed create must not
+            // leave the runtime believing the native session exists, or the
+            // retry would resume a session that was never created.
+            yield* Ref.update(openedNativeThreads, (current) => {
+              if (current.has(nativeThreadId)) {
+                return current;
+              }
+              const updated = new Set(current);
+              updated.add(nativeThreadId);
+              return updated;
+            });
+            // Level is per CLI process: reset Waiting roster and wake
+            // eligibility whenever this native thread's process starts or is
+            // replaced. Membership repopulates on the next snapshot/edge.
+            // openQuery only runs from startTurn after ProviderTurnStartService
+            // marked the provider thread active, and before activeTurn is set.
+            // Buffered local_bash task_notification classification is preserved
+            // across this reset (see resetBackgroundTaskStateForNativeThreadProcess).
+            yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
+              status: "active",
+            });
+            const closed = yield* Deferred.make<void, never>();
+            const context: ClaudeLiveQueryContext = {
+              nativeThreadId,
+              query: querySession,
+              queryPolicyKey,
+              selectionKey: compiledSelection.queryIdentity,
+              closed,
+              publishedRoot: null,
+              stopCloseReserved: false,
+              stopCloseFailure: null,
+              streamExited: false,
+              lastTurn: null,
+              promptEchoMode: "unknown",
+              preserveWakeForReplacement: false,
+              openedPermissionMode: queryOptions.permissionMode,
+              permissionMode: queryOptions.permissionMode,
+              stopping: false,
+              subagentsFromEarlierProcesses: new Set(
+                [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
+                  (subagent) => subagent.task.status === "running",
+                ),
               ),
+            };
+            yield* queryOwnership.withPermits(1)(
+              Effect.gen(function* () {
+                yield* checkStartOwnership(startGeneration);
+                yield* Ref.set(queryContext, context);
+              }),
             );
-          yield* queryOwnership.withPermits(1)(checkStartOwnership(startGeneration));
-          // Marked only after a successful open: a failed create must not
-          // leave the runtime believing the native session exists, or the
-          // retry would resume a session that was never created.
-          yield* Ref.update(openedNativeThreads, (current) => {
-            if (current.has(nativeThreadId)) {
-              return current;
-            }
-            const updated = new Set(current);
-            updated.add(nativeThreadId);
-            return updated;
-          });
-          // Level is per CLI process: reset Waiting roster and wake
-          // eligibility whenever this native thread's process starts or is
-          // replaced. Membership repopulates on the next snapshot/edge.
-          // openQuery only runs from startTurn after ProviderTurnStartService
-          // marked the provider thread active, and before activeTurn is set.
-          // Buffered local_bash task_notification classification is preserved
-          // across this reset (see resetBackgroundTaskStateForNativeThreadProcess).
-          yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
-            status: "active",
-          });
-          const closed = yield* Deferred.make<void, never>();
-          const context: ClaudeLiveQueryContext = {
-            nativeThreadId,
-            query: querySession,
-            queryPolicyKey,
-            selectionKey: compiledSelection.queryIdentity,
-            closed,
-            publishedRoot: null,
-            stopCloseReserved: false,
-            stopCloseFailure: null,
-            streamExited: false,
-            lastTurn: null,
-            promptEchoMode: "unknown",
-            openedPermissionMode: queryOptions.permissionMode,
-            permissionMode: queryOptions.permissionMode,
-            stopping: false,
-            subagentsFromEarlierProcesses: new Set(
-              [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
-                (subagent) => subagent.task.status === "running",
+            yield* querySession.messages.pipe(
+              Stream.takeUntil(
+                (message) =>
+                  requiresClaudeReauthentication(message) && message.session_id === nativeThreadId,
               ),
-            ),
-          };
-          yield* queryOwnership.withPermits(1)(
-            Effect.gen(function* () {
-              yield* checkStartOwnership(startGeneration);
-              yield* Ref.set(queryContext, context);
-            }),
-          );
-          yield* querySession.messages.pipe(
-            Stream.takeUntil(
-              (message) =>
-                requiresClaudeReauthentication(message) && message.session_id === nativeThreadId,
-            ),
-            Stream.runForEach((message) =>
-              sdkMessageLock.withPermits(1)(
-                Effect.gen(function* () {
-                  if (
-                    message.type === "system" &&
-                    (message.subtype === "init" || message.subtype === "status") &&
-                    message.permissionMode !== undefined
-                  )
-                    context.permissionMode = message.permissionMode;
-                  yield* handleSdkMessage({ query: querySession, message });
-                  if (
-                    !requiresClaudeReauthentication(message) ||
-                    message.session_id !== nativeThreadId
-                  )
-                    return;
-                  const current = yield* Ref.get(queryContext);
-                  if (current?.query !== querySession || current.stopping) return;
-                  current.stopping = true;
-                  // Even an idle/wake result proves this query's credential is
-                  // revoked. Any attached prompt must settle before retirement.
-                  const active = yield* Ref.get(activeTurn);
-                  if (active !== null) {
-                    const completedAt = yield* DateTime.now;
-                    const failure = providerFailureFromResult(
-                      message,
-                      completedAt,
-                      active.authenticationFailureMessage,
-                      false,
-                    );
-                    yield* finalizeActiveTurn({
-                      context: active,
-                      status: "failed",
-                      completedAt,
-                      result: message,
-                      ...(failure === null ? {} : { failure }),
+              Stream.runForEach((message) =>
+                sdkMessageLock.withPermits(1)(
+                  Effect.gen(function* () {
+                    if (
+                      message.type === "system" &&
+                      (message.subtype === "init" || message.subtype === "status") &&
+                      message.permissionMode !== undefined
+                    )
+                      context.permissionMode = message.permissionMode;
+                    yield* handleSdkMessage({ query: querySession, message });
+                    if (
+                      !requiresClaudeReauthentication(message) ||
+                      message.session_id !== nativeThreadId
+                    )
+                      return;
+                    const current = yield* Ref.get(queryContext);
+                    if (current?.query !== querySession || current.stopping) return;
+                    current.stopping = true;
+                    // Even an idle/wake result proves this query's credential is
+                    // revoked. Any attached prompt must settle before retirement.
+                    const active = yield* Ref.get(activeTurn);
+                    if (active !== null) {
+                      const completedAt = yield* DateTime.now;
+                      const failure = providerFailureFromResult(
+                        message,
+                        completedAt,
+                        active.authenticationFailureMessage,
+                        false,
+                      );
+                      yield* finalizeActiveTurn({
+                        context: active,
+                        status: "failed",
+                        completedAt,
+                        result: message,
+                        ...(failure === null ? {} : { failure }),
+                      });
+                    }
+                    yield* emitProviderEvent({
+                      type: "authentication.invalidated",
+                      driver: CLAUDE_PROVIDER,
+                      message: "Claude authentication expired. Sign in again.",
                     });
+                    yield* querySession.close.pipe(Effect.ignore);
+                    yield* emitProviderEvent({
+                      type: "provider_session.updated",
+                      driver: CLAUDE_PROVIDER,
+                      providerSession: {
+                        ...session,
+                        status: "stopped",
+                        updatedAt: yield* DateTime.now,
+                      },
+                    });
+                  }),
+                ),
+              ),
+              Effect.exit,
+              Effect.flatMap(
+                Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                  // Output held for a prompt echo that never came still
+                  // belongs to the turn this stream ended in. A replaced
+                  // query's exit must not touch the next query's turn.
+                  const heldContext = yield* Ref.get(activeTurn);
+                  if (
+                    (yield* Ref.get(queryContext))?.query === querySession &&
+                    heldContext !== null &&
+                    heldContext.heldRootFrames.length > 0
+                  ) {
+                    yield* releaseHeldRootFrames(heldContext);
                   }
-                  yield* emitProviderEvent({
-                    type: "authentication.invalidated",
-                    driver: CLAUDE_PROVIDER,
-                    message: "Claude authentication expired. Sign in again.",
-                  });
-                  yield* querySession.close.pipe(Effect.ignore);
-                  yield* emitProviderEvent({
-                    type: "provider_session.updated",
-                    driver: CLAUDE_PROVIDER,
-                    providerSession: {
-                      ...session,
-                      status: "stopped",
-                      updatedAt: yield* DateTime.now,
-                    },
-                  });
+                  const ownsLiveQuery = yield* queryOwnership.withPermits(1)(
+                    Effect.gen(function* () {
+                      context.streamExited = true;
+                      const current = yield* Ref.get(queryContext);
+                      if (current !== context) return false;
+                      // A settled root can start again while EOF cleanup yields.
+                      // Keep this exact query reserved until its native-thread
+                      // roster, legacy members and calls have all been retired.
+                      context.stopCloseReserved = true;
+                      return true;
+                    }),
+                  );
+                  if (ownsLiveQuery) {
+                    const active = yield* Ref.get(activeTurn);
+                    const interrupted =
+                      active !== null &&
+                      (yield* Ref.get(interruptedTurns)).has(active.providerTurnId);
+                    yield* workflowRegistry.settleForNativeProcess(
+                      context.nativeThreadId,
+                      interrupted ? "interrupted" : "failed",
+                    );
+                    yield* finalizeActiveTurnAfterQueryExit(
+                      context,
+                      exit._tag === "Failure" ? exit.cause : undefined,
+                    );
+                    yield* endSubagentCallsOfClosedQuery(
+                      context.nativeThreadId,
+                      context.stopping ? "interrupted" : "failed",
+                    );
+                    if (!context.preserveWakeForReplacement) {
+                      yield* clearWakeStateForNativeThread(context.nativeThreadId);
+                    }
+                  }
+                  yield* queryOwnership.withPermits(1)(
+                    Effect.gen(function* () {
+                      context.stopCloseReserved = false;
+                      yield* Ref.update(queryContext, (current) =>
+                        current === context ? null : current,
+                      );
+                    }),
+                  );
                 }),
               ),
-            ),
-            Effect.exit,
-            Effect.flatMap(
-              Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
-                // Output held for a prompt echo that never came still
-                // belongs to the turn this stream ended in. A replaced
-                // query's exit must not touch the next query's turn.
-                const heldContext = yield* Ref.get(activeTurn);
-                if (
-                  (yield* Ref.get(queryContext))?.query === querySession &&
-                  heldContext !== null &&
-                  heldContext.heldRootFrames.length > 0
-                ) {
-                  yield* releaseHeldRootFrames(heldContext);
+              Effect.ensuring(Deferred.succeed(closed, undefined)),
+              Effect.forkIn(sessionScope),
+            );
+            return context;
+          }).pipe(
+            Effect.onError(() =>
+              Effect.gen(function* () {
+                if (existing === null || !existing.preserveWakeForReplacement) return;
+                existing.preserveWakeForReplacement = false;
+                // If EOF already chose preservation, finish its captured cleanup
+                // before retiring reports from an abandoned replacement.
+                if (!existing.streamExited) return;
+                yield* Deferred.await(existing.closed);
+                const current = yield* Ref.get(queryContext);
+                if (current === null || current === existing) {
+                  yield* clearWakeStateForNativeThread(existing.nativeThreadId);
                 }
-                const ownsLiveQuery = yield* queryOwnership.withPermits(1)(
-                  Effect.gen(function* () {
-                    context.streamExited = true;
-                    const current = yield* Ref.get(queryContext);
-                    if (current !== context) return false;
-                    // A settled root can start again while EOF cleanup yields.
-                    // Keep this exact query reserved until its native-thread
-                    // roster, legacy members and calls have all been retired.
-                    context.stopCloseReserved = true;
-                    return true;
-                  }),
-                );
-                if (ownsLiveQuery) {
-                  const active = yield* Ref.get(activeTurn);
-                  const interrupted =
-                    active !== null &&
-                    (yield* Ref.get(interruptedTurns)).has(active.providerTurnId);
-                  yield* workflowRegistry.settleForNativeProcess(
-                    context.nativeThreadId,
-                    interrupted ? "interrupted" : "failed",
-                  );
-                  yield* finalizeActiveTurnAfterQueryExit(
-                    context,
-                    exit._tag === "Failure" ? exit.cause : undefined,
-                  );
-                  yield* endSubagentCallsOfClosedQuery(
-                    context.nativeThreadId,
-                    context.stopping ? "interrupted" : "failed",
-                  );
-                }
-                yield* queryOwnership.withPermits(1)(
-                  Effect.gen(function* () {
-                    context.stopCloseReserved = false;
-                    yield* Ref.update(queryContext, (current) =>
-                      current === context ? null : current,
-                    );
-                  }),
-                );
               }),
             ),
-            Effect.ensuring(Deferred.succeed(closed, undefined)),
-            Effect.forkIn(sessionScope),
           );
-          return context;
         });
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(

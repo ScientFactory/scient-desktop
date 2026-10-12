@@ -113,6 +113,60 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
         const firstTerminal = members[0]?.completedAt;
+        yield* h.offerAndWait(
+          claudeSdkFrame({
+            ...progress,
+            workflow_progress: [
+              { type: "workflow_phase", index: 0, title: "Inspect" },
+              {
+                type: "workflow_agent",
+                index: 0,
+                state: "done",
+                label: "Reader",
+                phaseIndex: 0,
+                phaseTitle: "Inspect",
+                model: "claude/reader",
+                attempt: 1,
+                tokens: 65,
+                toolCalls: 4,
+              },
+              {
+                type: "workflow_agent",
+                index: 1,
+                state: "pending",
+                label: "Auditor",
+                phaseIndex: 0,
+              },
+            ],
+            uuid: "00000000-0000-4000-8000-000000000905",
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            h.events.some(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.id === members[0]?.id &&
+                event.subagent.presentation?.usage?.totalTokens === 65 &&
+                event.subagent.presentation?.usage?.toolUses === 4,
+            ),
+          "rich member counter-only publication",
+        );
+        const usageUpdate = h.events.findLast(
+          (event) => event.type === "subagent.updated" && event.subagent.id === members[0]?.id,
+        );
+        assert.equal(usageUpdate?.type, "subagent.updated");
+        if (usageUpdate?.type !== "subagent.updated") return yield* Effect.die("Missing member.");
+        assert.deepEqual(usageUpdate.subagent.presentation?.usage, {
+          totalTokens: 65,
+          toolUses: 4,
+        });
+        assert.equal(usageUpdate.subagent.childThreadId, members[0]?.childThreadId);
+        assert.isNotNull(usageUpdate.subagent.childThreadId);
+        assert.equal(usageUpdate.subagent.completedAt, firstTerminal);
+        assert.equal(usageUpdate.subagent.startedAt, members[0]?.startedAt);
+        assert.isNull(usageUpdate.subagent.runId);
+        assert.isNull(usageUpdate.subagent.nativeTaskRef);
         yield* Queue.offer(
           h.sdkMessages,
           makeSubagentNotificationFrame({

@@ -198,7 +198,6 @@ it.live("ingests coordinator-owned workflow members after successful root settle
               {
                 type: "workflow_agent",
                 index: 0,
-                label: "Reader",
                 state: "running",
                 startedAt: "2026-10-04T00:00:00.000Z",
                 attempt: 1,
@@ -252,6 +251,11 @@ it.live("ingests coordinator-owned workflow members after successful root settle
           (candidate) => candidate.presentation?.kind === "workflow_agent",
         );
         assert.isDefined(member);
+        assert.equal(member?.title, "Agent 1");
+        assert.isEmpty(
+          settled.subagents.find((candidate) => candidate.presentation?.kind === "workflow")
+            ?.workflow?.agents ?? [],
+        );
         assert.equal(member?.status, "running");
         assert.isNull(member?.runId);
         assert.isNull(member?.nativeTaskRef);
