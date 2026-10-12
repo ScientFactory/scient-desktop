@@ -425,61 +425,61 @@
     "grok": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "1.0.50",
+      "version": "1.0.52",
       "artifacts": {
         "darwin-arm64": {
-          "artifactName": "grok-1.0.50-macos-aarch64",
-          "url": "https://x.ai/cli/grok-1.0.50-macos-aarch64",
+          "artifactName": "grok-1.0.52-macos-aarch64",
+          "url": "https://x.ai/cli/grok-1.0.52-macos-aarch64",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "8ae0c7ee416b76150cda0ee6e9383a1ec4b24cec2c3b047dd848af2c77601eef739d1443cc56ea54332e6c57550594615f2658ddcf1f998494edb895547c714b"
+            "digest": "fbbc54ed4a59ca8e3ad491f5c48a9f2eac7008976cfdcb0f543a75f1c2c2430f125e3ee76e75ea6f78cad1d18ac884bb38d75e419ed5b2632a34c2e9bf62a295"
           },
-          "size": 167936736
+          "size": 172237072
         },
         "darwin-x64": {
-          "artifactName": "grok-1.0.50-macos-x86_64",
-          "url": "https://x.ai/cli/grok-1.0.50-macos-x86_64",
+          "artifactName": "grok-1.0.52-macos-x86_64",
+          "url": "https://x.ai/cli/grok-1.0.52-macos-x86_64",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "11cc14ea8cb83997337f99ddd170ebdf60c8d5ad322e14cc3fbd09e6eabec735c5204b73be3618c17331c7b7a91fe4087e022d626ea182bf873c2565cca2b6e2"
+            "digest": "0d6ceec59ce13bc1df439820d8f9452656232bc0466b7438449ddfa46974dd2ce53bf733374f2e8dda12292bbb31fbeaae46c8c07349223edb429f82687d3129"
           },
-          "size": 181051888
+          "size": 185857856
         },
         "linux-arm64-glibc": {
-          "artifactName": "grok-1.0.50-linux-aarch64",
-          "url": "https://x.ai/cli/grok-1.0.50-linux-aarch64",
+          "artifactName": "grok-1.0.52-linux-aarch64",
+          "url": "https://x.ai/cli/grok-1.0.52-linux-aarch64",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "8651b58a99c975b6ecd39914b5c0081e1c36941b5e3bb165e4a704ce87888317b0e50c2a98d625676e72898eaaa51fa0b07c643c2716e40220dfc5f65e2a733b"
+            "digest": "9d826d707d01f66c45bf565284d6fb08515571bee184a3c7fdaa79762a6e8deb1f74e173aca9054f66fe0b9977fca65f5e69ddb6188ad61b0f3891fb2b2d65d7"
           },
-          "size": 156389720
+          "size": 160670952
         },
         "linux-x64-glibc": {
-          "artifactName": "grok-1.0.50-linux-x86_64",
-          "url": "https://x.ai/cli/grok-1.0.50-linux-x86_64",
+          "artifactName": "grok-1.0.52-linux-x86_64",
+          "url": "https://x.ai/cli/grok-1.0.52-linux-x86_64",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "c955de8b2dc25b9b357b2882f7b2a4deb8d9f44b9ec628716c041941ed22f5633b222747c08292bd1b30493cb0ccecb2f48bce9e17f03906eb7437989ffeefc1"
+            "digest": "f90423f3e497661b012e1df066bf98c043a078972872dcada64edd25f23cfca89149e6c3ce6be696d87ac0853384d7af9abb85f607d4453020a00b23f6da37f7"
           },
-          "size": 183493408
+          "size": 188326752
         },
         "win32-arm64": {
-          "artifactName": "grok-1.0.50-windows-aarch64.exe",
-          "url": "https://x.ai/cli/grok-1.0.50-windows-aarch64.exe",
+          "artifactName": "grok-1.0.52-windows-aarch64.exe",
+          "url": "https://x.ai/cli/grok-1.0.52-windows-aarch64.exe",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "76256f5c13f049e1578754d13a78bced4fb444417d192425b50af7637cf973712244c3571f2bcb97583a46c758da48c1c015909d18c18a804b66469c357c3c3f"
+            "digest": "a5482bc69060352c1938b2486407110a3fa673508a06ab2633dba83a26194af6dc3f278da6532559b11dacdfd9d243cfa50ecdc351539b26566851d6954a8cd7"
           },
-          "size": 140326728
+          "size": 144085832
         },
         "win32-x64": {
-          "artifactName": "grok-1.0.50-windows-x86_64.exe",
-          "url": "https://x.ai/cli/grok-1.0.50-windows-x86_64.exe",
+          "artifactName": "grok-1.0.52-windows-x86_64.exe",
+          "url": "https://x.ai/cli/grok-1.0.52-windows-x86_64.exe",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "969e5fb34f502a9cb0dc5a5d336b9c225e7b7beb0fdb88af7481a30df6a1414c03ceaa27817d5876e694c0405e06bb0ad4649ec27a390be785ed49d59624f3b1"
+            "digest": "0dc5c61efe49f4877d38e2a9de24457ec72ab0ff67a2b55b94ae205897c6aed14179b13112e83aed468ec70d2c23611131fe8182e227a55e2825bebc85f262c2"
           },
-          "size": 165241672
+          "size": 169355080
         }
       }
     },
