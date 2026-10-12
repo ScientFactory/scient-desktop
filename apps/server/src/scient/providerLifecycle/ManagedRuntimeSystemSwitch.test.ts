@@ -33,7 +33,7 @@ import {
   ManagedRuntimeCatalog,
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
-import { makeAntigravityManagedRuntimeResolution } from "./AntigravityManagedRuntimeActions.ts";
+import { makeAntigravityManagedRuntimeResolution } from "./LegacyAntigravityManagedRuntimeActions.ts";
 import { makeClaudeManagedRuntimeResolution } from "./ClaudeManagedRuntimeActions.ts";
 import { makeCursorManagedRuntimeResolution } from "./CursorManagedRuntimeActions.ts";
 import { makeDroidManagedRuntimeResolution } from "./DroidManagedRuntimeActions.ts";

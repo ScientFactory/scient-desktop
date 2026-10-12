@@ -22,7 +22,7 @@ import * as AcpErrors from "effect-acp/errors";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 // SCIENT-FORK:START — plugin skills are projected without their other components.
-import { projectAntigravityPluginSkills } from "./acp/AntigravityPluginSkillProjection.ts";
+import { projectAntigravityPluginSkills } from "../scient/skills/antigravityPluginSkillProjection.ts";
 // SCIENT-FORK:END
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
@@ -36,13 +36,17 @@ export const ANTIGRAVITY_AUTH_BROWSER_MARKER = "__T3_ANTIGRAVITY_AUTH_URL__";
 export const ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =
   "Sign in to Antigravity in Settings before you continue.";
 
+// SCIENT-FORK:START — safe pre-browser failure presentation.
 export const ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE =
   "Antigravity could not prepare the sign-in helper. Try again.";
 export const ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE =
   "Antigravity could not start its sign-in runtime. Try again.";
+export const ANTIGRAVITY_RUNTIME_RESOLUTION_FAILED_MESSAGE =
+  "Antigravity could not find a usable sign-in runtime. Review its installation and executable path, then try again.";
 export const ANTIGRAVITY_LINK_CAPTURE_FAILED_MESSAGE =
   "Antigravity could not capture the Google sign-in link. Start sign-in again.";
 
+// SCIENT-FORK:END
 const maxAuthorizationUrlLength = 16_384;
 const maxBrowserHelperLineLength =
   Math.max(ANTIGRAVITY_AUTH_BROWSER_MARKER.length, ANTIGRAVITY_AUTH_STDOUT_PREFIX.length) +
@@ -64,6 +68,7 @@ const ProfileSettingsFile = Schema.Struct({
 const encodeProfileSettings = Schema.encodeSync(Schema.fromJsonString(ProfileSettingsFile));
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
+// SCIENT-FORK:START — allowlisted failure classification data.
 const isSetupError = Schema.is(ProviderSetupError);
 const isAcpSpawnError = Schema.is(AcpErrors.AcpSpawnError);
 const isAcpProcessExitedError = Schema.is(AcpErrors.AcpProcessExitedError);
@@ -83,6 +88,7 @@ const linkCaptureDetails: Record<string, true> = {
   "Antigravity sent a Google sign-in marker that is too large.": true,
   "Antigravity started more than one Google sign-in request.": true,
 };
+// SCIENT-FORK:END
 const credentialConfigurationMessages: Record<
   Exclude<AntigravityAuthMethod, "oauth-personal">,
   string
@@ -94,9 +100,11 @@ const credentialConfigurationMessages: Record<
     "Agent Platform needs an API key, or a GCP project and location, in the Antigravity provider settings.",
 };
 const credentialConfigurationGuidance = Object.values(credentialConfigurationMessages);
+// SCIENT-FORK:START — fixed helper preparation guidance.
 const missingNodeMessage = nodeRuntimeUnavailableMessage("Antigravity sign-in");
 const missingNodeGuidance = `${ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE} ${missingNodeMessage}`;
 
+// SCIENT-FORK:END
 // Python splits BROWSER on the platform path separator before it parses quotes.
 // Keep this source free of both colons and semicolons. EPIPE must still exit 0
 // so Python does not fall back to an OS browser after cancellation.
@@ -222,12 +230,16 @@ function authSupportError(detail: string) {
   return new AcpErrors.AcpTransportError({ detail, cause: undefined });
 }
 
+// SCIENT-FORK:START — map owned startup stages without disclosing native payloads.
 /** Only adapter-owned details and typed runtime stages may become public auth failures. */
 export function antigravityAuthStageFailure(
   error: unknown,
   beforeAuthorizationUrl: boolean,
 ): string | undefined {
   if (isSetupError(error)) {
+    if (beforeAuthorizationUrl && error.operation === "resolve") {
+      return ANTIGRAVITY_RUNTIME_RESOLUTION_FAILED_MESSAGE;
+    }
     if (error.detail === "Google sign-in expired. Start sign-in again.") {
       return "Google sign-in expired. Start sign-in again.";
     }
@@ -277,6 +289,7 @@ export function antigravityAuthStageFailure(
   return undefined;
 }
 
+// SCIENT-FORK:END
 /** Recognizes native auth failures and interactive login blocked by T3. */
 export function isAntigravitySignInRequiredError(error: unknown): boolean {
   return (
@@ -356,7 +369,7 @@ function antigravityEnvironment(
  * The agent reads its global skills under `GEMINI_HOME`, which T3 points at
  * the private profile. Link the loose and provider-managed skill directories
  * back to the user's real `~/.gemini`. Plugin skills use a separate projection
- * (`acp/AntigravityPluginSkillProjection.ts`) so the runtime never inherits
+ * (`scient/skills/antigravityPluginSkillProjection.ts`) so the runtime never inherits
  * plugin MCP servers, hooks, rules, or credentials. Best effort: an unavailable link only costs those skills,
  * never the session. A real directory at a link path is left alone.
  */
@@ -669,6 +682,7 @@ export function makeAntigravityStdoutTransform(
     });
 }
 
+// SCIENT-FORK:START — bounded stderr and fatal malformed authorization markers.
 /** Receives native 1.1.1 sign-in URLs and T3 browser-helper URLs without logging stderr. */
 export function makeAntigravityStderrHandler(
   input: {
@@ -737,3 +751,5 @@ export function makeAntigravityStderrHandler(
     }
   });
 }
+
+// SCIENT-FORK:END

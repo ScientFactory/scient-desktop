@@ -17,7 +17,7 @@ import {
   makeAntigravityLocalCredentialStore,
   officialAntigravityAccountEnvironment,
   withAntigravitySessionShutdown,
-} from "./AntigravityConnectionActions.ts";
+} from "./LegacyAntigravityConnectionActions.ts";
 import type { PtyProcess } from "@t3tools/shared/PtyAdapter";
 
 describe("officialAntigravityAccountEnvironment", () => {

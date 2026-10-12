@@ -371,6 +371,12 @@ export const buildWslRuntimeInstallScript = (
     'cleanup_runtime_install() { rm -rf "$runtime_tmp"; }',
     "trap cleanup_runtime_install EXIT",
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp"`,
+    // Windows-created tarballs cannot retain the Linux helpers' execute bits.
+    // Repair only Cursor's executable helpers inside the verified new cache.
+    'for helper in "$runtime_tmp"/node_modules/@cursor/sdk-linux-*/bin/rg "$runtime_tmp"/node_modules/@cursor/sdk-linux-*/bin/cursorsandbox; do',
+    '  [ -f "$helper" ] || continue',
+    '  chmod 755 "$helper"',
+    "done",
     'test -f "$runtime_tmp/apps/server/dist/bin.mjs"',
     'test -f "$runtime_tmp/node_modules/node-pty/package.json"',
 

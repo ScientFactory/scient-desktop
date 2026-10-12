@@ -303,7 +303,8 @@ scope. Only the initiating T3 auth session receives its URL and flow ID or can c
 cancel it. Other clients receive busy state without those values. Subscriptions follow
 controller replacement when settings rebuild an instance.
 
-Scient's compact setup delegates to that same controller through `AntigravityLifecycleBridge`.
+Scient's compact setup delegates to that same controller through
+`scient/providerLifecycle/AntigravityAcpLifecycleActions.ts`.
 The bridge owns one private controller session for the shared lifecycle supervisor; existing
 authorized lifecycle clients can complete or cancel its current operation. It is not a second
 authentication engine. The direct upstream setup RPC keeps its initiating-client ownership.
@@ -328,6 +329,30 @@ Thread history and native session files remain. Settings sign-out and a text-onl
 use this same path. The command is handled before model prompting or title generation.
 Disabling an instance closes its processes but keeps credentials. Account replacement is
 explicit sign-out followed by sign-in.
+
+### Scient composition and legacy compatibility
+
+The native protocol, callback validation, profile isolation, and auth controller
+follow T3. Scient's qualified catalog is composed into the native installer by
+`scient/providerLifecycle/ScientAntigravityInstallation.ts`; the native installer
+does not depend on the catalog service. Server composition and its registry
+harnesses use this layer, retaining the existing installation service identity.
+
+Scient owns the compact lifecycle actions, safe failure diagnostics, skill-only
+plugin projection, model-family presentation, and voice correction. The voice
+capability shares the same guarded structured-generation runner as the standard
+text-generation service. Paired `SCIENT-FORK` markers identify the remaining
+upstream mounts and retained failure-presentation changes; unchanged native
+model-selection helpers remain upstream-owned.
+
+Legacy CLI configuration is active compatibility support, not another ACP auth
+engine. Its account and runtime owners are explicitly named
+`LegacyAntigravityConnectionActions.ts` and
+`LegacyAntigravityManagedRuntimeActions.ts`. Explicit `agy` paths and hosts
+outside Scient's qualified ACP target list keep their existing routing. This
+cleanup does not migrate credentials, histories, runtime policy, or disabled
+instance behavior. Retiring an implicit legacy fallback requires qualification
+of its native replacement first.
 
 ### Sessions, models, and client capabilities
 

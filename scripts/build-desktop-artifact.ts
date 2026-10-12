@@ -1226,6 +1226,11 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/@ff-labs/fff-bin-win32-",
   "node_modules/@yuuang/ffi-rs-win32-",
   "node_modules/@msgpackr-extract/msgpackr-extract-win32-",
+  // These loaders select separate Linux packages when the WSL Node host runs.
+  // Exclude only their Windows variants from this tarball, not the sidecar.
+  "node_modules/@napi-rs/canvas-win32-",
+  "node_modules/@napi-rs/keyring-win32-",
+  "node_modules/@cursor/sdk-win32-",
 ] as const;
 // A packaged WSL runtime is only usable when a Linux pty.node is bundled with
 // it, so this one predicate decides both whether the archive is built and

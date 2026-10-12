@@ -1,3 +1,7 @@
+// SCIENT-FORK:START — qualified Antigravity installer composition.
+import { scientAntigravityInstallationLayer } from "./scient/providerLifecycle/ScientAntigravityInstallation.ts";
+// SCIENT-FORK:END
+import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -80,7 +84,6 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
-import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
@@ -682,7 +685,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
   Layer.provideMerge(
     Layer.mergeAll(
-      AntigravityInstallation.AntigravityInstallation.layer,
+      // SCIENT-FORK:START — retain the qualified catalog at the native service identity.
+      scientAntigravityInstallationLayer,
+      // SCIENT-FORK:END
       CodexInstallation.CodexInstallation.layer,
     ),
   ),
