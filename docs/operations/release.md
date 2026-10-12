@@ -49,7 +49,9 @@ the stable scheduler and production gate.
   cancellation, or an unexplained skip blocks the existing required `Test`
   check on PRs and merge groups. It has no signing secrets or publication step.
   The job extracts the real AppImage, checks archived branding and external
-  runtimes, executes SyncTeX/Whisper and the resource-monitor protocol, and
+  runtimes, verifies x64 executable ELF metadata and dynamic-library resolution
+  (static helpers require no interpreter or needed libraries), executes
+  SyncTeX/Whisper and the resource-monitor protocol, and
   verifies desktop survival/shutdown and archived-icon registration under
   isolated XDG state, Xvfb, and a private D-Bus session. Capture helper execution
   is checked without claiming live KDE/Hyprland compositor acceptance.

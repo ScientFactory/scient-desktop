@@ -4,9 +4,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeModule from "node:module";
 import * as NodeTest from "node:test";
+import * as NodeChildProcess from "node:child_process";
 import {
   inspectLinuxPayload,
   compareLinuxPayloads,
+  verifyLinuxRuntimeLinkage,
 } from "../../scripts/qualify-linux-packaged-runtime.mjs";
 
 const require = NodeModule.createRequire(new URL("../../scripts/package.json", import.meta.url));
@@ -19,6 +21,79 @@ const binaries = [
   "hyprland-capture/t3-hyprland-snap-shot",
 ];
 const icon = "apps/desktop/prod-resources/icon.png";
+
+// eslint-disable-next-line t3code/no-global-process-runtime -- Native ELF regressions require the target Linux compiler and loader.
+const linuxNativeOptions = { skip: process.platform !== "linux" };
+const runNative = (file, args) =>
+  NodeChildProcess.spawnSync(file, args, {
+    encoding: "utf8",
+    timeout: 15000,
+    env: { ...process.env, LC_ALL: "C" },
+  });
+const compile = (args) => {
+  const result = runNative("cc", args);
+  NodeAssert.equal(result.status, 0, result.stderr);
+};
+
+NodeTest.test(
+  "actual static and dynamic ELF executables both qualify and execute",
+  linuxNativeOptions,
+  () => {
+    const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "linux-elf-test-"));
+    try {
+      const source = NodePath.join(scratch, "main.c");
+      NodeFS.writeFileSync(source, "int main(void) { return 0; }\n");
+      for (const linkage of ["static", "dynamic"]) {
+        const executable = NodePath.join(scratch, linkage);
+        compile([source, ...(linkage === "static" ? ["-static"] : []), "-o", executable]);
+        NodeAssert.equal(verifyLinuxRuntimeLinkage(executable, runNative), linkage);
+        NodeAssert.equal(runNative(executable, []).status, 0);
+      }
+    } finally {
+      NodeFS.rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
+
+NodeTest.test(
+  "ELF dependency checking still rejects invalid files and missing shared libraries",
+  linuxNativeOptions,
+  () => {
+    const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "linux-elf-test-"));
+    try {
+      const librarySource = NodePath.join(scratch, "library.c");
+      const mainSource = NodePath.join(scratch, "main.c");
+      const library = NodePath.join(scratch, "libqualification.so");
+      const executable = NodePath.join(scratch, "dynamic");
+      NodeFS.writeFileSync(librarySource, "int qualification(void) { return 0; }\n");
+      NodeFS.writeFileSync(
+        mainSource,
+        "extern int qualification(void); int main(void) { return qualification(); }\n",
+      );
+      NodeAssert.throws(
+        () => verifyLinuxRuntimeLinkage(mainSource, runNative),
+        /Invalid runtime ELF/,
+      );
+      compile(["-shared", "-fPIC", librarySource, "-o", library]);
+      compile([
+        mainSource,
+        "-L" + scratch,
+        "-lqualification",
+        "-Wl,-rpath,$ORIGIN",
+        "-o",
+        executable,
+      ]);
+      NodeAssert.equal(verifyLinuxRuntimeLinkage(executable, runNative), "dynamic");
+      NodeFS.rmSync(library);
+      NodeAssert.throws(
+        () => verifyLinuxRuntimeLinkage(executable, runNative),
+        /Missing dynamic library/,
+      );
+    } finally {
+      NodeFS.rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
 
 async function fixture(parent, name, duplicate = false) {
   const root = NodePath.join(parent, name);

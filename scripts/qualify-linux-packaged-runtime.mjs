@@ -138,6 +138,31 @@ export function compareLinuxPayloads(cleanRoot, baselineRoot) {
   return { restoredBytes, retainedArchiveBytesVerified: true, externalBytesAndModesVerified: true };
 }
 
+/** Static helpers have no interpreter/needed libraries; dynamic helpers must resolve every dependency. */
+export function verifyLinuxRuntimeLinkage(file, run) {
+  const metadata = run("readelf", ["--file-header", "--program-headers", "--dynamic", file]);
+  NodeAssert.equal(metadata.status, 0, `Invalid runtime ELF ${file}: ${metadata.stderr}`);
+  NodeAssert.match(metadata.stdout, /Class:\s+ELF64/, `Wrong ELF class: ${file}`);
+  NodeAssert.match(metadata.stdout, /Machine:.*X86-64/i, `Wrong target architecture: ${file}`);
+  NodeAssert.match(metadata.stdout, /Type:\s+(EXEC|DYN)\b/, `Not an executable ELF: ${file}`);
+  if (/\bINTERP\b/.test(metadata.stdout)) {
+    const linked = run("ldd", [file]);
+    NodeAssert.equal(
+      linked.status,
+      0,
+      `Dependency inspection failed for ${file}: ${linked.stderr}`,
+    );
+    NodeAssert.doesNotMatch(linked.stdout, /not found/, `Missing dynamic library: ${file}`);
+    return "dynamic";
+  }
+  NodeAssert.doesNotMatch(
+    metadata.stdout,
+    /\(NEEDED\)/,
+    `ELF needs libraries but has no interpreter: ${file}`,
+  );
+  return "static";
+}
+
 async function qualify() {
   // eslint-disable-next-line t3code/no-global-process-runtime -- Standalone target-host qualification, not application runtime policy.
   NodeAssert.equal(process.platform, "linux", "Run on the target Linux host");
@@ -162,6 +187,7 @@ async function qualify() {
     ELECTRON_ENABLE_LOGGING: "1",
     APPIMAGE: image,
     APPDIR: root,
+    LC_ALL: "C",
   };
   for (const key of [
     "ELECTRON_RUN_AS_NODE",
@@ -187,10 +213,9 @@ async function qualify() {
   };
   const binary = (file) => NodePath.join(resources, file);
   try {
+    const runtimeLinkage = {};
     for (const file of runtimeFiles) {
-      const linked = run("ldd", [binary(file)]);
-      NodeAssert.equal(linked.status, 0, linked.stderr);
-      NodeAssert.doesNotMatch(linked.stdout, /not found/, `Missing dynamic library: ${file}`);
+      runtimeLinkage[file] = verifyLinuxRuntimeLinkage(binary(file), run);
     }
     const synctex = run(binary("synctex-runtime/synctex"), ["help"]);
     NodeAssert.equal(synctex.status, 0, synctex.stderr);
@@ -271,6 +296,7 @@ async function qualify() {
       cleanAppImageBytes: cleanBytes,
       baselineAppImageBytes: baselineBytes,
       compressedSavingBytes: baselineBytes - cleanBytes,
+      runtimeLinkage,
       ...comparison,
       passed: [
         "extracted archive/resources",
