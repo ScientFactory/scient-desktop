@@ -538,6 +538,130 @@
   margin: 0;
   min-width: 0;
 }
+.scient-latex-content-layout {
+  display: flow-root;
+  min-width: 0;
+  max-width: 100%;
+}
+.scient-latex-content-layout[data-layout="macroHeading"][data-rule] {
+  border-bottom: var(--scient-latex-heading-rule-height, calc(0.45 * 96px / 72.27)) solid
+    var(--scient-latex-heading-rule-color, currentColor);
+}
+.scient-latex-content-layout-body > div > p:first-child {
+  margin-block-start: 0;
+  text-indent: 0;
+}
+.scient-latex-content-layout[data-layout="sourceColumns"]
+  > .scient-latex-content-layout-body
+  > div {
+  position: relative;
+  height: var(--scient-latex-source-column-height, auto);
+  --scient-latex-source-column-width: calc(
+    (100% - var(--scient-latex-column-gap, calc(10 * 96px / 72.27))) / 2
+  );
+}
+.scient-latex-content-layout[data-layout="sourceColumns"]
+  > .scient-latex-content-layout-body
+  > div
+  > * {
+  display: flow-root;
+  width: var(--scient-latex-source-column-part-width, var(--scient-latex-source-column-width));
+}
+[data-latex-source-column-part] {
+  position: absolute;
+  top: var(--scient-latex-source-column-top);
+  inset-inline-start: var(--scient-latex-source-column-left);
+  width: var(--scient-latex-source-column-part-width, var(--scient-latex-source-column-width));
+  box-sizing: border-box;
+}
+[data-latex-source-column-span] {
+  height: var(--scient-latex-source-column-span-height);
+  column-count: 2;
+  column-gap: var(--scient-latex-column-gap);
+  column-fill: auto;
+  orphans: 2;
+  widows: 2;
+}
+p[data-latex-source-column-span]::before {
+  content: "";
+  display: block;
+  height: var(--scient-latex-source-column-leading-space);
+  break-inside: avoid;
+}
+[data-latex-measuring] [data-latex-source-column-span] {
+  --scient-latex-source-column-part-width: var(--scient-latex-source-column-width) !important;
+  height: auto;
+  column-count: auto;
+}
+[data-latex-measuring] p[data-latex-source-column-span]::before {
+  display: none;
+}
+[data-latex-measuring] [data-latex-source-column-part] {
+  position: static;
+}
+[data-latex-measuring]
+  .scient-latex-content-layout[data-layout="sourceColumns"]
+  > .scient-latex-content-layout-body
+  > div {
+  height: auto;
+}
+.scient-latex-content-layout[data-layout="contentFloat"] {
+  margin-block: calc(12 * 96px / 72.27);
+  break-inside: avoid;
+}
+.scient-latex-content-layout[data-layout="contentFloat"] > figcaption {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0.333em;
+}
+.scient-latex-content-layout[data-layout="contentFloat"] > figcaption > span {
+  flex: none;
+  white-space: nowrap;
+}
+.scient-latex-content-layout[data-layout="contentFloat"] > figcaption textarea {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  text-align: start;
+}
+.scient-latex-content-layout[data-centered]
+  > .scient-latex-content-layout-body
+  > div
+  > .node-latexScientific
+  > .scient-latex-page-layout[data-layout="minipage"] {
+  margin-inline: auto;
+}
+.scient-latex-column-mode {
+  height: 0;
+}
+.scient-latex-content-rule {
+  margin-block: 0;
+  max-width: 100%;
+}
+.scient-latex-inline-stretch {
+  flex: 1 1 auto;
+  min-width: 1em;
+}
+.scient-latex-visual-document p:has(> .node-latexInlineCommand .scient-latex-inline-stretch) {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3em;
+}
+.scient-latex-visual-document p > .node-latexInlineCommand:has(.scient-latex-inline-stretch) {
+  flex: 1 1 auto;
+}
+.scient-latex-visual-document :is(ol, ul)[style*="--scient-latex-local-"] {
+  padding-inline-start: var(--scient-latex-local-leftmargin, 2.5em);
+  margin-block: var(--scient-latex-local-topsep, 0.8em);
+}
+.scient-latex-visual-document :is(ol, ul)[style*="--scient-latex-local-"] > li {
+  margin-block-start: var(--scient-latex-local-itemsep, 0.4em);
+}
+.scient-latex-visual-document :is(ol, ul)[style*="--scient-latex-local-"] > li > p + p {
+  margin-block-start: var(--scient-latex-local-parsep, 0.4em);
+}
 .scient-latex-page-layout[data-layout="columns"] {
   margin-block: calc(12 * 1.32835px);
 }
@@ -1131,10 +1255,11 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p,
 .scient-latex-visual-document
   p:has(.scient-latex-mathfield math-field:is(:focus-within, [data-scient-selection-held])),
+.scient-latex-visual-document p:has(.scient-latex-visual-command[data-footnote-editor]),
 .scient-latex-visual-document
   .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]) {
-  /* Active math guides extend past the line's ink box. Paint containment must
-     not clip their corners, including while a menu owns the selection. */
+  /* Active guides and footnote editors extend past the line's ink box. Paint
+     containment must not clip them while editing or using a menu. */
   content-visibility: visible;
   contain: none;
 }
@@ -1550,7 +1675,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   content: "";
   position: absolute;
   top: 0;
-  left: 0;
+  inset-inline-start: 0;
   width: 40%;
   border-top: calc(0.4 * 96px / 72.27) solid currentColor;
 }
@@ -4136,6 +4261,11 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 
 .scient-latex-retained-selection {
   background: var(--scient-latex-retained-selection-background);
+}
+
+.scient-latex-retained-caret {
+  background: currentColor;
+  opacity: 0.65;
 }
 
 .scient-latex-cell-selection {

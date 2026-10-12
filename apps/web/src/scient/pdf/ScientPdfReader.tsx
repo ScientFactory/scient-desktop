@@ -13,6 +13,7 @@ import { DropdownMenuItem, DropdownMenuSeparator } from "~/components/ui/menu";
 import { Button } from "~/components/ui/button";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { toastManager } from "~/components/ui/toast";
+import { installPdfRetainedSelection } from "./pdfRetainedSelection";
 import { ensureLocalApi } from "~/localApi";
 import { DocumentReaderControls } from "../writing/DocumentReaderControls";
 import { attachShortcutHost } from "../keyboard/host";
@@ -38,11 +39,6 @@ import { useScientPdfReader } from "./useScientPdfReader";
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
 
-const PDF_SOURCE_SYNC_HINT_DELAY_MS = 300;
-const PDF_SOURCE_SYNC_HINT_VISIBLE_MS = 4_000;
-
-let pdfSourceSyncHintLearnedThisSession = false;
-
 export interface PdfForwardSyncTarget {
   readonly requestId: number;
   readonly page: number;
@@ -58,7 +54,7 @@ export interface PdfInverseSyncPoint {
 
 export interface PdfSyncNavigation {
   readonly forwardTarget: PdfForwardSyncTarget | null;
-  readonly onInverseSearch?: (point: PdfInverseSyncPoint) => void;
+  readonly onInverseSearch?: (point: PdfInverseSyncPoint, selectedText?: string) => void;
   readonly onPageChange: (page: number) => void;
 }
 
@@ -203,6 +199,10 @@ function LoadedScientPdfReader(props: {
   const requestedRevisionId =
     props.source._tag === "generated-pdf" ? props.source.revisionId : null;
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  useEffect(
+    () => (container ? installPdfRetainedSelection(container) : undefined),
+    [container, props.documentKey],
+  );
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
   const [sidebar, setSidebarState] = useState<PdfSidebarMode>(() => {
     // Adopt the old document-wide position once, then keep this view independent.
@@ -254,9 +254,6 @@ function LoadedScientPdfReader(props: {
       : undefined;
   }, []);
   useHostedReaderShortcuts(keyboardAction);
-  const sourceSyncHintShowTimerRef = useRef<number | null>(null);
-  const sourceSyncHintHideTimerRef = useRef<number | null>(null);
-  const [sourceSyncHintVisible, setSourceSyncHintVisible] = useState(false);
   const reader = useScientPdfReader({
     documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
@@ -333,82 +330,9 @@ function LoadedScientPdfReader(props: {
     }
   }, [presentedSource, props.actions]);
 
-  const clearSourceSyncHintTimers = useCallback(() => {
-    if (sourceSyncHintShowTimerRef.current !== null) {
-      window.clearTimeout(sourceSyncHintShowTimerRef.current);
-      sourceSyncHintShowTimerRef.current = null;
-    }
-    if (sourceSyncHintHideTimerRef.current !== null) {
-      window.clearTimeout(sourceSyncHintHideTimerRef.current);
-      sourceSyncHintHideTimerRef.current = null;
-    }
-  }, []);
-
-  const dismissSourceSyncHint = useCallback(() => {
-    clearSourceSyncHintTimers();
-    setSourceSyncHintVisible(false);
-  }, [clearSourceSyncHintTimers]);
-
-  const showSourceSyncHint = useCallback(() => {
-    if (sourceSyncHintHideTimerRef.current !== null) {
-      window.clearTimeout(sourceSyncHintHideTimerRef.current);
-    }
-    setSourceSyncHintVisible(true);
-    sourceSyncHintHideTimerRef.current = window.setTimeout(() => {
-      sourceSyncHintHideTimerRef.current = null;
-      setSourceSyncHintVisible(false);
-    }, PDF_SOURCE_SYNC_HINT_VISIBLE_MS);
-  }, []);
-
-  useEffect(() => clearSourceSyncHintTimers, [clearSourceSyncHintTimers]);
-
-  const scheduleSourceSyncHint = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (
-        props.syncNavigation?.onInverseSearch === undefined ||
-        !currentPresentation ||
-        pdfSourceSyncHintLearnedThisSession ||
-        event.ctrlKey ||
-        event.metaKey
-      ) {
-        return;
-      }
-
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (target.closest("a, button, input, select, textarea, [contenteditable='true']")) return;
-      if (target.closest(".page[data-page-number]") === null) return;
-      if (window.getSelection()?.isCollapsed === false) return;
-
-      if (sourceSyncHintVisible) {
-        showSourceSyncHint();
-        return;
-      }
-      if (sourceSyncHintShowTimerRef.current !== null) return;
-
-      sourceSyncHintShowTimerRef.current = window.setTimeout(() => {
-        sourceSyncHintShowTimerRef.current = null;
-        if (pdfSourceSyncHintLearnedThisSession || window.getSelection()?.isCollapsed === false) {
-          return;
-        }
-        showSourceSyncHint();
-      }, PDF_SOURCE_SYNC_HINT_DELAY_MS);
-    },
-    [
-      props.syncNavigation?.onInverseSearch,
-      showSourceSyncHint,
-      sourceSyncHintVisible,
-      currentPresentation,
-    ],
-  );
-
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.nativeEvent.isComposing || event.key !== "Escape") return;
-    if (sourceSyncHintVisible || sourceSyncHintShowTimerRef.current !== null) {
-      event.preventDefault();
-      event.stopPropagation();
-      dismissSourceSyncHint();
-    } else if (searchOpen) {
+    if (searchOpen) {
       event.preventDefault();
       event.stopPropagation();
       closeSearch();
@@ -555,9 +479,7 @@ function LoadedScientPdfReader(props: {
             ref={setContainer}
             className="scient-pdf-presentation-mount"
             tabIndex={0}
-            onClick={scheduleSourceSyncHint}
             onDoubleClick={(event) => {
-              dismissSourceSyncHint();
               if (!currentPresentation) return;
               const onInverseSearch = props.syncNavigation?.onInverseSearch;
               if (onInverseSearch === undefined) return;
@@ -565,6 +487,7 @@ function LoadedScientPdfReader(props: {
               // search available in Split without making a direct edit also navigate.
               const target = event.target;
               if (!(target instanceof Element)) return;
+              if (target.closest("a,button,input,select,textarea,[contenteditable='true']")) return;
               const pageElement = target.closest<HTMLElement>(".page[data-page-number]");
               if (pageElement === null) return;
               const point = reader.syncPointFromClient({
@@ -573,22 +496,18 @@ function LoadedScientPdfReader(props: {
                 clientY: event.clientY,
               });
               if (point !== null) {
-                pdfSourceSyncHintLearnedThisSession = true;
-                onInverseSearch(point);
+                // Preserve ordinary PDF selection before reading its word.
+                queueMicrotask(() =>
+                  onInverseSearch(point, pageElement.ownerDocument.getSelection()?.toString()),
+                );
               }
             }}
-            onScrollCapture={dismissSourceSyncHint}
           >
             <div ref={setViewerElement} className="scient-pdf-presentation-layers" />
           </div>
           {props.sourceNotice || state.updateError ? (
             <div className="scient-pdf-update-notice" role="status">
               {state.updateError ?? props.sourceNotice}
-            </div>
-          ) : null}
-          {sourceSyncHintVisible ? (
-            <div className="scient-pdf-source-sync-hint" role="status">
-              Double-click a PDF word to show its matching source line
             </div>
           ) : null}
           {state.phase === "loading" ? (

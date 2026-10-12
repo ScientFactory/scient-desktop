@@ -1256,6 +1256,13 @@ export const LatexMathField = forwardRef<
           if (tapCount >= 3) applyMathSelection(math, { ranges: [[0, math.lastOffset]] });
           else runLatexSelectionCommand(math, "selectionScopeExpand");
         }
+        if (tapCount === 2)
+          math.dispatchEvent(
+            new CustomEvent("scient-latex-reveal-source", {
+              bubbles: true,
+              detail: { left: event.clientX, top: event.clientY },
+            }),
+          );
       };
       const clipboardSource = () => {
         const tex =

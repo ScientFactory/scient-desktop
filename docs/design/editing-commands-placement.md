@@ -139,6 +139,8 @@ Keep object controls in the fixed-height footer, between Fit width and Search.
 Content edits on paper; selecting an object does not resize it or add controls
 around it. Use named shared menus without an overall object inspector, duplicate
 object names, explanatory paragraphs, or select/delete-object actions.
+Footer menu buttons keep a short visible name, such as References, Columns,
+Appearance, or Numbering; a dropdown arrow or hover tooltip alone is insufficient.
 
 | Context                                                 | Controls and behavior                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -282,6 +284,13 @@ math, and the existing table-cell clipboard representation. Opening the action
 and its question popover retains Visual's selection. In Split with Visual on the
 right, **double-click** reveals the corresponding current draft in
 the source pane, including an included file, while keeping Visual mounted.
+PDF and Visual double-clicks reveal source only while Split is already open.
+They keep ordinary word/object selection and preview focus; navigation scrolls
+Source and updates its own editor selection/cursor. Each Split pane remembers its
+selection independently. The source highlight persists until Source interaction;
+returning to Visual or PDF preserves source selection. Inactive cursors/selection
+stay visible, while keyboard input follows focus. Source interaction cancels a
+pending navigation result. No double-click instruction popup appears.
 The source pane has no separate path row; document identity stays in the existing header, as in PDF Split.
 Hovering inside the source pane shows no pane-wide tooltip in Source or either Split preview.
 AI LaTeX build presentation leaves an existing document tab and its current view,

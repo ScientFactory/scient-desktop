@@ -1,0 +1,221 @@
+% !TEX program = tectonic
+% Workspace write test: this document remains an explicitly fictional sample.
+\documentclass[9pt,twocolumn]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[margin=1.55cm,top=1.35cm,bottom=1.45cm,columnsep=0.55cm]{geometry}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+
+\definecolor{journalblue}{HTML}{155B75}
+\definecolor{lightblue}{HTML}{EAF3F6}
+\definecolor{softgray}{HTML}{F2F4F5}
+\definecolor{textgray}{HTML}{4E5B61}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3.2pt}
+\setlength{\columnsep}{0.55cm}
+\setlist[itemize]{leftmargin=1.25em,itemsep=1pt,topsep=2pt}
+\renewcommand{\arraystretch}{1.12}
+
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\scriptsize\color{textgray}\textsc{Northbridge Journal of Digital Medicine} \quad Mock article}
+\fancyhead[R]{\scriptsize\color{textgray}Vol. 1 \textbullet\ 2026}
+\fancyfoot[C]{\scriptsize\color{textgray}\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\newcommand{\articleSection}[1]{%
+  \par\vspace{5pt}%
+  \noindent{\large\bfseries\color{journalblue}#1}\par\vspace{1pt}%
+  \noindent\textcolor{journalblue}{\rule{\columnwidth}{0.45pt}}\par\vspace{2pt}%
+}
+\newcommand{\subsectiontitle}[1]{\vspace{3pt}{\bfseries #1}\par}
+
+\begin{document}
+
+\twocolumn[
+\begin{minipage}{\textwidth}
+{\small\bfseries\color{journalblue}ORIGINAL RESEARCH \hfill OPEN ACCESS}\par
+\vspace{5pt}
+{\fontsize{19}{22}\selectfont\bfseries Remote Blood-Pressure Monitoring After Hospital Discharge: A Mock Randomized Clinical Study}\par
+\vspace{6pt}
+{\large Maya Levin, MD; Daniel Cho, MSc; Sofia Rahman, MPH; Elias Grant, MD}\par
+{\small Center for Clinical Systems Research, Northbridge University Hospital, Northbridge}\par
+\vspace{7pt}
+\colorbox{lightblue}{\parbox{0.965\textwidth}{\small\textbf{Educational mock article.} All authors, institutions, participants, data, analyses, registry numbers, and findings in this document are fictional and must not be used to guide clinical care or cited as real evidence.}}
+\vspace{8pt}
+\end{minipage}
+]
+
+\articleSection{Abstract}
+
+\textbf{Imporbjtance} Early post-discharge blood-pressure instability is common among adults hospitalized with hypertension, yet practical monitoring strategies remain uncertain.
+
+\textbf{Objective} To estimate, using a fulddeely synthetic trial, whether a 30-day app-supported home blood-pressure program could improve short-term systolic blood-pressure control compared with usual discharge instructions.
+
+\textbf{Design, setting, and particnhnhnipants} Mock, parallel-group randomized clinical study of 240 fictional adudlts discharged from a fictional academic hospital between January and October 2025. Participants had treated hypertension and a discharge systolic blood pressure of 140--179 mm Hg.
+
+\textbf{Intervention} Bluetooth-enabled home monitoring, daily medication prompts, and nurse review of threshold alerts versus written usual-care instructions.
+
+\textbf{Main outcomes and measures} The primary synthetic outcome was change in mean seated systolic blood pressure from discharge to day 30. Secondary outcomes included measurement adherence, medication discrepancies resolved, and simulated urgent-care use.
+
+\textbf{Results} Among 240 fictional participants (median age, 62 years; 126 [52.5\%] women), 228 completed the day-30 assessment. Mean systolic blood pressure decreased by 12.8 mm Hg in the remote-monitoring group and 7.1 mm Hg with usual care (adjusted between-group difference, $-5.4$ mm Hg; 95\% CI, $-8.1$ to $-2.7$). At least 24 of 30 daily measurements were submitted by 84.2\% of intervention participants. No synthetic safety signal was observed.
+
+\textbf{Conclusions and relevance} In this mock dataset, remote monitoring was associated with a modest improvement in short-term blood-pressure control. A real trial would require prospective registration, validated devices, prespecified safety escalation, and independent oversight.
+
+\vspace{3pt}
+\noindent\colorbox{softgray}{\parbox{0.94\columnwidth}{\scriptsize\textbf{Mock trial registration:} NBM-2025-0001 (fictional) \textbullet\ Data availability: synthetic dataset only}}
+
+\articleSection{Introduction}
+
+Transitions from hospital to home can expose gaps in medication reconciliation, follow-up access, and recognition of worsening hypertension. Home blood-pressure monitoring offers a low-burden way to observe recovery, but monitoring alone does not ensure that readings are interpreted or acted upon.
+
+Digital programs commonly combine a validated cuff, reminders, simple education, and clinician review. Their effect depends on engagement, measurement technique, alert design, and the capacity of care teams to respond. Overly sensitive thresholds may create avoidable work, whereas overly permissive thresholds may delay evaluation.
+
+We constructed a synthetic randomized study to demonstrate the structure, reporting style, and statistical presentation of a short medical research article. The mock hypothesis was that a 30-day supported monitoring pathway would produce a greater reduction in systolic blood pressure than usual discharge instructions.
+
+\vspace{5pt}
+\noindent\colorbox{lightblue}{\parbox{0.93\columnwidth}{\small
+\textbf{Key Points}\par\vspace{3pt}
+\textbf{Question}\quad In a synthetic post-discharge population, is supported home monitoring associated with improved 30-day systolic blood pressure?\par
+\textbf{Finding}\quad The fictional adjusted difference was $-5.4$ mm Hg, with high modeled measurement adherence and no simulated safety signal.\par
+\textbf{Meaning}\quad The example supports testing an integrated device-and-response pathway; it does not support clinical adoption or treatment decisions.
+}}
+
+\vfill
+{\scriptsize\color{textgray}\textbf{Suggested citation (fictional):} Levin M, Cho D, Rahman S, Grant E. Remote blood-pressure monitoring after hospital discharge. \textit{Northbridge J Digit Med}. 2026;1:1--3.}
+
+\clearpage
+
+\articleSection{Methods}
+
+\subsectiontitle{Study design and oversight}
+This parallel-group, 1:1 mock trial was designed around a superiority framework. A fictional institutional review board approved the equally fictional protocol. The analysis was written to resemble CONSORT-style reporting, but no patients were recruited and no protected health information was used.
+
+\subsectiontitle{Participants}
+Eligibility required age 18 years or older, a documented diagnosis of hypertension, a discharge systolic blood pressure of 140--179 mm Hg, access to a compatible smartphone, and anticipated residence within the hospital catchment for 30 days. Mock exclusions were pregnancy, dialysis, hypertensive emergency, inability to self-measure safely, or planned skilled-nursing placement.
+
+\subsectiontitle{Randomization and intervention}
+A computer-generated variable-block sequence assigned participants after discharge orders were entered. The intervention group received a paired upper-arm cuff, a five-minute onboarding session, daily reminders, and a dashboard reviewed each weekday by a study nurse. Readings of at least 180/120 mm Hg triggered an on-screen instruction to repeat the measurement after five minutes and seek urgent clinical advice; persistent alerts were routed to the nurse queue. The control group received standard written instructions to measure blood pressure and contact primary care.
+
+\subsectiontitle{Outcomes}
+The primary outcome was change in the average of three seated systolic measurements from baseline to day 30. Prespecified secondary outcomes were diastolic change, completion of at least 24 daily measurement sessions, medication discrepancies resolved within seven days, and mock urgent-care encounters. Adverse events were summarized descriptively.
+
+\subsectiontitle{Statistical analysis}
+The synthetic sample of 240 provided a plausible demonstration of 90\% power to detect a 5-mm Hg difference, assuming an SD of 11 mm Hg and 10\% attrition. The primary linear model adjusted for baseline systolic pressure and age stratum. Missing day-30 values were multiply imputed in the illustrative primary analysis; complete-case results were used as a sensitivity analysis. Two-sided $P<.05$ denoted statistical significance. All estimates and intervals were generated for layout demonstration rather than scientific inference.
+
+\articleSection{Results}
+
+\subsectiontitle{Participants}
+Of 318 fictional patients assessed, 240 were randomized: 120 to remote monitoring and 120 to usual care. Twelve lacked a day-30 assessment, leaving 116 and 112 participants, respectively, in the complete-case population. Baseline characteristics were intentionally balanced (Table 1).
+
+\begin{table}[h]
+\centering
+\caption{Synthetic baseline characteristics}
+\scriptsize
+\begin{tabular}{@{}p{2.55cm}cc@{}}
+\toprule
+ & Remote & Usual care \\
+\midrule
+Participants, No. & 120 & 120 \\
+Age, median (IQR), y & 61 (53--70) & 63 (54--71) \\
+Women, No. (\%) & 65 (54.2) & 61 (50.8) \\
+SBP, mean (SD), mm Hg & 151.6 (8.9) & 150.9 (9.2) \\
+Diabetes, No. (\%) & 43 (35.8) & 46 (38.3) \\
+$\geq$3 medicines, No. (\%) & 58 (48.3) & 55 (45.8) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsectiontitle{Primary and secondary outcomes}
+At day 30, mean systolic pressure was 138.8 mm Hg in the intervention group and 143.8 mm Hg in the control group. Adjusted change favored remote monitoring by 5.4 mm Hg (95\% CI, 2.7--8.1 mm Hg; $P<.001$). The complete-case estimate was similar ($-5.1$ mm Hg; 95\% CI, $-7.9$ to $-2.3$).
+
+Measurement adherence reached the prespecified threshold in 101 of 120 intervention participants (84.2\%). Medication discrepancies were identified in 29 participants and resolved within seven days in 24 (82.8\%). Simulated urgent-care use was uncommon in both groups.
+
+\begin{table}[h]
+\centering
+\caption{Synthetic 30-day outcomes}
+\scriptsize
+\begin{tabular}{@{}p{2.35cm}ccc@{}}
+\toprule
+Outcome & Remote & Control & Effect$^{a}$ \\
+\midrule
+SBP change, mm Hg & $-12.8$ & $-7.1$ & $-5.4$ \\
+DBP change, mm Hg & $-6.4$ & $-4.3$ & $-1.9$ \\
+Urgent care, No. & 3 & 5 & 0.60 \\
+Readmission, No. & 2 & 3 & 0.67 \\
+\bottomrule
+\end{tabular}
+\parbox{0.98\columnwidth}{\tiny $^{a}$Adjusted mean difference for continuous outcomes; risk ratio for binary outcomes. All values are synthetic.}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\caption{Synthetic reduction in systolic blood pressure}
+\vspace{2pt}
+\begin{minipage}{0.94\columnwidth}
+\scriptsize
+Remote monitoring \hfill $-12.8$ mm Hg\par
+\textcolor{journalblue}{\rule{0.92\linewidth}{9pt}}\par\vspace{5pt}
+Usual care \hfill $-7.1$ mm Hg\par
+\textcolor{textgray}{\rule{0.51\linewidth}{9pt}}\par\vspace{5pt}
+{\tiny Bars show unadjusted within-group mean change from discharge to day 30. Values are fictional and are presented only as a visual summary of the mock results.}
+\end{minipage}
+\end{figure}
+
+\clearpage
+
+\articleSection{Discussion}
+
+In this fully synthetic randomized study, a supported home-monitoring pathway produced a 5.4-mm Hg greater reduction in systolic blood pressure at 30 days than usual discharge instructions. The direction and magnitude were constructed to be clinically plausible, not to establish efficacy. The exercise illustrates how an intervention can be described with enough operational detail to distinguish a connected care pathway from provision of a device alone.
+
+Three design features are worth testing in a real study. First, measurement technique should be standardized, because cuff position, rest time, and device fit materially affect readings. Second, alert thresholds must connect to a defined response pathway with appropriate staffing and documentation. Third, adherence should be assessed separately from clinical response: participants may submit measurements without receiving or acting on treatment recommendations.
+
+The modeled between-group difference could reflect several mechanisms, including more frequent observation, earlier correction of medication discrepancies, reassurance after normal readings, and behavioral reinforcement. A future factorial design could separate the contribution of reminders, clinician review, and automated feedback. Longer follow-up would be necessary to determine whether early improvements persist after monitoring intensity decreases.
+
+\subsectiontitle{Limitations}
+This article has an overriding limitation: every datum is invented. The synthetic sample cannot support clinical, causal, economic, or safety conclusions. The model also assumes smartphone access, English-language onboarding, weekday nurse capacity, and reliable wireless transmission. These assumptions could exclude patients facing the largest transition-of-care barriers. The short follow-up does not address cardiovascular outcomes, sustainability, clinician workload, or unintended consequences such as anxiety and overtreatment.
+
+\subsectiontitle{Implications for a real protocol}
+A genuine evaluation should prospectively register outcomes, publish a statistical analysis plan, use independently validated cuffs, and establish escalation procedures for severe or symptomatic readings. Recruitment should include people with limited digital access and multiple languages. Patient-reported burden, alert volume, response time, medication intensification, equity measures, and cost should be evaluated alongside blood pressure.
+
+\articleSection{Conclusions}
+
+This mock trial demonstrates a concise medical-article format and a plausible approach to reporting remote-monitoring outcomes. It does not provide medical evidence. In the fictional dataset, supported monitoring improved 30-day systolic blood pressure compared with usual discharge instructions; only a properly governed real-world trial could determine whether such a program is effective and safe.
+
+\articleSection{Article Information}
+
+\textbf{Author contributions:} Dr Levin and Mr Cho had full access to the synthetic data. Ms Rahman drafted the mock analysis; Dr Grant supervised the fictional protocol. All authors approved the educational manuscript.
+
+\textbf{Conflict of interest disclosures:} None; authors and disclosures are fictional.
+
+\textbf{Funding/support:} No funding was received. No sponsor participated in the design, analysis, or preparation of this mock article.
+
+\textbf{Data statement:} Values were manually constructed for demonstration. No patient-level dataset exists.
+
+\textbf{Ethics statement:} No human participants, records, or biological materials were involved.
+
+\articleSection{Illustrative References}
+
+{\scriptsize
+\begin{enumerate}[leftmargin=1.45em,itemsep=2pt]
+\item Northbridge Hypertension Collaborative. Standardized home blood-pressure measurement in transitional care. \textit{Mock Clin Pract}. 2024;8:101--109. Fictional citation.
+\item Chen R, Patel K, Owens J. Designing actionable alerts for connected cardiovascular care. \textit{J Simul Digit Health}. 2023;4:44--52. Fictional citation.
+\item Alvarez P, Morgan T. Digital inclusion in remote monitoring trials. \textit{Equity Health Syst}. 2025;2:15--23. Fictional citation.
+\item Rahman S, Cho D. Reporting synthetic clinical studies for education. \textit{Methods Demonstr Q}. 2025;11:77--83. Fictional citation.
+\end{enumerate}
+}
+
+\vfill
+\noindent\colorbox{lightblue}{\parbox{0.94\columnwidth}{\scriptsize\textbf{Reader notice:} This document is a design and writing sample. It is not peer reviewed, indexed, registered, or suitable for clinical decision-making.}}
+
+\end{document}

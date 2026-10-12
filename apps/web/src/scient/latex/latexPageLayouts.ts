@@ -18,10 +18,11 @@ function argument(source: string, at: number, open = "{", close = "}") {
 
 /** CSS lengths for bounded literal layout dimensions, relative to the local line. */
 export function latexLayoutLength(value: string): string | null {
-  const relative = /^(\d+(?:\.\d*)?|\.\d+)\s*\\(?:linewidth|textwidth|columnwidth)$/u.exec(
+  const relative = /^((?:\d+(?:\.\d*)?|\.\d+)?)\s*\\(?:linewidth|textwidth|columnwidth)$/u.exec(
     value.trim(),
   );
-  if (relative) return Number(relative[1]) <= 1 ? `${Number(relative[1]) * 100}%` : null;
+  if (relative)
+    return Number(relative[1] || "1") <= 1 ? `${Number(relative[1] || "1") * 100}%` : null;
   const font = /^(\d+(?:\.\d*)?|\.\d+)\s*(em|ex)$/u.exec(value.trim());
   if (font) return `${Number(font[1])}${font[2]}`;
   const inches = latexLengthInches(value);
@@ -93,11 +94,11 @@ export function latexPageLayoutOpening(source: string, setup?: LatexLanguageSetu
   if (!["t", "c", "b", "s"].includes(innerAlignment)) return null;
   const width = argument(source, from);
   if (!width) return null;
-  const relative = /^(\d+(?:\.\d*)?|\.\d+)\s*\\(?:linewidth|textwidth|columnwidth)$/u.exec(
+  const relative = /^((?:\d+(?:\.\d*)?|\.\d+)?)\s*\\(?:linewidth|textwidth|columnwidth)$/u.exec(
     width.value.trim(),
   );
   const inches = latexLengthInches(width.value);
-  const amount = relative ? Number(relative[1]) : inches;
+  const amount = relative ? Number(relative[1] || "1") : inches;
   if (amount === null || amount <= 0 || (relative && amount > 1)) return null;
   return {
     environment,

@@ -72,6 +72,19 @@ document's language does not change the language default for new documents.
 
 ## Write visually, verify with TeX
 
+Unsupported nested content remains visible as source;
+surrounding supported text stays editable. Custom heading macros, formatting
+groups, paragraph boxes, and supported float contents retain their original
+commands when edited. Columns and float placement use browser layout, so rebuild
+and inspect PDF for the final page and column breaks. Standard `twocolumn`
+documents fill the first column before the second on each sheet, leaving the
+last column shorter when appropriate. `multicols` regions keep balanced columns.
+Visual follows those source layouts; it does not impose one column-filling style
+on every document. Browser line wrapping and TeX float placement can still differ.
+An explicit `\vfill` before trailing content uses the remaining printable space
+in the current source-derived column, so a concluding notice stays at its bottom
+when there is room. Its source is retained when editing the notice.
+
 Write is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. The canvas uses a document workspace
 with a compact toolbar, a collapsible outline, and a contextual
@@ -1016,8 +1029,17 @@ Choose **Find selection in PDF** in Source, or press Ctrl/Cmd+Shift+J, to reveal
 current source position in the successful PDF. This opens Split when needed.
 Double-clicking source keeps normal word selection. Double-clicking a word in the
 PDF in Split keeps normal word selection and reveals the corresponding source line.
+Visual double-clicks in Split also keep normal selection while revealing source.
+In a standalone PDF or Visual view, double-clicks keep ordinary selection and
+leave the current view open. No double-click instruction popup appears.
 Scient briefly marks the destination so it is easy
-to see. This needs a successful current build with a navigation index. If no
+to see. In Split, each pane keeps its own cursor and selection. Visual selects the
+mapped source characters for prose or an equation cell; PDF selects a matching
+word on its mapped source line when that word can be verified, otherwise the line.
+The source highlight stays until you interact with Source. Clicking back into
+Visual or PDF keeps your source selection. Source interaction also cancels a
+pending jump so a late result cannot replace your new cursor. PDF navigation needs a successful
+current build with a navigation index. If no
 mapping is available, the PDF remains usable and the status explains why the
 jump could not be completed.
 The exactness comes from the compiler's navigation index: some complex or RTL

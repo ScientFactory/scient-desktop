@@ -727,9 +727,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         }
       : null;
   const linkedSourceReveal =
-    preferredMode === "split" && splitPreview === "visual"
-      ? (visualSourceReveal ?? citationSourceReveal)
-      : citationSourceReveal;
+    preferredMode === "split" ? (visualSourceReveal ?? citationSourceReveal) : citationSourceReveal;
   useEffect(() => {
     if (persistence === null) return;
     let previous = persistence.getSnapshot();
@@ -909,8 +907,14 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     [build.snapshot, descriptor, persistence, props.cwd, props.environmentId, props.relativePath],
   );
 
+  const inverseSyncEnabled = mode === "split" && splitPreview === "pdf";
+  const inverseSyncEnabledRef = useRef(inverseSyncEnabled);
+  useLayoutEffect(() => {
+    inverseSyncEnabledRef.current = inverseSyncEnabled;
+  }, [inverseSyncEnabled]);
   const handleInverseSync = useCallback(
-    (point: PdfInverseSyncPoint) => {
+    (point: PdfInverseSyncPoint, selectedText?: string) => {
+      if (!inverseSyncEnabledRef.current) return;
       const snapshot = build.snapshot;
       if (
         snapshot === null ||
@@ -938,7 +942,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         y: point.y,
       })
         .then((result) => {
-          if (syncRequestRef.current !== issued) return;
+          if (syncRequestRef.current !== issued || !inverseSyncEnabledRef.current) return;
           if (result._tag === "unavailable") {
             setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
             return;
@@ -958,28 +962,32 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             setSyncNotice(UNSAVED_SYNC_NOTICE);
             return;
           }
-          onOpenFileSource(result.relativePath, result.line, {
-            latexRootRelativePath: snapshot.rootRelativePath,
+          visualSourceRequest.current += 1;
+          setVisualSourceReveal({
+            path: result.relativePath,
+            line: result.line,
+            column: result.column,
+            ...(selectedText === undefined ? {} : { selectedText }),
+            rootRelativePath: snapshot.rootRelativePath,
+            requestId: visualSourceRequest.current,
           });
         })
         .catch((error: unknown) => {
-          if (syncRequestRef.current !== issued) return;
+          if (syncRequestRef.current !== issued || !inverseSyncEnabledRef.current) return;
           setSyncNotice({
             label: "Navigation failed",
             message: error instanceof Error ? error.message : "SyncTeX navigation failed.",
           });
         });
     },
-    [build.snapshot, descriptor, onOpenFileSource, props.cwd, props.environmentId],
+    [build.snapshot, descriptor, props.cwd, props.environmentId],
   );
   const syncNavigation = useMemo<PdfSyncNavigation | undefined>(
     () =>
       descriptor?._tag === "generated-pdf"
         ? {
             forwardTarget: forwardSyncTarget,
-            ...(mode === "pdf" || (mode === "split" && splitPreview === "pdf")
-              ? { onInverseSearch: handleInverseSync }
-              : {}),
+            ...(inverseSyncEnabled ? { onInverseSearch: handleInverseSync } : {}),
             onPageChange: handlePdfPageChange,
           }
         : undefined,
@@ -988,8 +996,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       forwardSyncTarget,
       handleInverseSync,
       handlePdfPageChange,
-      mode,
-      splitPreview,
+      inverseSyncEnabled,
     ],
   );
   // Keyed by artifact, never by revision: a rebuild of the same document swaps
@@ -1639,11 +1646,27 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         </p>
       ) : null}
       {props.startBar}
-      <div className="scient-latex-content" ref={containerRef}>
+      <div
+        className="scient-latex-content"
+        ref={containerRef}
+        data-latex-split={mode === "split" || undefined}
+      >
         {showEditor ? (
           <div
             ref={primaryPaneRef}
             className={cn("scient-latex-pane", mode === "split" ? "scient-latex-pane-sized" : null)}
+            onPointerDownCapture={() => {
+              syncRequestRef.current += 1;
+              containerRef.current?.dispatchEvent(
+                new CustomEvent("scient-latex-source-interaction"),
+              );
+            }}
+            onKeyDownCapture={() => {
+              syncRequestRef.current += 1;
+              containerRef.current?.dispatchEvent(
+                new CustomEvent("scient-latex-source-interaction"),
+              );
+            }}
             onDoubleClickCapture={(event) => {
               if (mode !== "split") return;
               const position = sourcePositionFromPointerEvent(event);
@@ -1657,20 +1680,28 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                 );
             }}
           >
-            {linkedSourceReveal ? (
+            {(mode === "split" && persistence !== null && !sourceRecovery.blocked) ||
+            linkedSourceReveal ? (
               <LatexVisualSourcePane
                 threadRef={props.threadRef}
                 onCite={props.onCite}
-                key={linkedSourceReveal.path}
+                key={linkedSourceReveal?.path ?? props.relativePath}
                 environmentId={props.environmentId}
                 cwd={props.cwd}
                 composerDraftTarget={props.composerDraftTarget}
                 resolvedTheme={props.resolvedTheme}
                 wordWrap={props.wordWrap}
-                reveal={linkedSourceReveal}
+                reveal={
+                  linkedSourceReveal ?? {
+                    path: props.relativePath,
+                    requestId: props.revealRequestId,
+                    ...(revealLine === null ? {} : { line: revealLine }),
+                  }
+                }
                 onNavigateVisual={
                   mode === "split" && splitPreview === "visual"
-                    ? (source, line) => navigateVisual(linkedSourceReveal.path, source, line)
+                    ? (source, line) =>
+                        navigateVisual(linkedSourceReveal?.path ?? props.relativePath, source, line)
                     : undefined
                 }
               />
@@ -1743,6 +1774,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                                 from: owner.from,
                                 to: owner.to,
                                 source: owner.source,
+                                precise: owner.precise === true,
                                 rootRelativePath: owner.rootRelativePath,
                                 requestId: visualSourceRequest.current,
                               });

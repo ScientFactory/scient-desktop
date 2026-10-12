@@ -1,3 +1,5 @@
+import { matrixAt } from "../math/input/matrix";
+
 interface NumberingCommand {
   from: number;
   to: number;
@@ -112,6 +114,69 @@ export function projectMathNumbering(body: string): {
       row.commands.map((command) => row.source.slice(command.from, command.to)),
     ),
   };
+}
+
+/** Reveal an authored equation row using the same boundaries as numbering edits. */
+export function mathRowSourceRange(
+  source: string,
+  row: number,
+  rowCount: number,
+  environment: string,
+  cell?: { column: number; columns: number },
+): { from: number; to: number } | null {
+  let from = source.length - source.trimStart().length;
+  let to = source.trimEnd().length;
+  for (let depth = 0; depth < 8; depth++) {
+    const raw = source.slice(from, to);
+    const opening = /^\\begin\{(align\*?|gather\*?|aligned|gathered|split|equation\*?)\}/u.exec(
+      raw,
+    );
+    const head =
+      opening?.[0] ?? (raw.startsWith("\\[") ? "\\[" : raw.startsWith("$$") ? "$$" : null);
+    const tail = opening ? `\\end{${opening[1]}}` : head === "\\[" ? "\\]" : "$$";
+    if (!head || !raw.endsWith(tail)) return null;
+    from += head.length;
+    to -= tail.length;
+    const displayed = opening?.[1]?.startsWith("align")
+      ? "aligned"
+      : opening?.[1]?.startsWith("gather")
+        ? "gathered"
+        : opening?.[1];
+    if (displayed === environment) {
+      const rows = mathRows(source.slice(from, to));
+      if (!rows || rows.length !== rowCount || !rows[row]) return null;
+      const start =
+        from +
+        rows
+          .slice(0, row)
+          .reduce((at, entry) => at + entry.source.length + entry.separator.length, 0);
+      const selected = rows[row]!;
+      const entry = selected.source;
+      if (cell) {
+        const prefix = "\\begin{aligned}";
+        const grid = matrixAt(prefix + selected.visible + "\\end{aligned}", prefix.length);
+        const cells = grid?.rows[0];
+        const owned = cells?.[cell.column];
+        if (!owned || cells?.length !== cell.columns) return null;
+        const value = selected.visible.slice(owned.from - prefix.length, owned.to - prefix.length);
+        const lo = owned.from - prefix.length + value.length - value.trimStart().length;
+        const hi = owned.to - prefix.length - (value.length - value.trimEnd().length);
+        const first = selected.positions[lo];
+        const last = selected.positions[hi - 1];
+        return first !== undefined && last !== undefined
+          ? { from: start + first, to: start + last + 1 }
+          : null;
+      }
+      return {
+        from: start + entry.length - entry.trimStart().length,
+        to: start + entry.trimEnd().length,
+      };
+    }
+    const body = source.slice(from, to);
+    from += body.length - body.trimStart().length;
+    to = from + body.trim().length;
+  }
+  return null;
 }
 
 function patchRow(row: MathRow, value: string): string | null {

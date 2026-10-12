@@ -350,6 +350,54 @@ for the supported subset, fast local previews for ordinary edits, and the actual
 compiled PDF as the authority whenever exact layout is required. Measure drift
 on representative documents before widening the supported subset.
 
+### Proposed shared Visual–TeX layout mapping
+
+This is an integration proposal for the contributor working on mapping, not an
+implemented geometry API. Current source ranges connect Visual edits to TeX;
+the existing revision-scoped SyncTeX API connects source locations to PDF
+navigation points. Its forward result is a page and point, not a layout rectangle
+or a column assignment. Reuse those owners and build identities rather than
+creating a second source or PDF synchronization system.
+
+| Layer                                                                  | Identity and evidence                                                                                                    | Purpose                                                                                                |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| Source ownership (existing)                                            | Original file, exact source generation, owned range, and project include spans                                           | Patch the correct source and connect Visual selections to navigation.                                  |
+| Layout behavior (partly implemented; shared coverage catalog proposed) | Scoped command/configuration and its effects: column flow, vertical stretch, direction, typography, and object placement | Give each layout path the same semantics, and distinguish preserved source from reproduced appearance. |
+| Compiled layout evidence (proposed)                                    | Exact PDF artifact/revision, input/configuration identity, page dimensions, and available source-linked fragments        | Calibrate supported Visual placement against actual TeX output and measure drift.                      |
+
+The proposed compiled map should retain all fragments for a source range: a
+paragraph may cross columns or sheets, and a macro can produce several boxes.
+Record the coordinate system, units, page rotation, origin, and evidence precision;
+keep an unknown column or unavailable rectangle explicit. A SyncTeX navigation
+point must not be promoted to an exact content bounding box. Obtain richer
+geometry through a separately verified build/extraction boundary if needed.
+Visual block IDs are currently projection-local ordinal IDs; pair them with
+source ownership and revision rather than using them as durable build keys.
+
+Invalidate compiled placement when any relevant source/include, preamble,
+compiler configuration, font, or other build input changes. Ordinary editing
+continues through the existing DOM and source patches; stale compiled geometry
+must not override the newer draft. A successful matching rebuild can supply
+calibration evidence without replacing the editor or stealing selection/focus.
+This follows the current rebuild policy; it does not introduce compilation per
+keystroke.
+
+To prevent repeated integration gaps, the proposed coverage catalog should track
+parsing, source preservation, rendered content, and layout effects separately.
+One entry for vertical fill should describe stretch in a page, source column, or
+fixed-height panel; recognizing its syntax alone does not establish support in
+all three. Layout consumers should share the semantic descriptor and expose
+unhandled effects to developer diagnostics. Unsupported source remains visible
+under the existing fallback rules; this proposal adds no compatibility banner.
+
+Qualification should compare compiled fixtures with Visual for feature
+combinations, including columns plus full-width titles, `\vfill` plus notices,
+floats plus notes, nested font/direction changes, short columns, and content that
+overflows to another sheet. Check placement relationships and source/edit/undo
+preservation separately. Source round-tripping alone cannot establish layout
+fidelity. These are proposed regression checks, not a claim that the entire
+matrix has been run or that arbitrary TeX is supported.
+
 ## Current architecture
 
 ### Local document workflow
@@ -808,9 +856,21 @@ optional-label syntax; footer editing never converts it to `\href`.
 
 Standard footnote markers are numbered by the shared live index. Pagination
 measures their prose, reserves space with the containing line, and places
-non-source footnote widgets at the page's text-area bottom. Notes and markers
-select the same existing footer editor. Marker clicks navigate to the note;
-note clicks return to the marker. Navigation uses the shared temporary highlight
+non-source footnote widgets at the page's text-area bottom.
+The separator starts at the document's inline start: right for Hebrew/RTL and
+left for English/LTR.
+Notes and markers select the same existing footer editor.
+Edit text uses the shared inline editor for supported prose, formatting, language
+wrappers, inline math and references, preserving their LaTeX while editing.
+It brings the marker back into view before opening the field beside it.
+The field keeps focus while opening and stays open through writing menus;
+Enter, Tab, Escape or a click outside the editor exits it.
+Its position and width stay inside the visible paper/pane at either text direction
+and zoom level, including narrow Split panes.
+While the field is open, its owning paragraph releases paint containment so the
+editor below the line stays visible and receives pointer input.
+Marker clicks navigate to the note; note clicks return to the marker.
+Navigation uses the shared temporary highlight
 and respects reduced motion without automatically focusing the footer. The bounded prose renderer shares the
 source parser and constructs DOM text and mark elements without injecting HTML.
 Custom counters suppress inferred numbers, and long or unsupported footnotes
@@ -1369,6 +1429,34 @@ recursive row macros and exact TeX page breaking remain limitations.
 
 ### Columns, minipages and page furniture
 
+`latexContentLayouts.ts` composes balanced formatting groups, literal font/color
+declarations, paragraph boxes, and floats with text surrounding their grids or
+artwork. Each adapter owns a bounded body range and patches it recursively while
+retaining its original wrappers. Grid-only adapters reject unowned surrounding
+content. Opaque nested blocks stay visible, and ordinary edits cannot delete them
+implicitly through their enclosing container.
+Literal one-argument heading macros are supported when their definition contains
+only local typography, paragraph spacing, and a separator rule. Conditional,
+recursive, multi-argument, or executable definitions stay source-owned. Edits
+change the call argument without expanding or rewriting its definition.
+The standard two-column class option and one/two-column transitions group content
+into source-owned columns. Balanced optional full-width titles stay outside those
+columns. `latexSourceColumns.ts` fills each printable column in order, using the
+space below a full-width title on the first sheet and full printable height on
+subsequent sheets. The pagination extension places the existing editable blocks
+through decorations and adds their positions to the local page map. It retains
+heading groups and indivisible objects. A paragraph crossing the first column's
+bottom continues in the second through CSS fragmentation of its existing node;
+paragraphs crossing sheets currently travel as complete blocks. No generated
+breaks enter source. `multicols` retains its separate balanced
+layout. TeX line splitting, float placement, microtypography, and exact page breaks
+remain approximations.
+`latexVisualCompatibility.ts` reports nested source fallbacks with source lines
+and distinguishes them from layout approximations for diagnostics; it has no
+compatibility-summary control in the writing surface. Accepting a wrapper is not a
+claim that all class/package settings or PDF geometry have been reproduced.
+Local list spacing options retain their source when numbering changes.
+
 `latexPageLayouts.ts` bounds literal `multicols` counts, `minipage` widths,
 literal fixed heights and inner/outer alignment, and common root-preamble
 `fancyhdr` slots and running fields.
@@ -1416,6 +1504,15 @@ It divides remaining printable space among fills before the next explicit page
 break, reserving room for following content and footnotes. Existing gap widgets
 apply this space and disappear during natural-flow measurement; source is never
 rewritten to implement the stretch.
+Source-derived `twocolumn` regions use the same vertical-fill classification.
+Their planner reserves the natural heights and margins of following content and
+divides the current column's free space among remaining fills when that tail
+fits. A fill before a concluding notice therefore places it at the printable
+column bottom. Overflowing tails leave the fill at natural size and retain
+normal column flow. The positions remain presentation-only and source-owned.
+Column decoration styles are retained by React node-view attributes during
+content updates and undo; a node-view render must not clear its mapped position
+or its parent region's measured height.
 
 The paper sheets render running fields behind the editable DOM. Common fancyhdr
 left/center/right and odd/even assignments, cleared slots, numeric page fields
@@ -1826,7 +1923,29 @@ content instead of searching for repeated text.
 
 Double-click in Visual Split uses `LatexVisualSourcePane` to reveal
 the owning file without replacing or blurring Visual. It shares the document's
-persistence lease. `LatexCitationActions` feeds the existing selection toolbar
+persistence lease. Ordinary double-click selection runs before source navigation;
+the navigation handler does not consume the event. The source surface stays
+mounted across Split navigation and retains its own native editor cursor and
+selection. `revealFileEditorSelection` applies verified offsets through Pierre's
+`setViewState` with the existing viewport, avoiding `setSelections`' focus/scroll
+side effects. Navigation selects the mapped characters; SyncTeX can refine its
+mapped line to a uniquely verified PDF-selected word. The selection remains until
+interaction in Source and survives focus returning to the preview. Inner object
+fields use their authored slot ranges: table cells, description items, title
+declarations, captions, footnotes and literal code retain local selection offsets.
+Native nested-editor endpoints take precedence while ProseMirror catches up with
+double-click word selection. Framed figures map through their frame and box bodies;
+math maps clicked grid cells and uniquely verified selected TeX within that scope.
+Ambiguous repeated grids retain the enclosing mapping rather than guessing.
+The field selection painter preserves fractional widths and wrapping at document
+zoom, including RTL text. Source
+interaction cancels pending navigation and scroll guards. Split disables the
+source editor's outside-click dismissal and shows its inactive caret. Visual
+retains muted selection/caret through Source focus; PDF retains its selected ink
+through a scoped CSS Highlight without replacing Source's browser selection.
+Full citation ranges keep their quote behavior. Visual's
+destination outline also clears on interaction in its pane. Outside Split it does not
+reveal source or switch views. `LatexCitationActions` feeds the existing selection toolbar
 and composer callback; portal ownership retains the native editing selection.
 The comment bubble reads model geometry and reuses the selection painter rather
 than highlighting a whole math DOM node. Stale models and unpublished fields
@@ -1859,9 +1978,16 @@ stale or unmapped source rather than navigating to unrelated content. Visual's
 double-click uses the same ownership mapping to reveal Source,
 including an included file while keeping the document editor mounted.
 The clicked node-view DOM identifies the source owner, including math shadow
-hosts and virtualized prose. Paragraph pointer coordinates resolve precise
-source lines where the inline map supports them; other objects reveal their
-containing block. Navigation waits for edit publication before resolving the
+hosts and virtualized prose. Native word-selection endpoints and pointer coordinates
+resolve authored prose offsets in paragraphs and headings, including nested lists,
+statements, quotes and supported layout bodies. Container mapping follows parser
+boundaries and validates the projected children rather than searching repeated text.
+Math's completed second tap uses the same navigation pipeline because its pointer
+handler suppresses native double-click events. Aligned and gathered equations reveal
+the selected authored cell, excluding row labels while retaining their source.
+Other objects whose
+inner positions cannot be verified reveal their containing block. Navigation waits
+for edit publication before resolving the
 current project mapping. Ctrl/Command-double-click remains available too.
 
 ## Adapter direction

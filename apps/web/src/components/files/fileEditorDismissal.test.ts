@@ -8,7 +8,7 @@ describe("file editor dismissal", () => {
     for (const cleanup of dispose.splice(0)) cleanup();
   });
 
-  function setup(initiallyAttached = true) {
+  function setup(initiallyAttached = true, retainSelectionOnBlur = false) {
     const root = document.createElement("div");
     const file = document.createElement("diffs-container");
     const content = document.createElement("div");
@@ -26,7 +26,13 @@ describe("file editor dismissal", () => {
     };
     const onDismiss = vi.fn();
     const isBlocked = vi.fn(() => false);
-    const removeListeners = installFileEditorDismissal({ root, editor, onDismiss, isBlocked });
+    const removeListeners = installFileEditorDismissal({
+      root,
+      editor,
+      onDismiss,
+      isBlocked,
+      retainSelectionOnBlur,
+    });
     dispose.push(removeListeners, () => root.remove());
     return {
       root,
@@ -60,6 +66,29 @@ describe("file editor dismissal", () => {
     clickOutside();
     expect(onDismiss).toHaveBeenCalledOnce();
     expect(editor.setSelections).not.toHaveBeenCalled();
+  });
+
+  it("keeps Split source selection when focus moves to the preview", () => {
+    const { content, editor, onDismiss } = setup(true, true);
+    content.focus();
+    clickOutside();
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(editor.setSelections).not.toHaveBeenCalled();
+  });
+
+  it("still allows Escape to dismiss retained Split selection", () => {
+    const { content, editor, onDismiss } = setup(true, true);
+    content.focus();
+    content.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      }),
+    );
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(editor.setSelections).toHaveBeenCalledWith([]);
   });
 
   it("checks attachment after the dismissal callback, which can detach the editor", () => {

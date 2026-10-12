@@ -17,7 +17,11 @@ import { latexVisualNodeSignature } from "./latexVisualDocument";
 import { randomUUID } from "~/lib/utils";
 import { LatexMathMenuItems, LATEX_CASES_TEMPLATE } from "./LatexMathMenuItems";
 import { LatexLongTableBand, type LongTableBand } from "./LatexLongTableBand";
-import { latexRunningPageStyle, latexRunningPageFields } from "./latexPageLayouts";
+import {
+  latexRunningPageStyle,
+  latexRunningPageFields,
+  latexLayoutLength,
+} from "./latexPageLayouts";
 import {
   activateLatexContext,
   isLatexEditingMenuEvent,
@@ -196,6 +200,7 @@ import {
 } from "./latexObjectSelection";
 import { afterEditorPaint } from "./afterEditorPaint";
 import { observeLatexWidth } from "./observeLatexWidth";
+import { observeResize } from "~/lib/observeResize";
 import { observeLatexCurrentPage } from "./observeLatexCurrentPage";
 import { createEditorBackgroundTask } from "./editorBackgroundTask";
 import { processVisualDocument } from "./visualProcessing";
@@ -289,6 +294,7 @@ import {
   LatexVisualPagination,
   createLatexVisualPagination,
   latexPaginationKey,
+  latexSourceColumnStyle,
   latexObjectPageGaps,
   latexObjectContinuationHeights,
   latexVisualPageAt,
@@ -313,6 +319,7 @@ import {
   latexInlineCommandSource,
   latexCitationParts,
   metadataText,
+  latexTableInlineContent,
   latexVisualLayoutProfile,
   latexVisualScientificSource,
   latexVisualTableSource,
@@ -376,7 +383,7 @@ const LatexSourceAttributes = Extension.create({
         },
       },
       {
-        types: ["orderedList"],
+        types: ["orderedList", "bulletList"],
         attributes: {
           resume: { default: false, rendered: false },
           latexListOptions: {
@@ -384,12 +391,20 @@ const LatexSourceAttributes = Extension.create({
             renderHTML: (attributes: Record<string, unknown>) => {
               const options = parseLatexListOptions(String(attributes.latexListOptions ?? ""));
               const label = options?.label ? latexListLabelPresentation(options.label) : null;
-              return label
-                ? {
-                    "data-latex-list-style": label.style,
-                    style: `--scient-latex-list-prefix: ${JSON.stringify(label.prefix)}; --scient-latex-list-suffix: ${JSON.stringify(label.suffix)}`,
-                  }
-                : {};
+              const spacing = Object.entries(options?.layout ?? {})
+                .map(([key, value]) => `--scient-latex-local-${key}: ${latexLayoutLength(value)}`)
+                .join("; ");
+              return {
+                ...(label ? { "data-latex-list-style": label.style } : {}),
+                style: [
+                  spacing,
+                  label
+                    ? `--scient-latex-list-prefix: ${JSON.stringify(label.prefix)}; --scient-latex-list-suffix: ${JSON.stringify(label.suffix)}`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join("; "),
+              };
             },
           },
         },
@@ -1697,6 +1712,10 @@ function LatexInlineCommandView({
       : `equation ${equationReference?.number ?? argument}`;
   const root = useRef<HTMLSpanElement>(null);
   const footnoteText = name === "footnote" ? metadataText(argument) : null;
+  const footnoteEditable = useMemo(
+    () => name === "footnote" && latexTableInlineContent(argument) !== null,
+    [name, argument],
+  );
   const linkText = String(node.attrs.linkText ?? "");
   const linkPlain = metadataText(linkText);
   const isLink = ["href", "url", "hyperref", "hyperlink"].includes(name);
@@ -1711,6 +1730,69 @@ function LatexInlineCommandView({
     "hyperlink",
   ].includes(name);
   const hasLinkText = ["href", "hyperref", "hyperlink", "hypertarget"].includes(name);
+  useEffect(() => {
+    const element = root.current;
+    if (name !== "footnote" || !textEditing || !element) return;
+    // Native focus can move while the nested editor initializes. Only an
+    // explicit outside click closes it; shared menus retain the editing field.
+    const outside = (event: PointerEvent) => {
+      if (event.composedPath().includes(element) || isLatexEditingMenuEvent(event, element)) return;
+      setTextEditing(false);
+    };
+    element.ownerDocument.addEventListener("pointerdown", outside, true);
+    return () => element.ownerDocument.removeEventListener("pointerdown", outside, true);
+  }, [name, textEditing]);
+  useLayoutEffect(() => {
+    if (name !== "footnote" || !textEditing) return;
+    const panel = root.current?.querySelector<HTMLElement>(".scient-latex-inline-text-editor");
+    const paper = root.current?.closest<HTMLElement>(".scient-latex-visual-paper");
+    const scroll = paper?.closest<HTMLElement>(".scient-latex-visual-scroll");
+    if (!panel || !paper || !scroll) return;
+    const position = () => {
+      const page = paper.getBoundingClientRect();
+      const viewport = scroll.getBoundingClientRect();
+      const scale = page.width / paper.offsetWidth;
+      const viewportScale = viewport.width / scroll.offsetWidth;
+      if (!(scale > 0) || !(viewportScale > 0)) return;
+      const left = Math.max(page.left, viewport.left + scroll.clientLeft * viewportScale) + 4;
+      const right =
+        Math.min(
+          page.right,
+          viewport.left + (scroll.clientLeft + scroll.clientWidth) * viewportScale,
+        ) - 4;
+      if (right <= left) return;
+      // Keep the marker's anchor, but move the field back inside the clipped
+      // paper/pane when a Hebrew or English line ends near an edge.
+      panel.style.maxWidth = `${(right - left) / scale}px`;
+      panel.style.translate = "";
+      const bounds = panel.getBoundingClientRect();
+      const shift = Math.min(Math.max(bounds.left, left), right - bounds.width) - bounds.left;
+      panel.style.translate = `${shift / scale}px`;
+    };
+    let cancel: (() => void) | undefined;
+    const schedule = () => {
+      cancel?.();
+      cancel = afterEditorPaint(position);
+    };
+    const frame = paper.closest(".scient-latex-page-zoom-frame");
+    const stopResize = observeResize([paper, panel, scroll, ...(frame ? [frame] : [])], schedule);
+    scroll.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    position();
+    return () => {
+      cancel?.();
+      stopResize();
+      scroll.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+    };
+  }, [name, textEditing]);
+  const leaveFootnote = (direction: -1 | 1) => {
+    setTextEditing(false);
+    const position = getPos();
+    if (typeof position === "number")
+      editor.commands.setTextSelection(position + (direction > 0 ? node.nodeSize : 0));
+    editor.commands.focus(undefined, { scrollIntoView: false });
+  };
   if (name === "columnbreak") {
     return (
       <NodeViewWrapper
@@ -1753,7 +1835,7 @@ function LatexInlineCommandView({
     <NodeViewWrapper
       as="span"
       ref={root}
-      className="scient-latex-visual-command"
+      className={name === "hfill" ? "scient-latex-inline-stretch" : "scient-latex-visual-command"}
       data-selected={selected || undefined}
       data-equation-reference={!!equationReference || undefined}
       data-statement-label={statementLabel || undefined}
@@ -1763,7 +1845,7 @@ function LatexInlineCommandView({
       data-citation={!!citationTargets || undefined}
       contentEditable={false}
     >
-      {textEditing && (hasLinkText || name === "footnote") ? (
+      {name === "hfill" ? null : textEditing && (hasLinkText || name === "footnote") ? (
         <>
           {name === "footnote" && <sup>{footnoteNumber ?? "*"}</sup>}
           <span className="scient-latex-inline-text-editor">
@@ -1772,64 +1854,82 @@ function LatexInlineCommandView({
                 {(editingText ?? linkPlain ?? linkText) || "\u200b"}
               </span>
             )}
-            <LatexTextField
-              onInput={(event) => setEditingText(event.currentTarget.value)}
-              aria-label={name === "footnote" ? "Footnote text" : "Link text"}
-              rows={1}
-              value={name === "footnote" ? (footnoteText ?? argument) : (linkPlain ?? linkText)}
-              disabled={
-                !editable || (name === "footnote" ? footnoteText === null : linkPlain === null)
-              }
-              onBlur={(event) => {
-                if (!event.relatedTarget && !event.currentTarget.ownerDocument.hasFocus()) return;
-                if (
-                  event.relatedTarget instanceof Element &&
-                  event.relatedTarget.closest(
-                    ".scient-latex-context-tools, [data-dock-command-scope]",
-                  )
-                )
-                  return;
-                setTextEditing(false);
-                setEditingText(null);
-              }}
-              onValueChange={(value) => {
-                const next = escapeText(value);
-                updateAttributes(
-                  name === "footnote"
-                    ? {
-                        argument: next,
-                        raw: latexInlineCommandSource(
-                          name,
-                          next,
-                          linkText,
-                          String(node.attrs.raw ?? ""),
-                        ),
-                      }
-                    : {
-                        linkText: next,
-                        raw: latexInlineCommandSource(
-                          name,
-                          argument,
-                          next,
-                          String(node.attrs.raw ?? ""),
-                        ),
-                      },
-                );
-              }}
-              onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing) return;
-                if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey)) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  event.currentTarget.blur();
-                  setTextEditing(false);
+            {name === "footnote" ? (
+              <LatexInlineField
+                owner={editor}
+                source={argument}
+                label="Footnote text"
+                cell="footnote"
+                width="paragraph"
+                extensions={inlineFieldExtensions}
+                disabled={!editable || !footnoteEditable}
+                onFocus={() => setTextEditing(true)}
+                onChange={(value) => {
                   const position = getPos();
-                  if (typeof position === "number")
-                    editor.commands.setTextSelection(position + node.nodeSize);
-                  editor.commands.focus(undefined, { scrollIntoView: false });
-                }
-              }}
-            />
+                  if (!editable || typeof position !== "number") return false;
+                  const current = editor.state.doc.nodeAt(position);
+                  if (current?.type !== node.type || current.attrs.name !== "footnote")
+                    return false;
+                  updateAttributes({
+                    argument: value,
+                    raw: latexInlineCommandSource(
+                      name,
+                      value,
+                      linkText,
+                      String(current.attrs.raw ?? ""),
+                    ),
+                  });
+                  return editor.state.doc.nodeAt(position)?.attrs.argument === value;
+                }}
+                onTab={leaveFootnote}
+                onExit={leaveFootnote}
+              />
+            ) : (
+              <LatexTextField
+                onInput={(event) => setEditingText(event.currentTarget.value)}
+                aria-label="Link text"
+                rows={1}
+                value={linkPlain ?? linkText}
+                disabled={!editable || linkPlain === null}
+                onBlur={(event) => {
+                  if (!event.relatedTarget && !event.currentTarget.ownerDocument.hasFocus()) return;
+                  if (
+                    event.relatedTarget instanceof Element &&
+                    event.relatedTarget.closest(
+                      ".scient-latex-context-tools, [data-dock-command-scope]",
+                    )
+                  )
+                    return;
+                  setTextEditing(false);
+                  setEditingText(null);
+                }}
+                onValueChange={(value) => {
+                  const next = escapeText(value);
+                  updateAttributes({
+                    linkText: next,
+                    raw: latexInlineCommandSource(
+                      name,
+                      argument,
+                      next,
+                      String(node.attrs.raw ?? ""),
+                    ),
+                  });
+                }}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing) return;
+                  if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey)) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.currentTarget.blur();
+                    setTextEditing(false);
+                    const position = getPos();
+                    if (typeof position === "number")
+                      editor.commands.setTextSelection(position + node.nodeSize);
+                    editor.commands.focus(undefined, { scrollIntoView: false });
+                  }
+                }}
+              />
+            )}
           </span>
         </>
       ) : citationTargets ? (
@@ -1995,12 +2095,19 @@ function LatexInlineCommandView({
           <button
             type="button"
             className={dockButtonClass()}
-            disabled={!editable || footnoteText === null}
+            disabled={!editable || !footnoteEditable}
+            aria-description={
+              footnoteEditable
+                ? undefined
+                : "This footnote contains source-only content. Edit it in Source."
+            }
             onClick={() => {
+              const position = getPos();
+              if (typeof position === "number") navigateToFootnote(editor.view, position, false);
               setTextEditing(true);
               requestAnimationFrame(() =>
                 root.current
-                  ?.querySelector<HTMLTextAreaElement>('[aria-label="Footnote text"]')
+                  ?.querySelector<HTMLElement>('[aria-label="Footnote text"]')
                   ?.focus({ preventScroll: true }),
               );
             }}
@@ -3354,11 +3461,33 @@ function LatexRichPreviewView({
       <NodeViewWrapper
         className="scient-latex-layout-spacing"
         data-spacing={String(node.attrs.environment)}
+        style={sourceMeta?.height ? { height: String(sourceMeta.height) } : undefined}
         contentEditable={false}
         aria-hidden="true"
       />
     );
   }
+  if (kind === "columnMode")
+    return (
+      <NodeViewWrapper
+        className="scient-latex-column-mode"
+        contentEditable={false}
+        aria-label="Column transition"
+      />
+    );
+  if (kind === "rule")
+    return (
+      <NodeViewWrapper
+        className="scient-latex-content-rule"
+        contentEditable={false}
+        aria-label="Printed rule"
+        style={{
+          width: String(sourceMeta?.width ?? "100%"),
+          height: String(sourceMeta?.height ?? "0px"),
+          background: "currentColor",
+        }}
+      />
+    );
   if (kind === "pagebreak") {
     const command =
       String(node.attrs.raw ?? "").trim() === "\\clearpage" ? "\\clearpage" : "\\newpage";
@@ -4356,7 +4485,11 @@ const LatexInlineCommand = Node.create({
     return ["span", { ...HTMLAttributes, "data-latex-command": "" }];
   },
   addNodeView() {
-    return ReactNodeViewRenderer(LatexInlineCommandView);
+    return ReactNodeViewRenderer(LatexInlineCommandView, {
+      stopEvent: ({ event }) =>
+        event.target instanceof Element &&
+        Boolean(event.target.closest("input,textarea,.scient-latex-inline-field")),
+    });
   },
 });
 
@@ -4492,11 +4625,16 @@ function LatexScientificView(props: NodeViewProps) {
   const inheritedLanguage = useContext(LatexLanguageContext);
   const languageLabels = latexLanguageLabels(inheritedLanguage);
   const figurePresentation = useEditorState({
-    editor,
+    editor: ["framedFigure", "contentFloat"].includes(String(node.attrs.layout?.kind))
+      ? editor
+      : null,
     selector: ({ editor: current }) => {
       const at = getPos();
       return typeof at === "number"
-        ? latexEquationReferencesKey.getState(current.state)?.figures.get(at)
+        ? current &&
+            latexEquationReferencesKey
+              .getState(current.state)
+              ?.[node.attrs.layout?.floatType === "table" ? "tables" : "figures"].get(at)
         : undefined;
     },
   });
@@ -4606,6 +4744,73 @@ function LatexScientificView(props: NodeViewProps) {
             aria-label={language ? `${language} text` : `${node.attrs.layout.direction} text`}
           />
         </LatexLanguageContext>
+      </NodeViewWrapper>
+    );
+  }
+  if (
+    ["contentGroup", "fullWidthTitle", "macroHeading", "sourceColumns", "contentFloat"].includes(
+      String(node.attrs.layout?.kind),
+    )
+  ) {
+    const layout = node.attrs.layout;
+    const style = {
+      fontWeight: layout.weight,
+      fontStyle: layout.fontStyle,
+      color: layout.color ? latexColorCss(layout.color) : undefined,
+      fontSize: layout.points
+        ? `${(layout.points * CSS_PIXELS_PER_INCH) / TEX_POINTS_PER_INCH}px`
+        : layout.size
+          ? `var(--scient-latex-size-${layout.size})`
+          : undefined,
+      lineHeight:
+        layout.leading ?? (layout.size ? `var(--scient-latex-baseline-${layout.size})` : undefined),
+      width: layout.width,
+      textAlign: layout.alignment,
+      marginBlockStart: layout.before,
+      marginBlockEnd: layout.after,
+      "--scient-latex-text-align": layout.alignment,
+      "--scient-latex-columns": layout.columns,
+      "--scient-latex-heading-rule-color": layout.ruleColor
+        ? latexColorCss(layout.ruleColor)
+        : undefined,
+      "--scient-latex-heading-rule-height": layout.ruleHeight,
+    } as CSSProperties;
+    const float = layout.kind === "contentFloat";
+    const table = layout.floatType === "table";
+    const presentation = figurePresentation;
+    return (
+      <NodeViewWrapper
+        className={`scient-latex-content-layout ${float ? "scient-latex-rich-preview" : ""}`}
+        data-layout={layout.kind}
+        data-rule={layout.rule || undefined}
+        data-centered={layout.centered || undefined}
+        style={style}
+      >
+        {float && layout.captioned && (
+          <figcaption className="scient-latex-figure-numbered-caption" contentEditable={false}>
+            <span>
+              {table ? languageLabels.table : languageLabels.figure}
+              {presentation?.number ? ` ${presentation.number}` : ""}:{" "}
+            </span>
+            <LatexTextField
+              aria-label={table ? "Table caption" : "Figure caption"}
+              disabled={!editable}
+              rows={1}
+              value={String(node.attrs.caption ?? "")}
+              onValueChange={(caption) => updateAttributes({ caption })}
+            />
+          </figcaption>
+        )}
+        <NodeViewContent
+          className="scient-latex-content-layout-body"
+          aria-label={
+            float
+              ? "Float content"
+              : layout.kind === "macroHeading"
+                ? "Custom heading"
+                : "Formatted content"
+          }
+        />
       </NodeViewWrapper>
     );
   }
@@ -4719,8 +4924,8 @@ function LatexScientificView(props: NodeViewProps) {
           editor={editor}
           root={root}
           selected={selected}
-          label={layout.kind === "columns" ? "Columns tools" : "Panel tools"}
           position={layout.kind === "columns" ? "Columns" : "Panel"}
+          label={layout.kind === "columns" ? "Columns tools" : "Panel tools"}
           inline
         >
           <LatexLayoutControls node={node} editor={editor} getPos={getPos} />
@@ -4994,19 +5199,32 @@ const LatexScientific = Node.create({
     return ["div", { ...HTMLAttributes, "data-latex-scientific": "" }, 0];
   },
   addNodeView() {
-    const fallback = ReactNodeViewRenderer(LatexScientificView, {
-      attrs: ({ node }) => {
-        const layout = node.attrs.layout;
-        return {
-          "data-latex-page-layout": layout?.kind ?? "",
-          "data-alignment": layout?.alignment ?? "",
-          style:
-            layout?.kind === "minipage"
-              ? `width: ${layout.width}; min-width: 0; flex-shrink: 0; margin-inline-start: ${node.attrs.layoutGap ?? "0px"};`
-              : "",
-        };
-      },
-    });
+    const fallback: NodeViewRenderer = (props) =>
+      ReactNodeViewRenderer(LatexScientificView, {
+        stopEvent: ({ event }) =>
+          event.target instanceof Element &&
+          Boolean(event.target.closest("input,textarea,select,.scient-latex-inline-field")),
+        attrs: ({ node }) => {
+          const layout = node.attrs.layout;
+          const position = props.getPos();
+          const columnStyle =
+            typeof position === "number"
+              ? latexSourceColumnStyle(props.editor.state, position)
+              : "";
+          return {
+            "data-latex-page-layout": layout?.kind ?? "",
+            "data-alignment": layout?.alignment ?? "",
+            style: [
+              layout?.kind === "minipage"
+                ? `width: ${layout.width}; min-width: 0; flex-shrink: 0; margin-inline-start: ${node.attrs.layoutGap ?? "0px"};`
+                : "",
+              columnStyle,
+            ]
+              .filter(Boolean)
+              .join(";"),
+          };
+        },
+      })(props);
     return scientificStatementNodeView(LatexScientificStatementView, fallback);
   },
 });
@@ -5729,6 +5947,74 @@ function LatexVisualEditorReady(
     [installProjection, reportDraft, props.draftKey],
   );
   const flushSourceEditRef = useRef(flushSourceEdit);
+  const revealSourceAtPoint = useCallback(
+    (target: HTMLElement, point: { left: number; top: number }) => {
+      if (!selectionProps.current.onRevealSource) return;
+      if (sourceNavigationFrame.current !== null)
+        cancelAnimationFrame(sourceNavigationFrame.current);
+      const request = ++sourceNavigationRequest.current;
+      // Let normal word/cell selection finish before publishing drafts.
+      queueMicrotask(() => {
+        if (sourceNavigationRequest.current !== request || !selectionProps.current.onRevealSource)
+          return;
+        const math = activeMath.get();
+        if (!flushTypingRef.current() || (math && !math.flush()) || !flushSourceEditRef.current())
+          return;
+        // Read project ownership after React commits the published source.
+        sourceNavigationFrame.current = requestAnimationFrame(() => {
+          sourceNavigationFrame.current = null;
+          if (sourceNavigationRequest.current !== request) return;
+          const currentEditor = editorRef.current;
+          if (!currentEditor || currentEditor.isDestroyed) return;
+          const view = currentEditor.view;
+          const position = target.isConnected ? null : view.posAtCoords(point)?.pos;
+          const resolved = position != null ? view.state.doc.resolve(position) : null;
+          const replacement = resolved
+            ? view.nodeDOM(resolved.depth > 0 ? resolved.before(1) : resolved.pos)
+            : null;
+          const clicked = target.isConnected
+            ? target
+            : replacement instanceof HTMLElement
+              ? replacement
+              : null;
+          const snapshot = clicked ? captureSelection(clicked, point) : null;
+          const reveal = selectionProps.current.onRevealSource;
+          if (!reveal) return;
+          if (snapshot) reveal(snapshot.sourceOwner);
+          else
+            setNotice(
+              "This content could not be mapped to the current source. Try again after finishing the edit.",
+            );
+        });
+      });
+    },
+    [activeMath, captureSelection],
+  );
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const split =
+      workspace.closest(".scient-latex-content") ?? workspace.closest("[data-latex-split]");
+    const cancel = () => {
+      sourceNavigationRequest.current += 1;
+      if (sourceNavigationFrame.current !== null)
+        cancelAnimationFrame(sourceNavigationFrame.current);
+      sourceNavigationFrame.current = null;
+    };
+    split?.addEventListener("scient-latex-source-interaction", cancel);
+    // Math owns pointer selection and suppresses the browser's dblclick.
+    // Its completed second tap reveals source through the same pipeline.
+    const reveal = (event: Event) => {
+      if (!(event instanceof CustomEvent) || !(event.target instanceof HTMLElement)) return;
+      const point = event.detail as { left: number; top: number };
+      revealSourceAtPoint(event.target, point);
+    };
+    workspace.addEventListener("scient-latex-reveal-source", reveal);
+    return () => {
+      workspace.removeEventListener("scient-latex-reveal-source", reveal);
+      split?.removeEventListener("scient-latex-source-interaction", cancel);
+    };
+  }, [revealSourceAtPoint]);
   useLayoutEffect(() => {
     flushSourceEditRef.current = flushSourceEdit;
   }, [flushSourceEdit]);
@@ -7840,7 +8126,23 @@ function LatexVisualEditorReady(
     const node = selection.node ?? selection.$from.parent;
     if (mathActive || node.type.name === "latexInlineMath" || node.type.name === "latexDisplayMath")
       return "Equation";
-    if (node.type.name === "latexScientific") return String(node.attrs.environment);
+    const contentLabel = (item: ProseMirrorNode) => {
+      const kind = item.attrs.layout?.kind;
+      return kind === "sourceColumns"
+        ? "Columns"
+        : kind === "macroHeading"
+          ? "Heading"
+          : kind === "fullWidthTitle"
+            ? "Title"
+            : kind === "contentGroup"
+              ? "Text"
+              : kind === "contentFloat"
+                ? item.attrs.layout.floatType === "table"
+                  ? "Table"
+                  : "Figure"
+                : String(item.attrs.environment);
+    };
+    if (node.type.name === "latexScientific") return contentLabel(node);
     if (node.type.name === "latexRichPreview") {
       const kind = String(node.attrs.kind ?? "object");
       return kind === "scientific"
@@ -7849,7 +8151,7 @@ function LatexVisualEditorReady(
     }
     for (let depth = selection.$from.depth; depth > 0; depth--) {
       const parent = selection.$from.node(depth);
-      if (parent.type.name === "latexScientific") return String(parent.attrs.environment);
+      if (parent.type.name === "latexScientific") return contentLabel(parent);
     }
     if (node.type.name === "heading") return `Heading ${String(node.attrs.level ?? 1)}`;
     if (node.type.name === "bulletList" || node.type.name === "orderedList") return "List";
@@ -8719,52 +9021,7 @@ function LatexVisualEditorReady(
                             )
                           )
                             return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          if (sourceNavigationFrame.current !== null)
-                            cancelAnimationFrame(sourceNavigationFrame.current);
-                          const request = ++sourceNavigationRequest.current;
-                          const point = { left: event.clientX, top: event.clientY };
-                          const math = activeMath.get();
-                          if (
-                            !flushTypingRef.current() ||
-                            (math && !math.flush()) ||
-                            !flushSourceEditRef.current()
-                          )
-                            return;
-                          // Source publication updates project ownership in React.
-                          // Read it after that commit, retaining the clicked block.
-                          sourceNavigationFrame.current = requestAnimationFrame(() => {
-                            sourceNavigationFrame.current = null;
-                            if (sourceNavigationRequest.current !== request) return;
-                            const currentEditor = editorRef.current;
-                            if (!currentEditor || currentEditor.isDestroyed) return;
-                            const view = currentEditor.view;
-                            const position = target.isConnected
-                              ? null
-                              : view?.posAtCoords(point)?.pos;
-                            const resolved =
-                              position != null && view ? view.state.doc.resolve(position) : null;
-                            const replacement =
-                              resolved && view
-                                ? view.nodeDOM(
-                                    resolved.depth > 0 ? resolved.before(1) : resolved.pos,
-                                  )
-                                : null;
-                            const clicked = target.isConnected
-                              ? target
-                              : replacement instanceof HTMLElement
-                                ? replacement
-                                : null;
-                            const snapshot = clicked ? captureSelection(clicked, point) : null;
-                            const reveal = selectionProps.current.onRevealSource;
-                            if (!reveal) return;
-                            if (snapshot) reveal(snapshot.sourceOwner);
-                            else
-                              setNotice(
-                                "This content could not be mapped to the current source. Try again after finishing the edit.",
-                              );
-                          });
+                          revealSourceAtPoint(target, { left: event.clientX, top: event.clientY });
                         }}
                         onKeyDown={(event) => {
                           if (
@@ -9290,7 +9547,12 @@ function LatexVisualEditorReady(
                                             }}
                                           >
                                             {runningFields(index + 1).head.map((source, slot) => (
-                                              <LatexProsePreview key={slot} source={source} />
+                                              <LatexProsePreview
+                                                key={slot}
+                                                source={source}
+                                                rootSource={mathSetupSource}
+                                                {...(editor ? { editor } : {})}
+                                              />
                                             ))}
                                           </div>
                                         )}
@@ -9312,7 +9574,12 @@ function LatexVisualEditorReady(
                                           }}
                                         >
                                           {runningFields(index + 1).foot.map((source, slot) => (
-                                            <LatexProsePreview key={slot} source={source} />
+                                            <LatexProsePreview
+                                              key={slot}
+                                              source={source}
+                                              rootSource={mathSetupSource}
+                                              {...(editor ? { editor } : {})}
+                                            />
                                           ))}
                                         </div>
                                       </div>

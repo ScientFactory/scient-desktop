@@ -538,6 +538,38 @@ function equationReferences(
       footnotesReliable = false;
       return false;
     }
+    if (node.type.name === "latexScientific" && node.attrs.layout?.kind === "contentFloat") {
+      const table = node.attrs.layout.floatType === "table";
+      const captioned = node.attrs.layout.captioned === true;
+      if (captioned) {
+        if (table) tableCounter++;
+        else figureCounter++;
+      }
+      const reliableFloat = table ? tablesReliable : figuresReliable;
+      const number =
+        captioned && reliableFloat
+          ? `${chapterPrefix()}${table ? tableCounter : figureCounter}`
+          : null;
+      if (table) result.tables.set(position, { number });
+      else result.figures.set(position, { number, panels: [] });
+      if (captioned)
+        result.floatContents.push({
+          position,
+          level: 1,
+          number,
+          title: String(node.attrs.caption ?? ""),
+          kind: table ? "table" : "figure",
+        });
+      const label = String(node.attrs.label ?? "");
+      if (captioned && label)
+        addLabel(label, {
+          position,
+          row: 0,
+          number,
+          kind: table ? "table" : "figure",
+          title: table ? "Table" : "Figure",
+        });
+    }
     if (node.type.name === "latexRichPreview" && node.attrs.environment === "lstlisting") {
       const captioned = node.attrs.caption !== null;
       if (captioned) listingCounter++;

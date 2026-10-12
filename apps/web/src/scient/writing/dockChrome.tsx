@@ -245,7 +245,7 @@ export function DockMenu(props: {
                     className={dockButtonClass(props.active)}
                     aria-label={props.label}
                   >
-                    {props.icon}
+                    {props.icon ?? props.label}
                     {(props.chevron ?? true) ? (
                       <Chevron className="size-3 shrink-0 opacity-60" />
                     ) : null}

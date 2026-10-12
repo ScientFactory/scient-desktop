@@ -1,3 +1,5 @@
+import { latexLayoutLength } from "./latexPageLayouts";
+
 const listCounters = {
   arabic: "decimal",
   alph: "lower-alpha",
@@ -12,6 +14,7 @@ export function parseLatexListOptions(source: string) {
   let resume = false;
   let label: string | null = null;
   const seen = new Set<string>();
+  const layout: Record<string, string> = {};
   for (const option of source.split(",")) {
     const value = option.trim();
     if (!value && !source.trim()) continue;
@@ -24,10 +27,14 @@ export function parseLatexListOptions(source: string) {
       const raw = value.slice(value.indexOf("=") + 1).trim();
       label = raw.startsWith("{") && raw.endsWith("}") ? raw.slice(1, -1) : raw;
       if (!latexListLabelPresentation(label)) return null;
+    } else if (["leftmargin", "itemsep", "topsep", "parsep", "partopsep"].includes(key)) {
+      const length = value.slice(value.indexOf("=") + 1).trim();
+      if (!value.includes("=") || !latexLayoutLength(length) || length.startsWith("-")) return null;
+      layout[key] = length;
     } else return null;
   }
   if (!Number.isSafeInteger(start) || start < 1 || (resume && seen.has("start"))) return null;
-  return { start, resume, label };
+  return { start, resume, label, layout };
 }
 
 export function latexListLabelPresentation(label: string) {
@@ -48,6 +55,7 @@ export function latexListOptionsSource(
   const options = [
     ...(resume ? ["resume"] : start !== 1 ? [`start=${start}`] : []),
     ...(parsed.label ? [`label=${parsed.label}`] : []),
+    ...Object.entries(parsed.layout).map(([key, value]) => `${key}=${value}`),
   ];
   return options.length ? `[${options.join(",")}]` : "";
 }

@@ -1,4 +1,5 @@
 import type { EditorSelection } from "@pierre/diffs/edit";
+import { revealFileEditorSelection, type SourceSelectionReveal } from "./fileEditorSourceReveal";
 import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
 // SCIENT-FORK:START
 import {
@@ -569,6 +570,7 @@ export function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
+  markLine = true,
 ): { readonly onPostRender: FilePostRender; readonly move: (from: string, to: string) => void } {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
   // SCIENT-FORK:START — an in-place rename carries a handled reveal along, never replays it
@@ -611,7 +613,7 @@ export function useFileLineReveal(
       const contents = instance.file?.contents;
       const targetLine =
         revealLine === null || contents === undefined ? null : clampFileLine(contents, revealLine);
-      updateFileLinkReveal(fileContainer, targetLine);
+      updateFileLinkReveal(fileContainer, markLine ? targetLine : null);
 
       if (!(instance instanceof VirtualizedFile)) return;
 
@@ -622,6 +624,7 @@ export function useFileLineReveal(
       }
 
       if (revealLine === null) {
+        cancelPendingReveal();
         fileContainer.style.minHeight = "";
         return;
       }
@@ -728,7 +731,7 @@ export function useFileLineReveal(
             if (attempt < REVEAL_MAX_ATTEMPTS) scheduleReveal(attempt + 1);
             return;
           }
-          updateFileLinkReveal(fileContainer, line);
+          updateFileLinkReveal(fileContainer, markLine ? line : null);
 
           scrollContainer.scrollTop = targetTop;
           state.handledRequestId = revealRequestId;
@@ -738,7 +741,7 @@ export function useFileLineReveal(
 
       scheduleReveal(0);
     },
-    [revealStatesByPath, relativePath, revealLine, revealRequestId],
+    [revealStatesByPath, relativePath, revealLine, revealRequestId, markLine],
   );
   return { onPostRender, move };
 }
@@ -828,6 +831,8 @@ interface EditableFileSurfaceProps {
   saveResolution: FileSaveResolution | null;
   onSelectionChange?: (range: SelectedLineRange | null) => void;
   activeLineRange?: SelectedLineRange | null;
+  retainSelectionOnBlur?: boolean;
+  sourceSelectionReveal?: SourceSelectionReveal | undefined;
   onEditorSelectionChange?: (selection: EditorSelection | null) => void;
   renderEditorGutterAction?: (
     getHoveredLine: () => GetHoveredLineResult<"file"> | undefined,
@@ -896,6 +901,8 @@ export function EditableFileEditor({
   editingBlocked = false,
   onSelectionChange,
   activeLineRange,
+  retainSelectionOnBlur = false,
+  sourceSelectionReveal,
   onEditorSelectionChange,
   renderEditorGutterAction,
   onRunShortcut,
@@ -965,6 +972,21 @@ export function EditableFileEditor({
     FileCommentAnnotationGroup,
     undefined
   > | null>(null);
+  const handledSourceSelection = useRef<{ editor: typeof editor; requestId: number } | null>(null);
+  useEffect(() => {
+    if (
+      !editor ||
+      !sourceSelectionReveal ||
+      !editable ||
+      editingBlocked ||
+      restorationBlocked ||
+      (handledSourceSelection.current?.editor === editor &&
+        handledSourceSelection.current.requestId === sourceSelectionReveal.requestId)
+    )
+      return;
+    if (revealFileEditorSelection(editor, sourceSelectionReveal))
+      handledSourceSelection.current = { editor, requestId: sourceSelectionReveal.requestId };
+  }, [editor, sourceSelectionReveal, editable, editingBlocked, restorationBlocked]);
   const editorOptions = useMemo<EditorOptions<"file", FileCommentAnnotationGroup, undefined>>(
     () => ({
       ownsVerticalViewport: true,
@@ -1239,9 +1261,10 @@ export function EditableFileEditor({
         setSelections: (selections) => editorRef.current?.setSelections(selections),
       },
       isBlocked: () => hasOpenCommentForm,
+      retainSelectionOnBlur,
       onDismiss: () => setSelectedRange(null),
     });
-  }, [hasOpenCommentForm, setSelectedRange]);
+  }, [hasOpenCommentForm, setSelectedRange, retainSelectionOnBlur]);
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null) => {
       setSelectedRange(range);
@@ -1273,6 +1296,8 @@ export function EditableFileEditor({
         return;
       }
 
+      fileContainer.toggleAttribute("data-scient-retained-selection", retainSelectionOnBlur);
+
       selectionFrameRef.current = requestAnimationFrame(() => {
         selectionFrameRef.current = null;
         if (!fileContainer.isConnected) return;
@@ -1286,7 +1311,14 @@ export function EditableFileEditor({
         );
       });
     },
-    [activeLineRange, displayedRange, onEditablePostRender, onPostRender, selectedRange],
+    [
+      activeLineRange,
+      displayedRange,
+      onEditablePostRender,
+      onPostRender,
+      selectedRange,
+      retainSelectionOnBlur,
+    ],
   );
 
   return (

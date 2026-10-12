@@ -27,6 +27,18 @@ export function useLatexSourceNavigation({
     let timer = 0;
     let marked: HTMLElement | null = null;
     let done = false;
+    let dismissed = false;
+    const clearMarker = () => {
+      window.clearTimeout(timer);
+      marked?.removeAttribute("data-latex-source-sync");
+    };
+    const dismissMarker = () => {
+      dismissed = true;
+      clearMarker();
+    };
+    const scrollPane = viewport.current;
+    scrollPane?.addEventListener("pointerdown", dismissMarker, true);
+    scrollPane?.addEventListener("keydown", dismissMarker, true);
     const reveal = () => {
       frame = 0;
       if (
@@ -69,9 +81,11 @@ export function useLatexSourceNavigation({
       const x = rect.left + Math.min(rect.width, scroll.clientWidth / 2) / 2;
       if (rect.left < bounds.left || rect.right > bounds.right)
         scroll.scrollLeft += x - bounds.left - scroll.clientLeft - scroll.clientWidth / 2;
-      marked = element;
-      element.setAttribute("data-latex-source-sync", "");
-      timer = window.setTimeout(() => element.removeAttribute("data-latex-source-sync"), 1_600);
+      if (!dismissed) {
+        marked = element;
+        element.setAttribute("data-latex-source-sync", "");
+        timer = window.setTimeout(clearMarker, 1_600);
+      }
     };
     const schedule = () => {
       if (done) return;
@@ -86,8 +100,9 @@ export function useLatexSourceNavigation({
     return () => {
       editor.off("transaction", schedule);
       cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-      marked?.removeAttribute("data-latex-source-sync");
+      clearMarker();
+      scrollPane?.removeEventListener("pointerdown", dismissMarker, true);
+      scrollPane?.removeEventListener("keydown", dismissMarker, true);
     };
   }, [editor, target, projection, source, viewport, onUnavailable]);
 }

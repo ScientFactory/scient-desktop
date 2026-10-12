@@ -710,12 +710,14 @@ view over the destination. If an engine records only line-level locations for a 
 different columns can legitimately return the same candidates; Scient keeps
 the official first candidate instead of inventing a more precise PDF position.
 
-Inverse search starts with a modified PDF double-click while Split is open;
+Inverse search starts with a PDF double-click only while Split is open;
 ordinary clicks retain PDF selection behavior. The reader preserves native selection, converts the pointer's
 page position back to top-left big points, asks `synctex edit`, and selects the
 first returned candidate whose input is contained in the workspace. Source-only
 and PDF-only modes never switch layout implicitly. The source pane opens that
-file at the reported line; a negative or absent helper column remains
+file at the reported line without replacing the PDF reader or moving focus;
+the normal PDF word selection stays active and there is no gesture hint popup.
+A negative or absent helper column remains
 truthfully line-level instead of being guessed. Diagnostics with a valid
 workspace-relative file are buttons through the same line-aware open seam. Any
 revision change invalidates the in-flight navigation request and target, and a

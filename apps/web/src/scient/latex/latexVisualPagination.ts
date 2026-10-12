@@ -10,6 +10,8 @@ export interface LatexVisualPaginationBlock {
   readonly footnoteHeight?: number;
   /** Root vertical fill distributes the free printable space before the next page break. */
   readonly stretch?: boolean;
+  /** A source-derived column region already distributes content across its sheets. */
+  readonly flowsAcrossPages?: boolean;
   readonly continuationHeaderHeight?: number;
   readonly continuationFooterHeight?: number;
 }
@@ -118,6 +120,7 @@ export function planLatexVisualPagination(
       .slice(index, groupEnd + 1)
       .reduce((sum, item) => sum + (item.footnoteHeight ?? 0), 0);
     if (
+      !block.flowsAcrossPages &&
       top + fittingHeight + footnoteSpace + groupNotes > pageBottom + 0.5 &&
       top > pageStart + 1 &&
       fittingHeight + groupNotes <= contentHeight

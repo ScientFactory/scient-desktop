@@ -1,7 +1,16 @@
 import type { EditorView } from "@tiptap/pm/view";
 import type { LatexVisualDocument } from "./latexVisualDocument";
-import { latexVisualNodeSignature, latexVisualInlineSourceRange } from "./latexVisualDocument";
+import {
+  latexVisualNodeSignature,
+  latexVisualInlineSourceRange,
+  latexVisualNodeSourceRange,
+} from "./latexVisualDocument";
 import { readLatexSelection } from "./latexSelectionSession";
+import type { MathfieldElement } from "mathlive";
+import { mathSelectionPoint, mathSelectionAtOffset } from "./mathLiveSelection";
+import { mathRowSourceRange } from "./latexMathNumbering";
+import { latexVisualObjectSourceRange } from "./latexVisualObjectSourceRange";
+import { latexMathSourceRange } from "./latexMathSourceRange";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
 import type { FileCitation } from "@t3tools/contracts";
@@ -23,6 +32,7 @@ export interface LatexSourceOwner {
   readonly baselineSource: string;
   readonly from: number;
   readonly to: number;
+  readonly precise?: boolean;
 }
 export type ResolveLatexSourceOwner = (
   source: string,
@@ -62,16 +72,52 @@ export function captureLatexVisualSelection(
       to = from;
       const node = view.state.doc.nodeAt(position);
       const clicked = point ? view.posAtCoords(point)?.pos : undefined;
-      if (
-        node?.isTextblock &&
-        node.content.size > 0 &&
-        clicked !== undefined &&
-        clicked > position &&
-        clicked < position + node.nodeSize
-      ) {
-        from = Math.min(clicked, position + node.nodeSize - 2);
-        to = from + 1;
-        pointerRange = true;
+      if (node && !node.isAtom) {
+        if (clicked !== undefined && clicked > position && clicked < position + node.nodeSize) {
+          from = Math.min(clicked, position + node.nodeSize - 2);
+          to = from + 1;
+          pointerRange = true;
+        }
+        // Native word selection can precede ProseMirror's selectionchange.
+        // Resolve its actual DOM endpoints without changing either selection.
+        const native = view.dom.ownerDocument.getSelection();
+        let nativeRange = false;
+        if (native?.rangeCount && !native.isCollapsed) {
+          const range = native.getRangeAt(0);
+          if (
+            view.nodeDOM(position)?.contains(range.commonAncestorContainer) &&
+            range.intersectsNode(target)
+          ) {
+            const start = view.posAtDOM(range.startContainer, range.startOffset);
+            const end = view.posAtDOM(range.endContainer, range.endOffset);
+            const resolved = view.state.doc.resolve(start);
+            if (
+              start > position &&
+              end < position + node.nodeSize &&
+              resolved.sameParent(view.state.doc.resolve(end)) &&
+              resolved.parent.isTextblock &&
+              view.state.doc.textBetween(start, end) === native.toString()
+            ) {
+              from = start;
+              to = end;
+              nativeRange = true;
+              pointerRange = true;
+            }
+          }
+        }
+        const selection = view.state.selection;
+        if (
+          !nativeRange &&
+          pointerRange &&
+          !selection.empty &&
+          selection.$from.sameParent(selection.$to) &&
+          selection.$from.parent.isTextblock &&
+          from >= selection.from &&
+          from <= selection.to
+        ) {
+          from = selection.from;
+          to = selection.to;
+        }
       }
     } else {
       from = documentRange ? content.from : view.posAtDOM(element, 0);
@@ -80,7 +126,7 @@ export function captureLatexVisualSelection(
   } catch {
     return null;
   }
-  const blocks: { from: number; to: number }[] = [];
+  const blocks: { from: number; to: number; precise: boolean }[] = [];
   if (view.state.doc.childCount !== projection.blocks.length) return null;
   let unmapped = false;
   view.state.doc.forEach((node, position, index) => {
@@ -96,15 +142,106 @@ export function captureLatexVisualSelection(
       unmapped = true;
       return;
     }
-    const precise =
-      (documentRange || pointerRange) && node.isTextblock
-        ? latexVisualInlineSourceRange(
-            block,
-            Math.max(0, from - position - 1),
-            Math.min(node.content.size, to - position - 1),
-          )
-        : null;
-    blocks.push(precise ?? { from: block.from, to: block.to });
+    let precise: { from: number; to: number; precise?: boolean } | null =
+      pointerRange && projection.setup
+        ? latexVisualNodeSourceRange(block, from - position, to - position, projection.setup)
+        : documentRange && node.isTextblock
+          ? latexVisualInlineSourceRange(
+              block,
+              Math.max(0, from - position - 1),
+              Math.min(node.content.size, to - position - 1),
+            )
+          : null;
+    if (target?.closest("textarea,input,[data-table-cell]") && projection.setup) {
+      view.state.doc.descendants((candidate, at) => {
+        if (at < position || at >= end) return false;
+        const dom = view.nodeDOM(at);
+        if (!(dom instanceof Element) || !dom.contains(target)) return;
+        const owned =
+          at === position
+            ? block
+            : latexVisualNodeSourceRange(
+                block,
+                at - position,
+                at - position + candidate.nodeSize,
+                projection.setup!,
+              );
+        if (!owned) return;
+        const raw = source.slice(owned.from, owned.to);
+        // Source-owned node views preserve raw TeX; reject stale field ownership.
+        if (String(candidate.attrs.raw ?? "") !== raw) return;
+        const fieldRange = latexVisualObjectSourceRange(
+          candidate.toJSON(),
+          raw,
+          owned.from,
+          target,
+          reading,
+          source,
+          point,
+        );
+        if (fieldRange) precise = fieldRange;
+      });
+    }
+    if (target && point && block.node.type === "latexDisplayMath") {
+      const math =
+        target.closest<MathfieldElement>("math-field") ??
+        (reading?.element.matches("math-field") ? (reading.element as MathfieldElement) : null);
+      if (math && view.nodeDOM(position)?.contains(math)) {
+        const path = mathSelectionPoint(math, point.left, point.top).path;
+        const cell = path.length === 1 ? path[0] : null;
+        const row =
+          cell &&
+          mathRowSourceRange(
+            block.source,
+            cell.row,
+            cell.array.rowCount ?? 0,
+            cell.array.environmentName ?? "",
+            { column: cell.column, columns: cell.array.colCount ?? 0 },
+          );
+        if (row && row.from < row.to)
+          precise = { from: block.from + row.from, to: block.from + row.to };
+      }
+    }
+    const math = target?.closest<MathfieldElement>("math-field");
+    if (math && point && projection.setup && view.nodeDOM(position)?.contains(math)) {
+      view.state.doc.descendants((candidate, at) => {
+        if (at < position || at >= end) return false;
+        if (
+          !["latexInlineMath", "latexDisplayMath"].includes(candidate.type.name) ||
+          !view.nodeDOM(at)?.contains(math)
+        )
+          return;
+        const owned =
+          at === position
+            ? block
+            : latexVisualNodeSourceRange(
+                block,
+                at - position,
+                at - position + candidate.nodeSize,
+                projection.setup!,
+              );
+        if (!owned) return;
+        const mathContent = reading?.element === math ? reading.snapshot.content : null;
+        const path = (
+          mathContent?.selected
+            ? mathSelectionAtOffset(math, mathContent.to).path
+            : mathSelectionPoint(math, point.left, point.top).path
+        ).map((cell) => ({
+          environment: cell.array.environmentName ?? "",
+          row: cell.row,
+          rows: cell.array.rowCount ?? 0,
+          column: cell.column,
+          columns: cell.array.colCount ?? 0,
+        }));
+        const selected = reading?.element === math ? (reading.snapshot.content?.text ?? "") : "";
+        const range = latexMathSourceRange(source.slice(owned.from, owned.to), path, selected);
+        if (range) precise = { from: owned.from + range.from, to: owned.from + range.to };
+      });
+    }
+    blocks.push({
+      ...(precise ?? { from: block.from, to: block.to }),
+      precise: precise !== null && precise.precise !== false,
+    });
   });
   if (unmapped || !blocks.length) return null;
   const owner = resolveOwner(source, blocks[0]!.from, blocks.at(-1)!.to);
@@ -114,7 +251,7 @@ export function captureLatexVisualSelection(
   return {
     element,
     content,
-    sourceOwner: owner,
+    sourceOwner: { ...owner, precise: blocks.every((block) => block.precise) },
     revision: latexCitationRevision(owner.source),
     geometry: () =>
       snapshot?.contentRects?.() ?? snapshot?.selection() ?? [element.getBoundingClientRect()],

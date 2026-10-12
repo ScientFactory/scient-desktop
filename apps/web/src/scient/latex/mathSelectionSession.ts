@@ -13,6 +13,7 @@ import {
   mathSelectionRevision,
   mathCellRectangle,
   mathSelectionAtOffset,
+  mathCaretRect,
   type MathRectangleSelection,
 } from "./mathLiveSelection";
 
@@ -83,6 +84,10 @@ export function installMathSelectionSession(
         path: [...latexContainerScope(math), ...scopes.toReversed().map((scope) => scope.label)],
         selectionOverlay: Boolean(rectangle) || selection.ranges.some(([from, to]) => from !== to),
         selectionKind: rectangle ? ("cells" as const) : ("text" as const),
+        caret: () => {
+          const caret = math.shadowRoot?.querySelector<HTMLElement>(".ML__caret");
+          return math.selectionIsCollapsed && caret ? [mathCaretRect(math, caret)] : [];
+        },
         scopes: () => mathEditingGuideRects(math),
         vacantScopes: () => mathVacantGuideRects(math),
         emptyScopes: () => mathEmptyGuideRects(math),

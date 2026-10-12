@@ -9,28 +9,50 @@ import {
 import { projectLatexVisualDocument } from "./latexVisualDocument";
 import { LATEX_CANVAS_TEXT_MARKS } from "./latexTextFormatting";
 import { latexDirectionMark } from "./latexLanguage";
+import type { JSONContent } from "@tiptap/core";
+import { latexColorCss } from "./latexColorBoxes";
 
 /** Small read-only prose projections share the source parser and never inject HTML. */
-export function appendLatexProsePreview(element: HTMLElement, source: string, editor?: Editor) {
-  const projection = projectLatexVisualDocument(source);
-  const content = projection.content.content?.[0]?.content;
-  if (
-    projection.blocks.length !== 1 ||
-    projection.blocks[0]?.node.type !== "paragraph" ||
-    !content?.every(
-      (node) =>
-        node.type === "text" ||
-        node.type === "hardBreak" ||
-        (editor &&
-          node.type === "latexInlineCommand" &&
-          ["ref", "eqref"].includes(String(node.attrs?.name))),
-    )
-  ) {
+export function appendLatexProsePreview(
+  element: HTMLElement,
+  source: string,
+  editor?: Editor,
+  rootSource?: string,
+) {
+  const projection = projectLatexVisualDocument(source, 0, rootSource ?? source);
+  const content = projection.content.content ?? [];
+  const supported = (node: JSONContent): boolean =>
+    ["text", "hardBreak"].includes(String(node.type)) ||
+    (!!editor &&
+      node.type === "latexInlineCommand" &&
+      ["ref", "eqref"].includes(String(node.attrs?.name))) ||
+    ((node.type === "paragraph" ||
+      (node.type === "latexScientific" && node.attrs?.layout?.kind === "contentGroup")) &&
+      (node.content ?? []).every(supported));
+  if (projection.rawBlocks || !content.every(supported)) {
+    element.dataset.sourceFallback = "true";
     element.textContent = source;
     return;
   }
+  delete element.dataset.sourceFallback;
   const fragment = document.createDocumentFragment();
-  for (const node of content) {
+  const append = (parent: globalThis.Node, node: JSONContent) => {
+    if (node.type === "paragraph") {
+      for (const child of node.content ?? []) append(parent, child);
+      return;
+    }
+    if (node.type === "latexScientific") {
+      const wrapper = document.createElement("span");
+      const layout = node.attrs!.layout;
+      if (layout.size) wrapper.style.fontSize = `var(--scient-latex-size-${layout.size})`;
+      if (layout.points) wrapper.style.fontSize = `${(layout.points * 96) / 72.27}px`;
+      if (layout.weight) wrapper.style.fontWeight = String(layout.weight);
+      if (layout.fontStyle) wrapper.style.fontStyle = layout.fontStyle;
+      if (layout.color) wrapper.style.color = latexColorCss(layout.color) ?? "";
+      for (const child of node.content ?? []) append(wrapper, child);
+      parent.appendChild(wrapper);
+      return;
+    }
     let child: globalThis.Node =
       node.type === "hardBreak"
         ? document.createElement("br")
@@ -61,6 +83,8 @@ export function appendLatexProsePreview(element: HTMLElement, source: string, ed
       const style = LATEX_CANVAS_TEXT_MARKS.find((item) => item.name === mark.type)?.style;
       if (style) wrapper.dataset.latexTextStyle = style;
       const direction = latexDirectionMark(mark.type);
+      if (mark.type === "latexColor")
+        wrapper.style.color = latexColorCss(String(mark.attrs?.color ?? "")) ?? "";
       if (direction) {
         wrapper.dataset.latexDirectionMark = direction.name;
         wrapper.dir = direction.direction;
@@ -69,19 +93,28 @@ export function appendLatexProsePreview(element: HTMLElement, source: string, ed
       wrapper.append(child);
       child = wrapper;
     }
-    fragment.append(child);
-  }
+    parent.appendChild(child);
+  };
+  for (const node of content) append(fragment, node);
   element.replaceChildren(fragment);
 }
 
-export function LatexProsePreview({ source, editor }: { source: string; editor?: Editor }) {
+export function LatexProsePreview({
+  source,
+  editor,
+  rootSource,
+}: {
+  source: string;
+  editor?: Editor;
+  rootSource?: string;
+}) {
   const element = useRef<HTMLSpanElement>(null);
   const references = useEditorState({
     editor: editor ?? null,
     selector: ({ editor: current }) => (current ? latexReferencePresentation(current.state) : null),
   });
   useLayoutEffect(() => {
-    if (element.current) appendLatexProsePreview(element.current, source, editor);
-  }, [source, editor, references]);
+    if (element.current) appendLatexProsePreview(element.current, source, editor, rootSource);
+  }, [source, editor, rootSource, references]);
   return <span ref={element} />;
 }

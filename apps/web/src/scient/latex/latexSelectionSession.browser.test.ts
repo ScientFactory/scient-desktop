@@ -6,6 +6,7 @@ let workspace: HTMLDivElement;
 let surface: HTMLDivElement;
 let range: Range;
 let registration: ReturnType<typeof registerLatexSelection>;
+const splitRoots: HTMLElement[] = [];
 const frame = () =>
   new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -42,6 +43,7 @@ beforeEach(() => {
       path: ["Text"],
       scopes: () => [],
       selection: () => [...range.getClientRects()],
+      caret: () => [...range.getClientRects()],
       selectionOverlay: true,
       restore: (focus) => {
         if (focus) surface.focus();
@@ -58,6 +60,7 @@ afterEach(() => {
   registration.dispose();
   document.getSelection()?.removeAllRanges();
   workspace.remove();
+  for (const root of splitRoots.splice(0)) root.remove();
 });
 
 function watchOverlayWrites() {
@@ -159,4 +162,30 @@ it("retains selected ink and muted colors through menu focus, then restores acti
   expect(workspace.querySelector(".scient-latex-range-selection")).toBeTruthy();
   expect(workspace.hasAttribute("data-scient-selection-held")).toBe(false);
   expect(surface.textContent).toBe("A short selection for ink geometry.");
+});
+
+it("retains Visual ink when Source takes focus in Split", async () => {
+  const split = document.createElement("div");
+  split.dataset.latexSplit = "true";
+  workspace.before(split);
+  split.append(workspace);
+  splitRoots.push(split);
+  const source = document.createElement("textarea");
+  source.className = "scient-latex-pane";
+  split.append(source);
+  // DOM reparenting moves live Range boundaries; the model range stays on its ink.
+  const text = surface.querySelector("p")!.firstChild!;
+  range.setStart(text, 2);
+  range.setEnd(text, 17);
+  surface.focus();
+  registration.refresh();
+  await frame();
+  source.focus();
+  await frame();
+  expect(workspace.querySelector(".scient-latex-retained-selection")).toBeTruthy();
+  expect(document.activeElement).toBe(source);
+  surface.focus();
+  registration.refresh();
+  await frame();
+  expect(workspace.querySelector(".scient-latex-range-selection")).toBeTruthy();
 });

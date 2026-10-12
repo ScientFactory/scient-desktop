@@ -41,6 +41,7 @@ export interface LatexSelectionSnapshot {
   readonly vacantScopes?: () => readonly DOMRect[];
   readonly scopePadding?: number;
   readonly selection: () => readonly DOMRect[];
+  readonly caret?: () => readonly DOMRect[];
   /** False means the surface paints its selection even while a menu owns focus. */
   readonly selectionOverlay?: boolean;
   readonly selectionKind?: "text" | "cells";
@@ -57,6 +58,7 @@ interface Participant {
 const participants = new Set<Participant>();
 let active: Participant | null = null;
 let held: LatexSelectionSnapshot | null = null;
+let splitRetained = false;
 let overlay: HTMLDivElement | null = null;
 let frame = 0;
 let disposeListeners: (() => void) | null = null;
@@ -160,6 +162,7 @@ function paint() {
   // an inactive selection; continued editing must use the live selection.
   if (held && active?.element.matches(":focus-within")) release();
   const root = workspace(active);
+  if (held?.isCurrent?.() === false) held = active?.capture() ?? null;
   const snapshot = held ?? active?.capture();
   if (!root || !snapshot || !active?.element.isConnected) {
     present(null);
@@ -240,22 +243,24 @@ function paint() {
       ? [emptyFieldGuideRect(activeField)]
       : snapshot.scopes();
   const children = [
-    ...(selection.length
-      ? boxes(
-          snapshot.emptyScopes?.() ?? [],
-          "scient-latex-scope-outline",
-          VACANT_GUIDE_MARGIN,
-          true,
-        )
-      : [
-          ...boxes(
-            [...vacantText, ...(snapshot.vacantScopes?.() ?? [])],
+    ...(splitRetained
+      ? []
+      : selection.length
+        ? boxes(
+            snapshot.emptyScopes?.() ?? [],
             "scient-latex-scope-outline",
             VACANT_GUIDE_MARGIN,
             true,
-          ),
-          ...boxes(current, "scient-latex-scope-outline"),
-        ]),
+          )
+        : [
+            ...boxes(
+              [...vacantText, ...(snapshot.vacantScopes?.() ?? [])],
+              "scient-latex-scope-outline",
+              VACANT_GUIDE_MARGIN,
+              true,
+            ),
+            ...boxes(current, "scient-latex-scope-outline"),
+          ]),
     ...((held && snapshot.selectionOverlay !== false) || snapshot.selectionOverlay
       ? boxes(
           selection,
@@ -265,6 +270,9 @@ function paint() {
               ? "scient-latex-cell-selection"
               : "scient-latex-range-selection",
         )
+      : []),
+    ...(splitRetained && !selection.length
+      ? boxes(snapshot.caret?.() ?? [], "scient-latex-retained-caret")
       : []),
   ];
   // Finish ink, guide and color reads before presentation changes invalidate
@@ -294,6 +302,7 @@ function scrolled(event: Event) {
   if (target instanceof Element && anchor.contains(target)) schedule();
 }
 function release() {
+  splitRetained = false;
   held = null;
   active?.element.removeAttribute("data-scient-selection-held");
   workspace(active)?.removeAttribute("data-scient-selection-held");
@@ -357,6 +366,21 @@ function activate(event: Event) {
     retained?.restore(false);
     schedule();
   } else {
+    const split = workspace(active)?.closest("[data-latex-split]");
+    if (
+      split &&
+      path.some(
+        (target) =>
+          target instanceof HTMLElement &&
+          split.contains(target) &&
+          target.closest(".scient-latex-pane"),
+      )
+    ) {
+      hold();
+      splitRetained = true;
+      schedule();
+      return;
+    }
     release();
     workspace(active)?.dispatchEvent(
       new CustomEvent("scient-latex-selection-scope", { detail: [] }),

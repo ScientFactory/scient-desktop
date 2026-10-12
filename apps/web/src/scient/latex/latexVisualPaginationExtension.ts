@@ -30,6 +30,11 @@ import {
 import { latexInlineColumnBreakPositions } from "./latexColumnBreaks";
 import { appendLatexProsePreview } from "./LatexProsePreview";
 import {
+  planLatexSourceColumns,
+  type LatexSourceColumnLayout,
+  type LatexSourceColumnPart,
+} from "./latexSourceColumns";
+import {
   latexEquationReferencesKey,
   latexReferenceLayoutChanged,
   navigateToFootnote,
@@ -57,6 +62,33 @@ type PaginationUpdate =
     };
 
 export const latexPaginationKey = new PluginKey<PaginationState>("scientLatexPagination");
+
+/** React node attributes must retain the mapped column decoration on edits. */
+export function latexSourceColumnStyle(
+  state: import("@tiptap/pm/state").EditorState,
+  position: number,
+): string {
+  const decoration = latexPaginationKey
+    .getState(state)
+    ?.decorations.find(
+      position,
+      position + 1,
+      (spec) => typeof spec.latexSourceColumnStyle === "string",
+    )
+    .find((item) => item.from === position);
+  const style: unknown = decoration?.spec.latexSourceColumnStyle;
+  return typeof style === "string" ? style : "";
+}
+
+function sourceColumnDecoration(
+  position: number,
+  size: number,
+  attributes: Record<string, string>,
+) {
+  return Decoration.node(position, position + size, attributes, {
+    latexSourceColumnStyle: attributes.style,
+  });
+}
 
 const emptyPages: PaginationState["pages"] = [];
 const orderedPageMaps = new WeakMap<PaginationState["pages"], boolean>();
@@ -160,6 +192,15 @@ export function setLatexPaginationDimensions(
 interface MeasuredUnit extends LatexVisualPaginationBlock {
   readonly position: number;
   readonly objectPart?: { readonly index: number; readonly node: DocumentNode };
+}
+
+/** Keep the command's layout meaning shared by page and column measurement. */
+function isVerticalFill(node: DocumentNode): boolean {
+  return (
+    node.type.name === "latexRichPreview" &&
+    node.attrs.kind === "spacing" &&
+    node.attrs.environment === "vfill"
+  );
 }
 
 interface ObjectPagination {
@@ -352,6 +393,7 @@ export function* measureLatexDocument(
   naturalBlocks: NaturalBlock[],
   viewportSnapshots: ViewportSnapshot[] = [],
   geometry?: LatexMeasurementGeometry,
+  sourceColumns: LatexSourceColumnLayout[] = [],
 ): Generator<void, MeasuredUnit[], number | undefined> {
   const root = geometry?.root ?? view.dom;
   const nodeDOM = (position: number) => geometry?.nodeDOM(position) ?? view.nodeDOM(position);
@@ -366,7 +408,8 @@ export function* measureLatexDocument(
   const computed = getComputedStyle(root);
   const font = `${latexTypographyKey(computed)}|${computed.textAlign}|${computed.textIndent}|${computed.letterSpacing}`;
   let originTop = bounds.top;
-  const y = (value: number) => (value - originTop) / scale;
+  let columnDisplacement = 0;
+  const y = (value: number) => (value - originTop) / scale + columnDisplacement;
   function* checkpoint(): Generator<void, void, number | undefined> {
     const nextOrigin = yield;
     if (nextOrigin !== undefined) originTop = nextOrigin;
@@ -395,6 +438,49 @@ export function* measureLatexDocument(
     const rect = dom.getBoundingClientRect();
     const naturalTop = y(rect.top),
       naturalBottom = y(rect.bottom);
+    if (node.type.name === "latexScientific" && node.attrs.layout?.kind === "sourceColumns") {
+      const parts: LatexSourceColumnPart[] = [];
+      let offset = 0;
+      for (const child of node.content.content) {
+        yield* checkpoint();
+        const childPosition = position + 1 + offset;
+        offset += child.nodeSize;
+        const element = nodeDOM(childPosition);
+        if (!(element instanceof HTMLElement)) continue;
+        const style = getComputedStyle(element);
+        const lineHeight =
+          child.type.name === "paragraph" &&
+          !element.querySelector(".scient-latex-inline-column-break, .scient-latex-inline-stretch")
+            ? Number.parseFloat(style.lineHeight)
+            : 0;
+        parts.push({
+          position: childPosition,
+          size: child.nodeSize,
+          height: element.getBoundingClientRect().height / scale,
+          marginTop: Number.parseFloat(style.marginTop) || 0,
+          marginBottom: Number.parseFloat(style.marginBottom) || 0,
+          keepWithNext:
+            child.type.name === "heading" || child.attrs.layout?.kind === "macroHeading",
+          stretch: isVerticalFill(child),
+          ...(lineHeight > 0 ? { lineHeight } : {}),
+        });
+      }
+      const preceding = planLatexVisualPagination(
+        [...units, { top: naturalTop, bottom: naturalTop, flowsAcrossPages: true }],
+        dimensions,
+      );
+      const displacement = preceding.placements.reduce((total, part) => total + part.offset, 0);
+      const planned = planLatexSourceColumns(parts, naturalTop + displacement, dimensions);
+      sourceColumns.push({ position, size: node.nodeSize, ...planned });
+      units.push({
+        position,
+        top: naturalTop,
+        bottom: naturalTop + planned.height,
+        flowsAcrossPages: true,
+      });
+      columnDisplacement += planned.height - rect.height / scale;
+      return;
+    }
     if (dom.hasAttribute("data-latex-viewport-closed")) {
       const geometry = latexViewportMeasurement(view, node, position);
       if (node.type.name === "paragraph")
@@ -446,6 +532,8 @@ export function* measureLatexDocument(
       });
     };
     const breakBefore =
+      (node.type.name === "latexRichPreview" && node.attrs.kind === "columnMode") ||
+      node.attrs.layout?.kind === "fullWidthTitle" ||
       (chapters &&
         ((node.type.name === "heading" && node.attrs.level === 6) ||
           (node.type.name === "latexRichPreview" && node.attrs.kind === "toc"))) ||
@@ -591,10 +679,7 @@ export function* measureLatexDocument(
         bottom: y(rect.bottom),
         explicitBreak: node.type.name === "latexRichPreview" && node.attrs.kind === "pagebreak",
         breakBefore,
-        stretch:
-          node.type.name === "latexRichPreview" &&
-          node.attrs.kind === "spacing" &&
-          node.attrs.environment === "vfill",
+        stretch: isVerticalFill(node),
         keepWithNext: heading,
       });
       rememberViewport();
@@ -641,6 +726,8 @@ export function* measureLatexDocument(
     const top = y(rect.top);
     const cached = blocks.get(node);
     if (
+      sourceColumns.length === 0 &&
+      node.attrs.layout?.kind !== "sourceColumns" &&
       cached?.element === sourceElement(element) &&
       cached.context === context &&
       Math.abs(cached.width - rect.width / scale) < 0.1 &&
@@ -906,6 +993,10 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       };
       const localMeasurementBlocks = (width: string): Set<Element> | null => {
         if (
+          view.state.doc.content.content.some((node) => node.attrs.layout?.kind === "sourceColumns")
+        )
+          return null;
+        if (
           !naturalBlocks ||
           width !== naturalWidth ||
           naturalBlocks.length !== view.state.doc.childCount
@@ -1157,6 +1248,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
               )
             : null;
           let units: MeasuredUnit[];
+          const sourceColumns: LatexSourceColumnLayout[] = [];
           if (measured) units = measured.units;
           else {
             const measurement = measureLatexDocument(
@@ -1168,6 +1260,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
               nextBlocks,
               viewportSnapshots,
               snapshot ?? undefined,
+              sourceColumns,
             );
             let started = performance.now();
             let next = measurement.next();
@@ -1377,6 +1470,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             scrollBefore?.scrollTop === scrollTopBefore &&
             scrollBefore?.scrollLeft === scrollLeftBefore;
           const nextSignature = JSON.stringify([
+            sourceColumns,
             paragraphHeights,
             columnBreaks,
             gaps,
@@ -1393,13 +1487,40 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             view.dispatch(
               view.state.tr
                 .setMeta(latexPaginationKey, {
-                  pages: plan.placements.map((placement, index) => ({
-                    position: units[index]!.position,
-                    page: placement.page,
-                  })),
+                  pages: [
+                    ...plan.placements.map((placement, index) => ({
+                      position: units[index]!.position,
+                      page: placement.page,
+                    })),
+                    ...sourceColumns.flatMap((layout) =>
+                      layout.parts.map(({ position, page }) => ({ position, page })),
+                    ),
+                  ].sort((a, b) => a.position - b.position),
                   pageCount: plan.pageCount,
                   decorations: DecorationSet.create(view.state.doc, [
                     ...spacing,
+                    ...sourceColumns.flatMap((layout) => [
+                      sourceColumnDecoration(layout.position, layout.size, {
+                        style: `--scient-latex-source-column-height:${layout.height}px`,
+                      }),
+                      ...layout.parts.map((part) =>
+                        sourceColumnDecoration(part.position, part.size, {
+                          "data-latex-source-column-part": "true",
+                          ...(part.spanHeight ? { "data-latex-source-column-span": "true" } : {}),
+                          style: [
+                            `--scient-latex-source-column-top:${part.top - part.marginTop}px`,
+                            `--scient-latex-source-column-left:${part.column === 0 ? "0px" : "calc((100% + var(--scient-latex-column-gap)) / 2)"}`,
+                            ...(part.spanHeight
+                              ? [
+                                  "--scient-latex-source-column-part-width:100%",
+                                  `--scient-latex-source-column-span-height:${part.spanHeight}px`,
+                                  `--scient-latex-source-column-leading-space:${part.leadingSpace}px`,
+                                ]
+                              : []),
+                          ].join(";"),
+                        }),
+                      ),
+                    ]),
                     // ProseMirror must own paragraph attributes. Direct style
                     // writes make its DOM observer reparse embedded math views.
                     ...paragraphHeights.map(({ position, size, height }) =>

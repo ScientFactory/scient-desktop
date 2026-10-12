@@ -356,6 +356,15 @@ export const LatexStructuredSelection = Extension.create<{
                   return slot ? [slot.getBoundingClientRect()] : [];
                 },
                 selectionOverlay: true,
+                caret: () => {
+                  if (!view.state.selection.empty || view.isDestroyed) return [];
+                  try {
+                    const rect = view.coordsAtPos(view.state.selection.head);
+                    return [new DOMRect(rect.left, rect.top, 1, rect.bottom - rect.top)];
+                  } catch {
+                    return [];
+                  }
+                },
                 selection: () => {
                   const selection = bookmark?.resolve(view.state.doc);
                   const measured = new Set<Element>([view.dom]);
