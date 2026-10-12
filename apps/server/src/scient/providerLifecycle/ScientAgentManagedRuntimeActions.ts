@@ -8,6 +8,7 @@ import {
   MANAGED_RUNTIME_POLICY,
   type ManagedScientAgentRuntime,
   detectManagedRuntimeTarget,
+  downloadManagedScientAgentRuntime,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
@@ -216,7 +217,11 @@ export const makeQualifiedManagedScientAgentRuntime = Effect.fn(
     target: scientAgentTarget,
     gate,
     qualification,
-    dependencies: { ...input.dependencies, smoke },
+    dependencies: {
+      ...input.dependencies,
+      download: input.dependencies?.download ?? downloadManagedScientAgentRuntime,
+      smoke,
+    },
   });
 });
 
