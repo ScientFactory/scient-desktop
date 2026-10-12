@@ -7,6 +7,7 @@ import {
   installMathReadingPreview,
   mathReadingPreview,
   mathReadingPreviewContextId,
+  mathReadingPreviewKey,
   mathReadingPreviewReady,
   retainMathReadingPreview,
   rememberMathReadingFallback,
@@ -33,6 +34,14 @@ interface Reader {
 const owners = new WeakMap<Editor, ReturnType<typeof createOwner>>();
 const noMacros = {};
 const previewActions = new WeakMap<Element, { fallback(): void; retry(): void }>();
+const preparationKeys = new WeakMap<Element, string>();
+const terminalFallbacks = new WeakMap<NodeViewRendererProps["node"], number>();
+
+export function mathReadingPreparationKeys(elements: readonly Element[]) {
+  return elements
+    .map((element) => preparationKeys.get(element))
+    .filter((key): key is string => key !== undefined);
+}
 
 /** A page deadline releases only its pending previews; later retries keep source authority. */
 export function settleMathReadingPreviews(elements: readonly Element[]) {
@@ -153,12 +162,19 @@ export function mathReadingNodeView(
     ]);
     if (next === signature) return;
     signature = next;
+    preparationKeys.set(
+      preview,
+      mathReadingPreviewKey(value, display, macros, configuration.colors),
+    );
     renderedMarkup = null;
     const version = ++epoch;
     cancelPreview?.();
     queued?.cancel();
     delete content.dataset.mathPreviewReady;
     delete preview.dataset.mathPreviewFallback;
+    field.dispatchEvent(
+      new CustomEvent("scient-latex-math-preview", { bubbles: true, detail: { pending: true } }),
+    );
     preview.setAttribute("aria-label", value);
     const apply = (markup: string | null, cached = false) => {
       const present = () => {
@@ -166,8 +182,13 @@ export function mathReadingNodeView(
         if (markup === null) content.textContent = value;
         else content.innerHTML = markup;
         preview.toggleAttribute("data-math-preview-fallback", markup === null);
-        if (markup === null)
+        if (markup === null) {
+          terminalFallbacks.set(
+            props.node,
+            mathReadingPreviewContextId(macros, configuration.colors),
+          );
           rememberMathReadingFallback(value, display, macros, configuration.colors);
+        }
         renderedMarkup = markup;
         content.dataset.mathPreviewReady = "true";
         field.dispatchEvent(
@@ -179,6 +200,13 @@ export function mathReadingNodeView(
       if (cached) present();
       else queued = scheduleMathFieldMount(present, priority);
     };
+    if (
+      terminalFallbacks.get(props.node) ===
+      mathReadingPreviewContextId(macros, configuration.colors)
+    ) {
+      apply(null, true);
+      return;
+    }
     try {
       cancelPreview = mathReadingPreview(
         value,
@@ -201,6 +229,10 @@ export function mathReadingNodeView(
       content.dataset.mathPreviewReady = "true";
       preview.dataset.mathPreviewFallback = "";
       const configuration = context();
+      terminalFallbacks.set(
+        props.node,
+        mathReadingPreviewContextId(configuration.macros ?? noMacros, configuration.colors),
+      );
       rememberMathReadingFallback(
         sourceFor(props.node),
         display,
@@ -210,6 +242,7 @@ export function mathReadingNodeView(
       field.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
     },
     retry() {
+      terminalFallbacks.delete(props.node);
       const configuration = context();
       forgetMathReadingFallback(
         sourceFor(props.node),

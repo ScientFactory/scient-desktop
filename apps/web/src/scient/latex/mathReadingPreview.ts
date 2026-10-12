@@ -135,6 +135,19 @@ export function mathReadingPreviewContextId(
   return contextFor(macros, colors).id;
 }
 
+export function mathReadingPreviewKey(
+  source: string,
+  display: boolean,
+  macros: Readonly<Record<string, DocumentMathMacro>>,
+  colors: Readonly<Record<string, string>> | undefined,
+) {
+  return JSON.stringify([contextFor(macros, colors).id, display, source]);
+}
+
+export function hasMathReadingPreview(key: string) {
+  return markupCache.peek(key) !== undefined;
+}
+
 function stopWorker() {
   clearTimeout(deadline);
   clearTimeout(idle);
@@ -145,7 +158,15 @@ function stopWorker() {
 }
 
 function remember(key: string, markup: string | null, reading: boolean) {
-  markupCache.put(key, markup, (markup?.length ?? 0) * 2, reading);
+  const retained = markupCache.canRetain(key, (markup?.length ?? 0) * 2) ? markup : null;
+  markupCache.put(
+    key,
+    retained,
+    (retained?.length ?? 0) * 2,
+    reading,
+    reading ? "replace" : "available",
+  );
+  return retained;
 }
 
 export function rememberMathReadingFallback(
@@ -164,8 +185,7 @@ export function forgetMathReadingFallback(
   macros: Readonly<Record<string, DocumentMathMacro>>,
   colors: Readonly<Record<string, string>> | undefined,
 ) {
-  const context = contextFor(macros, colors);
-  const key = JSON.stringify([context.id, display, source]);
+  const key = mathReadingPreviewKey(source, display, macros, colors);
   if (markupCache.get(key) === null) markupCache.delete(key);
 }
 
@@ -201,7 +221,7 @@ function finish(markup: string | null) {
   try {
     if (job) {
       if (markup !== null)
-        remember(
+        markup = remember(
           job.key,
           markup,
           [...job.subscribers.values()].some((subscriber) => subscriber.priority() >= 2),
@@ -309,7 +329,7 @@ export function mathReadingPreview(
   priority: () => number = () => 0,
 ) {
   const context = contextFor(macros, colors);
-  const key = JSON.stringify([context.id, display, source]);
+  const key = mathReadingPreviewKey(source, display, macros, colors);
   const cached = markupCache.get(key, priority() >= 2);
   if (cached !== undefined) {
     complete(cached, true);

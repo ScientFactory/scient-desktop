@@ -152,7 +152,7 @@ it("keeps recently read markup when background scanning exceeds the cache budget
   const early = vi.fn();
   mathReadingPreview("background-0", false, macros, undefined, early);
   expect(early).toHaveBeenCalledExactlyOnceWith("ready background-0", true);
-  // Actual byte pressure still evicts background work before visited content.
+  // Idle byte pressure preserves previously prepared work and declines later admission.
   for (let i = 0; i < 100; i++) {
     mathReadingPreview(
       `large-${i}`,
@@ -168,8 +168,11 @@ it("keeps recently read markup when background scanning exceeds the cache budget
   mathReadingPreview("reading", false, macros, undefined, complete, () => 2);
   expect(complete).toHaveBeenLastCalledWith("ready reading", true);
   const evicted = vi.fn();
-  const cancel = mathReadingPreview("background-0", false, macros, undefined, evicted);
-  expect(evicted).not.toHaveBeenCalled();
+  mathReadingPreview("background-0", false, macros, undefined, evicted);
+  expect(evicted).toHaveBeenCalledExactlyOnceWith("ready background-0", true);
+  const later = vi.fn();
+  const cancel = mathReadingPreview("large-99", false, macros, undefined, later);
+  expect(later).not.toHaveBeenCalled();
   expect(worker.messages).toHaveLength(pressureBefore + 1);
   cancel();
 });
