@@ -72,7 +72,7 @@ jobs:
           const config = path.join(process.env.STAGE_PARENT, 'baseline-config.json');
           // Keep the production output directory: electron-builder excludes it
           // from input automatically, including artifacts from the first build.
-          assert.equal(pkg.build.directories.output, 'dist');
+          assert.equal(pkg.build.directories.output ?? 'dist', 'dist');
           pkg.build.npmRebuild = false;
           fs.writeFileSync(config, JSON.stringify(pkg.build, null, 2));
           fs.appendFileSync(process.env.GITHUB_OUTPUT, 'stage=' + stage + '\n');
