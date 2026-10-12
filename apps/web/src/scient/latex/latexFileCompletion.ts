@@ -3,7 +3,7 @@ import { sourceMathOwnsEvent, sourceOffset, sourcePosition } from "../math/input
 import { installLatexTextCompletion } from "./latexTextCompletion";
 import { latexDocumentMathSetup } from "./latexDocumentMacros";
 import { latexDocumentColors } from "./latexColorBoxes";
-import { latexPreambleEnd } from "./latexPackages";
+import { latexPreambleEnd } from "./latexSourceSyntax";
 
 /** Source completion uses the file editor's edits and undo, including its shadow-root selection. */
 export function installLatexFileCompletion<Annotation>(

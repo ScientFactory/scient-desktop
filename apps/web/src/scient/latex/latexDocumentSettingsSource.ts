@@ -16,7 +16,9 @@ export function updateLatexDocumentSettingsSource(
   update: LatexDocumentSettingsUpdate,
 ): string | null {
   const { language, ...layout } = update;
-  const next = Object.keys(layout).length ? updateLatexVisualLayoutSource(source, layout) : source;
+  const next = Object.keys(layout).length
+    ? (updateLatexVisualLayoutSource(source, layout)?.source ?? null)
+    : source;
   if (next === null || language === undefined) return next;
   const setup = latexDocumentLanguage(next);
   return updateLatexLanguageSource(

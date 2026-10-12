@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The navigation boundary is filesystem-backed.
+import * as NodeCrypto from "node:crypto";
 import { ArtifactId, ArtifactRevisionId } from "@scientfactory/document-artifacts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -15,6 +16,9 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProcessRunner from "../../processRunner.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import {
   GeneratedDocumentStore,
   GeneratedDocumentStoreError,
@@ -22,6 +26,14 @@ import {
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import { LatexSyncTex, make as makeSyncTex } from "./LatexSyncTex.ts";
 import * as SyncTexRuntime from "./SyncTexRuntime.ts";
+import {
+  collectLatexBuildEvidence,
+  decodePublishedLatexBuildEvidence,
+  encodePublishedLatexBuildEvidence,
+} from "./latexBuildEvidence.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
+
+const publicationHelper = await filePublicationTestHelper();
 
 const LegacyNavigationMetadataJson = Schema.fromJsonString(
   Schema.Struct({
@@ -40,6 +52,9 @@ const environmentId = EnvironmentId.make("environment-latex-synctex-test");
 const artifactId = ArtifactId.make("artifact-latex-synctex-test");
 const firstRevisionId = ArtifactRevisionId.make("revision-latex-synctex-first");
 const secondRevisionId = ArtifactRevisionId.make("revision-latex-synctex-second");
+const rootSource = "\\input{chapters/body}";
+const sourceRevision = `sha256:${NodeCrypto.createHash("sha256").update("Body").digest("hex")}`;
+const rootRevision = `sha256:${NodeCrypto.createHash("sha256").update(rootSource).digest("hex")}`;
 
 const processOutput = (stdout: string): ProcessRunner.ProcessRunOutput => ({
   stdout,
@@ -57,18 +72,18 @@ const revisionKey = (revisionId: ArtifactRevisionId) => `${artifactId}/${revisio
 const makeHarness = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
-    prefix: "scient-latex-synctex-workspace-",
-  });
-  const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-    prefix: "scient-latex-synctex-state-",
-  });
+  const workspaceRoot = yield* fileSystem.realPath(
+    yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-synctex-workspace-" }),
+  );
+  const baseDir = yield* fileSystem.realPath(
+    yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-synctex-state-" }),
+  );
   const compileDirectory = workspaceRoot;
   const buildDirectory = path.join(baseDir, "compile");
   yield* fileSystem.makeDirectory(path.join(workspaceRoot, "chapters"), { recursive: true });
   yield* fileSystem.makeDirectory(buildDirectory, { recursive: true });
   const bodyPath = path.join(workspaceRoot, "chapters", "body.tex");
-  yield* fileSystem.writeFileString(path.join(workspaceRoot, "main.tex"), "\\input{chapters/body}");
+  yield* fileSystem.writeFileString(path.join(workspaceRoot, "main.tex"), rootSource);
   yield* fileSystem.writeFileString(bodyPath, "Body");
 
   const liveRevisions = yield* Ref.make(new Set<string>([revisionKey(firstRevisionId)]));
@@ -77,6 +92,10 @@ const makeHarness = Effect.gen(function* () {
     null,
   );
   const runtimeError = yield* Ref.make<SyncTexRuntime.SyncTexRuntimeError | null>(null);
+  const mutationEpoch = yield* Ref.make("compiled-epoch");
+  const mutationEpochError =
+    yield* Ref.make<WorkspaceFileSystem.WorkspaceFileSystemOperationError | null>(null);
+  const duringQuery = yield* Ref.make<Effect.Effect<void> | null>(null);
   const inverseInputPath = yield* Ref.make(bodyPath);
   const resolvedRevision = {
     artifact: {},
@@ -116,6 +135,8 @@ const makeHarness = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* Ref.update(invocations, (previous) => [...previous, input]);
         const overridden = yield* Ref.get(navigationOutput);
+        const mutation = yield* Ref.get(duringQuery);
+        if (mutation !== null) yield* mutation;
         if (overridden === "spawn-error") {
           return yield* new ProcessRunner.ProcessSpawnError({
             command: input.command,
@@ -157,7 +178,37 @@ SyncTeX result end`);
     Layer.provide(Layer.succeed(SyncTexRuntime.SyncTexRuntime, runtime)),
     Layer.provide(Layer.succeed(GeneratedDocumentStore, store)),
     Layer.provide(Layer.succeed(ServerEnvironment.ServerEnvironment, serverEnvironment)),
-    Layer.provideMerge(ServerConfig.layerTest(workspaceRoot, baseDir)),
+    Layer.provideMerge(
+      Layer.effect(
+        WorkspaceFileSystem.WorkspaceFileSystem,
+        Effect.gen(function* () {
+          const underlying = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          return WorkspaceFileSystem.WorkspaceFileSystem.of({
+            ...underlying,
+            getMutationEpoch: () =>
+              Ref.get(mutationEpochError).pipe(
+                Effect.flatMap((error) =>
+                  error === null ? Ref.get(mutationEpoch) : Effect.fail(error),
+                ),
+              ),
+          });
+        }),
+      ).pipe(
+        Layer.provide(
+          WorkspaceFileSystem.layer.pipe(
+            Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+            Layer.provide(WorkspacePaths.layer),
+          ),
+        ),
+      ),
+    ),
+    Layer.provideMerge(
+      ServerConfig.layerTest(
+        workspaceRoot,
+        baseDir,
+        publicationHelper === undefined ? {} : { filePublicationHelperPath: publicationHelper },
+      ),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
 
@@ -165,6 +216,26 @@ SyncTeX result end`);
     Effect.gen(function* () {
       const syncTexPath = path.join(buildDirectory, `main-${revisionId}.synctex.gz`);
       yield* fileSystem.writeFileString(syncTexPath, `index for ${revisionId}`);
+      const { evidence } = yield* collectLatexBuildEvidence({
+        workspaceRoot,
+        rootRelativePath: "main.tex",
+        dependencies: ["chapters/body.tex"],
+        truncated: false,
+        nowEpochMs: 1,
+      });
+      const evidenceDirectory = path.join(baseDir, "userdata", "latex", "evidence");
+      yield* fileSystem.makeDirectory(evidenceDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(evidenceDirectory, "fixture.json"),
+        encodePublishedLatexBuildEvidence({
+          schemaVersion: 1,
+          artifactId,
+          revisionId,
+          evidence,
+          mutationEpoch: yield* Ref.get(mutationEpoch),
+          sourceRevisions: { "main.tex": rootRevision, "chapters/body.tex": sourceRevision },
+        }),
+      );
       const service = yield* LatexSyncTex;
       yield* service.publishIndex({
         artifactId,
@@ -173,6 +244,7 @@ SyncTeX result end`);
         rootRelativePath: "main.tex",
         compileDirectory,
         syncTexPath,
+        evidenceFileName: "fixture.json",
       });
     }).pipe(Effect.provide(serviceLayer));
 
@@ -189,6 +261,10 @@ SyncTeX result end`);
     navigationOutput,
     runtimeError,
     inverseInputPath,
+    mutationEpoch,
+    mutationEpochError,
+    duringQuery,
+    evidencePath: path.join(baseDir, "userdata", "latex", "evidence", "fixture.json"),
     serviceLayer,
     publish,
     navigationDirectory,
@@ -227,6 +303,7 @@ describe("LatexSyncTex", () => {
         workspaceRoot: harness.workspaceRoot,
         rootRelativePath: "main.tex",
         sourceRelativePath: "chapters/body.tex",
+        sourceRevision,
         artifactId,
         revisionId: firstRevisionId,
         line: 17,
@@ -246,6 +323,7 @@ describe("LatexSyncTex", () => {
       expect(inverse).toEqual({
         _tag: "found",
         relativePath: "chapters/body.tex",
+        sourceRevision,
         line: 17,
         column: 4,
       });
@@ -277,6 +355,7 @@ describe("LatexSyncTex", () => {
         workspaceRoot: harness.workspaceRoot,
         rootRelativePath: "main.tex",
         sourceRelativePath: "main.tex",
+        sourceRevision: rootRevision,
         artifactId,
         revisionId: firstRevisionId,
         line: 1,
@@ -301,6 +380,7 @@ describe("LatexSyncTex", () => {
         workspaceRoot: harness.workspaceRoot,
         rootRelativePath: "main.tex",
         sourceRelativePath: "../outside.tex",
+        sourceRevision,
         artifactId,
         revisionId: firstRevisionId,
         line: 1,
@@ -359,6 +439,7 @@ SyncTeX result end`),
       ).toEqual({
         _tag: "found",
         relativePath: "chapters/body.tex",
+        sourceRevision,
         line: 51,
         column: null,
       });
@@ -375,6 +456,7 @@ SyncTeX result end`),
         workspaceRoot: harness.workspaceRoot,
         rootRelativePath: "main.tex",
         sourceRelativePath: "chapters/body.tex",
+        sourceRevision,
         artifactId,
         revisionId: firstRevisionId,
         line: 17,
@@ -406,15 +488,14 @@ SyncTeX result end`),
         workspaceRoot: harness.workspaceRoot,
         rootRelativePath: "main.tex",
         sourceRelativePath: "chapters/body.tex",
+        sourceRevision,
         artifactId,
         revisionId: firstRevisionId,
         line: 17,
       });
       expect((yield* Ref.get(harness.invocations)).at(-1)?.command).toBe("/bundled/synctex");
 
-      // Version 1 persisted an executable and bin directory. Treat both as
-      // untrusted migration input. The current verified bundled runtime still
-      // supplies the command, independently of the producing LaTeX engine.
+      // Old indexes cannot prove any compiled source revision, even with a current PDF.
       const navigationDirectory = harness.navigationDirectory(firstRevisionId);
       const outputFileName = "main-revision-latex-synctex-first.pdf";
       yield* fileSystem.writeFileString(
@@ -429,15 +510,17 @@ SyncTeX result end`),
           binDirectory: path.join(harness.baseDir, "outside"),
         })}\n`,
       );
-      yield* service.forward({
+      const legacyResult = yield* service.forward({
         workspaceRoot: harness.workspaceRoot,
         rootRelativePath: "main.tex",
         sourceRelativePath: "chapters/body.tex",
+        sourceRevision,
         artifactId,
         revisionId: firstRevisionId,
         line: 17,
       });
-      expect((yield* Ref.get(harness.invocations)).at(-1)?.command).toBe("/bundled/synctex");
+      expect(legacyResult).toMatchObject({ _tag: "unavailable", reason: "index-invalid" });
+      expect(yield* Ref.get(harness.invocations)).toHaveLength(1);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -465,6 +548,7 @@ SyncTeX result end`),
         workspaceRoot: harness.workspaceRoot,
         rootRelativePath: "main.tex",
         sourceRelativePath: "chapters/body.tex",
+        sourceRevision,
         artifactId,
         revisionId: firstRevisionId,
         line: 17,
@@ -514,6 +598,188 @@ SyncTeX result end`),
         reason: "navigator-unavailable",
         message: expect.stringContaining("integrity check"),
       });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+  it.effect(
+    "rejects saved source coordinates from another revision without querying the index",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness;
+        yield* harness.publish(firstRevisionId);
+        const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+        const result = yield* service.forward({
+          workspaceRoot: harness.workspaceRoot,
+          rootRelativePath: "main.tex",
+          sourceRelativePath: "chapters/body.tex",
+          sourceRevision: `sha256:${"b".repeat(64)}`,
+          artifactId,
+          revisionId: firstRevisionId,
+          line: 18,
+        });
+        expect(result).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
+        expect(yield* Ref.get(harness.invocations)).toEqual([]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("rejects externally saved source changes despite a still-live PDF", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* harness.publish(firstRevisionId);
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(harness.bodyPath, "Inserted line\nBody");
+      const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+      expect(
+        yield* service.inverse({
+          workspaceRoot: harness.workspaceRoot,
+          rootRelativePath: "main.tex",
+          artifactId,
+          revisionId: firstRevisionId,
+          page: 2,
+          x: 18,
+          y: 72,
+        }),
+      ).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
+      expect(yield* Ref.get(harness.invocations)).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("drops forward and inverse results when their source changes during the query", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      for (const direction of ["forward", "inverse"] as const) {
+        const harness = yield* makeHarness;
+        yield* harness.publish(firstRevisionId);
+        yield* Ref.set(
+          harness.duringQuery,
+          fileSystem.writeFileString(harness.bodyPath, "Inserted\nBody").pipe(Effect.orDie),
+        );
+        const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+        const identity = {
+          workspaceRoot: harness.workspaceRoot,
+          rootRelativePath: "main.tex",
+          artifactId,
+          revisionId: firstRevisionId,
+        };
+        const result =
+          direction === "forward"
+            ? yield* service.forward({
+                ...identity,
+                sourceRelativePath: "chapters/body.tex",
+                sourceRevision,
+                line: 17,
+              })
+            : yield* service.inverse({ ...identity, page: 2, x: 18, y: 72 });
+        expect(result).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
+        expect((yield* Ref.get(harness.invocations)).map((call) => call.args[0])).toEqual([
+          direction === "forward" ? "view" : "edit",
+        ]);
+      }
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("rejects source ABA and replacement receipts even when source bytes match again", () =>
+    Effect.gen(function* () {
+      for (const replacement of ["epoch", "receipt"] as const) {
+        const harness = yield* makeHarness;
+        yield* harness.publish(firstRevisionId);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const duringQuery =
+          replacement === "epoch"
+            ? Ref.set(harness.mutationEpoch, "another-source-publication")
+            : Effect.gen(function* () {
+                const receipt = decodePublishedLatexBuildEvidence(
+                  yield* fileSystem.readFileString(harness.evidencePath),
+                );
+                if (receipt === null) return yield* Effect.die("Missing fixture receipt");
+                yield* fileSystem.writeFileString(
+                  harness.evidencePath,
+                  encodePublishedLatexBuildEvidence({
+                    ...receipt,
+                    revisionId: secondRevisionId,
+                  }),
+                );
+              }).pipe(Effect.orDie);
+        yield* Ref.set(harness.duringQuery, duringQuery);
+        const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+        expect(
+          yield* service.forward({
+            workspaceRoot: harness.workspaceRoot,
+            rootRelativePath: "main.tex",
+            sourceRelativePath: "chapters/body.tex",
+            sourceRevision,
+            artifactId,
+            revisionId: firstRevisionId,
+            line: 17,
+          }),
+        ).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
+      }
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("does not grant navigation from legacy hash-only evidence", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* harness.publish(firstRevisionId);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const receipt = decodePublishedLatexBuildEvidence(
+        yield* fileSystem.readFileString(harness.evidencePath),
+      );
+      if (receipt === null) return yield* Effect.die("Missing fixture receipt");
+      const { sourceRevisions: _unqualified, ...legacy } = receipt;
+      yield* fileSystem.writeFileString(
+        harness.evidencePath,
+        encodePublishedLatexBuildEvidence(legacy),
+      );
+      const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+      expect(
+        yield* service.inverse({
+          workspaceRoot: harness.workspaceRoot,
+          rootRelativePath: "main.tex",
+          artifactId,
+          revisionId: firstRevisionId,
+          page: 2,
+          x: 18,
+          y: 72,
+        }),
+      ).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
+      expect(yield* Ref.get(harness.invocations)).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("refuses navigation when publication proof fails before or during the query", () =>
+    Effect.gen(function* () {
+      for (const phase of ["before", "during"] as const) {
+        const harness = yield* makeHarness;
+        yield* harness.publish(firstRevisionId);
+        const failure = Ref.set(
+          harness.mutationEpochError,
+          new WorkspaceFileSystem.WorkspaceFileSystemOperationError({
+            workspaceRoot: harness.workspaceRoot,
+            relativePath: ".",
+            resolvedPath: harness.workspaceRoot,
+            operationPath: harness.workspaceRoot,
+            operation: "read",
+            cause: new Error("Publication epoch could not be read"),
+          }),
+        );
+        if (phase === "before") yield* failure;
+        else yield* Ref.set(harness.duringQuery, failure);
+        const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+        expect(
+          yield* service.forward({
+            workspaceRoot: harness.workspaceRoot,
+            rootRelativePath: "main.tex",
+            sourceRelativePath: "chapters/body.tex",
+            sourceRevision,
+            artifactId,
+            revisionId: firstRevisionId,
+            line: 17,
+          }),
+        ).toMatchObject({ _tag: "unavailable", reason: "source-stale" });
+        expect((yield* Ref.get(harness.invocations)).map((call) => call.args[0])).toEqual(
+          phase === "before" ? [] : ["view"],
+        );
+      }
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

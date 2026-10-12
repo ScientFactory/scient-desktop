@@ -26,6 +26,8 @@ export function visualChangeDelta(
   return {
     kind: "change-delta",
     base,
+    snapshotId: input.snapshotId,
+    setupSource: input.setupSource,
     prefix,
     suffix,
     content: { ...input.content, content: after.slice(prefix, after.length - suffix) },
@@ -72,6 +74,8 @@ export function createVisualProcessingState(maxEntries = 4, maxBytes = 8 * 1024 
       return {
         kind: "change",
         source: entry.projection.source,
+        snapshotId: delta.snapshotId,
+        setupSource: delta.setupSource,
         projection: entry.projection,
         content: {
           ...delta.content,

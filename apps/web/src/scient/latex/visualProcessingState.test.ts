@@ -17,6 +17,8 @@ function edit(): VisualChangeInput {
   return {
     kind: "change",
     source,
+    snapshotId: "current-snapshot",
+    setupSource: source,
     projection,
     content,
     rootSource: source,

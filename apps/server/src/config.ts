@@ -119,6 +119,12 @@ export class ServerConfig extends Context.Service<
     readonly desktopBrowserControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
     readonly syncTexNavigatorPath?: string | undefined;
+    /** Host-owned native publisher; never selected by a workspace request. */
+    readonly filePublicationHelperPath?: string | undefined;
+    /** Shared physical-file history across profiles; tests use isolated storage. */
+    readonly filePublicationRetentionRoot?: string | undefined;
+    /** Explicit admission budget. Unresolved versions are never silently evicted. */
+    readonly filePublicationRetentionLimitBytes?: number | null | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
@@ -286,6 +292,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     desktopBrowserControlFd: undefined,
     resourceMonitorPath: undefined,
     syncTexNavigatorPath: undefined,
+    filePublicationRetentionRoot: `${baseDir}/file-publications`,
     staticDir: undefined,
     devUrl,
     devAllowedOrigins: [],
@@ -294,8 +301,23 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
   });
 });
 
-export const layerTest = (cwd: string, baseDirOrPrefix: string | { readonly prefix: string }) =>
-  Layer.effect(ServerConfig, makeTest(cwd, baseDirOrPrefix));
+export const layerTest = (
+  cwd: string,
+  baseDirOrPrefix: string | { readonly prefix: string },
+  publicationOptions: Pick<
+    ServerConfig["Service"],
+    | "filePublicationHelperPath"
+    | "filePublicationRetentionRoot"
+    | "filePublicationRetentionLimitBytes"
+    | "syncTexNavigatorPath"
+  > = {},
+) =>
+  Layer.effect(
+    ServerConfig,
+    makeTest(cwd, baseDirOrPrefix).pipe(
+      Effect.map((config) => ServerConfig.of({ ...config, ...publicationOptions })),
+    ),
+  );
 
 export const resolveStaticDir = Effect.fn(function* () {
   const { join, resolve } = yield* Path.Path;

@@ -1,15 +1,25 @@
-import { latexWithoutComments } from "./latexPackages";
+import {
+  validateDocumentSourcePatches,
+  DocumentSourcePatchError,
+  type DocumentSourceEdit,
+  type DocumentSourcePatch,
+} from "@scientfactory/scient-document";
+import type { LatexSourceEdit, LatexOwnedSourcePatch } from "./latexSourceEditPlan";
+import { latexDocumentBoundary, maskLatexSource } from "./latexSourceSyntax";
 
 export interface VisualProjectFile {
   contents: string;
   revision: string;
   truncated: boolean;
+  /** Absent for presentation-only files; only a live session can authorize an edit. */
+  owner?: { readonly documentId: string; readonly editVersion: number };
 }
-interface SourceSpan {
+export interface SourceSpan {
   from: number;
   to: number;
   path: string | null;
   sourceFrom: number;
+  occurrence: number;
 }
 export interface VisualProjectDocument {
   source: string;
@@ -33,47 +43,6 @@ function resolvePath(base: string, target: string): string | null {
   return parts.join("/");
 }
 
-/** Mask literals without changing offsets used to route edits back to files. */
-function dependencySource(source: string): string {
-  const parts: string[] = [];
-  let cursor = 0;
-  for (const token of source.matchAll(/\\([A-Za-z]+|[^\r\n])|%/gu)) {
-    const from = token.index;
-    if (from < cursor) continue;
-    let end = from;
-    if (token[0] === "%") {
-      const newline = source.indexOf("\n", from);
-      end = newline < 0 ? source.length : newline;
-    } else if (token[1] === "verb") {
-      const opening = from + token[0].length + Number(source[from + token[0].length] === "*");
-      const delimiter = source[opening];
-      if (delimiter && !/\s/u.test(delimiter)) {
-        const closing = source.indexOf(delimiter, opening + 1);
-        const newline = source.indexOf("\n", opening + 1);
-        if (closing >= 0 && (newline < 0 || closing < newline)) end = closing + 1;
-      }
-    } else if (token[1] === "begin") {
-      const environment = /^\s*\{(verbatim\*?|Verbatim|lstlisting|minted|comment)\}/u.exec(
-        source.slice(from + token[0].length),
-      );
-      if (environment) {
-        const closing = `\\end{${environment[1]}}`;
-        const position = source.indexOf(closing, from + token[0].length + environment[0].length);
-        end = position < 0 ? source.length : position + closing.length;
-      }
-    }
-    if (end > from) {
-      parts.push(
-        source.slice(cursor, from),
-        source.slice(from, end).replace(/[^\r\n]/gu, (character) => " ".repeat(character.length)),
-      );
-      cursor = end;
-    }
-  }
-  parts.push(source.slice(cursor));
-  return parts.join("");
-}
-
 export function assembleVisualProject(
   root: string,
   files: ReadonlyMap<string, VisualProjectFile>,
@@ -89,10 +58,11 @@ export function assembleVisualProject(
   const visited = new Set<string>();
   let includeOnly: Set<string> | null = null;
   let occurrences = 0;
-  const append = (text: string, path: string | null, sourceFrom: number) => {
+  const append = (text: string, path: string | null, sourceFrom: number, occurrence: number) => {
+    if (text.length === 0) return;
     const from = result.source.length;
     result.source += text;
-    result.spans.push({ from, to: result.source.length, path, sourceFrom });
+    result.spans.push({ from, to: result.source.length, path, sourceFrom, occurrence });
   };
   const expand = (
     path: string,
@@ -106,6 +76,7 @@ export function assembleVisualProject(
       );
       return;
     }
+    const occurrence = occurrences;
     if (stack.includes(path)) {
       result.errors.push(`Circular LaTeX include: ${[...stack, path].join(" → ")}`);
       return;
@@ -121,18 +92,18 @@ export function assembleVisualProject(
       return;
     }
     const source = file.contents;
-    const clean = dependencySource(source);
+    const clean = maskLatexSource(source, { literals: true, opaqueEnvironments: ["comment"] });
     let start = 0,
       end = source.length;
     if (subfile) {
-      const begin = /\\begin\s*\{document\}/u.exec(clean);
-      if (begin) {
-        start = begin.index + begin[0].length;
-        const finish = /\\end\s*\{document\}/u.exec(clean.slice(start));
-        if (finish) end = start + finish.index;
+      const boundary = latexDocumentBoundary(source);
+      if (boundary) {
+        start = boundary.bodyFrom;
+        end = boundary.bodyTo;
       }
     }
     let cursor = start;
+    const firstSpan = result.spans.length;
     let depth = 0;
     let conditional = 0;
     const customConditions = new Set(
@@ -161,7 +132,12 @@ export function assembleVisualProject(
       if (name === "newif") {
         const declaration = /^\s*\\if[A-Za-z]+/u.exec(clean.slice(at + token[0].length));
         if (declaration) {
-          append(source.slice(cursor, at + token[0].length + declaration[0].length), path, cursor);
+          append(
+            source.slice(cursor, at + token[0].length + declaration[0].length),
+            path,
+            cursor,
+            occurrence,
+          );
           cursor = at + token[0].length + declaration[0].length;
         }
         continue;
@@ -227,9 +203,9 @@ export function assembleVisualProject(
         result.errors.push(`The include path in ${path} cannot be resolved inside this workspace.`);
         continue;
       }
-      append(source.slice(cursor, at), path, cursor);
+      append(source.slice(cursor, at), path, cursor, occurrence);
       cursor = at + token[0].length + consumed;
-      if (name === "include") append("\n\\clearpage\n", null, 0);
+      if (name === "include") append("\n\\clearpage\n", null, 0, occurrence);
       if (name === "include" && includeOnly && !includeOnly.has(target.replace(/\.tex$/u, "")))
         continue;
       expand(
@@ -239,10 +215,14 @@ export function assembleVisualProject(
         name === "subfile",
       );
       // File EOF ends a TeX input line, including an unterminated comment.
-      if (!result.source.endsWith("\n")) append("\n", null, 0);
-      if (name === "include") append("\n\\clearpage\n", null, 0);
+      if (!result.source.endsWith("\n")) append("\n", null, 0, occurrence);
+      if (name === "include") append("\n\\clearpage\n", null, 0, occurrence);
     }
-    append(source.slice(cursor, end), path, cursor);
+    append(source.slice(cursor, end), path, cursor, occurrence);
+    if (result.spans.length === firstSpan) {
+      const offset = result.source.length;
+      result.spans.push({ from: offset, to: offset, path, sourceFrom: start, occurrence });
+    }
   };
   expand(root, [], null, false);
   if (result.source.length > 2_000_000)
@@ -255,94 +235,140 @@ export function assembleVisualProject(
   return result;
 }
 
-interface SourceEdit {
-  from: number;
-  to: number;
-  text: string;
+export interface PhysicalLatexSourceEdit extends DocumentSourceEdit {
+  readonly documentId: string;
 }
-function difference(before: string, after: string, offset: number): SourceEdit | null {
-  if (before === after) return null;
-  let from = 0;
-  while (from < before.length && from < after.length && before[from] === after[from]) from++;
-  let tail = 0;
-  while (
-    tail < before.length - from &&
-    tail < after.length - from &&
-    before.at(-1 - tail) === after.at(-1 - tail)
-  )
-    tail++;
-  return {
-    from: offset + from,
-    to: offset + before.length - tail,
-    text: after.slice(from, after.length - tail),
-  };
-}
-const bodyStart = (source: string) => {
-  const match = /\\begin\s*\{document\}/u.exec(latexWithoutComments(source));
-  return match ? match.index + match[0].length : 0;
+
+export type VisualProjectEditPlan = {
+  readonly edits: ReadonlyMap<string, PhysicalLatexSourceEdit>;
+  readonly error: string | null;
 };
 
-/** Keep include directives in place; apply only edits owned by one physical span. */
+function insertionSpan(
+  document: VisualProjectDocument,
+  offset: number,
+  affinity: LatexOwnedSourcePatch["insertionAffinity"],
+): SourceSpan | undefined {
+  const interior = document.spans.find(
+    (span) => span.path !== null && span.from < offset && offset < span.to,
+  );
+  if (interior) return interior;
+  if (!affinity) return undefined;
+  const spans = document.spans.filter(
+    (span) =>
+      span.path !== null && (affinity === "before" ? span.to === offset : span.from === offset),
+  );
+  // Empty includes can share an assembled offset. Never guess which occurrence owns it.
+  return spans.length === 1 ? spans[0] : undefined;
+}
+
+/** Map already-owned original-coordinate patches; never infer an edit from a text diff. */
 export function planVisualProjectEdit(
   document: VisualProjectDocument,
-  next: string,
+  edit: LatexSourceEdit,
   files: ReadonlyMap<string, VisualProjectFile>,
   root: string,
-  preferredPath: string,
-): { changes: Map<string, string>; error: string | null } {
-  const changes = new Map<string, string>();
-  const oldBody = bodyStart(document.source),
-    newBody = bodyStart(next);
-  const edits = [
-    difference(document.source.slice(0, oldBody), next.slice(0, newBody), 0),
-    difference(document.source.slice(oldBody), next.slice(newBody), oldBody),
-  ].filter((edit): edit is SourceEdit => edit !== null);
-  const byFile = new Map<string, SourceEdit[]>();
-  for (const edit of edits) {
-    const spans = document.spans.filter((span) =>
-      edit.from === edit.to
-        ? span.from <= edit.from && span.to >= edit.to
-        : span.from < edit.to && span.to > edit.from,
-    );
-    let span: SourceSpan | undefined;
-    if (edit.from === edit.to) {
-      span =
-        spans.find((item) => item.path && item.from < edit.from && item.to > edit.from) ??
-        spans.find((item) => item.path === (edit.from < oldBody ? root : preferredPath)) ??
-        spans.find((item) => item.path !== null && item.path !== root) ??
-        spans.find((item) => item.path);
-    } else {
-      span = spans[0];
-      for (let index = 1; index < spans.length; index++) {
-        const previous = spans[index - 1]!,
-          current = spans[index]!;
-        if (
-          current.path !== previous.path ||
-          current.sourceFrom !== previous.sourceFrom + previous.to - previous.from
-        )
-          return {
-            changes,
-            error:
+): VisualProjectEditPlan {
+  const refused = (error: string): VisualProjectEditPlan => ({
+    edits: new Map(),
+    error,
+  });
+  if (edit.source !== document.source)
+    return refused("The source changed while this edit was being prepared.");
+  const byFile = new Map<string, DocumentSourcePatch[]>();
+  const append = (path: string, patch: DocumentSourcePatch) => {
+    const patches = byFile.get(path) ?? [];
+    // One physical range can appear through repeated inputs. Apply an identical edit once.
+    if (
+      !patches.some(
+        (previous) =>
+          previous.start === patch.start &&
+          previous.end === patch.end &&
+          previous.replacement === patch.replacement &&
+          previous.expected === patch.expected,
+      )
+    )
+      patches.push(patch);
+    byFile.set(path, patches);
+  };
+  try {
+    validateDocumentSourcePatches(document.source, edit.patches);
+    for (const patch of edit.patches) {
+      let span: SourceSpan | undefined;
+      if (patch.start === patch.end) {
+        span = insertionSpan(document, patch.start, patch.insertionAffinity);
+      } else {
+        const spans = document.spans.filter(
+          (item) => item.from < patch.end && item.to > patch.start,
+        );
+        span = spans[0];
+        for (let index = 1; index < spans.length; index += 1) {
+          const before = spans[index - 1]!;
+          const after = spans[index]!;
+          if (
+            after.path !== before.path ||
+            after.occurrence !== before.occurrence ||
+            after.from !== before.to ||
+            after.sourceFrom !== before.sourceFrom + before.to - before.from
+          )
+            return refused(
               "This edit crosses included-file boundaries. Edit each file's content separately.",
-          };
+            );
+        }
       }
+      if (!span?.path || patch.start < span.from || patch.end > document.source.length)
+        return refused(
+          "This boundary belongs to an include command. Change that command in Source.",
+        );
+      const file = files.get(span.path);
+      if (!file) return refused(`The source for ${span.path} is no longer available.`);
+      const start = span.sourceFrom + patch.start - span.from;
+      const end = start + patch.end - patch.start;
+      const expected = document.source.slice(patch.start, patch.end);
+      if (file.contents.slice(start, end) !== expected)
+        return refused("The source map is no longer current. Reopen the document before editing.");
+      append(span.path, { start, end, replacement: patch.replacement, expected });
     }
-    if (!span?.path)
-      return {
-        changes,
-        error: "This page break belongs to an include command. Change that command in Source.",
-      };
-    const from = span.sourceFrom + edit.from - span.from;
-    const to = from + edit.to - edit.from;
-    const list = byFile.get(span.path) ?? [];
-    list.push({ from, to, text: edit.text });
-    byFile.set(span.path, list);
+    if (edit.root) {
+      const file = files.get(root);
+      if (!file || file.contents !== edit.root.source)
+        return refused("The root document changed while this edit was being prepared.");
+      validateDocumentSourcePatches(file.contents, edit.root.patches);
+      for (const patch of edit.root.patches)
+        append(root, { ...patch, expected: file.contents.slice(patch.start, patch.end) });
+    }
+    for (const physical of edit.physical ?? []) {
+      // A rename moves a stable document owner, not its history.
+      const path = document.paths.find(
+        (candidate) => files.get(candidate)?.owner?.documentId === physical.documentId,
+      );
+      const file = path === undefined ? undefined : files.get(path);
+      if (!path || !file || file.contents !== physical.source)
+        return refused("This source-history edit no longer belongs to the current document.");
+      validateDocumentSourcePatches(file.contents, physical.patches);
+      for (const patch of physical.patches)
+        append(path, { ...patch, expected: file.contents.slice(patch.start, patch.end) });
+    }
+    if (byFile.size > 1)
+      return refused(
+        "This edit also changes another file. Add the required declaration in Source, then retry the edit.",
+      );
+    const edits = new Map<string, PhysicalLatexSourceEdit>();
+    for (const [path, patches] of byFile) {
+      const file = files.get(path)!;
+      if (!file.owner) return refused(`Open ${path} to edit it.`);
+      if (file.truncated) return refused(`${path} is not completely loaded for editing.`);
+      validateDocumentSourcePatches(file.contents, patches);
+      edits.set(path, {
+        documentId: file.owner.documentId,
+        basedOnVersion: file.owner.editVersion,
+        patches,
+      });
+    }
+    return { edits, error: null };
+  } catch (error) {
+    if (error instanceof DocumentSourcePatchError)
+      return refused(`This edit no longer matches a safe source range (${error.problem}).`);
+    throw error;
   }
-  for (const [path, editsForFile] of byFile) {
-    let source = files.get(path)!.contents;
-    for (const edit of editsForFile.sort((a, b) => b.from - a.from))
-      source = source.slice(0, edit.from) + edit.text + source.slice(edit.to);
-    changes.set(path, source);
-  }
-  return { changes, error: null };
 }

@@ -20,6 +20,7 @@ const missing: ScientLatexToolchainReport = {
   version: null,
   probedAtEpochMs: 1,
   canInstallManaged: true,
+  compilers: [],
 };
 const downloading: ScientLatexManagedInstallState = {
   state: "downloading",
@@ -31,11 +32,15 @@ const downloading: ScientLatexManagedInstallState = {
 };
 
 let kind = "";
+let summary = "";
+let lastReport: ScientLatexToolchainReport | null = null;
 let install: () => void = () => undefined;
 let refresh: () => Promise<void> = async () => undefined;
 function Watch() {
   const controller = useLatexInstallation(EnvironmentId.make("local"));
   kind = controller.view.kind;
+  summary = controller.view.summary;
+  lastReport = controller.report;
   install = controller.act;
   refresh = controller.refresh;
   return null;
@@ -60,6 +65,49 @@ afterEach(async () => {
 });
 
 describe("useLatexInstallation answers that arrive out of order", () => {
+  it("never installs during mount, refresh, or passive status polling", async () => {
+    readLatexToolchain.mockResolvedValue(missing);
+    await act(async () => root.render(<Watch />));
+    await act(async () => refresh());
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(requestLatexToolchainInstall).not.toHaveBeenCalled();
+    expect(kind).toBe("missing");
+  });
+
+  it("ignores an install action when all standalone compilers are already available", async () => {
+    readLatexToolchain.mockResolvedValue({
+      ...missing,
+      kind: "latexmk",
+      compilers: (["pdflatex", "xelatex", "lualatex"] as const).map((compiler) => ({
+        compiler,
+        available: true,
+        executable: compiler,
+        version: null,
+      })),
+    });
+    await act(async () => root.render(<Watch />));
+    await act(() => install());
+    expect(requestLatexToolchainInstall).not.toHaveBeenCalled();
+    expect(kind).toBe("ready");
+  });
+
+  it("retains existing tool capabilities if an optional install request fails, and permits retry", async () => {
+    const tectonic = { ...missing, kind: "tectonic" as const, executable: "tectonic" };
+    readLatexToolchain.mockResolvedValue(tectonic);
+    requestLatexToolchainInstall.mockRejectedValueOnce(new Error("Connection interrupted"));
+    await act(async () => root.render(<Watch />));
+    await act(async () => install());
+    expect(kind).toBe("failed");
+    expect(summary).toBe("Ready");
+    expect(lastReport).toEqual(tectonic);
+    requestLatexToolchainInstall.mockResolvedValueOnce(downloading);
+    await act(async () => install());
+    expect(requestLatexToolchainInstall).toHaveBeenCalledTimes(2);
+    expect(kind).toBe("installing");
+    expect(summary).toBe("Ready");
+    expect(lastReport?.kind).toBe("tectonic");
+  });
+
   it("lets the install's answer lead over a check that finished before the server saw it", async () => {
     readLatexToolchain.mockResolvedValueOnce(missing);
     await act(async () => root.render(<Watch />));

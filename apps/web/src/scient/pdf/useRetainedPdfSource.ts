@@ -12,12 +12,15 @@ export function useRetainedPdfSource(
     source: PdfSourceDescriptor;
     asset: Extract<PdfSourceResolution, { _tag: "Success" }>;
   } | null>(null);
+  const authorized = asset._tag === "Success" && asset.waiting !== true;
   if (
-    asset._tag === "Success" &&
-    (retained?.documentKey !== documentKey || retained.asset.url !== asset.url)
+    authorized &&
+    (retained?.documentKey !== documentKey ||
+      retained.source !== source ||
+      retained.asset.url !== asset.url)
   ) {
     setRetained({ documentKey, source, asset });
   }
-  if (asset._tag === "Success") return { source, asset };
+  if (authorized) return { source, asset };
   return retained?.documentKey === documentKey ? retained : null;
 }

@@ -20,13 +20,7 @@ const same = (a: Draft, b: Draft) => a.source === b.source && a.baseRevision ===
 const storageKey = (key: string) => `scient:latex-visual-draft:source:${key}`;
 
 /** One source copy, coalesced off the input path. Workspace saving owns durability. */
-export function checkpointVisualDraft(
-  key: string,
-  _text: string,
-  _before: string,
-  source: string,
-  baseRevision: string,
-): void {
+export function checkpointVisualDraft(key: string, source: string, baseRevision: string): void {
   if (!observed.has(key)) {
     try {
       observed.set(key, localStorage.getItem(storageKey(key)));

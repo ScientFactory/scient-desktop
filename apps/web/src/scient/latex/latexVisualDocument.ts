@@ -1,6 +1,30 @@
 import type { JSONContent } from "@tiptap/core";
+import {
+  introducesLatexParagraphDirection,
+  latexParagraphDirectionSupported,
+  prepareLatexParagraphDirectionSetup,
+} from "./latexParagraphDirectionSetup";
 import { latexDirectionMark, latexDocumentLanguage } from "./latexLanguage";
-import { latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
+import {
+  latexSourceArgument,
+  latexSourceCommands,
+  latexCommands,
+  latexWithoutComments,
+  latexPreambleEnd,
+  latexDocumentBoundary,
+  maskLatexSource,
+  composeLatexSourcePatches,
+  latexCommentRanges as sourceCommentRanges,
+} from "./latexSourceSyntax";
+import {
+  applyDocumentSourcePatches,
+  type DocumentSourcePatch,
+} from "@scientfactory/scient-document";
+import {
+  latexOwnedSourcePatch,
+  type LatexOwnedSourcePatch,
+  type LatexSourceEdit,
+} from "./latexSourceEditPlan";
 import { setLatexEnvironmentOption } from "./latexObjectProperties";
 import { latexTableColumns, type LatexTableRule } from "./latexTableAuthoring";
 import { isLatexTikz, latexTikzEnd } from "./latexTikz";
@@ -76,9 +100,6 @@ import {
   ensureLatexMenuColors,
   latexPackageInventory,
   newLatexCommandPackages,
-  latexCommands,
-  latexWithoutComments,
-  latexPreambleEnd,
 } from "./latexPackages";
 import {
   latexLengthInches,
@@ -109,7 +130,6 @@ export interface LatexVisualDocument {
     readonly expansion: DocumentLoopExpansion;
     readonly virtual: LatexVisualDocument;
   };
-  readonly generatedOrigins?: readonly Pick<DocumentLoopExpansion, "raw" | "expanded">[];
 }
 
 function protectedLatexSources(nodes: readonly JSONContent[]): string[] {
@@ -165,9 +185,38 @@ function visualSetup(source: string): LatexVisualSetup {
   return setup;
 }
 
-export interface LatexRootUpdate {
-  readonly expected: string;
-  readonly next: string;
+export interface LatexVisualDocumentChange {
+  readonly source: string;
+  readonly edit: LatexSourceEdit;
+  readonly structural: boolean;
+  readonly projection: LatexVisualDocument;
+  readonly materializedGenerator?: boolean;
+}
+
+function declarationPatches(
+  source: string,
+  stages: readonly (readonly DocumentSourcePatch[])[],
+): readonly LatexOwnedSourcePatch[] {
+  const begin = latexPreambleEnd(source);
+  return composeLatexSourcePatches(source, stages).map((patch) =>
+    patch.start === patch.end
+      ? {
+          ...patch,
+          insertionAffinity: patch.start === begin ? ("after" as const) : ("before" as const),
+        }
+      : patch,
+  );
+}
+
+/** An explicit raw-block edit retains the block's original ownership and stale-range guard. */
+export function latexVisualBlockSourceEdit(
+  source: string,
+  block: Pick<LatexVisualSourceBlock, "from" | "to" | "source">,
+  replacement: string,
+): LatexSourceEdit | null {
+  if (source.slice(block.from, block.to) !== block.source) return null;
+  const patch = latexOwnedSourcePatch(source, block.from, block.to, replacement);
+  return { source, patches: patch ? [patch] : [] };
 }
 
 export const LATEX_HEADING_STYLES = [
@@ -195,19 +244,30 @@ function replaceOrInsertPreambleLine(
   value: string,
   insertionAt: number,
   eol: string,
+  onPatches?: (patches: readonly DocumentSourcePatch[]) => void,
 ): string {
-  const match = pattern.exec(source.slice(0, insertionAt));
-  if (match)
-    return source.slice(0, match.index) + value + source.slice(match.index + match[0].length);
-  const boundary = insertionAt > 0 && !/[\r\n]/u.test(source[insertionAt - 1]!) ? eol : "";
-  return source.slice(0, insertionAt) + boundary + value + eol + source.slice(insertionAt);
+  const match = pattern.exec(maskLatexSource(source.slice(0, insertionAt), { literals: true }));
+  const patch = match
+    ? latexOwnedSourcePatch(source, match.index, match.index + match[0].length, value)
+    : {
+        start: insertionAt,
+        end: insertionAt,
+        expected: "",
+        replacement:
+          (insertionAt > 0 && !/[\r\n]/u.test(source[insertionAt - 1]!) ? eol : "") + value + eol,
+      };
+  if (patch) onPatches?.([patch]);
+  return patch ? applyDocumentSourcePatches(source, [patch]) : source;
 }
 
 export function updateLatexVisualLayoutSource(
   source: string,
   update: Partial<LatexVisualLayoutUpdate>,
-): string | null {
-  const classAt = findDelimiter(source, "\\documentclass", 0);
+): { source: string; edit: LatexSourceEdit } | null {
+  const classAt =
+    latexSourceCommands(source).find(
+      (command) => command.name === "documentclass" && command.depth === 0,
+    )?.from ?? -1;
   const documentClass = /^\\documentclass\s*(?:\[([^\]]*)\])?\s*\{([^{}]+)\}/u.exec(
     source.slice(classAt),
   );
@@ -229,6 +289,10 @@ export function updateLatexVisualLayoutSource(
       return null;
   }
   let changed = source;
+  const stages: (readonly DocumentSourcePatch[])[] = [];
+  const record = (patches: readonly DocumentSourcePatch[]) => {
+    stages.push(patches);
+  };
   if (
     update.baseFontPt !== undefined ||
     update.paper !== undefined ||
@@ -250,10 +314,16 @@ export function updateLatexVisualLayoutSource(
     if (update.paper !== undefined) options.push(`${update.paper}paper`);
     if (update.orientation === "landscape") options.push("landscape");
     const value = options.filter(Boolean).join(",");
-    changed =
-      source.slice(0, classAt) +
-      `\\documentclass${value ? `[${value}]` : ""}{${targetClass}}` +
-      source.slice(classAt + documentClass[0].length);
+    const patch = latexOwnedSourcePatch(
+      source,
+      classAt,
+      classAt + documentClass[0].length,
+      `\\documentclass${value ? `[${value}]` : ""}{${targetClass}}`,
+    );
+    if (patch) {
+      record([patch]);
+      changed = applyDocumentSourcePatches(source, [patch]);
+    }
   }
   const margins =
     update.margins ??
@@ -327,23 +397,45 @@ export function updateLatexVisualLayoutSource(
         .join(",");
     const at = findDelimiter(changed, "\\begin{document}", 0);
     const preamble = changed.slice(0, at);
+    const clean = maskLatexSource(preamble, { literals: true });
     const geometry = /\\usepackage(?:\[([^\]]*)\])?\{geometry\}/u;
     const configure = /\\geometry\s*\{((?:[^{}]|\{[^{}]*\})*)\}/gu;
     if (
-      geometry.test(preamble) ||
-      /\\usepackage(?:\[[^\]]*\])?\{[^{}]*\bgeometry\b[^{}]*\}/u.test(preamble)
+      geometry.test(clean) ||
+      /\\usepackage(?:\[[^\]]*\])?\{[^{}]*\bgeometry\b[^{}]*\}/u.test(clean)
     ) {
-      let updated = preamble.replace(
-        geometry,
-        (_match, value: string | undefined) => `\\usepackage[${options(value ?? "")}]{geometry}`,
-      );
-      if (configure.test(preamble))
-        updated = updated.replace(
-          configure,
-          (_match, value: string) => `\\geometry{${options(value)}}`,
+      const patches: DocumentSourcePatch[] = [];
+      const loaded = geometry.exec(clean);
+      if (loaded) {
+        const patch = latexOwnedSourcePatch(
+          changed,
+          loaded.index,
+          loaded.index + loaded[0].length,
+          `\\usepackage[${options(loaded[1] ?? "")}]{geometry}`,
         );
-      else if (updated === preamble) updated += `\\geometry{${options("")}}${eol}`;
-      changed = updated + changed.slice(at);
+        if (patch) patches.push(patch);
+      }
+      const configurations = [...clean.matchAll(configure)];
+      for (const configuration of configurations) {
+        const patch = latexOwnedSourcePatch(
+          changed,
+          configuration.index,
+          configuration.index + configuration[0].length,
+          `\\geometry{${options(configuration[1]!)}}`,
+        );
+        if (patch) patches.push(patch);
+      }
+      if (!loaded && !configurations.length)
+        patches.push({
+          start: at,
+          end: at,
+          expected: "",
+          replacement: `\\geometry{${options("")}}${eol}`,
+        });
+      if (patches.length) {
+        record(patches);
+        changed = applyDocumentSourcePatches(changed, patches);
+      }
     } else if (margins !== undefined) {
       // Introducing geometry must retain the other standard-class margins.
       const profile = latexVisualLayoutProfile(source);
@@ -362,11 +454,16 @@ export function updateLatexVisualLayoutSource(
             })
             .join(",")
         : "";
-      changed =
-        preamble +
-        (preamble.endsWith("\n") ? "" : eol) +
-        `\\usepackage[${[retained, options("")].filter(Boolean).join(",")}]{geometry}${eol}` +
-        changed.slice(at);
+      const patch = {
+        start: at,
+        end: at,
+        expected: "",
+        replacement:
+          (preamble.endsWith("\n") ? "" : eol) +
+          `\\usepackage[${[retained, options("")].filter(Boolean).join(",")}]{geometry}${eol}`,
+      };
+      record([patch]);
+      changed = applyDocumentSourcePatches(changed, [patch]);
     }
   }
   if (update.paragraphStyle !== undefined) {
@@ -380,10 +477,11 @@ export function updateLatexVisualLayoutSource(
         `\\setlength{\\${command}}{${value}}`,
         findDelimiter(changed, "\\begin{document}", 0),
         eol,
+        record,
       );
     }
   }
-  return changed;
+  return { source: changed, edit: { source, patches: declarationPatches(source, stages) } };
 }
 
 const INLINE_ATOMS = new Set([
@@ -671,39 +769,10 @@ function commentEnd(source: string, from: number): number {
 
 /** Comments are source trivia; percent signs in escaped or literal text are content. */
 function latexCommentRanges(source: string): { from: number; to: number }[] {
-  const ranges: { from: number; to: number }[] = [];
-  let cursor = 0;
-  for (const token of source.matchAll(/\\([A-Za-z]+|[^\r\n])|%/gu)) {
-    const from = token.index;
-    if (from < cursor) continue;
-    if (token[0] === "%") {
-      cursor = commentEnd(source, from);
-      ranges.push({ from, to: cursor });
-    } else if (token[1] === "verb") {
-      const opening = from + token[0].length + Number(source[from + token[0].length] === "*");
-      const delimiter = source[opening];
-      if (delimiter && !/\s/u.test(delimiter)) {
-        const closing = source.indexOf(delimiter, opening + 1);
-        const newline = source.indexOf("\n", opening + 1);
-        if (closing >= 0 && (newline < 0 || closing < newline)) cursor = closing + 1;
-      }
-    } else if (token[1] === "begin") {
-      const literal = latexLiteralBlock(source, from);
-      if (literal) {
-        cursor = literal.end;
-        continue;
-      }
-      const environment = /^\s*\{(verbatim\*?|Verbatim|alltt|lstlisting|tcblisting|minted)\}/u.exec(
-        source.slice(from + token[0].length),
-      );
-      if (environment) {
-        const closing = `\\end{${environment[1]}}`;
-        const end = source.indexOf(closing, from + token[0].length + environment[0].length);
-        cursor = end < 0 ? source.length : end + closing.length;
-      }
-    }
-  }
-  return ranges;
+  return sourceCommentRanges(source, true).map(({ from, to }) => ({
+    from,
+    to: source[to] === "\r" && source[to + 1] === "\n" ? to + 2 : source[to] === "\n" ? to + 1 : to,
+  }));
 }
 
 function withoutVisualComments(source: string): string {
@@ -987,6 +1056,21 @@ function parseHeading(source: string): JSONContent | null {
   };
 }
 
+interface LatexListItemSource {
+  readonly from: number;
+  readonly to: number;
+  readonly bodyFrom: number;
+  readonly bodyTo: number;
+  readonly blocks: readonly LatexVisualSourceBlock[];
+}
+interface LatexListSource {
+  readonly raw: string;
+  readonly bodyFrom: number;
+  readonly close: number;
+  readonly environment: string;
+  readonly items: readonly LatexListItemSource[];
+}
+
 function parseList(
   source: string,
   depth: number,
@@ -1032,20 +1116,39 @@ function parseList(
   if (matches.length === 0) return null;
   if (body.slice(0, matches[0]!.index).trim()) return null;
   const items: JSONContent[] = [];
+  const itemRanges: LatexListItemSource[] = [];
   for (let index = 0; index < matches.length; index++) {
     const start = matches[index]!.index + matches[index]!.length;
     const end = index + 1 < matches.length ? matches[index + 1]!.index! : body.length;
-    const item = body.slice(start, end).trim();
-    const itemFrom =
-      bodyFrom + start + body.slice(start, end).length - body.slice(start, end).trimStart().length;
-    sourceRanges?.push({ from: itemFrom, to: itemFrom + item.length });
+    const [trimFrom, trimTo] = trimSourceRange(body, start, end);
+    const item = body.slice(trimFrom, trimTo);
+    sourceRanges?.push({ from: bodyFrom + trimFrom, to: bodyFrom + trimTo });
     const projected = projectLatexVisualDocument(item, depth + 1, setup);
     if (projected.rawBlocks > 0 || projected.blocks[0]?.node.type !== "paragraph") return null;
-    items.push({ type: "listItem", content: projected.content.content ?? [] });
+    const range: LatexListItemSource = {
+      from: bodyFrom + matches[index]!.index,
+      to: bodyFrom + end,
+      bodyFrom: bodyFrom + trimFrom,
+      bodyTo: bodyFrom + trimTo,
+      blocks: projected.blocks,
+    };
+    itemRanges.push(range);
+    items.push({
+      type: "listItem",
+      attrs: { sourceMeta: { from: range.from } },
+      content: projected.content.content ?? [],
+    });
   }
   return {
     type: environment === "itemize" ? "bulletList" : "orderedList",
     attrs: {
+      sourceMeta: {
+        raw: source,
+        bodyFrom,
+        close,
+        environment,
+        items: itemRanges,
+      } satisfies LatexListSource,
       ...(options.resume ? { resume: true } : {}),
       ...(options.start !== 1 ? { start: options.start } : {}),
       ...(optionRange ? { latexListOptions: optionRange.source } : {}),
@@ -1219,6 +1322,10 @@ function matchingEnvironmentEnd(source: string, from: number, depth = 0): number
 }
 
 function findDelimiter(source: string, delimiter: string, from: number): number {
+  if (delimiter === "\\begin{document}") {
+    const at = latexDocumentBoundary(source)?.from ?? -1;
+    return at >= from ? at : -1;
+  }
   for (let index = from; index < source.length; index++) {
     if (source[index] === "%") {
       const end = source.indexOf("\n", index);
@@ -1504,22 +1611,34 @@ function titleMetadata(source: string) {
 }
 
 /** Restore the printed title without replacing existing document metadata. */
-function ensureLatexTitleBlock(source: string, defaultTitle: string): string | null {
-  const marker = "\\begin{document}";
-  const begin = findDelimiter(source, marker, 0);
-  if (begin < 0) return null;
-  if (/\\maketitle\b/u.test(source.slice(begin + marker.length).replace(/(?<!\\)%[^\r\n]*/gu, "")))
+function ensureLatexTitleBlock(
+  source: string,
+  defaultTitle: string,
+  onPatches?: (patches: readonly DocumentSourcePatch[]) => void,
+): string | null {
+  const boundary = latexDocumentBoundary(source);
+  if (!boundary) return null;
+  const begin = boundary.from;
+  if (
+    /\\maketitle\b/u.test(
+      maskLatexSource(source.slice(boundary.bodyFrom, boundary.bodyTo), { literals: true }),
+    )
+  )
     return source;
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
   let changed = source;
   if (commandArgument(source.slice(0, begin), "title") === null)
     changed =
-      setPreambleCommandArgument(changed, "title", escapeText(defaultTitle), eol) ?? changed;
+      setPreambleCommandArgument(changed, "title", escapeText(defaultTitle), eol, onPatches) ??
+      changed;
   for (const command of ["author", "date"]) {
     if (commandArgument(source.slice(0, begin), command) === null)
-      changed = setPreambleCommandArgument(changed, command, "", eol) ?? changed;
+      changed = setPreambleCommandArgument(changed, command, "", eol, onPatches) ?? changed;
   }
-  const at = findDelimiter(changed, marker, 0) + marker.length;
+  const changedBoundary = latexDocumentBoundary(changed);
+  if (!changedBoundary) return null;
+  const at = changedBoundary.bodyFrom;
+  onPatches?.([{ start: at, end: at, expected: "", replacement: eol + "\\maketitle" + eol }]);
   return changed.slice(0, at) + eol + "\\maketitle" + eol + changed.slice(at);
 }
 
@@ -1529,17 +1648,18 @@ export function prepareLatexDocumentTitle(
   paragraphIndex?: number,
 ): {
   source: string;
+  edit: LatexSourceEdit;
   previousTitle: string;
   title: string;
 } | null {
   const projected = projectLatexVisualDocument(source);
   const printed = projected.blocks.filter((block) => block.node.attrs?.kind === "title");
-  const begin = findDelimiter(source, "\\begin{document}", 0);
-  if (begin < 0 || printed.length > 1) return null;
+  const boundary = latexDocumentBoundary(source);
+  if (!boundary || printed.length > 1) return null;
   // A custom titlepage is not evidence that a standard title block is missing.
-  const uncommented = source.replace(/(?<!\\)%[^\r\n]*/gu, "");
+  const uncommented = maskLatexSource(source, { literals: true });
   if (/\\begin\s*\{titlepage\}/u.test(uncommented)) return null;
-  const body = source.slice(begin).replace(/(?<!\\)%[^\r\n]*/gu, "");
+  const body = uncommented.slice(boundary.bodyFrom, boundary.bodyTo);
   if (
     /\\(?:title|author|date)\s*\{/u.test(body) ||
     (printed.length === 0 && /\\maketitle\b/u.test(body))
@@ -1548,6 +1668,10 @@ export function prepareLatexDocumentTitle(
   const previous = titleMetadata(source);
   if (previous.sourceMeta.titleEditable === false) return null;
   let changed = source;
+  const stages: (readonly DocumentSourcePatch[])[] = [];
+  const record = (patches: readonly DocumentSourcePatch[]) => {
+    stages.push(patches);
+  };
   let title = String(previous.title ?? "");
   if (paragraphIndex !== undefined) {
     const paragraph = projected.blocks[paragraphIndex];
@@ -1565,28 +1689,50 @@ export function prepareLatexDocumentTitle(
       .trim();
     if (!title) return null;
     changed = source.slice(0, paragraph.from) + source.slice(paragraph.to);
+    record([
+      { start: paragraph.from, end: paragraph.to, replacement: "", expected: paragraph.source },
+    ]);
     changed =
       setPreambleCommandArgument(
         changed,
         "title",
         escapeText(title),
         source.includes("\r\n") ? "\r\n" : "\n",
+        record,
       ) ?? changed;
   }
-  changed = ensureLatexTitleBlock(changed, title) ?? changed;
-  return { source: changed, previousTitle: String(previous.title ?? ""), title };
+  changed = ensureLatexTitleBlock(changed, title, record) ?? changed;
+  const patches = declarationPatches(source, stages);
+  return {
+    source: changed,
+    edit: { source, patches },
+    previousTitle: String(previous.title ?? ""),
+    title,
+  };
 }
 
-/** Validate source snapshots carried by explicit document operations and their undo steps. */
-export function projectLatexTitleSourceEdit(
-  source: string,
+/** Project an owned edit (including history inverses), never an unowned whole-source escape. */
+export function projectLatexSourceEdit(
+  edit: LatexSourceEdit,
   content: JSONContent,
-  rootSource?: string,
-) {
-  const projected = projectLatexVisualDocument(source, 0, rootSource ?? source);
+  setupSource?: string,
+): LatexVisualDocumentChange | null {
+  let source: string,
+    setup = setupSource;
+  try {
+    source = applyDocumentSourcePatches(edit.source, edit.patches);
+    if (edit.root) {
+      const root = applyDocumentSourcePatches(edit.root.source, edit.root.patches);
+      if (setup === edit.root.source) setup = root;
+    } else if (setup === edit.source) setup = source;
+  } catch {
+    return null;
+  }
+  const projected = projectLatexVisualDocument(source, 0, setup ?? source);
   if (roundTripSignature(projected.content) !== roundTripSignature(content)) return null;
   return {
     source,
+    edit,
     structural: true,
     projection: adoptLatexVisualContent(source, content, projected),
   };
@@ -4161,18 +4307,15 @@ export function projectLatexVisualDocument(
         ...virtual,
         source,
         generated: { expansion, virtual },
-        generatedOrigins: [{ raw: expansion.raw, expanded: expansion.expanded }],
         blocks: virtual.blocks.map((block) => {
           const range = documentLoopSourceRange(expansion, block.from, block.to);
           return { ...block, ...range, source: source.slice(range.from, range.to) };
         }),
       };
   }
-  const beginMarker = "\\begin{document}";
-  const endMarker = "\\end{document}";
-  const begin = findDelimiter(source, beginMarker, 0);
-  const bodyFrom = begin < 0 ? 0 : begin + beginMarker.length;
-  const body = source.slice(bodyFrom);
+  const boundary = latexDocumentBoundary(source);
+  const bodyFrom = boundary?.bodyFrom ?? 0;
+  const body = source.slice(bodyFrom, boundary?.bodyTo);
   const blocks: LatexVisualSourceBlock[] = [];
   const manualContents: { from: number; level: number; number: string; title: string }[] = [];
   let dynamicSyntax = /\\catcode\b/u.test(withoutVisualComments(source.slice(0, bodyFrom)));
@@ -4181,7 +4324,6 @@ export function projectLatexVisualDocument(
     const whitespace = /^\s+/u.exec(body.slice(cursor));
     if (whitespace) cursor += whitespace[0].length;
     if (cursor >= body.length) break;
-    if (body.startsWith(endMarker, cursor)) break;
     if (body[cursor] === "%") {
       cursor = commentEnd(body, cursor);
       continue;
@@ -5562,6 +5704,7 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     return serialized;
   }
   if (node.type === "bulletList" || node.type === "orderedList") {
+    if (node.attrs?.sourceMeta?.items) return serializeLosslessList(node);
     const environment = node.type === "bulletList" ? "itemize" : "enumerate";
     const items = (node.content ?? []).map((item) => {
       const children = (item.content ?? []).map(serializeLatexVisualBlock);
@@ -5604,6 +5747,8 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
       .filter(([key, value]) => {
         if (
           key === "sourceId" ||
+          (["bulletList", "orderedList", "listItem"].includes(node.type ?? "") &&
+            key === "sourceMeta") ||
           (node.type === "latexInlineCommand" && key === "raw") ||
           (node.type === "latexScientific" && (key === "raw" || key === "titleSource")) ||
           (node.type === "latexDisplayMath" && key === "numberingSource") ||
@@ -5881,16 +6026,38 @@ export function adoptLatexVisualContent(
   content: JSONContent,
   parsed = projectLatexVisualDocument(source),
 ): LatexVisualDocument {
+  const adopt = (value: JSONContent, native: JSONContent | undefined): JSONContent => {
+    if (!native) return value;
+    let children: JSONContent[] | undefined;
+    value.content?.forEach((child, index) => {
+      const adopted = adopt(child, native.content?.[index]);
+      if (adopted === child) return;
+      children ??= value.content!.slice();
+      children[index] = adopted;
+    });
+    const ownsListRanges =
+      ["bulletList", "orderedList", "listItem"].includes(value.type ?? "") &&
+      value.attrs?.sourceMeta !== native.attrs?.sourceMeta;
+    if (!children && !ownsListRanges) return value;
+    return {
+      ...value,
+      ...(ownsListRanges
+        ? { attrs: { ...value.attrs, sourceMeta: native.attrs?.sourceMeta } }
+        : {}),
+      ...(children ? { content: children } : {}),
+    };
+  };
+  const adopted = adopt(content, parsed.content);
   return {
     ...parsed,
-    content,
+    content: adopted,
     ...(parsed.generated
       ? {
           generated: {
             ...parsed.generated,
             virtual: adoptLatexVisualContent(
               parsed.generated.virtual.source,
-              content,
+              adopted,
               parsed.generated.virtual,
             ),
           },
@@ -5898,7 +6065,7 @@ export function adoptLatexVisualContent(
       : {}),
     blocks: parsed.blocks.map((block, index) => ({
       ...block,
-      node: content.content?.[index] ?? block.node,
+      node: adopted.content?.[index] ?? block.node,
     })),
   };
 }
@@ -5921,11 +6088,15 @@ function ensureScientificEnvironmentDeclarations(
   source: string,
   environments: ReadonlySet<string>,
   eol: string,
+  onPatches?: (patches: readonly DocumentSourcePatch[]) => void,
+  setupSource = source,
 ): string {
   if (environments.size === 0) return source;
   const begin = findDelimiter(source, "\\begin{document}", 0);
   if (begin < 0) return source;
-  const preamble = source.slice(0, begin).replace(/(?<!\\)%[^\r\n]*/gu, "");
+  const preamble = maskLatexSource(setupSource.slice(0, latexPreambleEnd(setupSource)), {
+    literals: true,
+  });
   const declarations: string[] = [];
   for (const environment of environments) {
     if (environment === "abstract") continue;
@@ -5953,6 +6124,7 @@ function ensureScientificEnvironmentDeclarations(
   if (declarations.length === 0) return source;
   const boundary = begin > 0 && !/[\r\n]/u.test(source[begin - 1]!) ? eol : "";
   const insertion = [`% Scient visual statement environments`, ...declarations, ""].join(eol);
+  onPatches?.([{ start: begin, end: begin, expected: "", replacement: boundary + insertion }]);
   return source.slice(0, begin) + boundary + insertion + source.slice(begin);
 }
 
@@ -6006,8 +6178,16 @@ function requiredObjectPackages(nodes: readonly JSONContent[]): Set<string> {
   return packages;
 }
 
-function ensureMathSymbolDefinitions(source: string, nextMath: string, eol: string): string {
-  const { preamble, end } = latexPackageInventory(source);
+function ensureMathSymbolDefinitions(
+  source: string,
+  nextMath: string,
+  eol: string,
+  onPatches?: (patches: readonly DocumentSourcePatch[]) => void,
+  setupSource = source,
+): string {
+  const destination = latexPackageInventory(source);
+  const { end } = destination;
+  const { preamble } = setupSource === source ? destination : latexPackageInventory(setupSource);
   // wasysym's nointegrals option leaves these variants under private names.
   const definitions = ["varint", "varoint"]
     .filter(
@@ -6019,6 +6199,7 @@ function ensureMathSymbolDefinitions(source: string, nextMath: string, eol: stri
     .join("");
   if (!definitions) return source;
   const boundary = end > 0 && !/[\r\n]/u.test(source[end - 1]!) ? eol : "";
+  onPatches?.([{ start: end, end, expected: "", replacement: boundary + definitions }]);
   return source.slice(0, end) + boundary + definitions + source.slice(end);
 }
 
@@ -6027,17 +6208,23 @@ function setPreambleCommandArgument(
   command: string,
   value: string,
   eol: string,
+  onPatches?: (patches: readonly DocumentSourcePatch[]) => void,
 ): string | null {
   const begin = findDelimiter(source, "\\begin{document}", 0);
   if (begin < 0) return null;
   const range = latexTitleDeclarations(source).get(command);
-  if (range) return source.slice(0, range.from) + value + source.slice(range.to);
+  if (range) {
+    const patch = latexOwnedSourcePatch(source, range.from, range.to, value);
+    if (patch) onPatches?.([patch]);
+    return patch ? applyDocumentSourcePatches(source, [patch]) : source;
+  }
   return replaceOrInsertPreambleLine(
     source,
     new RegExp("(?!)", "u"),
     `\\${command}{${value}}`,
     begin,
     eol,
+    onPatches,
   );
 }
 
@@ -6045,6 +6232,7 @@ function updateTitleMetadata(
   source: string,
   previous: JSONContent,
   node: JSONContent,
+  onPatches?: (patches: readonly DocumentSourcePatch[]) => void,
 ): string | null {
   if (
     typeof node.attrs?.title !== "string" ||
@@ -6065,6 +6253,7 @@ function updateTitleMetadata(
         "title",
         node.attrs.title.split(/\r?\n/u).map(escapeText).join(`\\\\${eol}`),
         eol,
+        onPatches,
       ) ?? changed;
   if (
     node.attrs.authorEnabled !== previous.attrs?.authorEnabled ||
@@ -6072,13 +6261,24 @@ function updateTitleMetadata(
   ) {
     const begin = findDelimiter(changed, "\\begin{document}", 0);
     if (begin < 0) return null;
-    changed = changed.slice(0, begin).replace(HIDDEN_AUTHOR_COMMENT, "") + changed.slice(begin);
+    const hidden = HIDDEN_AUTHOR_COMMENT.exec(changed.slice(0, begin));
+    if (hidden) {
+      const patch = {
+        start: hidden.index,
+        end: hidden.index + hidden[0].length,
+        replacement: "",
+        expected: hidden[0],
+      };
+      onPatches?.([patch]);
+      changed = applyDocumentSourcePatches(changed, [patch]);
+    }
     changed =
       setPreambleCommandArgument(
         changed,
         "author",
         node.attrs.authorEnabled ? authorSource : "",
         eol,
+        onPatches,
       ) ?? changed;
   }
   if (
@@ -6091,7 +6291,7 @@ function updateTitleMetadata(
         : node.attrs.dateMode === "today" || node.attrs.dateMode === "default"
           ? "\\today"
           : escapeText(node.attrs.date);
-    changed = setPreambleCommandArgument(changed, "date", dateValue, eol) ?? changed;
+    changed = setPreambleCommandArgument(changed, "date", dateValue, eol, onPatches) ?? changed;
   }
   return changed;
 }
@@ -6524,6 +6724,215 @@ function splitParagraphSource(
   return results;
 }
 
+function authoredListParagraphs(
+  blocks: readonly LatexVisualSourceBlock[],
+): LatexVisualSourceBlock[] {
+  return blocks.flatMap((block) => {
+    if (block.node.type === "paragraph") return [block];
+    const meta = block.node.attrs?.sourceMeta as LatexListSource | undefined;
+    return meta?.items ? authoredListParagraphs(meta.items.flatMap((item) => item.blocks)) : [];
+  });
+}
+
+/** A list join or lift reuses authored inline tokens, including their wrappers. */
+function joinedListParagraphSource(
+  blocks: readonly LatexVisualSourceBlock[],
+  next: JSONContent,
+): string | null {
+  if (next.type !== "paragraph") return null;
+  const desired = inlineEditorUnits(next.content ?? []);
+  if (!desired.length) return "\\par";
+  const units = blocks.flatMap((block) =>
+    block.node.type === "paragraph"
+      ? (inlineSourceUnits(block.source) ?? []).map((unit) => ({ ...unit, source: block.source }))
+      : [],
+  );
+  const firstKey = latexVisualNodeSignature(desired[0]!);
+  for (let start = 0; start < units.length; start++) {
+    if (units[start]!.key !== firstKey) continue;
+    let at = start,
+      value = "",
+      wrappers: readonly string[] = [],
+      valid = true;
+    for (const child of desired) {
+      const key = latexVisualNodeSignature(child);
+      while (
+        units[at]?.key !== key &&
+        units[at]?.node.type === "text" &&
+        /^\s+$/u.test(units[at]!.node.text ?? "")
+      )
+        at++;
+      const unit = units[at++];
+      if (!unit || unit.key !== key) {
+        valid = false;
+        break;
+      }
+      let shared = 0;
+      while (
+        shared < wrappers.length &&
+        shared < unit.wrappers.length &&
+        wrappers[shared] === unit.wrappers[shared]
+      )
+        shared++;
+      value +=
+        "}".repeat(wrappers.length - shared) +
+        unit.wrappers.slice(shared).join("") +
+        unit.source.slice(unit.from, unit.to);
+      wrappers = unit.wrappers;
+    }
+    if (valid) return value + "}".repeat(wrappers.length);
+  }
+  return null;
+}
+
+/** Retain surviving list children and item separators; only newly authored structure is canonical. */
+function serializeLosslessList(
+  node: JSONContent,
+  original?: JSONContent,
+  onPatches?: (patches: readonly DocumentSourcePatch[]) => void,
+): string | null {
+  const meta = (original?.attrs?.sourceMeta ?? node.attrs?.sourceMeta) as
+    | LatexListSource
+    | undefined;
+  if (!meta?.items || typeof meta.raw !== "string") return null;
+  const environment = node.type === "bulletList" ? "itemize" : "enumerate";
+  const start = Number(node.attrs?.start ?? 1);
+  if (!Number.isSafeInteger(start) || start < 1) return null;
+  const options =
+    environment === "enumerate"
+      ? latexListOptionsSource(node.attrs?.latexListOptions, start, node.attrs?.resume === true)
+      : "";
+  if (options === null) return null;
+  const oldItems =
+    original?.content ?? parseList(meta.raw, 0, visualSetup(meta.raw))?.content ?? [];
+  const authoredParagraphs = authoredListParagraphs(meta.items.flatMap((owner) => owner.blocks));
+  const used = new Set<number>();
+  const eol = meta.raw.includes("\r\n") ? "\r\n" : "\n";
+  const values: string[] = [];
+  const itemOwners: number[] = [];
+  const splitValues = new Map<number, string>();
+  for (const range of meta.items) {
+    const descendants = (node.content ?? []).flatMap((item, index) =>
+      item.attrs?.sourceMeta?.from === range.from ? [{ item, index }] : [],
+    );
+    if (
+      descendants.length < 2 ||
+      range.blocks.length !== 1 ||
+      descendants.some(
+        ({ item }) => item.content?.length !== 1 || item.content[0]?.type !== "paragraph",
+      )
+    )
+      continue;
+    const split = splitParagraphSource(
+      range.blocks[0]!,
+      descendants.map(({ item }) => item.content![0]!),
+    );
+    if (split)
+      descendants.forEach(({ index }, at) => {
+        splitValues.set(index, split[at]!);
+      });
+  }
+  for (const [index, item] of (node.content ?? []).entries()) {
+    let oldIndex = meta.items.findIndex(
+      (range, at) => !used.has(at) && item.attrs?.sourceMeta?.from === range.from,
+    );
+    if (oldIndex < 0)
+      oldIndex = oldItems.findIndex(
+        (old, at) =>
+          !used.has(at) && latexVisualNodeSignature(old) === latexVisualNodeSignature(item),
+      );
+    if (oldIndex < 0 && oldItems.length === node.content?.length && !used.has(index))
+      oldIndex = index;
+    const range = meta.items[oldIndex];
+    if (range) used.add(oldIndex);
+    itemOwners.push(oldIndex);
+    const split = splitValues.get(index);
+    if (split !== undefined) {
+      const owner = meta.items.find(
+        (candidate) => candidate.from === item.attrs?.sourceMeta?.from,
+      )!;
+      values.push(
+        (range ? meta.raw.slice(range.from, range.bodyFrom) : "\\item ") +
+          split +
+          meta.raw.slice(owner.bodyTo, owner.to),
+      );
+      continue;
+    }
+    const children: string[] = [];
+    const oldChildren = oldItems[oldIndex]?.content ?? [];
+    const usedChildren = new Set<number>();
+    for (const [childIndex, child] of (item.content ?? []).entries()) {
+      let before = oldChildren.findIndex(
+        (old, at) =>
+          !usedChildren.has(at) &&
+          latexVisualNodeSignature(old) === latexVisualNodeSignature(child),
+      );
+      if (
+        before < 0 &&
+        oldChildren.length === item.content?.length &&
+        !usedChildren.has(childIndex)
+      )
+        before = childIndex;
+      const block = range?.blocks[before];
+      if (block) usedChildren.add(before);
+      const value =
+        block && latexVisualNodeSignature(block.node) === latexVisualNodeSignature(child)
+          ? block.source
+          : block && ["bulletList", "orderedList"].includes(child.type ?? "")
+            ? serializeLosslessList(child, block.node)
+            : (joinedListParagraphSource(authoredParagraphs, child) ??
+              (block
+                ? (minimallyPatchedBlock(block, child) ?? serializeLatexVisualBlock(child))
+                : serializeLatexVisualBlock(child)));
+      if (value === null) return null;
+      const previousBlock = range?.blocks[before - 1];
+      const gap =
+        children.length && block && previousBlock && before === childIndex
+          ? meta.raw.slice(range!.bodyFrom + previousBlock.to, range!.bodyFrom + block.from)
+          : children.length
+            ? eol + eol
+            : "";
+      children.push(gap + value);
+    }
+    const prefix = range ? meta.raw.slice(range.from, range.bodyFrom) : "\\item ";
+    const suffix = range ? meta.raw.slice(range.bodyTo, range.to) : eol;
+    values.push(prefix + children.join("") + suffix);
+  }
+  const originalOptions = parseLatexListOptions(
+    optionalArgumentRange(meta.raw, `\\begin{${meta.environment}}`.length)?.source ?? "",
+  );
+  const unchangedOpening =
+    environment === meta.environment &&
+    originalOptions?.start === start &&
+    originalOptions?.resume === (node.attrs?.resume === true) &&
+    originalOptions?.label ===
+      parseLatexListOptions(String(node.attrs?.latexListOptions ?? ""))?.label;
+  const opening = unchangedOpening
+    ? meta.raw.slice(0, meta.bodyFrom)
+    : `\\begin{${environment}}${options}`;
+  const first = meta.items[0];
+  const leading = first ? meta.raw.slice(meta.bodyFrom, first.from) : eol;
+  const tail =
+    environment === meta.environment ? meta.raw.slice(meta.close) : `\\end{${environment}}`;
+  if (
+    onPatches &&
+    itemOwners.length === meta.items.length &&
+    itemOwners.every((owner, index) => owner === index)
+  ) {
+    const patches: DocumentSourcePatch[] = [];
+    for (const [from, to, value] of [
+      [0, meta.bodyFrom, opening],
+      ...meta.items.map((range, index) => [range.from, range.to, values[index]!]),
+      [meta.close, meta.raw.length, tail],
+    ] as [number, number, string][]) {
+      const patch = latexOwnedSourcePatch(meta.raw, from, to, value);
+      if (patch) patches.push(patch);
+    }
+    onPatches(patches);
+  }
+  return opening + leading + values.join("") + tail;
+}
+
 function minimallyPatchedBlock(
   block: LatexVisualSourceBlock,
   next: JSONContent,
@@ -6780,7 +7189,7 @@ function patchScientificStructure(
       type: "doc",
       content: next.content ?? [],
     },
-    { rootSource, allowRootUpdates: true },
+    { rootSource, setupSource: rootSource, allowRootUpdates: true },
   );
   if (!body) return null;
   let changedBody = body.source;
@@ -6923,79 +7332,79 @@ export function applyLatexVisualDocumentChange(
   nextContent: JSONContent,
   context?: {
     rootSource?: string | null;
+    setupSource?: string | null;
     allowRootUpdates?: boolean;
     onMissingRequirement?: (message: string) => void;
   },
-): {
-  source: string;
-  structural: boolean;
-  projection: LatexVisualDocument;
-  rootUpdate?: LatexRootUpdate;
-  origin?: number;
-  materializedGenerator?: boolean;
-} | null {
+): LatexVisualDocumentChange | null {
   if (projection.source !== source) return null;
-  if (projection.generated || projection.generatedOrigins?.length) {
+  if (projection.generated) {
     if (latexVisualNodeSignature(projection.content) === latexVisualNodeSignature(nextContent))
-      return { source, structural: false, projection };
-    const { generated, generatedOrigins, ...ordinary } = projection;
-    const virtual = generated?.virtual ?? ordinary;
+      return { source, edit: { source, patches: [] }, structural: false, projection };
+    const { expansion, virtual } = projection.generated;
     const changed = applyLatexVisualDocumentChange(virtual.source, virtual, nextContent, context);
     if (!changed) return null;
-    const origins = generatedOrigins ?? [];
-    let result = changed.source;
-    for (const origin of origins) {
-      const at = result.indexOf(origin.expanded);
-      if (at >= 0 && result.indexOf(origin.expanded, at + 1) < 0)
-        result = result.slice(0, at) + origin.raw + result.slice(at + origin.expanded.length);
+    const virtualEnd = expansion.from + expansion.expanded.length;
+    const generatedPatches: LatexOwnedSourcePatch[] = [];
+    const directPatches: LatexOwnedSourcePatch[] = [];
+    for (const patch of changed.edit.patches) {
+      const ownsGenerator =
+        patch.start === patch.end
+          ? (patch.start > expansion.from && patch.start < virtualEnd) ||
+            (patch.start === expansion.from && patch.insertionAffinity === "after") ||
+            (patch.start === virtualEnd && patch.insertionAffinity === "before")
+          : patch.start < virtualEnd && patch.end > expansion.from;
+      if (ownsGenerator) generatedPatches.push(patch);
+      else {
+        const range = documentLoopSourceRange(expansion, patch.start, patch.end);
+        directPatches.push({
+          ...patch,
+          start: range.from,
+          end: range.to,
+          expected: source.slice(range.from, range.to),
+        });
+      }
     }
-    // Once materialized, normal typing retains the existing incremental source map.
-    if (result === changed.source)
-      return {
-        ...changed,
-        materializedGenerator: generated !== undefined,
-        ...(generated && changed.origin !== undefined
-          ? {
-              origin: documentLoopSourceRange(
-                generated.expansion,
-                changed.origin,
-                changed.origin + 1,
-              ).from,
-            }
-          : {}),
-        projection: { ...changed.projection, generatedOrigins: origins },
-      };
-    const project = (value: string) =>
-      projectLatexVisualDocument(
-        value,
-        0,
-        value.includes("\\begin{document}")
-          ? value
-          : (changed.rootUpdate?.next ?? context?.rootSource ?? projection.setup ?? value),
-      );
-    let parsed = project(result);
-    if (roundTripSignature(parsed.content) !== roundTripSignature(nextContent)) {
-      result = changed.source;
-      parsed = project(result);
-      if (roundTripSignature(parsed.content) !== roundTripSignature(nextContent)) return null;
-    }
-    const mappedOrigin =
-      generated && changed.origin !== undefined
-        ? documentLoopSourceRange(generated.expansion, changed.origin, changed.origin + 1).from
-        : changed.origin;
+    const materialized = generatedPatches.length > 0;
+    const patches = materialized
+      ? [
+          ...composeLatexSourcePatches(source, [
+            [
+              {
+                start: expansion.from,
+                end: expansion.to,
+                expected: expansion.raw,
+                replacement: expansion.expanded,
+              },
+            ],
+            generatedPatches,
+          ]),
+          ...directPatches,
+        ]
+      : directPatches;
+    const result = applyDocumentSourcePatches(source, patches);
+    const edit: LatexSourceEdit = {
+      source,
+      patches,
+      ...(changed.edit.root ? { root: changed.edit.root } : {}),
+    };
+    const parsed = projectLatexVisualDocument(
+      result,
+      0,
+      changed.projection.setup ?? context?.setupSource ?? projection.setup ?? result,
+    );
+    if (roundTripSignature(parsed.content) !== roundTripSignature(nextContent)) return null;
     return {
-      ...changed,
       source: result,
-      ...(mappedOrigin === undefined ? {} : { origin: mappedOrigin }),
-      materializedGenerator: generated !== undefined && parsed.generated === undefined,
-      projection: {
-        ...adoptLatexVisualContent(result, nextContent, parsed),
-        generatedOrigins: origins,
-      },
+      edit,
+      structural: changed.structural,
+      materializedGenerator: materialized,
+      projection: adoptLatexVisualContent(result, nextContent, parsed),
     };
   }
-  const setup = context?.rootSource
-    ? visualSetup(context.rootSource)
+  const declarationSource = context?.setupSource ?? context?.rootSource;
+  const setup = declarationSource
+    ? visualSetup(declarationSource)
     : (projection.setup ?? visualSetup(source));
   const previous = projection.blocks;
   const next = nextContent.content ?? [];
@@ -7017,7 +7426,7 @@ export function applyLatexVisualDocumentChange(
   )
     suffix++;
   if (prefix === previous.length && prefix === next.length)
-    return { source, structural: false, projection };
+    return { source, edit: { source, patches: [] }, structural: false, projection };
   const oldChanged = previous.slice(prefix, previous.length - suffix);
   const newChanged = next.slice(prefix, next.length - suffix);
   if (oldChanged.some((block) => !block.editable)) return null;
@@ -7050,22 +7459,51 @@ export function applyLatexVisualDocumentChange(
     newChanged[0]?.type === "latexRichPreview" &&
     newChanged[0]?.attrs?.kind === "title"
   ) {
-    const changedSource = updateTitleMetadata(source, oldChanged[0]!.node, newChanged[0]);
+    const stages: (readonly DocumentSourcePatch[])[] = [];
+    const changedSource = updateTitleMetadata(
+      source,
+      oldChanged[0]!.node,
+      newChanged[0],
+      (patches) => {
+        stages.push(patches);
+      },
+    );
     if (changedSource === null) return null;
     const projected = projectLatexVisualDocument(changedSource);
     if (roundTripSignature(projected.content) !== roundTripSignature(nextContent)) return null;
     return {
       source: changedSource,
+      edit: { source, patches: declarationPatches(source, stages) },
       projection: adoptLatexVisualContent(changedSource, nextContent, projected),
       structural: false,
     };
   }
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
   const split = oldChanged.length === 1 ? splitParagraphSource(oldChanged[0]!, newChanged) : null;
+  let listPatches: readonly DocumentSourcePatch[] | undefined;
+  const authoredParagraphs = oldChanged.some((block) =>
+    ["bulletList", "orderedList"].includes(block.node.type ?? ""),
+  )
+    ? authoredListParagraphs(oldChanged)
+    : [];
   const serialized =
     split ??
     newChanged.map((node, index) => {
       const previousBlock = oldChanged.length === newChanged.length ? oldChanged[index] : null;
+      if (
+        previousBlock &&
+        ["bulletList", "orderedList"].includes(previousBlock.node.type ?? "") &&
+        ["bulletList", "orderedList"].includes(node.type ?? "")
+      )
+        return serializeLosslessList(
+          node,
+          previousBlock.node,
+          oldChanged.length === 1
+            ? (patches) => {
+                listPatches = patches;
+              }
+            : undefined,
+        );
       if (node.type === "latexRichPreview" && node.attrs?.kind === "documentCommand") {
         // Title edits update the declaration's source without replacing the live
         // editor. A later structural edit must not restore its older raw attribute.
@@ -7086,13 +7524,13 @@ export function applyLatexVisualDocumentChange(
             : String(node.attrs.raw ?? ""),
           node,
           setup,
-          source.includes("\\begin{document}") ? source : (context?.rootSource ?? null),
+          context?.setupSource ?? (source.includes("\\begin{document}") ? source : null),
         );
       if (previousBlock?.node.type === "latexScientific" && node.type === "latexScientific")
         return patchScientificStructure(
           previousBlock,
           node,
-          source.includes("\\begin{document}") ? source : (context?.rootSource ?? null),
+          context?.setupSource ?? (source.includes("\\begin{document}") ? source : null),
           setup,
         );
       if (
@@ -7134,12 +7572,16 @@ export function applyLatexVisualDocumentChange(
         return patchRichTextBlock(previousBlock, node);
       if (node.type === "latexRichPreview" && node.attrs?.sourceMeta?.literal === true)
         return serializeLatexVisualBlock(node);
-      return minimal ?? serializeLatexVisualBlock(node)?.replace(/\r?\n/gu, eol) ?? null;
+      return (
+        minimal ??
+        joinedListParagraphSource(authoredParagraphs, node) ??
+        serializeLatexVisualBlock(node)?.replace(/\r?\n/gu, eol) ??
+        null
+      );
     });
   if (serialized.some((value) => value === null)) return null;
   let from = oldChanged[0]?.from ?? previous[prefix]?.from ?? previous.at(-1)?.to ?? source.length;
   let to = oldChanged.at(-1)?.to ?? from;
-  const origin = oldChanged[0]?.from ?? previous[prefix - 1]?.from ?? from;
   const sourceGaps = oldChanged
     .slice(1)
     .map((block, index) => source.slice(oldChanged[index]!.to, block.from));
@@ -7150,14 +7592,12 @@ export function applyLatexVisualDocumentChange(
   // Keep explicit contents metadata at its existing boundary. Refuse a
   // structural change that cannot retain that boundary instead of deleting it.
   if (hasContentsGap && oldChanged.length !== newChanged.length) return null;
-  const keepParagraphGaps =
-    oldChanged.length === newChanged.length && sourceGaps.some((gap) => /\\par\b/u.test(gap));
   let replacement = serialized
     .map(
       (block, index) =>
         block +
         (index < serialized.length - 1
-          ? hasContentsGap || keepParagraphGaps
+          ? oldChanged.length === newChanged.length
             ? sourceGaps[index]!
             : eol + eol
           : ""),
@@ -7165,7 +7605,7 @@ export function applyLatexVisualDocumentChange(
     .join("");
   // Own only whitespace at the edited boundaries. Otherwise inserting/deleting
   // a block leaves old separators behind and blank lines accumulate over time.
-  if (oldChanged.length !== 1 || newChanged.length !== 1) {
+  if (oldChanged.length !== newChanged.length) {
     const before = previous[prefix - 1];
     const after = previous[previous.length - suffix];
     if (before && /^\s*$/u.test(source.slice(before.to, from))) from = before.to;
@@ -7192,10 +7632,12 @@ export function applyLatexVisualDocumentChange(
       replacement = eol + replacement;
   }
   let changedSource = source.slice(0, from) + replacement + source.slice(to);
-  let rootUpdate: LatexRootUpdate | undefined;
+  let rootEdit: LatexSourceEdit["root"];
   const previousNodes = oldChanged.map((block) => block.node);
-  const ownPreamble = findDelimiter(source, "\\begin{document}", 0) >= 0;
-  const root = ownPreamble ? changedSource : context?.rootSource;
+  const ownPreamble = latexDocumentBoundary(source) !== null;
+  const root = context?.rootSource ?? (ownPreamble ? source : null);
+  let setupSource = context?.setupSource ?? context?.rootSource ?? (ownPreamble ? source : null);
+  let preamblePatches: readonly LatexOwnedSourcePatch[] = [];
   const previousEnvironments = scientificEnvironments(previousNodes);
   const addedEnvironments = new Set(
     [...scientificEnvironments(newChanged)].filter(
@@ -7215,26 +7657,133 @@ export function applyLatexVisualDocumentChange(
       root ?? undefined,
     ),
   ]);
-  if (addedEnvironments.size || requiredPackages.size) {
-    if (!root || findDelimiter(root, "\\begin{document}", 0) < 0) {
+  const needsDirectionSetup =
+    introducesLatexParagraphDirection(previousNodes, newChanged) &&
+    !latexParagraphDirectionSupported(setupSource ?? "");
+  if (addedEnvironments.size || requiredPackages.size || needsDirectionSetup) {
+    if (!setupSource || latexDocumentBoundary(setupSource) === null) {
       context?.onMissingRequirement?.(
         "Choose the root document before inserting content that needs LaTeX packages or declarations.",
       );
       return null;
     }
-    let prepared = ensureLatexPackages(root, requiredPackages, eol);
-    prepared = ensureLatexMenuColors(prepared, replacement, eol);
-    prepared = ensureMathSymbolDefinitions(prepared, replacement, eol);
-    prepared = ensureScientificEnvironmentDeclarations(prepared, addedEnvironments, eol);
-    if (!ownPreamble && prepared !== root && !context?.allowRootUpdates) {
+    let preparedSetup = ensureScientificEnvironmentDeclarations(
+      ensureMathSymbolDefinitions(
+        ensureLatexMenuColors(
+          ensureLatexPackages(setupSource, requiredPackages, eol),
+          replacement,
+          eol,
+        ),
+        replacement,
+        eol,
+      ),
+      addedEnvironments,
+      eol,
+    );
+    if (needsDirectionSetup) {
+      const directionSetup = prepareLatexParagraphDirectionSetup(preparedSetup);
+      if (!directionSetup) return null;
+      preparedSetup = directionSetup.source;
+    }
+    if (preparedSetup !== setupSource && (!root || latexDocumentBoundary(root) === null)) {
+      context?.onMissingRequirement?.(
+        "Choose the root document before inserting content that needs LaTeX packages or declarations.",
+      );
+      return null;
+    }
+    // Already assembled declarations satisfy requirements; never duplicate a
+    // package into the physical root merely because an include supplies it.
+    let prepared = root ?? "";
+    const stages: (readonly DocumentSourcePatch[])[] = [];
+    const record = (patches: readonly DocumentSourcePatch[]) => {
+      stages.push(patches);
+    };
+    if (preparedSetup !== setupSource) {
+      prepared = ensureScientificEnvironmentDeclarations(
+        ensureMathSymbolDefinitions(
+          ensureLatexMenuColors(
+            ensureLatexPackages(prepared, requiredPackages, eol, record, setupSource),
+            replacement,
+            eol,
+            record,
+            setupSource,
+          ),
+          replacement,
+          eol,
+          record,
+          setupSource,
+        ),
+        addedEnvironments,
+        eol,
+        record,
+        setupSource,
+      );
+      if (needsDirectionSetup) {
+        const directionSetup = prepareLatexParagraphDirectionSetup(prepared);
+        if (!directionSetup) return null;
+        prepared = directionSetup.source;
+        record(directionSetup.patches);
+      }
+      preamblePatches = declarationPatches(root!, stages);
+    }
+    if (
+      !ownPreamble &&
+      preparedSetup !== setupSource &&
+      prepared !== root &&
+      !context?.allowRootUpdates
+    ) {
       context?.onMissingRequirement?.(
         "This insertion needs packages or declarations in the root document. Add them in the root's Source view, then try again.",
       );
       return null;
     }
-    if (!ownPreamble && prepared !== root) rootUpdate = { expected: root, next: prepared };
-    if (ownPreamble) changedSource = prepared;
+    if (preparedSetup !== setupSource && prepared !== root) {
+      if (ownPreamble && root === source) {
+        // Declaration patches and the body range share original coordinates.
+        changedSource = applyDocumentSourcePatches(source, [
+          ...preamblePatches,
+          { start: from, end: to, replacement, expected: source.slice(from, to) },
+        ]);
+      } else {
+        rootEdit = { source: root!, patches: preamblePatches };
+        preamblePatches = [];
+      }
+    }
+    setupSource = preparedSetup;
   }
+  const bodyPatch = latexOwnedSourcePatch(
+    source,
+    from,
+    to,
+    replacement,
+    from === to ? (previous[prefix - 1] ? "before" : "after") : undefined,
+  );
+  const bodyPatches = listPatches
+    ? listPatches.map((patch) => ({
+        ...patch,
+        start: oldChanged[0]!.from + patch.start,
+        end: oldChanged[0]!.from + patch.end,
+      }))
+    : oldChanged.length > 1 && oldChanged.length === newChanged.length
+      ? oldChanged.flatMap((block, index) => {
+          const value = preserveSourceComments(
+            block.source,
+            serialized[index]!,
+            eol,
+            source.slice(block.to),
+          );
+          const patch = latexOwnedSourcePatch(source, block.from, block.to, value);
+          return patch ? [patch] : [];
+        })
+      : bodyPatch
+        ? [bodyPatch]
+        : [];
+  const edit: LatexSourceEdit = {
+    source,
+    patches: [...preamblePatches, ...bodyPatches],
+    ...(rootEdit ? { root: rootEdit } : {}),
+  };
+  if (applyDocumentSourcePatches(source, edit.patches) !== changedSource) return null;
   // Local edits cannot change neighboring syntax. Validate only the replacement
   // block; keep the original source and mappings for all unaffected blocks.
   if (
@@ -7244,11 +7793,7 @@ export function applyLatexVisualDocumentChange(
     !["bulletList", "orderedList"].includes(newChanged[0]!.type ?? "") &&
     !["title", "toc"].includes(String(newChanged[0]!.attrs?.kind))
   ) {
-    const parsed = projectLatexVisualDocument(
-      replacement,
-      0,
-      rootUpdate?.next ?? (ownPreamble ? changedSource : setup),
-    );
+    const parsed = projectLatexVisualDocument(replacement, 0, setupSource ?? setup);
     if (
       parsed.blocks.length === 1 &&
       roundTripSignature(parsed.blocks[0]!.node) === roundTripSignature(newChanged[0]!)
@@ -7276,11 +7821,11 @@ export function applyLatexVisualDocumentChange(
       );
       return {
         source: changedSource,
-        ...(rootUpdate ? { rootUpdate } : {}),
-        origin,
+        edit,
         structural: false,
         projection: {
           ...projection,
+          ...(parsed.setup ? { setup: parsed.setup } : {}),
           source: changedSource,
           content: nextContent,
           blocks,
@@ -7297,11 +7842,7 @@ export function applyLatexVisualDocumentChange(
     }
   }
   // Reject a transaction that the supported projection cannot round-trip.
-  const projected = projectLatexVisualDocument(
-    changedSource,
-    0,
-    rootUpdate?.next ?? (ownPreamble ? changedSource : setup),
-  );
+  const projected = projectLatexVisualDocument(changedSource, 0, setupSource ?? setup);
   if (roundTripSignature(projected.content) !== roundTripSignature(nextContent)) {
     const oldBlock = oldChanged[0];
     const newBlock = newChanged[0];
@@ -7325,7 +7866,7 @@ export function applyLatexVisualDocumentChange(
       latexVisualNodeSignature(nonText(oldBlock.node)) !==
         latexVisualNodeSignature(nonText(newBlock)) ||
       hasMultilineText(newBlock) ||
-      rootUpdate ||
+      rootEdit ||
       changedSource !== source.slice(0, from) + replacement + source.slice(to)
     )
       return null;
@@ -7341,15 +7882,14 @@ export function applyLatexVisualDocumentChange(
     );
     return {
       source: changedSource,
-      origin,
+      edit,
       structural: false,
       projection: { ...projection, source: changedSource, content: nextContent, blocks },
     };
   }
   return {
     source: changedSource,
-    ...(rootUpdate ? { rootUpdate } : {}),
-    origin,
+    edit,
     projection: adoptLatexVisualContent(changedSource, nextContent, projected),
     structural: oldChanged.length !== 1 || newChanged.length !== 1,
   };

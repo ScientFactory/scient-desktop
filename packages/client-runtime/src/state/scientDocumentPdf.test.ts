@@ -42,7 +42,7 @@ const request = (requestId: string, connectionId: string): ScientDocumentHostStr
     requestId,
     threadId: ThreadId.make("thread-1"),
     operation: "documentLatexPresent",
-    input: { rootSourcePath: "papers/main.tex" },
+    input: { sourcePath: "papers/main.tex", rootSourcePath: "papers/main.tex" },
     timeoutMs: 15_000,
   },
 });

@@ -19,8 +19,10 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
 import { FileSaveCoordinator } from "~/components/files/fileSaveCoordinator";
+import { createTestCheckpointStore } from "~/scient/markdownEditor/persistence/markdownDraftCheckpointTestkit";
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { stubLatexReadingFonts, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import {
   checkpointVisualDraft,
   clearVisualDraft,
@@ -72,9 +74,11 @@ describe("recovering unsaved work", () => {
   let singleFileDocument: boolean;
   let coordinator: FileSaveCoordinator<FileView, Error>;
   const writes = vi.fn();
+  let restoreFonts = () => {};
 
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    restoreFonts = stubLatexReadingFonts();
     writes.mockReset();
     singleFileDocument = true;
     save = "completes";
@@ -93,6 +97,7 @@ describe("recovering unsaved work", () => {
     container.remove();
     clearVisualDraft(KEY);
     clearTypingDraft(KEY);
+    restoreFonts();
     vi.unstubAllGlobals();
   });
 
@@ -114,6 +119,8 @@ describe("recovering unsaved work", () => {
     coordinator = new FileSaveCoordinator<FileView, Error>({
       debounceMs: SAVE_DELAY,
       initialRevision: `r${revision}`,
+      initialSource: source,
+      journal: { key: KEY, store: createTestCheckpointStore() },
       persist: async (contents, expectedRevision) => {
         if (publicationGate) await publicationGate;
         if (save === "waits") return new Promise(() => {});
@@ -131,6 +138,7 @@ describe("recovering unsaved work", () => {
     });
     function Harness() {
       const [value, setValue] = useState(shown);
+      const owner = useLatexVisualTestOwner(value.source);
       useEffect(() => {
         show = (next) => {
           shown = next;
@@ -143,16 +151,19 @@ describe("recovering unsaved work", () => {
             draftKey={KEY}
             fileRevision={`r${value.revision}`}
             source={value.source}
+            sourceSnapshot={owner.snapshot}
             disabled={false}
             singleFileDocument={singleFileDocument}
             onEditingChange={() => {}}
             onOpenSource={() => {}}
-            onEdit={(expected, next) => {
-              if (shown.source !== expected) return false;
-              writes(expected, next);
+            onEdit={(request) => {
+              const outcome = owner.edit(request, shown.source === request.edit.source);
+              if (!outcome.accepted) return outcome;
+              const next = outcome.snapshot.source;
+              writes(request.edit.source, next);
               show({ source: next, revision: shown.revision });
               coordinator.change(next);
-              return true;
+              return outcome;
             }}
           />
           <AfterEditorRender />
@@ -168,7 +179,7 @@ describe("recovering unsaved work", () => {
   const changeOutside = (source: string) =>
     act(async () => {
       disk = { source, revision: disk.revision + 1 };
-      coordinator.syncConfirmedFileRevision(`r${disk.revision}`);
+      coordinator.syncConfirmedFileRevision(`r${disk.revision}`, disk.source);
       show(disk);
     });
   /** The user edits in the Source view: the buffer changes, with no checkpoint. */
@@ -339,6 +350,38 @@ describe("recovering unsaved work", () => {
     await reopen();
     expect(message()).toBe("Unsaved changes");
     expect(parked()?.source).toBe(next);
+  });
+
+  it("retains an accepted raw fragment until checkpoint transfer succeeds without republishing it", async () => {
+    save = "waits";
+    const base = tex("\\unsupported{Original}");
+    const draft = "\\unsupported{Changed}";
+    const next = base.replace("\\unsupported{Original}", draft);
+    await mount(base, 1);
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label="Edit this block’s LaTeX"]')!.click(),
+    );
+    const field = container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Block LaTeX source"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(
+        field,
+        draft,
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    noRoomFor(SOURCE_SLOT);
+    await click("Apply LaTeX");
+    expect(shown.source).toBe(next);
+    expect(writes).toHaveBeenCalledExactlyOnceWith(base, next);
+    expect(parked()?.text).toBe(draft);
+    expect(checkpoint()).toBeNull();
+    storageLimit?.mockRestore();
+    await click("Apply LaTeX");
+    expect(writes).toHaveBeenCalledExactlyOnceWith(base, next);
+    expect(parked()).toBeNull();
+    expect(checkpoint()).toEqual({ source: next, baseRevision: "r1" });
   });
 
   it("sits in the footer as one line with plain actions", async () => {
@@ -613,7 +656,7 @@ describe("recovering unsaved work", () => {
       disk = { source: newer, revision: 2 };
       shown = disk;
       pm().commands.insertContent(" typed");
-      coordinator.syncConfirmedFileRevision("r2");
+      coordinator.syncConfirmedFileRevision("r2", disk.source);
       show(disk);
     });
     await settle(300);
@@ -667,7 +710,7 @@ describe("recovering unsaved work", () => {
       pm().commands.setTextSelection(3);
       pm().commands.setNode("heading", { level: 1 });
       disk = { source: newer, revision: 2 };
-      coordinator.syncConfirmedFileRevision("r2");
+      coordinator.syncConfirmedFileRevision("r2", disk.source);
       show(disk);
     });
     await settle(300);
@@ -867,7 +910,7 @@ describe("recovering unsaved work", () => {
 
     it("is not replaced when the read-only editor closes with an older unwritten checkpoint", async () => {
       storeSourceDraft(MONDAY, "r1");
-      checkpointVisualDraft(KEY, "", "", tex("Older, never written"), "r0");
+      checkpointVisualDraft(KEY, tex("Older, never written"), "r0");
       noRoomToPark();
       await mount(AGENT, 2);
       expect(editable()).toBe(false);
@@ -945,7 +988,7 @@ describe("recovering unsaved work", () => {
         pm().commands.setTextSelection(3);
         pm().commands.setNode("heading", { level: 1 });
         disk = { source: tex("Old base\n\nAgent paragraph."), revision: 2 };
-        coordinator.syncConfirmedFileRevision("r2");
+        coordinator.syncConfirmedFileRevision("r2", disk.source);
         show(disk);
       });
       await settle(300);

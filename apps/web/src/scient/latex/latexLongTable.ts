@@ -1,5 +1,5 @@
 import type { DocumentMathMacro } from "./latexDocumentMacros";
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments } from "./latexSourceSyntax";
 
 function argument(source: string, from: number) {
   while (/\s/u.test(source[from] ?? "")) from++;

@@ -13,6 +13,7 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { createLatexEditorSourceSnapshot } from "./latexSourceEditPlan";
 import { clearVisualDraft } from "./visualDrafts";
 import {
   createLatexMeasurementSnapshot,
@@ -67,6 +68,7 @@ async function open() {
       draftKey={key}
       fileRevision="snapshot-r1"
       source={input}
+      sourceSnapshot={createLatexEditorSourceSnapshot(input)}
       disabled={false}
       onEditingChange={() => {}}
       onOpenSource={() => {}}

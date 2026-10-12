@@ -6,13 +6,14 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ProjectReadFileResult } from "@t3tools/contracts";
+import type { ProjectReadFileError, ProjectReadFileResult } from "@t3tools/contracts";
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import {
   markdownPersistenceRegistry,
   type MarkdownPersistenceLease,
   type MarkdownPersistenceTarget,
 } from "./markdownPersistenceRegistry";
+import { documentCurrentMissingReview } from "./documentFailureReason";
 
 const emptySubscribe = () => () => {};
 const emptySnapshot = () => null;
@@ -20,7 +21,9 @@ const emptySnapshot = () => null;
 export function useMarkdownPersistenceLease(input: {
   readonly target: MarkdownPersistenceTarget | null;
   readonly authoritativeSnapshot: ProjectReadFileResult | null;
+  readonly authoritativeReadError?: ProjectReadFileError | null;
   readonly workspaceMutationId?: string | null;
+  readonly onAttentionResolved?: () => void;
 }) {
   const key = input.target === null ? null : projectFileOperationKey(input.target);
   const available =
@@ -28,7 +31,8 @@ export function useMarkdownPersistenceLease(input: {
     (markdownPersistenceRegistry.has(input.target) ||
       (input.authoritativeSnapshot !== null &&
         !input.authoritativeSnapshot.truncated &&
-        !input.authoritativeSnapshot.readOnly));
+        !input.authoritativeSnapshot.readOnly) ||
+      documentCurrentMissingReview(input.authoritativeReadError, input.target) !== null);
   const [binding, setBinding] = useState<{
     readonly key: string | null;
     readonly attempt: number;
@@ -150,6 +154,25 @@ export function useMarkdownPersistenceLease(input: {
     lease?.getSnapshot ?? emptySnapshot,
     lease?.getSnapshot ?? emptySnapshot,
   );
+  const attentionOwner = useRef<{
+    lease: MarkdownPersistenceLease | null;
+    attention: NonNullable<typeof snapshot>["attention"];
+  }>({ lease: null, attention: null });
+  const onAttentionResolved = useEffectEvent(() => input.onAttentionResolved?.());
+  useEffect(() => {
+    const previous = attentionOwner.current;
+    const attention = snapshot?.attention ?? null;
+    attentionOwner.current = { lease, attention };
+    // The coordinator clears this latch only after explicit exact-revision
+    // recovery and ordered confirmation, never from a watcher or equal bytes.
+    if (
+      lease !== null &&
+      previous.lease === lease &&
+      previous.attention !== null &&
+      attention === null
+    )
+      onAttentionResolved();
+  }, [lease, snapshot?.attention]);
   return {
     lease,
     snapshot,

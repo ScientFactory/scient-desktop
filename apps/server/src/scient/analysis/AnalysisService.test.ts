@@ -35,6 +35,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as ScientificRuntimePreferences from "../compute/ScientificRuntimePreferences.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { AnalyticsService, type AnalyticsStatus } from "../../telemetry/AnalyticsService.ts";
+import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
@@ -45,6 +46,7 @@ import {
   recoveredOutputContentHash,
 } from "./AnalysisService.ts";
 import * as LocalAnalysisStore from "./LocalAnalysisStore.ts";
+import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 
 const output: ReadonlyArray<ExecutionOutputChunk> = [
   {
@@ -56,7 +58,8 @@ const output: ReadonlyArray<ExecutionOutputChunk> = [
 ];
 
 const runtimeId = AnalysisRuntimeId.make("matlab:test");
-const sourceRevision = AnalysisSourceRevision.make("sha256:test-source");
+const sourceContents = "% test source\n";
+const sourceRevision = AnalysisSourceRevision.make(bytesRevision(Buffer.from(sourceContents)));
 const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const runtimeProfile = (
@@ -129,6 +132,28 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
   });
   yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
   const projectIdentity = yield* Effect.promise(() => readScientProjectIdentity(projectRoot));
+  yield* Effect.forEach(
+    [
+      "cancel-publishing.m",
+      "launch-error.m",
+      "first-capture.m",
+      "cancel-capture.m",
+      "private-study.m",
+      "later-error.m",
+      "consent.m",
+      "first.m",
+      "queued.m",
+      "cleanup.m",
+      "owned.m",
+      "wait.m",
+      "disabled.m",
+      "analysis.m",
+      "second.m",
+      "interrupted.m",
+      "promote.m",
+    ],
+    (relativePath) => fileSystem.writeFileString(`${projectRoot}/${relativePath}`, sourceContents),
+  );
 
   const startedRuns = yield* Queue.unbounded<ExecutionRunId>();
   const processExits = new Map<ExecutionRunId, Deferred.Deferred<number>>();
@@ -155,39 +180,12 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
         };
       }),
   };
-  const workspaceFileSystem = WorkspaceFileSystem.WorkspaceFileSystem.of({
-    getMetadata: () => Effect.die("getMetadata is not used by the analysis service test"),
-    replaceFileRetained: () => Effect.die("Unexpected retained mutation"),
-    removeFileRetained: () => Effect.die("Unexpected retained removal"),
-    createBinaryFile: () => Effect.die("createBinaryFile is not used by the analysis service test"),
-    inspectWriteTarget: (input) =>
-      Effect.succeed({
-        relativePath: input.relativePath,
-        canonicalRelativePath: input.relativePath,
-        traversesSymlink: false,
-      }),
-    readFile: (input) =>
-      Effect.succeed({
-        relativePath: input.relativePath,
-        contents: "% test source\n",
-        byteLength: 14,
-        truncated: false,
-        revision: sourceRevision,
-      }),
-    viewFile: () => Effect.die("viewFile is not used by the analysis service test"),
-    writeFile: () => Effect.die("writeFile is not used by the analysis service test"),
-    renameFile: () => Effect.die("renameFile is not used by the analysis service test"),
-    deleteFile: () => Effect.die("deleteFile is not used by the analysis service test"),
-    watchFile: () => Stream.empty,
-  });
-  const workspacePaths = WorkspacePaths.WorkspacePaths.of({
-    normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
-    resolveRelativePathWithinRoot: (input) =>
-      Effect.succeed({
-        absolutePath: `${input.workspaceRoot}/${input.relativePath}`,
-        relativePath: input.relativePath,
-      }),
-  });
+  const workspaceLayer = WorkspaceFileSystem.layer.pipe(
+    Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provide(ServerConfig.layerTest(projectRoot, baseDir)),
+    Layer.provide(NodeServices.layer),
+  );
   const indexLayer = AnalysisRunIndex.layer.pipe(Layer.provide(SqlitePersistenceMemory));
   const localStoreLayer = LocalAnalysisStore.layer.pipe(
     Layer.provide(ServerConfig.ServerConfig.layerTest(projectRoot, baseDir)),
@@ -213,8 +211,8 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     Layer.provide(serviceStoreLayer),
     Layer.provide(indexLayer),
     Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, processPort)),
-    Layer.provide(Layer.succeed(WorkspaceFileSystem.WorkspaceFileSystem, workspaceFileSystem)),
-    Layer.provide(Layer.succeed(WorkspacePaths.WorkspacePaths, workspacePaths)),
+    Layer.provide(workspaceLayer),
+    Layer.provide(WorkspacePaths.layer),
     Layer.provideMerge(NodeServices.layer),
   );
 

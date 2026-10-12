@@ -94,6 +94,13 @@ is refused until the declaration is added in Source; root resolution alone
 does not authorize a multi-file write. See [saving and recovery](scient-latex-visual.md)
 for preparation and recovery behavior.
 
+Source observation includes the workspace mutation epoch. Completed publication
+receipts record historical success or a definitive unchanged refusal; they grant
+no permission to reapply a write. Older successful creates and mount device-ID
+changes therefore do not require recovery before another document can resolve
+or compile. Unfinished, ambiguous, or unattributed journals retain their recovery
+checks. Each fresh save still verifies the current binding and source revision.
+
 **Logical document key.** Every build, status, and cancel call resolves to
 `latex:<sha256-of-normalized-workspace-root>:<root-relative-path>`, capped at 1,024
 characters (`document-key-too-long` otherwise). This is the same key space
@@ -121,11 +128,10 @@ can announce Scient's own publishes and failures, but an agent, another editor,
 or a changed included file has no binding event to emit; the slower evidence
 poll is the correctness backstop for those external changes.
 
-**Three-permit admission.** A single `Semaphore` bounds compilation itself to
-`MAX_CONCURRENT_COMPILES = 3` — a compile is CPU- and disk-bound, and three at
-once keeps a laptop usable. The permit is taken around the compile, not the
-whole build-loop pass, so a build waiting its turn stays honestly in `queued`
-instead of claiming to run.
+**Three-permit admission.** A `Semaphore` bounds document compilation passes to
+`MAX_CONCURRENT_COMPILES = 3`. A pass waiting for a permit stays in `queued`.
+Each admitted attempt creates a fresh private output directory. Aux files from
+older attempts are never adopted, including after cancellation or restart.
 
 **Supersession via store generations.** `GeneratedDocumentStore` assigns each
 production attempt a monotonic `BindingGeneration` on `beginProduction`.
@@ -151,6 +157,16 @@ reader who cancels a rebuild keeps a still-valid PDF marked `current` instead
 of watching it go stale for no content reason. `abandonProduction` is
 idempotent — a handle that no longer owns the binding settles as a no-op — so
 every path that might need it can run it unconditionally.
+
+Cancellation uses the existing local process adapter, which stops the owned
+process group and observes exit. Every attempt has a distinct output directory,
+so an older process or pending finalizer cannot supply or delete a successor's
+PDF. The service rechecks its generation and source evidence before publication.
+Successful and ordinary failed attempts remove their private outputs after the
+immutable PDF and SyncTeX index have been retained. A failed cancellation keeps
+that attempt's directory for diagnosis; it does not block a fresh build or
+require manual cleanup. Ordinary builds do not require an additional process
+containment capability.
 
 Two of those paths are races a first reading of the code misses. A cancel can
 land between `beginProduction` claiming the binding and the handle reaching the
@@ -178,15 +194,26 @@ in the root takes precedence over declarations in included preambles. Only
 fixed compiler names are accepted; source text never supplies executable paths
 or additional command arguments.
 
+`latexCompiler.ts` supplies the web's shared choice/directive model. The device's
+`scient.newDocumentCompiler` preference only affects new documents, yields to
+template declarations, and never forces Hebrew onto pdfLaTeX. The document's
+Compiler menu instead edits the resolved root through its existing persistence
+lease: settle all pending document fields, apply an expected-text/edit-version
+checked directive patch, save, and rebuild only while the owner is still current.
+Included files offer root navigation rather than acquiring another root writer.
+Automatic removes root engine declarations; unknown declarations stay observable
+until a deliberate selection replaces them.
+
 `latexCommand.ts` maps the selection to `latexmk -lualatex`, `-xelatex`, or
 `-pdf`. The existing subprocess environment, shell-escape restriction, isolated
 output directory, recorder, retries, diagnostics and publication path remain in
 use. The selected compiler must exist in the resolved distribution. Tectonic
 keeps its XeTeX-based invocation and rejects explicit LuaLaTeX/pdfLaTeX requests.
 
-Without a directive, latexmk defaults to pdfLaTeX. A load of `fontspec` or
-`unicode-math` prompts the author to select LuaLaTeX or XeLaTeX. This package
-inference is suppressed whenever the document
+Without a directive, latexmk defaults to pdfLaTeX. An unguarded load of `fontspec`
+or `unicode-math` selects XeLaTeX automatically; an explicit pdfLaTeX request
+still receives compatibility guidance. This package inference is suppressed
+whenever the document
 shows an engine-conditional idiom: a load of `iftex`, `ifxetex` or `ifluatex`,
 or a use of `\ifPDFTeX`/`\ifxetex`/`\ifluatex`/`\iftutex` in any of the casings
 those get written in. That suppression exists because Pandoc's default template
@@ -410,6 +437,18 @@ minutes later and rebuilt the distribution's file index underneath a build that
 had already been told nothing was placed. Short read-only probes (`kpsewhich`)
 stay on `ProcessRunner`, which is what it is for.
 
+The invocation timeout starts only after the distribution-script permit is
+acquired. Its process scope cancels and observes exit before releasing that
+permit, including finalizer retirement; queue wait does not spend the execution
+budget. Artwork previews never invoke this installer: a missing package asks
+the user to build the document explicitly. Cancelling or resizing an artwork
+request therefore cannot interrupt shared distribution installation.
+Unknown installer-process retirement similarly quarantines further mutation of
+that distribution, with `.scient-unretired-install` in its managed bin directory
+preserving the refusal across restart. Such a failure is infrastructure failure,
+not an ordinary missing-package verdict. No automatic marker removal or retry
+claims the still-unknown distribution safe.
+
 On Windows the invocation is the `perl` script, not the shim.
 `texliveScriptInvocation` encodes what `tlmgr.bat` does — derive the
 installation root from the `bin` directory, put `tlpkg/tlperl/bin` and the
@@ -470,6 +509,7 @@ transcript. Builds run with `-file-line-error`, so most errors arrive as
 `./path.tex:12: message`; tectonic prefixes every line it forwards with
 `error:`/`warning:` labels, which the parser strips before matching so the
 label is read as severity, not swallowed into the file capture. Diagnostics
+with an empty message use a fallback matching that severity. Diagnostics
 are deduplicated across engine passes by severity, normalized path, line, and
 the complete whitespace-normalized message, before the display message is
 truncated. Only recognizable continuation lines are joined; another diagnostic
@@ -492,7 +532,9 @@ reported path: TeX resolves `\input` against its own working directory (the
 root document's folder, not the workspace root), so the engine's paths are
 rebased onto workspace-relative paths, and a diagnostic whose path would land
 outside the workspace keeps its message but loses its file reference, since no
-client could open it anyway. Every invocation also sets `max_print_line=1000`,
+client could open it anyway. A relative package filename absent from the project
+also loses its navigation link while retaining its location in the message.
+Every invocation also sets `max_print_line=1000`,
 `error_line=254`, and `half_error_line=238` in the child environment — the
 documented `texmf.cnf` knobs — because TeX wraps its own messages at 79
 columns by default, which otherwise cuts file paths and error text in half
@@ -536,6 +578,17 @@ process. Every build and every status poll asks for the toolchain, so the
 cache is filled behind a single-permit `Semaphore`: one fiber runs the actual
 subprocess probe, and every fiber that arrives while it is in flight reads the
 answer that fiber leaves behind instead of shelling out again.
+
+The same cached observation independently probes `pdflatex`, `xelatex`, and
+`lualatex` with bounded `--version` processes when the active driver is latexmk.
+The toolchain endpoint's required `compilers` array reports each binary's
+availability, resolved executable, and parsed version. Driver readiness alone
+does not imply any compiler is installed. Managed probes use the same managed
+bin-directory/PATH environment as builds. Build snapshots retain the existing
+driver-only status shape. Tectonic reports no standalone compiler binaries;
+the web separately preserves its existing XeTeX-compatible build path while
+disabling incompatible explicit pdfLaTeX/LuaLaTeX choices. Offline and failed
+checks are shown as Offline/Not checked rather than successful probes.
 
 **Managed TinyTeX install.** `tinytexManifest.ts` pins exactly one TinyTeX
 release, `v2026.08`, by hand-verified SHA-256 and exact byte size — nothing
@@ -589,8 +642,9 @@ gate rather than leaving the state saying an install is forever in flight.
 **Eagerly installed collections.** Promotion is not the last step. Once the
 state file names the new root — that is, once the engine is installed and
 discoverable — the run enters the `installing-packages` phase and asks
-`LatexPackageInstaller` for `collection-latexrecommended` and
-`collection-fontsrecommended` under a 15-minute bound. Source navigation is
+`LatexPackageInstaller` for `collection-latexrecommended`,
+`collection-fontsrecommended`, `collection-xetex`, `fontspec`, `polyglossia`,
+and `bidi` under a 15-minute bound. Source navigation is
 not a TinyTeX package and does not add an install-time network dependency: the
 application ships the same verified helper for managed TinyTeX, system TeX,
 and Tectonic. The base set
@@ -665,12 +719,12 @@ Every invocation asks the engine for a SyncTeX index (`-synctex=1` for
 `latexmk`, `--synctex` for tectonic), and it is written next to the PDF in the
 build work directory like any other aux file. A successful publish copies that
 index into an exact-revision navigation directory after the immutable PDF is
-published and before the build reports success. Navigation metadata records
-only the workspace/root identity, compile directory, and synthetic output
-name. It never persists an executable path or the producing compiler's install
-kind. Schema-version-1 and -2 metadata remain readable, but their persisted
-command, bin directory, and managed flag are discarded as untrusted migration
-input.
+published and before the build reports success. Schema-version-4 navigation
+metadata records the workspace/root identity, compile directory, synthetic output
+name, and basename of the revision-bound build-evidence receipt. It never persists
+an executable path or the producing compiler's install kind. Older navigation
+metadata cannot prove compiled source identity and fails closed; rebuilding
+produces a qualified index without preventing the old PDF from being read.
 Failure to retain this auxiliary index never invalidates an otherwise valid
 PDF.
 
@@ -696,10 +750,11 @@ missing or damaged result. Successful verification remains cached.
 
 Forward search starts on a plain double-click in the source editor only while
 Split is already open and asks `synctex view` for the current successful
-descriptor's exact artifact/revision. The inherited editor does not expose its
-internal cursor on the current upstream seam, so Scient sends SyncTeX's explicit
-unknown-column value instead of guessing a visual DOM offset for wrapped or
-bidirectional text. It includes the reader's current page as a disambiguation hint. SyncTeX
+descriptor's exact artifact/revision and the source buffer's compiled revision.
+The inherited editor does not expose its internal cursor on the current upstream
+seam, so Scient sends SyncTeX's explicit unknown-column value instead of guessing
+a visual DOM offset for wrapped or bidirectional text.
+It includes the reader's current page as a disambiguation hint. SyncTeX
 returns ordered candidates: Scient preserves that order, uses the first valid
 target point (`x`/`y`, not the potentially page-spanning `h`/`v` enclosing box
 reported for some RTL material), converts that top-left big-point coordinate
@@ -710,19 +765,30 @@ view over the destination. If an engine records only line-level locations for a 
 different columns can legitimately return the same candidates; Scient keeps
 the official first candidate instead of inventing a more precise PDF position.
 
-Inverse search starts with a PDF double-click only while Split is open;
+Navigation requires the compiled source revisions and workspace mutation epoch in
+the retained evidence receipt, not just a cached current build descriptor. Native
+workspace reads and dependency evidence are checked before the helper runs and
+again before returning its result. A saved source that differs from the compiled
+source, unresolved publication state, or missing proof returns `source-stale`.
+Client requests also invalidate on source/session transitions and same-PDF freshness
+changes, so a delayed answer cannot reveal coordinates from an older source.
+
+Inverse search starts with a plain PDF double-click while Split is open;
 ordinary clicks retain PDF selection behavior. The reader preserves native selection, converts the pointer's
 page position back to top-left big points, asks `synctex edit`, and selects the
 first returned candidate whose input is contained in the workspace. Source-only
-and PDF-only modes never switch layout implicitly. The source pane opens that
-file at the reported line without replacing the PDF reader or moving focus;
-the normal PDF word selection stays active and there is no gesture hint popup.
-A negative or absent helper column remains
-truthfully line-level instead of being guessed. Diagnostics with a valid
-workspace-relative file are buttons through the same line-aware open seam. Any
-revision change invalidates the in-flight navigation request and target, and a
-missing/evicted revision or index returns a typed `unavailable` result rather
-than navigating against a newer PDF.
+and PDF-only modes never switch layout implicitly. The result carries the compiled
+target source revision. The source pane waits for authoritative target loading and
+session admission before revealing its reported line, and refuses changed, pending,
+missing, conflicting, or locally edited target text. It retains the PDF reader and
+native word selection without moving focus or showing a gesture hint popup. When
+the selected PDF word can be verified against the mapped source line and column,
+the source editor selects that word; otherwise it retains line-level precision.
+Invalidating a reveal
+also cancels its queued frame and active scroll guard, even when its request ID is
+unchanged. Diagnostics with a valid workspace-relative file use the same line-aware
+open seam without imposing a compiled-source revision. A missing/evicted PDF revision
+or index returns typed `unavailable` rather than navigating against a newer PDF.
 
 ## Word export
 
@@ -883,10 +949,15 @@ Ownership, wired into `.github/workflows/scient-upstream-provenance.yml`.
   Its `<latexDir>/synctex/<artifact-id>` tree then remains orphaned. Reclaim it
   with the build/evidence collector above rather than adding another hot-path
   global scan to each successful publish.
-- **Selectable LaTeX providers.** Discovery currently prefers an existing
-  system `latexmk`, falls back to Tectonic, and offers the pinned TinyTeX
-  install only when neither is available. A user-facing provider registry and
-  preference (TinyTeX, tex-to-PDF services, or future engines) is deliberately
+- **Selectable LaTeX providers.** Discovery preserves system `latexmk`, then
+  Tectonic, as the default. A verified managed TinyTeX install supplies a compiler
+  absent from that default only when the document requires it; with no system
+  driver it is the fallback. Capability reports include verified additional
+  compilers without changing the default driver. The optional bundle can be
+  installed even when Tectonic already builds PDFs. Availability checks and
+  compiler selection never install it.
+  A user-facing provider registry and preference (TinyTeX, tex-to-PDF services,
+  or future engines) is deliberately
   deferred to a later PR so this lane does not prematurely freeze provider
   vocabulary or send document sources to a network service without a separate
   consent and privacy design.

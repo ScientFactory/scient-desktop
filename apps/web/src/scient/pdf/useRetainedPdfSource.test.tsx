@@ -21,7 +21,7 @@ const source: PdfSourceDescriptor = {
   capabilities: { canSaveCopy: true, canRevealSource: false },
 };
 const refresh = () => {};
-const success = (url: string): PdfSourceResolution => ({
+const success = (url: string): Extract<PdfSourceResolution, { readonly _tag: "Success" }> => ({
   _tag: "Success",
   url,
   expiresAt: 99999999,
@@ -43,6 +43,9 @@ it("retains the reader through asset loading/failure, replaces it on success, an
   };
   await render("env/doc", success("pdf-one"));
   const input = mount.querySelector("textarea");
+  await render("env/doc", { ...success("unsettled-pdf"), waiting: true });
+  expect(mount.querySelector("textarea")).toBe(input);
+  expect(displayed).toMatchObject({ asset: { url: "pdf-one" } });
   await render("env/doc", { _tag: "Loading", refresh });
   expect(mount.querySelector("textarea")).toBe(input);
   expect(displayed).toMatchObject({ asset: { url: "pdf-one" } });
@@ -52,6 +55,9 @@ it("retains the reader through asset loading/failure, replaces it on success, an
   expect(mount.querySelector("textarea")).toBe(input);
   expect(displayed).toMatchObject({ asset: { url: "pdf-two" } });
   await render("another-env/doc", { _tag: "Loading", refresh });
+  expect(displayed).toBeNull();
+  expect(mount.querySelector("textarea")).toBeNull();
+  await render("another-env/doc", { ...success("unsettled-pdf"), waiting: true });
   expect(displayed).toBeNull();
   expect(mount.querySelector("textarea")).toBeNull();
   await act(() => root.unmount());

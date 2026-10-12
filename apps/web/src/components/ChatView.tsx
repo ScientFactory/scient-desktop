@@ -11926,6 +11926,11 @@ function ChatViewContent(props: ChatViewProps) {
               ? (renderedRightPanelSurface.latexRootRelativePath ?? null)
               : null
           }
+          latexSourceReveal={
+            renderedRightPanelSurface.kind === "file"
+              ? renderedRightPanelSurface.latexSourceReveal
+              : undefined
+          }
           onOpenFile={openFileSurface}
           onFileRenamed={(fromPath, toPath) => {
             if (activeThreadRef)

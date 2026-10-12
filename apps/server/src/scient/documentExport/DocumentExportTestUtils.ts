@@ -12,6 +12,7 @@ import type {
   ScientDocumentPageRenderResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
@@ -20,19 +21,42 @@ import * as ServerConfig from "../../config.ts";
 import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import {
   GeneratedDocumentStore,
   type GeneratedDocumentProductionHandle,
   type GeneratedDocumentStoreError,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
+
+const publicationHelper = await filePublicationTestHelper();
 
 /** Shared fixtures for document export tests; never imported by production code. */
 
 export const documentExportTestLayer = (prefix: string) => {
-  const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix });
+  const configLayer = Layer.unwrap(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix });
+      return ServerConfig.layerTest(
+        process.cwd(),
+        yield* fs.realPath(directory),
+        publicationHelper === undefined ? {} : { filePublicationHelperPath: publicationHelper },
+      );
+    }),
+  );
   return Layer.mergeAll(
     configLayer,
     WorkspacePaths.layer,
+    WorkspaceFileSystem.layer.pipe(
+      Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+      Layer.provide(WorkspacePaths.layer),
+      Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
+      Layer.provide(configLayer),
+    ),
     ProjectFaviconResolver.layer.pipe(
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(T3ProjectFileLoader.layer),

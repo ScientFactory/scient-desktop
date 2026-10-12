@@ -1,5 +1,5 @@
 import { manualBibliography } from "./latexBibliographyModel";
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments } from "./latexSourceSyntax";
 
 export interface CompiledBibliographyItem {
   label: string;

@@ -2,8 +2,10 @@ import {
   latexSourceArgument as arg,
   latexSourceCommands,
   patchLatexSource,
+  latexSourcePatches,
 } from "./latexSourceSyntax";
 import { latexLiteralBlock } from "./latexLiteral";
+import type { LatexSourceEdit } from "./latexSourceEditPlan";
 
 export function latexLabelInventory(source: string) {
   const targets: { key: string; from: number; to: number; uses: number; duplicate: boolean }[] = [];
@@ -61,11 +63,11 @@ export function renameLatexLabel(
   source: string,
   before: string,
   after: string,
-): { source: string } | { error: string } {
+): { source: string; edit: LatexSourceEdit } | { error: string } {
   const inventory = latexLabelInventory(source);
   if (!/^[^{}\\%\s#$&~^,]+$/u.test(after))
     return { error: "Use a label without spaces or LaTeX control characters." };
-  if (before === after) return { source };
+  if (before === after) return { source, edit: { source, patches: [] } };
   if (inventory.incomplete)
     return {
       error:
@@ -89,5 +91,7 @@ export function renameLatexLabel(
       })),
   ];
   const next = patchLatexSource(source, patches);
-  return next === null ? { error: "The reference ranges overlap." } : { source: next };
+  return next === null
+    ? { error: "The reference ranges overlap." }
+    : { source: next, edit: { source, patches: latexSourcePatches(source, patches) } };
 }

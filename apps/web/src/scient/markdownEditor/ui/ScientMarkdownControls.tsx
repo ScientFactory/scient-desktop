@@ -33,8 +33,6 @@ import {
   Minus,
   NotebookText,
   PanelTop,
-  PilcrowLeft,
-  PilcrowRight,
   RemoveFormatting,
   Rows3,
   Search,
@@ -80,6 +78,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { WritingShortcutsDialog } from "../../keyboard/WritingShortcutsDialog";
 import { WritingCommandIcon } from "../../writing/commandIcons";
+import { WritingDirectionIcon } from "../../writing/WritingDirectionIcon";
 import {
   InsertMenu,
   InsertMenuContent,
@@ -185,9 +184,9 @@ function commandIcon(command: ScientMarkdownCommand): ReactNode {
     case "direction-auto":
       return <ArrowRightLeft className={className} />;
     case "direction-ltr":
-      return <PilcrowRight className={className} />;
+      return <WritingDirectionIcon direction="ltr" />;
     case "direction-rtl":
-      return <PilcrowLeft className={className} />;
+      return <WritingDirectionIcon direction="rtl" />;
     default:
       return <FileText className={className} />;
   }
@@ -543,10 +542,11 @@ function InsertBlockMenu({
 const DIRECTION_ITEMS: ReadonlyArray<{
   readonly command: ScientMarkdownCommand;
   readonly label: string;
+  readonly accessibleLabel: string;
 }> = [
-  { command: "direction-auto", label: "Auto" },
-  { command: "direction-ltr", label: "Left-to-right" },
-  { command: "direction-rtl", label: "Right-to-left" },
+  { command: "direction-auto", label: "Auto", accessibleLabel: "Auto" },
+  { command: "direction-ltr", label: "LTR", accessibleLabel: "Left-to-right" },
+  { command: "direction-rtl", label: "RTL", accessibleLabel: "Right-to-left" },
 ];
 
 function DirectionMenuItems({
@@ -564,6 +564,11 @@ function DirectionMenuItems({
         <MenuRadioItem
           key={item.command}
           value={item.command}
+          aria-label={
+            snapshot.inTable && item.command === "direction-auto"
+              ? "Auto — detect from table"
+              : item.accessibleLabel
+          }
           onClick={() => controller.execute(item.command)}
         >
           <MenuRow

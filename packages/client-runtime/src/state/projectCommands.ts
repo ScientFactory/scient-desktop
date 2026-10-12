@@ -248,13 +248,35 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
+    listFileVersions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:list-file-versions",
+      tag: WS_METHODS.projectsListFileVersions,
+      scheduler: fileScheduler,
+      concurrency: fileConcurrency,
+    }),
+    discardFileVersion: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:discard-file-version",
+      tag: WS_METHODS.projectsDiscardFileVersion,
+      scheduler: fileScheduler,
+      concurrency: fileConcurrency,
+    }),
+    resolveFileMutation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:resolve-file-mutation",
+      tag: WS_METHODS.projectsResolveFileMutation,
+      scheduler: fileScheduler,
+      concurrency: fileConcurrency,
+    }),
     writeFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:write-file",
       tag: WS_METHODS.projectsWriteFile,
       scheduler: fileScheduler,
       concurrency: fileConcurrency,
       execute: (input) =>
-        requestGuarded(WS_METHODS.projectsWriteFile, input).pipe(
+        Effect.gen(function* () {
+          const mutationId =
+            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.orDie));
+          return yield* requestGuarded(WS_METHODS.projectsWriteFile, { ...input, mutationId });
+        }).pipe(
           Effect.tap((result) =>
             Effect.forEach(writtenFilePaths(input, result), fileMetadata.invalidate),
           ),
@@ -269,18 +291,13 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:rename-file",
       tag: WS_METHODS.projectsRenameFile,
       scheduler: fileScheduler,
-      concurrency: {
-        mode: "serial",
-        key: ({ environmentId, input }) =>
-          JSON.stringify([
-            environmentId,
-            input.cwd,
-            input.relativePath,
-            input.destinationRelativePath,
-          ]),
-      },
+      concurrency: fileConcurrency,
       execute: (input) =>
-        requestGuarded(WS_METHODS.projectsRenameFile, input).pipe(
+        Effect.gen(function* () {
+          const mutationId =
+            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.orDie));
+          return yield* requestGuarded(WS_METHODS.projectsRenameFile, { ...input, mutationId });
+        }).pipe(
           Effect.tap((result) =>
             Effect.forEach(
               new Set(
@@ -307,6 +324,12 @@ export function createProjectEnvironmentAtoms<R, E>(
     deleteFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:delete-file",
       tag: WS_METHODS.projectsDeleteFile,
+      execute: (input) =>
+        Effect.gen(function* () {
+          const mutationId =
+            input.mutationId ?? (yield* (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.orDie));
+          return yield* request(WS_METHODS.projectsDeleteFile, { ...input, mutationId });
+        }),
       scheduler: fileScheduler,
       concurrency: fileConcurrency,
     }),

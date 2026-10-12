@@ -1222,11 +1222,10 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-document
   .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared="true"]
   .scient-latex-visual-display-math {
-  /* Prepared geometry owns the offscreen size; a remembered browser size can
-     belong to an older wrapping or pagination layout. Visible content remains
-     naturally laid out by content-visibility:auto. */
-  content-visibility: auto;
-  contain-intrinsic-block-size: var(--scient-latex-block-height, 100px);
+  /* Viewport admission already bounds live DOM. A second browser viewport
+     cache can change flow while an anchor is being restored. */
+  content-visibility: visible;
+  contain-intrinsic-block-size: none;
 }
 [data-latex-measure-visible]
   .scient-latex-visual-document
@@ -3488,6 +3487,23 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   text-align: center;
 }
 
+/* The installation offer belongs to the document, including Source and Visual. */
+.scient-latex-tools-notice {
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  text-align: left;
+}
+
+.scient-latex-tools-notice p {
+  max-width: none;
+  flex-basis: 100%;
+}
+
 .scient-latex-placeholder h2 {
   color: var(--foreground);
   font-weight: 500;
@@ -4279,5 +4295,163 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 @media print {
   .scient-latex-selection-overlay {
     display: none !important;
+  }
+}
+
+/* Preparation state occupies no paper space and never continuously repaints. */
+@media screen {
+  .scient-latex-visual-scroll:has(.scient-latex-visual-document[data-latex-opening="true"]) {
+    overflow: hidden;
+  }
+  .scient-latex-visual-scroll:has(.scient-latex-visual-document[data-latex-opening="true"])
+    > .scient-latex-page-zoom-frame {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+.scient-latex-viewport-status {
+  position: sticky;
+  top: 8px;
+  height: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+.scient-latex-viewport-status[hidden] {
+  display: none;
+}
+.scient-latex-viewport-status > span {
+  position: absolute;
+  right: 8px;
+  max-width: calc(100% - 16px);
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.scient-latex-visual-document [data-latex-viewport-closed]::after {
+  content: "Preparing content…";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+.scient-latex-visual-document
+  p[data-latex-viewport-prepared="true"][data-latex-viewport-rendering="true"]:not(
+    [data-latex-viewport-editing="true"]
+  ):not(:has(math-field)),
+.scient-latex-visual-document
+  .node-latexDisplayMath[data-latex-viewport-prepared="true"][data-latex-viewport-rendering="true"]:not(
+    :has(math-field)
+  )
+  > .scient-latex-visual-display-math {
+  height: var(--scient-latex-block-height);
+}
+@media print {
+  .scient-latex-viewport-status {
+    display: none;
+  }
+}
+
+/* Cold blocks reserve a stable box until their natural geometry is ready.
+   Formula arrivals must not move every later block between measurement passes. */
+.scient-latex-visual-document
+  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]:not(
+    [data-latex-viewport-editing="true"]
+  ):not(:has(math-field)) {
+  position: relative;
+  visibility: hidden;
+}
+.scient-latex-visual-document
+  p[data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]:not(
+    [data-latex-viewport-editing="true"]
+  ):not(:has(math-field)),
+.scient-latex-visual-document
+  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]:not(
+    :has(math-field)
+  )
+  > .scient-latex-visual-display-math {
+  height: var(--scient-latex-viewport-estimate);
+  overflow: hidden;
+}
+.scient-latex-visual-document
+  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]:not(
+    [data-latex-viewport-editing="true"]
+  ):not(:has(math-field))::after {
+  content: "Preparing content…";
+  visibility: visible;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"],
+.scient-latex-page-preview [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"] {
+  visibility: visible;
+}
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  p[data-latex-viewport="mounted"][data-latex-viewport-prepared="false"],
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]
+  > .scient-latex-visual-display-math {
+  height: auto;
+  overflow: visible;
+}
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]::after,
+.scient-latex-page-preview
+  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]::after {
+  display: none;
+}
+
+/* The viewport owns source anchors; native anchoring must not apply a second
+   scroll correction after the same measured geometry publication. */
+.scient-latex-visual-scroll:has(.scient-latex-visual-document[data-latex-windowed]) {
+  overflow-anchor: none;
+}
+@media print {
+  .scient-latex-visual-document
+    [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"],
+  .scient-latex-visual-document
+    [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]
+    > .scient-latex-visual-display-math {
+    visibility: visible;
+    height: auto;
+    overflow: visible;
+  }
+  .scient-latex-visual-document
+    [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]::after {
+    display: none;
+  }
+}
+
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  p[data-latex-viewport="mounted"][data-latex-viewport-prepared],
+[data-latex-measure-visible]
+  .scient-latex-visual-document
+  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared]
+  > .scient-latex-visual-display-math {
+  height: auto !important;
+  overflow: visible;
+}
+@media print {
+  .scient-latex-visual-document p[data-latex-viewport="mounted"][data-latex-viewport-prepared],
+  .scient-latex-visual-document
+    .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared]
+    > .scient-latex-visual-display-math {
+    height: auto !important;
   }
 }

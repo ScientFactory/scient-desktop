@@ -22,7 +22,6 @@ import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts"
 import { selectLatexBuildEngine } from "./latexEngineGate.ts";
 import { parseLatexLog } from "./latexLog.ts";
 import { missingLatexPackageInputs } from "./latexMissingPackages.ts";
-import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { latexArtworkWorkspaceKey, makeLatexArtworkWorkspaces } from "./latexArtworkWorkspaces.ts";
 import { makeLatexArtworkRaster } from "./latexArtworkRaster.ts";
@@ -48,16 +47,20 @@ const make = Effect.gen(function* () {
   const paths = yield* WorkspacePaths.WorkspacePaths;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const toolchains = yield* LatexToolchain;
-  const packages = yield* LatexPackageInstaller;
   const hostEnvironment = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
   const delimiter = platform === "win32" ? ";" : ":";
   const resolveExecutable = yield* SpawnExecutableResolution;
   const gate = yield* Semaphore.make(2);
-  const withWorkspace = yield* makeLatexArtworkWorkspaces;
+  const previews = path.join(config.latexDir, "artwork");
+  const withWorkspace = yield* makeLatexArtworkWorkspaces(previews);
   const rasterize = yield* makeLatexArtworkRaster;
 
   const render = Effect.fn("LatexTikzPreview.render")(function* (input: ScientLatexArtworkRequest) {
+    if (input.authorization !== "execute-host-tex")
+      return unavailable(
+        "Drawing preview requires an explicit action to run this source and preamble with host TeX/Lua filesystem authority.",
+      );
     const algorithm =
       /^\s*\\begin\{algorithm\}(?:\[[htbpH!]+\])?/u.test(input.source) &&
       /\\end\{algorithm\}\s*$/u.test(input.source) &&
@@ -91,6 +94,13 @@ const make = Effect.gen(function* () {
     if (compiler.error) return unavailable(compiler.error);
     const managedBin =
       toolchain.source === "scient-managed" ? path.dirname(toolchain.executable) : null;
+    if (
+      managedBin !== null &&
+      (yield* fileSystem.exists(path.join(managedBin, ".scient-unretired-install")))
+    )
+      return unavailable(
+        "The managed TeX distribution has an active or unretired installer and cannot run this preview.",
+      );
     const environment = latexEngineEnvironment({
       base: {
         max_print_line: "1000",
@@ -100,8 +110,6 @@ const make = Effect.gen(function* () {
       binDirectory: managedBin,
       pathDelimiter: delimiter,
     });
-    const previews = path.join(config.latexDir, "artwork");
-    yield* fileSystem.makeDirectory(previews, { recursive: true });
     return yield* withWorkspace({
       key: latexArtworkWorkspaceKey([
         workspaceRoot,
@@ -118,33 +126,15 @@ const make = Effect.gen(function* () {
           .sort(([left], [right]) => left.localeCompare(right))
           .flatMap(([key, value]) => [key, String(value)]),
       ]),
-      parent: previews,
-      workspaceRoot,
       trackedInputs: [path.resolve(workspaceRoot, document.relativePath), discovered.executable],
-      run: (directory, forceReprocess) =>
+      searchPath: environment.TEXINPUTS ?? null,
+      pathDelimiter: delimiter,
+      run: (directory, forceReprocess, onRetirementFailure) =>
         Effect.gen(function* () {
           const sourcePath = path.join(directory, "picture.tex");
           const preamble = /\\documentclass\b/u.test(input.preamble)
             ? input.preamble
             : `\\documentclass{article}\n${input.preamble}`;
-          const labels = algorithm
-            ? yield* workspace
-                .readFile({
-                  cwd: input.workspaceRoot,
-                  relativePath: input.relativePath.replace(/\.tex$/iu, ".aux"),
-                })
-                .pipe(
-                  Effect.map((file) =>
-                    file.truncated
-                      ? ""
-                      : file.contents
-                          .split(/\r?\n/u)
-                          .filter((line) => line.startsWith("\\newlabel{"))
-                          .join("\n"),
-                  ),
-                  Effect.orElseSucceed(() => ""),
-                )
-            : "";
           const artwork = algorithm
             ? `\\setcounter{algorithm}{${(input.algorithmNumber ?? 1) - 1}}\n` +
               input.source.replace(
@@ -155,7 +145,6 @@ const make = Effect.gen(function* () {
           const pictureSource =
             `${preamble}\n\\usepackage[active,tightpage]{preview}\n` +
             `\\setlength{\\PreviewBorder}{0.5pt}\n` +
-            `\\makeatletter\n${labels}\n\\makeatother\n` +
             `\\begin{document}\n` +
             `\\setlength{\\textwidth}{${input.widthInches}in}\n\\setlength{\\columnwidth}{${input.widthInches}in}\n` +
             `\\begin{preview}\n\\setlength{\\linewidth}{${input.widthInches}in}\n` +
@@ -172,79 +161,77 @@ const make = Effect.gen(function* () {
             workDirectory: directory.replaceAll("\\", "/"),
             forceReprocess,
           });
-          const attempted = new Set<string>();
-          for (let round = 0; round < 10; round++) {
-            if (forceReprocess || round > 0)
-              yield* fileSystem.remove(invocation.pdfPath, { force: true });
-            const outcome = yield* Effect.scoped(
-              Effect.gen(function* () {
-                const handle = yield* Effect.acquireRelease(
-                  processes.start({
-                    runId: ExecutionRunId.make(NodeCrypto.randomUUID()),
-                    executable: invocation.command,
-                    args:
-                      round > 0 && !forceReprocess && discovered.kind !== "tectonic"
-                        ? [...invocation.args, "-g"]
-                        : invocation.args,
+          if (forceReprocess) yield* fileSystem.remove(invocation.pdfPath, { force: true });
+          const outcome = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const handle = yield* Effect.acquireRelease(
+                processes.start({
+                  runId: ExecutionRunId.make(NodeCrypto.randomUUID()),
+                  executable: invocation.command,
+                  args:
+                    discovered.kind === "tectonic"
+                      ? ["--only-cached", ...invocation.args]
+                      : invocation.args,
+                  cwd: directory,
+                  environment,
+                }),
+                (handle) =>
+                  handle.cancel.pipe(
+                    Effect.andThen(handle.exitCode),
+                    Effect.catchCause((cause) =>
+                      onRetirementFailure.pipe(Effect.andThen(Effect.failCause(cause))),
+                    ),
+                    Effect.orDie,
+                  ),
+              );
+              const transcript = yield* Ref.make("");
+              const output = yield* handle.output.pipe(
+                Stream.runForEach((chunk) =>
+                  Ref.update(transcript, (text) => (text + chunk.text).slice(-256_000)),
+                ),
+                Effect.forkScoped,
+              );
+              const exit = yield* handle.exitCode;
+              yield* Fiber.join(output).pipe(Effect.ignoreCause());
+              return { exit, transcript: yield* Ref.get(transcript) };
+            }),
+          ).pipe(Effect.timeoutOption("60 seconds"));
+          if (Option.isNone(outcome)) return unavailable("The drawing preview timed out.");
+          if (outcome.value.exit === 0) {
+            const info = yield* fileSystem.stat(invocation.pdfPath);
+            if (info.size > 6_000_000n) return unavailable("The drawing preview is too large.");
+            const pdf = yield* fileSystem.readFile(invocation.pdfPath);
+            const raster =
+              input.rasterPixelRatio === undefined
+                ? null
+                : yield* rasterize({
+                    pdfPath: invocation.pdfPath,
+                    pngPrefix: path.join(directory, "picture-raster"),
                     cwd: directory,
                     environment,
-                  }),
-                  (handle) => handle.cancel.pipe(Effect.ignoreCause()),
-                );
-                const transcript = yield* Ref.make("");
-                const output = yield* handle.output.pipe(
-                  Stream.runForEach((chunk) =>
-                    Ref.update(transcript, (text) => (text + chunk.text).slice(-256_000)),
-                  ),
-                  Effect.forkScoped,
-                );
-                const exit = yield* handle.exitCode.pipe(Effect.timeoutOption("60 seconds"));
-                if (Option.isNone(exit)) yield* handle.cancel.pipe(Effect.ignoreCause());
-                yield* Fiber.join(output).pipe(Effect.ignoreCause());
-                return { exit: Option.getOrNull(exit), transcript: yield* Ref.get(transcript) };
-              }),
-            );
-            if (outcome.exit === null) return unavailable("The drawing preview timed out.");
-            if (outcome.exit === 0) {
-              const info = yield* fileSystem.stat(invocation.pdfPath);
-              if (info.size > 6_000_000n) return unavailable("The drawing preview is too large.");
-              const pdf = yield* fileSystem.readFile(invocation.pdfPath);
-              const raster =
-                input.rasterPixelRatio === undefined
-                  ? null
-                  : yield* rasterize({
-                      pdfPath: invocation.pdfPath,
-                      pngPrefix: path.join(directory, "picture-raster"),
-                      cwd: directory,
-                      environment,
-                      ratio: input.rasterPixelRatio,
-                    });
-              return {
-                _tag: "ready" as const,
-                pdfBase64: Buffer.from(pdf).toString("base64"),
-                ...(raster ? { raster } : {}),
-              };
-            }
-            const missing = missingLatexPackageInputs(outcome.transcript).filter(
-              (item) => !attempted.has(item.packageName),
-            );
-            if (managedBin && missing.length && round < 9) {
-              for (const item of missing) attempted.add(item.packageName);
-              const installed = yield* packages.install({
-                binDirectory: managedBin,
-                packages: missing.map((item) => item.packageName),
-                expectedFiles: missing.map((item) => item.fileName),
-                timeout: "60 seconds",
-              });
-              if (installed.installed.length) continue;
-            }
-            return unavailable(
-              parseLatexLog(outcome.transcript).find((item) => item.severity === "error")
-                ?.message ?? "The LaTeX toolchain could not render this drawing.",
-            );
+                    ratio: input.rasterPixelRatio,
+                    onRetirementFailure,
+                  });
+            return {
+              _tag: "ready" as const,
+              pdfBase64: Buffer.from(pdf).toString("base64"),
+              ...(raster ? { raster } : {}),
+            };
           }
-          return unavailable("The drawing's packages could not be resolved.");
-        }),
+          const missing = missingLatexPackageInputs(outcome.value.transcript);
+          if (missing.length)
+            return unavailable(
+              "Drawing preview needs missing LaTeX packages. Use the document’s explicit Build action to resolve packages, then run this preview again.",
+            );
+          const message =
+            parseLatexLog(outcome.value.transcript).find((item) => item.severity === "error")
+              ?.message ?? "The LaTeX toolchain could not render this drawing.";
+          return unavailable(
+            discovered.kind === "tectonic"
+              ? `${message} Tectonic previews use only cached bundle files. If files are missing, use the document’s explicit Build action to resolve them, then run this preview again.`
+              : message,
+          );
+        }).pipe(Effect.timeout("150 seconds")),
     });
   });
   return LatexTikzPreview.of({
@@ -252,9 +239,8 @@ const make = Effect.gen(function* () {
       gate
         .withPermits(1)(render(input))
         .pipe(
-          Effect.timeout("150 seconds"),
-          Effect.catch((error) =>
-            Effect.logDebug("TikZ preview unavailable", { error }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logDebug("TikZ preview unavailable", { cause }).pipe(
               Effect.as(unavailable("The drawing preview is unavailable. Check the LaTeX build.")),
             ),
           ),

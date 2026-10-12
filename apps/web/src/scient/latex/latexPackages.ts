@@ -1,3 +1,11 @@
+import {
+  latexWithoutComments,
+  latexCommands,
+  latexPreambleEnd,
+  maskLatexSource,
+} from "./latexSourceSyntax";
+import type { DocumentSourcePatch } from "@scientfactory/scient-document";
+
 /** Package declarations and tool requirements share this source-level inventory. */
 import { latexSourceArgument } from "./latexSourceSyntax";
 
@@ -68,17 +76,6 @@ const providedPackages: Readonly<Record<string, readonly string[]>> = {
   algorithm: ["float"],
 };
 
-// Preserve offsets so declarations can be inserted without rewriting the preamble.
-export function latexWithoutComments(source: string): string {
-  return source.replace(/\\(?:[A-Za-z]+|[^\r\n])|%[^\r\n]*/gu, (token) =>
-    token.startsWith("%") ? " ".repeat(token.length) : token,
-  );
-}
-
-export function latexCommands(source: string) {
-  return [...latexWithoutComments(source).matchAll(/\\([A-Za-z]+|[^\r\n])/gu)];
-}
-
 /** Existing commands do not turn an unrelated prose edit into a package edit. */
 export function newLatexCommandPackages(
   previous: string,
@@ -122,28 +119,8 @@ export function newLatexCommandPackages(
   return packages;
 }
 
-/** Locate the real document boundary without scanning or copying its body. */
-export function latexPreambleEnd(source: string): number {
-  const tokens = /\\([A-Za-z]+|[^\r\n])|[{}%]/gu;
-  const document = /(?:\s|%[^\r\n]*(?:\r?\n|$))*\{document\}/uy;
-  let depth = 0;
-  for (let token = tokens.exec(source); token; token = tokens.exec(source)) {
-    if (token[0] === "%") {
-      const newline = source.indexOf("\n", tokens.lastIndex);
-      if (newline < 0) break;
-      tokens.lastIndex = newline + 1;
-    } else if (token[0] === "{") depth++;
-    else if (token[0] === "}") depth--;
-    else if (depth === 0 && token[1] === "begin") {
-      document.lastIndex = tokens.lastIndex;
-      if (document.test(source)) return token.index;
-    }
-  }
-  return source.length;
-}
-
 export function latexPackageInventory(source: string) {
-  const clean = latexWithoutComments(source.slice(0, latexPreambleEnd(source)));
+  const clean = maskLatexSource(source.slice(0, latexPreambleEnd(source)), { literals: true });
   let end = clean.length;
   let directionBoundary: number | null = null;
   const declarations: { name: string; from: number; options: string }[] = [];
@@ -196,8 +173,13 @@ export function ensureLatexPackages(
   source: string,
   required: Iterable<string>,
   eol: string,
+  onPatches?: (patches: readonly DocumentSourcePatch[]) => void,
+  setupSource = source,
 ): string {
-  const { end, declarations, loaded, directionBoundary } = latexPackageInventory(source);
+  const destination = latexPackageInventory(source);
+  const { end, declarations, directionBoundary } = destination;
+  const setup = setupSource === source ? destination : latexPackageInventory(setupSource);
+  const loaded = setup.loaded;
   const wanted = new Set(required);
   const breakable = wanted.delete("tcolorbox-breakable");
   if (breakable) wanted.add("tcolorbox");
@@ -206,13 +188,11 @@ export function ensureLatexPackages(
   const missing = [...wanted].filter((name) => !loaded.has(name));
   const needsBreakable =
     breakable &&
-    !declarations.some(
+    !setup.declarations.some(
       ({ name, options }) =>
         name === "tcolorbox" && /(?:^|,)\s*(?:most|many|breakable)\s*(?:,|$)/u.test(options),
     ) &&
-    !/\\tcbuselibrary\s*\{[^{}]*\bbreakable\b[^{}]*\}/u.test(
-      latexWithoutComments(source.slice(0, end)),
-    );
+    !/\\tcbuselibrary\s*\{[^{}]*\bbreakable\b[^{}]*\}/u.test(setup.preamble);
   if (!missing.length && !needsBreakable) return source;
   const order = [
     "amsmath",
@@ -250,6 +230,14 @@ export function ensureLatexPackages(
     lines.push(`\\tcbuselibrary{breakable}${eol}`);
     insertions.set(end, lines);
   }
+  onPatches?.(
+    [...insertions].map(([at, lines]) => ({
+      start: at,
+      end: at,
+      expected: "",
+      replacement: (at > 0 && !/[\r\n]/u.test(source[at - 1]!) ? eol : "") + lines.join(""),
+    })),
+  );
   let next = source;
   for (const [at, lines] of [...insertions].sort(([a], [b]) => b - a)) {
     const boundary = at > 0 && !/[\r\n]/u.test(source[at - 1]!) ? eol : "";
@@ -266,8 +254,16 @@ const menuColors: Readonly<Record<string, string>> = {
   "light-grey": "D4D5D2",
 };
 
-export function ensureLatexMenuColors(source: string, content: string, eol: string): string {
-  const { preamble, end } = latexPackageInventory(source);
+export function ensureLatexMenuColors(
+  source: string,
+  content: string,
+  eol: string,
+  onPatches?: (patches: readonly DocumentSourcePatch[]) => void,
+  setupSource = source,
+): string {
+  const destination = latexPackageInventory(source);
+  const { end } = destination;
+  const { preamble } = setupSource === source ? destination : latexPackageInventory(setupSource);
   const clean = latexWithoutComments(content);
   const needed = new Set<string>();
   for (const command of latexCommands(content)) {
@@ -291,5 +287,6 @@ export function ensureLatexMenuColors(source: string, content: string, eol: stri
     .join("");
   if (!declarations) return source;
   const boundary = end > 0 && !/[\r\n]/u.test(source[end - 1]!) ? eol : "";
+  onPatches?.([{ start: end, end, expected: "", replacement: boundary + declarations }]);
   return source.slice(0, end) + boundary + declarations + source.slice(end);
 }

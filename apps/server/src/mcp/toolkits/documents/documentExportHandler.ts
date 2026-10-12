@@ -28,11 +28,11 @@ import { captureProjectMarkdownFile } from "../../../scient/documentExport/Markd
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import {
   assertCurrentDocumentBuildProject,
-  commitStagedProjectPdfOutput,
+  publishProjectPdfOutput,
   type ProjectDocumentBuildBoundaryError,
   resolveDocumentBuildProject,
   resolveProjectPdfOutput,
-  stageProjectPdfOutput,
+  prepareProjectPdfOutputIntent,
 } from "./projectDocumentBuild.ts";
 import { ScientDocumentExportToolError } from "./tools.ts";
 
@@ -41,11 +41,31 @@ type ErrorCode = ConstructorParameters<typeof ScientDocumentExportToolError>[0][
 const toolError = (
   code: ErrorCode,
   message: string,
-  receipt?: Pick<ScientDocumentExportToolError, "publishedSource" | "outputPath">,
-) => new ScientDocumentExportToolError({ code, message, ...receipt });
+  receipt?: Pick<
+    ScientDocumentExportToolError,
+    | "publishedSource"
+    | "outputPath"
+    | "publicationOutcome"
+    | "recoveryId"
+    | "retainedPaths"
+    | "mutationId"
+  >,
+) =>
+  new ScientDocumentExportToolError({
+    code,
+    message,
+    ...(receipt?.publishedSource === undefined ? {} : { publishedSource: receipt.publishedSource }),
+    ...(receipt?.outputPath === undefined ? {} : { outputPath: receipt.outputPath }),
+    ...(receipt?.publicationOutcome === undefined
+      ? {}
+      : { publicationOutcome: receipt.publicationOutcome }),
+    ...(receipt?.recoveryId === undefined ? {} : { recoveryId: receipt.recoveryId }),
+    ...(receipt?.retainedPaths === undefined ? {} : { retainedPaths: receipt.retainedPaths }),
+    ...(receipt?.mutationId === undefined ? {} : { mutationId: receipt.mutationId }),
+  });
 
 const boundaryToolError = (cause: ProjectDocumentBuildBoundaryError) =>
-  toolError(cause.code, cause.message);
+  toolError(cause.code, cause.message, cause);
 
 /** `ScientDocumentExportResult.warnings` holds at most this many entries. */
 const MAX_TOOL_WARNINGS = 64;
@@ -120,9 +140,9 @@ const renderCapture = Effect.fn("ScientDocumentExport.render")(function* (
 
 /**
  * `scient_document_export`: a project Markdown file to a project PDF at an
- * explicit output path. Authority, output staging, and partial-publication
- * receipts follow `scient_pdf_build`; the source is captured and rendered on
- * Scient's document page instead of loaded as HTML.
+ * explicit output path. Source epochs, retained output publication, and
+ * partial-publication receipts follow `scient_pdf_build`; the source is
+ * captured and rendered on Scient's document page instead of loaded as HTML.
  */
 export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport.export")(
   function* (input: ScientDocumentExportInput) {
@@ -163,7 +183,15 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
         Effect.mapError(exportErrorToToolError),
       );
 
-      const { source, projectOutputState } = yield* Effect.scoped(
+      if (record.source._tag !== "workspace-file" || record.source.mutationEpoch === undefined) {
+        yield* abandonQuietly(generatedDocuments, handle, "The capture has no workspace epoch.");
+        return yield* toolError("source-changed", "Export the project document again.");
+      }
+      const intent = prepareProjectPdfOutputIntent(output, bytes, {
+        mutationId: `markdown-pdf-output:${handle.operationId}:${output.outputPath}`,
+        expectedMutationEpoch: record.source.mutationEpoch,
+      });
+      const { source, outputError } = yield* Effect.scoped(
         Effect.gen(function* () {
           yield* assertCurrentDocumentBuildProject(authority).pipe(
             Effect.mapError(boundaryToolError),
@@ -171,26 +199,8 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
               abandonQuietly(generatedDocuments, handle, "The project workspace changed."),
             ),
           );
-          const staged = yield* stageProjectPdfOutput(output, bytes).pipe(
-            Effect.mapError(boundaryToolError),
-            Effect.tapError(() =>
-              abandonQuietly(
-                generatedDocuments,
-                handle,
-                "The requested project output could not be staged.",
-              ),
-            ),
-          );
-          yield* assertCurrentDocumentBuildProject(authority).pipe(
-            Effect.mapError(boundaryToolError),
-            Effect.tapError(() =>
-              abandonQuietly(generatedDocuments, handle, "The project workspace changed."),
-            ),
-          );
           const source = yield* publishDocumentPdfBytes(record, handle, bytes).pipe(
-            Effect.mapError(() =>
-              toolError("publication-failed", "Scient rejected or could not store the PDF."),
-            ),
+            Effect.mapError(exportErrorToToolError),
           );
           if (source._tag !== "generated-pdf") {
             return yield* toolError(
@@ -198,43 +208,31 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
               "Scient returned an unsupported PDF source.",
             );
           }
-          const projectOutputState = yield* assertCurrentDocumentBuildProject(authority).pipe(
-            Effect.mapError(boundaryToolError),
-            Effect.andThen(
-              commitStagedProjectPdfOutput(staged).pipe(Effect.mapError(boundaryToolError)),
-            ),
-            Effect.as("written" as const),
-            Effect.catch((cause) =>
-              Effect.logWarning("published document PDF could not replace its project output", {
-                errorCode: cause.code,
-                outputPath: output.outputPath,
-              }).pipe(
-                Effect.as(
-                  cause.code === "project-changed"
-                    ? ("authority-stale" as const)
-                    : ("write-failed" as const),
-                ),
-              ),
-            ),
+          const outputError = yield* assertCurrentDocumentBuildProject(authority).pipe(
+            Effect.andThen(publishProjectPdfOutput(intent)),
+            Effect.as(null),
+            Effect.catch((cause) => Effect.succeed(cause)),
           );
-          return { source, projectOutputState };
+          return { source, outputError };
         }),
       );
 
       const partialMessage =
-        "Scient stored an immutable PDF revision, but could not safely write the requested project file. The publishedSource receipt identifies the available revision; outputPath was not written.";
+        outputError?.publicationOutcome === "unchanged"
+          ? "Scient stored an immutable PDF revision, but the native publication authority refused the project output unchanged. The publishedSource receipt identifies the available revision."
+          : "Scient stored an immutable PDF revision, but project output acceptance failed. The workspace mutation may have applied; inspect the publication outcome and recovery receipt before retrying.";
       const authorityStillCurrent = yield* assertCurrentDocumentBuildProject(authority).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
-      if (projectOutputState === "authority-stale" || !authorityStillCurrent) {
-        const outputWasWritten = projectOutputState === "written";
+      if (outputError?.code === "project-changed" || !authorityStillCurrent) {
+        const outputWasWritten = outputError === null;
         return yield* toolError(
           outputWasWritten ? "project-changed" : "partial-publication",
           outputWasWritten
             ? "Scient wrote the PDF to the workspace where the export began, but the active workspace changed before presentation. The PDF was not opened in the new workspace."
             : partialMessage,
-          { publishedSource: source, outputPath: output.outputPath },
+          { ...outputError, publishedSource: source, outputPath: output.outputPath },
         );
       }
 
@@ -254,8 +252,9 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
             }).pipe(Effect.as(false)),
           ),
         );
-      if (projectOutputState === "write-failed") {
+      if (outputError !== null) {
         return yield* toolError("partial-publication", partialMessage, {
+          ...outputError,
           publishedSource: source,
           outputPath: output.outputPath,
         });

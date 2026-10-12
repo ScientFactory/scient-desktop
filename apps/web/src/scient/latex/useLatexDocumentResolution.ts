@@ -1,5 +1,5 @@
 import type { EnvironmentId, ScientLatexResolveResult } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { requestLatexResolution } from "./client";
 
@@ -15,6 +15,7 @@ export interface LatexDocumentResolutionState extends Omit<
   "requestKey" | "documentKey"
 > {
   readonly pending: boolean;
+  readonly retry: () => void;
 }
 
 export function useLatexDocumentResolution(input: {
@@ -30,6 +31,8 @@ export function useLatexDocumentResolution(input: {
   readonly movedFrom?: string;
 }): LatexDocumentResolutionState {
   const requestRef = useRef(0);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((previous) => previous + 1), []);
   const [state, setState] = useState<StoredLatexDocumentResolution | null>(null);
   const request = useMemo(
     () => ({
@@ -41,6 +44,7 @@ export function useLatexDocumentResolution(input: {
         input.contextRootRelativePath ?? null,
       ]),
       key: JSON.stringify([
+        attempt,
         input.environmentId,
         input.workspaceRoot,
         input.sourceRelativePath,
@@ -56,6 +60,7 @@ export function useLatexDocumentResolution(input: {
       },
     }),
     [
+      attempt,
       input.contextRootRelativePath,
       input.environmentId,
       input.sourceRelativePath,
@@ -99,6 +104,7 @@ export function useLatexDocumentResolution(input: {
       ? carriedResolution(state, input, input.movedFrom)
       : null;
   return {
+    retry,
     pending: current?.requestKey !== request.key,
     result: current?.result ?? carried,
     error: current?.error ?? null,

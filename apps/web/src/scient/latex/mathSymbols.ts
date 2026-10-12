@@ -1,5 +1,5 @@
 import catalog from "./mathSymbolCatalog.json";
-import { latexCommands, latexWithoutComments } from "./latexPackages";
+import { latexCommands, latexWithoutComments } from "./latexSourceSyntax";
 
 export interface MathSymbol {
   id: string;

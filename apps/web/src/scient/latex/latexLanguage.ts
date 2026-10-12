@@ -1,4 +1,4 @@
-import { latexPreambleEnd, latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments, latexDocumentBoundary, latexPreambleEnd } from "./latexSourceSyntax";
 
 export type LatexTextDirection = "ltr" | "rtl";
 export type LatexWritingLanguage = "english" | "hebrew";
@@ -32,7 +32,8 @@ export function latexDirectionMark(name: string) {
 /** Only literal, top-level declarations are settings; macro bodies are not evaluated. */
 function preambleDeclarations(source: string) {
   const withoutComments = latexWithoutComments(source);
-  const clean = withoutComments.slice(0, latexPreambleEnd(source));
+  const begin = latexDocumentBoundary(source)?.from ?? -1;
+  const clean = begin < 0 ? withoutComments : withoutComments.slice(0, begin);
   const depths = new Int32Array(clean.length);
   let depth = 0;
   for (let at = 0; at < clean.length; at++) {
@@ -215,8 +216,8 @@ export function updateLatexLanguageSource(
   if (!setup.canConfigure || !/^[\p{L}\p{N} ._()+-]+$/u.test(font.trim())) return null;
   const { find } = preambleDeclarations(source);
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
-  const end = latexPreambleEnd(source);
-  if (end === source.length) return null;
+  const end = latexDocumentBoundary(source)?.from ?? -1;
+  if (end < 0) return null;
   const declarations = find(/\\set(?:default|main)language\s*(?:\[[^\]]*\])?\s*\{[^{}]+\}/gu);
   const fonts = find(
     /\\newfontfamily\s*(?:\{\\hebrewfont\}|\\hebrewfont\b)\s*(?:\[[^\]]*\])?\s*\{[^{}]+\}/gu,

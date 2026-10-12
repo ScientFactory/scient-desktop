@@ -5,6 +5,8 @@ import {
   type DocumentPersistenceFailureKind,
   type DocumentPersistenceOptions,
   type DocumentPersistenceReadResult,
+  type DocumentPersistenceCurrentReview,
+  type DocumentPersistenceSnapshot,
   type ReconcileDocument,
 } from "./persistenceCoordinator.ts";
 import type { DocumentSaveIntent } from "./session.ts";
@@ -37,6 +39,7 @@ function fixture(
   });
   const read = vi.fn(async (): Promise<DocumentPersistenceReadResult> => disk);
   const reconcile = vi.fn<ReconcileDocument<KeyedLinesReconciliation>>(reconcileKeyedLines);
+  let checkpoint: DocumentPersistenceSnapshot | null = null;
   const coordinator = new DocumentPersistenceCoordinator<KeyedLinesReconciliation>({
     source: initial,
     revision: "r0",
@@ -44,6 +47,9 @@ function fixture(
     read,
     classifyFailure,
     reconcile,
+    persistAuthorizedCurrentReview: async (snapshot) => {
+      checkpoint = snapshot;
+    },
     debounceMs: 100,
     maxWaitMs: 500,
     ...overrides,
@@ -53,6 +59,7 @@ function fixture(
     write,
     read,
     reconcile,
+    checkpoint: () => checkpoint,
     disk: () => disk,
     setDisk: (source: string) => {
       revisions += 1;
@@ -616,5 +623,719 @@ describe("DocumentPersistenceCoordinator.replaceIo", () => {
     expect(await h.coordinator.flushNow()).toBe(true);
     expect(io.write).toHaveBeenCalledOnce();
     expect(h.write).not.toHaveBeenCalled();
+  });
+});
+
+describe("DocumentPersistenceCoordinator mutation outcomes", () => {
+  it("replays an ambiguous logical intent but assigns a new ID to a later identical pair", async () => {
+    vi.useFakeTimers();
+    try {
+      let disk = { source: "key=A\n", revision: "rA" };
+      const intents: DocumentSaveIntent[] = [];
+      const h = fixture({
+        source: "key=A\n",
+        revision: "rA",
+        read: async () => disk,
+        classifyFailure: (error) => (error === "transient" ? "transient" : "terminal"),
+        write: async (intent) => {
+          intents.push(intent);
+          if (intents.length === 1) throw "transient";
+          disk = { source: intent.source, revision: "rB" };
+          return { revision: disk.revision };
+        },
+        retryDelaysMs: [1],
+      });
+      h.coordinator.change("key=B\n");
+      const saved = h.coordinator.flushNow();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await saved).toBe(true);
+      expect(intents[1]).toBe(intents[0]);
+      disk = { source: "key=A\n", revision: "rA" };
+      h.coordinator.noteFreshnessHint();
+      expect(await h.coordinator.flushNow()).toBe(true);
+      h.coordinator.change("key=B\n");
+      expect(await h.coordinator.flushNow()).toBe(true);
+      expect(intents[2]?.source).toBe(intents[0]?.source);
+      expect(intents[2]?.expectedRevision).toBe(intents[0]?.expectedRevision);
+      expect(intents[2]?.mutationId).not.toBe(intents[0]?.mutationId);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps retained attention, newer typing and held input through equal freshness and reconnect", async () => {
+    let rejectWrite!: (error: unknown) => void;
+    const error = { recoveryId: "retained-1", retainedPaths: ["/retained/old.md"] };
+    const read = vi.fn(async () => ({ source: "C", revision: "rC" }));
+    const write = vi.fn(
+      () =>
+        new Promise<{ revision: string }>((_resolve, reject) => {
+          rejectWrite = reject;
+        }),
+    );
+    const h = fixture({
+      source: "A",
+      write,
+      read,
+      classifyFailure: (value) => (value === error ? "recovery_required" : "terminal"),
+    });
+    h.coordinator.change("B");
+    const saved = h.coordinator.flushNow();
+    h.coordinator.change("C");
+    const releaseInput = h.coordinator.suspendExternalUpdates();
+    rejectWrite(error);
+    expect(await saved).toBe(false);
+    h.coordinator.noteFreshnessHint();
+    h.coordinator.setConnected(false);
+    h.coordinator.setConnected(true);
+    expect(await h.coordinator.refresh()).toBe(false);
+    expect(await h.coordinator.retry()).toBe(false);
+    releaseInput();
+    expect(await h.coordinator.flushNow()).toBe(false);
+    expect(read).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledOnce();
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      attention: "recovery_required",
+      error,
+      baselineSource: "A",
+      draftSource: "C",
+      publicationSource: "B",
+      pending: true,
+      confirmedEditVersion: 0,
+    });
+  });
+
+  it("restores a pending publication identity without inferring success from equal disk bytes", async () => {
+    const intent: DocumentSaveIntent = {
+      mutationId: "ambiguous-old",
+      source: "a=mine\nb=1\n",
+      expectedRevision: "r0",
+      editVersion: 3,
+    };
+    const write = vi.fn(async (_intent: DocumentSaveIntent) => ({ revision: "r1" }));
+    const h = fixture({ initialPublication: intent, draftSource: intent.source, write });
+    expect(await h.coordinator.flushNow()).toBe(true);
+    expect(write.mock.calls[0]?.[0]).toBe(intent);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      baselineSource: intent.source,
+      pending: false,
+      publicationIntent: null,
+    });
+  });
+
+  it.each(["target_changed", "mutation_unavailable", "mutation_intent_conflict"] as const)(
+    "does not retry or adopt freshness after the terminal %s outcome",
+    async (kind) => {
+      const h = fixture({
+        write: async () => {
+          throw kind;
+        },
+        classifyFailure: () => kind,
+      });
+      h.coordinator.change("a=mine\nb=1\n");
+      expect(await h.coordinator.flushNow()).toBe(false);
+      h.coordinator.noteFreshnessHint();
+      expect(await h.coordinator.retry()).toBe(false);
+      expect(await h.coordinator.refresh()).toBe(false);
+      expect(h.coordinator.getSnapshot()).toMatchObject({ attention: kind, pending: true });
+      expect(h.read).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not consider an unknown held rename outcome clean or rename-only", async () => {
+    const h = fixture();
+    const release = h.coordinator.holdForRename()!;
+    h.coordinator.noteMutationFailure(new Error("Reply lost"));
+    expect(h.coordinator.pendingOnlyForRename()).toBe(false);
+    release();
+    h.coordinator.noteFreshnessHint();
+    expect(await h.coordinator.flushNow()).toBe(false);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      attention: "outcome_unknown",
+      draftSource: "a=1\nb=1\n",
+      pending: true,
+    });
+    expect(h.read).not.toHaveBeenCalled();
+  });
+
+  it("releases only the exact recovered namespace holder and preserves newer source through destination publication", async () => {
+    let destination = { source: "frozen", revision: "r-frozen" };
+    const coordinator = new DocumentPersistenceCoordinator({
+      source: "frozen",
+      revision: "r-frozen",
+      draftSource: "newer working source",
+      initialCurrentMissing: true,
+      initialAttention: "outcome_unknown",
+      initialAttentionMutationId: "rename-id",
+      reconcile: () => null,
+      read: async () => {
+        throw new Error("The missing original path must not be read");
+      },
+      write: async () => {
+        throw new Error("The missing original path must not be written");
+      },
+      classifyFailure: () => "terminal",
+    });
+    expect(coordinator.holdForRecoveredRename("other-id", "r-frozen")).toBeNull();
+    expect(coordinator.holdForRecoveredRename("rename-id", "different-revision")).toBeNull();
+    const release = coordinator.holdForRecoveredRename("rename-id", "r-frozen")!;
+    expect(coordinator.acknowledgeRecoveredRename(() => {}, "rename-id")).toBe(false);
+    expect(coordinator.acknowledgeRecoveredRename(release, "other-id")).toBe(false);
+    expect(coordinator.getSnapshot()).toMatchObject({
+      currentMissing: true,
+      attention: "outcome_unknown",
+      draftSource: "newer working source",
+    });
+    expect(coordinator.acknowledgeRecoveredRename(release, "rename-id")).toBe(true);
+    expect(
+      coordinator.replaceIo(release, {
+        read: async () => destination,
+        write: async (intent) => {
+          if (intent.expectedRevision !== destination.revision)
+            throw new Error("wrong destination baseline");
+          destination = { source: intent.source, revision: "r-newer" };
+          return { revision: destination.revision };
+        },
+        classifyFailure: () => "terminal",
+      }),
+    ).toBe(true);
+    release();
+    expect(coordinator.acknowledgeRecoveredRename(release, "rename-id")).toBe(false);
+    expect(await coordinator.flushNow()).toBe(true);
+    expect(destination).toEqual({ source: "newer working source", revision: "r-newer" });
+    expect(coordinator.getSnapshot()).toMatchObject({
+      currentMissing: false,
+      attention: null,
+      draftSource: "newer working source",
+      pending: false,
+    });
+  });
+  it("does not infer a restarted matching disk snapshot is saved while retained attention exists", async () => {
+    const attention = {
+      recoveryId: "recovery",
+      mutationId: "save",
+      retainedPaths: ["/private/A"],
+      message: "Review.",
+    };
+    const h = fixture({
+      source: "C",
+      revision: "rC",
+      initialPublicationAttention: attention,
+      read: async () => ({ source: "C", revision: "rC", publicationAttention: attention }),
+    });
+    h.coordinator.noteFreshnessHint();
+    h.coordinator.setConnected(false);
+    h.coordinator.setConnected(true);
+    expect(await h.coordinator.flushNow()).toBe(false);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      attention: "recovery_required",
+      publicationAttention: attention,
+      pending: true,
+    });
+    expect(h.write).not.toHaveBeenCalled();
+  });
+
+  it("requires the displayed revision and durable resolution, retaining newer draft and pending input", async () => {
+    const attention = {
+      recoveryId: "review",
+      mutationId: "old",
+      retainedPaths: ["/private/A"],
+      message: "Review.",
+    };
+    let disk: DocumentPersistenceReadResult = {
+      source: "C",
+      revision: "rC",
+      publicationAttention: attention,
+    };
+    const resolve = vi.fn(async () => {
+      disk = { source: "C", revision: "rC" };
+      return { revision: "rC" };
+    });
+    const h = fixture({
+      source: "A",
+      draftSource: "D",
+      initialPublicationAttention: attention,
+      read: async () => disk,
+      resolve,
+    });
+    expect(await h.coordinator.reviewRetainedCurrent("review")).toMatchObject({
+      source: "C",
+      revision: "rC",
+    });
+    expect(await h.coordinator.resolveRetainedAttention("review", "old-presented-revision")).toBe(
+      false,
+    );
+    expect(resolve).not.toHaveBeenCalled();
+    const release = h.coordinator.suspendExternalUpdates();
+    expect(await h.coordinator.resolveRetainedAttention("review", "rC")).toBe(false);
+    release();
+    h.coordinator.change("E");
+    expect(await h.coordinator.resolveRetainedAttention("review", "rC")).toBe(true);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      baselineSource: "C",
+      draftSource: "E",
+      attention: null,
+      conflict: { externalSource: "C", externalRevision: "rC" },
+      pending: true,
+    });
+    expect(h.write).not.toHaveBeenCalled();
+  });
+
+  it("restarts from the durable authorized revision after confirmation disconnects without resolving twice", async () => {
+    const attention = {
+      recoveryId: "review",
+      mutationId: "old",
+      retainedPaths: ["/private/A"],
+      message: "Review.",
+    };
+    let resolved = false;
+    let loseConfirmation = true;
+    const resolve = async () => {
+      if (resolved) throw new Error("Resolution is not repeatable");
+      resolved = true;
+      return { revision: "rC" };
+    };
+    const read = async () => {
+      if (resolved && loseConfirmation) {
+        loseConfirmation = false;
+        throw new Error("Disconnected");
+      }
+      return {
+        source: "C",
+        revision: "rC",
+        ...(resolved ? {} : { publicationAttention: attention }),
+      };
+    };
+    const h = fixture({
+      source: "A",
+      draftSource: "D",
+      initialPublicationAttention: attention,
+      resolve,
+      read,
+    });
+    expect(await h.coordinator.resolveRetainedAttention("review", "rC")).toBe(false);
+    const durable = h.checkpoint()!;
+    expect(durable.authorizedCurrentReview).toEqual({
+      recoveryId: "review",
+      currentRevision: "rC",
+    });
+    expect(durable).toMatchObject({
+      baselineSource: "A",
+      draftSource: "D",
+      publicationAttention: attention,
+    });
+    const restarted = fixture({
+      source: durable.baselineSource,
+      revision: durable.baselineRevision,
+      draftSource: durable.draftSource,
+      initialPublicationAttention: durable.publicationAttention!,
+      initialAuthorizedCurrentReview: durable.authorizedCurrentReview!,
+      resolve,
+      read,
+    });
+    expect(await restarted.coordinator.resolveRetainedAttention("review", "rC")).toBe(true);
+    expect(restarted.checkpoint()).toMatchObject({
+      authorizedCurrentReview: null,
+      attention: null,
+      baselineSource: "C",
+      draftSource: "D",
+      conflict: { externalSource: "C", externalRevision: "rC" },
+    });
+  });
+
+  it("acknowledges only a proven unchanged refusal against the displayed revision without replaying old intent", async () => {
+    const resolve = vi.fn(async () => ({ revision: "rC" }));
+    const h = fixture({
+      source: "A",
+      draftSource: "D",
+      initialAttention: "target_changed",
+      initialPublicationOutcome: "unchanged",
+      read: async () => ({ source: "C", revision: "rC" }),
+      resolve,
+    });
+    expect(await h.coordinator.reviewUnchangedRefusal("rB")).toBe(false);
+    expect(await h.coordinator.reviewUnchangedRefusal("rC")).toBe(true);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(h.write).not.toHaveBeenCalled();
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      attention: null,
+      draftSource: "D",
+      baselineSource: "C",
+      conflict: { externalSource: "C", externalRevision: "rC" },
+    });
+  });
+
+  it("cannot use unchanged-refusal acknowledgement to release newly discovered retained disk attention", async () => {
+    const attention = {
+      recoveryId: "other",
+      mutationId: "other-op",
+      retainedPaths: ["/private/B"],
+      message: "Review another publication.",
+    };
+    const h = fixture({
+      source: "A",
+      draftSource: "D",
+      initialAttention: "target_changed",
+      initialPublicationOutcome: "unchanged",
+      read: async () => ({ source: "C", revision: "rC", publicationAttention: attention }),
+    });
+    expect(await h.coordinator.reviewUnchangedRefusal("rC")).toBe(false);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      attention: "recovery_required",
+      publicationOutcome: "retained-attention",
+      publicationAttention: attention,
+      baselineSource: "A",
+      draftSource: "D",
+    });
+  });
+
+  it("keeps reviewed absence pending even for equal historical source, then creates only through a distinct exclusive intent", async () => {
+    vi.useFakeTimers();
+    try {
+      const source = "key=A\n";
+      const attention = {
+        recoveryId: "absent",
+        mutationId: "old",
+        retainedPaths: ["/private/A"],
+        message: "Review.",
+      };
+      let current: DocumentPersistenceCurrentReview = {
+        missing: true,
+        revision: null,
+        publicationAttention: attention,
+      };
+      const write = vi.fn(async (intent: DocumentSaveIntent) => {
+        if (!intent.createOnly || !current.missing) throw "conflict";
+        current = { source: intent.source, revision: "created" };
+        return { revision: "created" };
+      });
+      const resolve = vi.fn(async () => {
+        if (!current.missing) throw "conflict";
+        current = { missing: true, revision: null };
+        return { revision: null };
+      });
+      const h = fixture({
+        source,
+        initialPublicationAttention: attention,
+        write,
+        resolve,
+        readForReview: async () => current,
+        read: async () => {
+          if (current.missing) throw "not_found";
+          return current;
+        },
+      });
+      expect(await h.coordinator.reviewRetainedCurrent("absent")).toMatchObject({
+        missing: true,
+        revision: null,
+      });
+      expect(await h.coordinator.resolveRetainedAttention("absent", null)).toBe(true);
+      expect(h.coordinator.getSnapshot()).toMatchObject({
+        baselineSource: source,
+        baselineRevision: "r0",
+        draftSource: source,
+        currentMissing: true,
+        pending: true,
+        attention: null,
+        publicationIntent: null,
+      });
+      h.coordinator.change("key=typed\n");
+      h.coordinator.noteFreshnessHint();
+      h.coordinator.setConnected(false);
+      h.coordinator.setConnected(true);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await h.coordinator.flushNow()).toBe(false);
+      expect(write).not.toHaveBeenCalled();
+      const release = h.coordinator.suspendExternalUpdates();
+      expect(await h.coordinator.recreateMissingCurrent()).toBe(false);
+      release();
+      expect(await h.coordinator.recreateMissingCurrent()).toBe(true);
+      expect(write.mock.calls[0]?.[0]).toMatchObject({ source: "key=typed\n", createOnly: true });
+      expect(write.mock.calls[0]?.[0].mutationId).not.toBe(attention.mutationId);
+      expect(current).toEqual({ source: "key=typed\n", revision: "created" });
+      expect(h.coordinator.getSnapshot()).toMatchObject({
+        currentMissing: false,
+        pending: false,
+        draftSource: "key=typed\n",
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not overwrite a pathname that appears after absence acceptance or lose the historical draft when reviewing that refusal", async () => {
+    const source = "key=A\n";
+    const attention = {
+      recoveryId: "absent-race",
+      mutationId: "old",
+      retainedPaths: ["/private/A"],
+      message: "Review.",
+    };
+    let current: DocumentPersistenceCurrentReview = {
+      missing: true,
+      revision: null,
+      publicationAttention: attention,
+    };
+    const write = vi.fn(async (intent: DocumentSaveIntent) => {
+      if (intent.createOnly && !current.missing) throw "target_changed";
+      current = { source: intent.source, revision: "overwritten" };
+      return { revision: "overwritten" };
+    });
+    const h = fixture({
+      source,
+      initialPublicationAttention: attention,
+      write,
+      classifyFailure: (error) =>
+        error === "target_changed" ? "target_changed" : classifyFailure(error),
+      describeOutcome: () => "unchanged",
+      readForReview: async () => current,
+      resolve: async () => {
+        current = { missing: true, revision: null };
+        return { revision: null };
+      },
+    });
+    expect(await h.coordinator.resolveRetainedAttention("absent-race", null)).toBe(true);
+    current = { source: "key=C\n", revision: "foreign" };
+    expect(await h.coordinator.recreateMissingCurrent()).toBe(false);
+    expect(current).toEqual({ source: "key=C\n", revision: "foreign" });
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      currentMissing: true,
+      pending: true,
+      draftSource: source,
+      attention: "target_changed",
+    });
+    expect(await h.coordinator.reviewUnchangedRefusal("foreign")).toBe(true);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      currentMissing: false,
+      draftSource: source,
+      baselineSource: "key=C\n",
+      conflict: { externalSource: "key=C\n", externalRevision: "foreign" },
+      pending: true,
+    });
+  });
+
+  it("requires absent current before and after nullable resolution, including explicit replay after lost confirmation", async () => {
+    const attention = {
+      recoveryId: "absence-replay",
+      mutationId: "old",
+      retainedPaths: ["/private/A"],
+      message: "Review.",
+    };
+    let current: DocumentPersistenceCurrentReview = {
+      source: "key=C\n",
+      revision: "present",
+      publicationAttention: attention,
+    };
+    let loseConfirmation = false;
+    let resolved = false;
+    const resolve = vi.fn(async () => {
+      resolved = true;
+      loseConfirmation = true;
+      return { revision: null };
+    });
+    const h = fixture({
+      source: "key=A\n",
+      draftSource: "key=B\n",
+      initialPublicationAttention: attention,
+      resolve,
+      readForReview: async () => {
+        if (loseConfirmation) {
+          loseConfirmation = false;
+          throw new Error("Confirmation lost");
+        }
+        return current.missing
+          ? { ...current, publicationAttention: resolved ? null : attention }
+          : current;
+      },
+    });
+    expect(await h.coordinator.resolveRetainedAttention("absence-replay", null)).toBe(false);
+    expect(resolve).not.toHaveBeenCalled();
+    current = { missing: true, revision: null };
+    expect(await h.coordinator.resolveRetainedAttention("absence-replay", null)).toBe(false);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      attention: "recovery_required",
+      draftSource: "key=B\n",
+      pending: true,
+    });
+    expect(h.coordinator.getSnapshot().authorizedCurrentReview).toEqual({
+      recoveryId: "absence-replay",
+      currentRevision: null,
+    });
+    expect(await h.coordinator.resolveRetainedAttention("absence-replay", null)).toBe(true);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      currentMissing: true,
+      pending: true,
+      baselineSource: "key=A\n",
+      draftSource: "key=B\n",
+      attention: null,
+    });
+    expect(h.write).not.toHaveBeenCalled();
+  });
+  it("replays a recovered create-only intent while current is missing without requiring a new edit or mutation ID", async () => {
+    const source = "key=A\n";
+    const intent: DocumentSaveIntent = {
+      mutationId: "recovered-exclusive-create",
+      source,
+      expectedRevision: "r0",
+      editVersion: 1,
+      createOnly: true,
+    };
+    const acknowledgement = Promise.withResolvers<{ readonly revision: string }>();
+    const write = vi.fn(() => acknowledgement.promise);
+    const h = fixture({
+      source,
+      initialCurrentMissing: true,
+      initialPublication: intent,
+      write,
+    });
+    const replay = h.coordinator.flushNow();
+    await Promise.resolve();
+    expect(write).toHaveBeenCalledExactlyOnceWith(intent);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      currentMissing: true,
+      pending: true,
+      inFlight: true,
+      publicationIntent: intent,
+      draftSource: source,
+    });
+    acknowledgement.resolve({ revision: "created" });
+    expect(await replay).toBe(true);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      currentMissing: false,
+      pending: false,
+      publicationIntent: null,
+      baselineRevision: "created",
+      draftSource: source,
+    });
+    expect(h.read).not.toHaveBeenCalled();
+    h.coordinator.dispose();
+  });
+});
+
+describe("durable authorized current confirmation", () => {
+  const attention = {
+    recoveryId: "authorized",
+    mutationId: "old",
+    retainedPaths: ["/private/A"],
+    message: "Review.",
+  };
+
+  it("does not move restored authorization to another revision or adopt changed current bytes", async () => {
+    const h = fixture({
+      source: "A",
+      draftSource: "D",
+      initialPublicationAttention: attention,
+      initialAuthorizedCurrentReview: { recoveryId: "authorized", currentRevision: "rC" },
+      resolve: async () => {
+        throw new Error("Already resolved");
+      },
+      read: async () => ({ source: "new current", revision: "rNew" }),
+    });
+    expect(await h.coordinator.resolveRetainedAttention("authorized", "rNew")).toBe(false);
+    expect(await h.coordinator.resolveRetainedAttention("authorized", "rC")).toBe(false);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      baselineSource: "A",
+      draftSource: "D",
+      publicationAttention: attention,
+      authorizedCurrentReview: { recoveryId: "authorized", currentRevision: "rC" },
+    });
+  });
+
+  it("invalidates old authorization when confirmation discovers a new retained publication", async () => {
+    const next = { ...attention, recoveryId: "new-recovery", mutationId: "new-mutation" };
+    const h = fixture({
+      source: "A",
+      draftSource: "D",
+      initialPublicationAttention: attention,
+      initialAuthorizedCurrentReview: { recoveryId: "authorized", currentRevision: "rC" },
+      resolve: async () => {
+        throw new Error("Already resolved");
+      },
+      read: async () => ({ source: "new current", revision: "rNew", publicationAttention: next }),
+    });
+    expect(await h.coordinator.resolveRetainedAttention("authorized", "rC")).toBe(false);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      authorizedCurrentReview: null,
+      publicationAttention: next,
+      baselineSource: "A",
+      draftSource: "D",
+    });
+    expect(await h.coordinator.resolveRetainedAttention("authorized", "rC")).toBe(false);
+  });
+
+  it("blocks confirmation at failed durable admission while retaining the resolved phase for retry", async () => {
+    let resolved = false;
+    let failAdmission = true;
+    const h = fixture({
+      source: "A",
+      draftSource: "D",
+      initialPublicationAttention: attention,
+      resolve: async () => {
+        if (resolved) throw new Error("Resolution cannot be repeated");
+        resolved = true;
+        return { revision: "rC" };
+      },
+      read: async () => {
+        if (resolved && failAdmission)
+          throw new Error("Confirmation crossed failed journal admission");
+        return {
+          source: "C",
+          revision: "rC",
+          ...(resolved ? {} : { publicationAttention: attention }),
+        };
+      },
+      persistAuthorizedCurrentReview: async () => {
+        if (failAdmission) throw new Error("Quota");
+      },
+    });
+    expect(await h.coordinator.resolveRetainedAttention("authorized", "rC")).toBe(false);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      authorizedCurrentReview: { recoveryId: "authorized", currentRevision: "rC" },
+      baselineSource: "A",
+      draftSource: "D",
+      attention: "recovery_required",
+    });
+    failAdmission = false;
+    expect(await h.coordinator.resolveRetainedAttention("authorized", "rC")).toBe(true);
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      authorizedCurrentReview: null,
+      baselineSource: "C",
+      draftSource: "D",
+      attention: null,
+    });
+  });
+
+  it("settles the journal with newer typing made during guarded confirmation", async () => {
+    const entered = deferred<void>();
+    const confirmation = deferred<DocumentPersistenceReadResult>();
+    const h = fixture({
+      source: "A",
+      draftSource: "D",
+      initialPublicationAttention: attention,
+      initialAuthorizedCurrentReview: { recoveryId: "authorized", currentRevision: "rC" },
+      resolve: async () => {
+        throw new Error("Already resolved");
+      },
+      read: () => {
+        entered.resolve();
+        return confirmation.promise;
+      },
+    });
+    const accepting = h.coordinator.resolveRetainedAttention("authorized", "rC");
+    await entered.promise;
+    h.coordinator.change("new typing");
+    confirmation.resolve({ source: "C", revision: "rC" });
+    expect(await accepting).toBe(true);
+    expect(h.checkpoint()).toMatchObject({
+      authorizedCurrentReview: null,
+      baselineSource: "C",
+      draftSource: "new typing",
+      pending: true,
+      conflict: { externalSource: "C", externalRevision: "rC" },
+    });
+    expect(h.coordinator.getSnapshot().draftSource).toBe("new typing");
   });
 });

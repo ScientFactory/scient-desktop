@@ -39,9 +39,9 @@ Yaacov's [architecture note](https://github.com/ScientFactory/scient-desktop/blo
 and [editable-content proposal](https://github.com/ScientFactory/scient-desktop/blob/claude/shared-editor-layer-design-20260926/docs/internals/scient-latex-visual-editable-content.md)
 explain the target shared architecture. This file describes the implementation
 on this branch, including shared document-session saving and the existing
-comparison-first LaTeX recovery journal. The broader patch-contract migration,
-recovery-store consolidation and future timed-build scheduler remain integration
-work owned by the maintainers.
+comparison-first LaTeX recovery journal and native source-patch admission.
+Recovery-store consolidation and the future timed-build scheduler remain
+integration work owned by the maintainers.
 
 The [contributor request](https://github.com/ScientFactory/scient-desktop/blob/claude/shared-editor-layer-design-20260926/docs/internals/scient-latex-visual-contributor-request.md)
 separately asks for an operation-by-operation capability table with exact-source
@@ -60,7 +60,7 @@ that every operation preserves every supported LaTeX construct.
 | Math setup                               | `latexDocumentMacros.ts`, `LatexDocumentMathContext.ts`                                                      | Parse bounded literal preamble definitions once, pass the root macro dictionary to every MathLive field, preserve calls in source, and expose setup in Document settings.                                                                                  |
 | Environment declarations                 | `latexEnvironmentDeclarations.ts`                                                                            | Interpret literal theorem names, standard styles, shared/scoped counters and simple quote wrappers; preserve declarations and reject unsupported definitions.                                                                                              |
 | Literal text and code                    | `latexLiteral.ts`, `LatexLiteralCodeView.tsx`                                                                | Bound literal source and listing options, paint supported syntax and presentation, and reuse native fields for body/caption edits.                                                                                                                         |
-| Title conversion                         | `LatexTitleStep.ts`                                                                                          | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                                                                                                                 |
+| Native edit history                      | `LatexSourceStep.ts`                                                                                         | Pair exact native inverse scripts with existing ProseMirror history, including title conversion and same-owner filename renames.                                                                                                                           |
 | Writing chrome                           | `writing/dockChrome.tsx`                                                                                     | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults.                                                                                          |
 | Reading controls                         | `writing/DocumentReaderControls.tsx`, `writing/readerBarHost.ts`                                             | Shared PDF/Visual sidebar, page, zoom and search controls. Format adapters supply navigation and search operations. With a `ReaderBarHost` they are drawn in the host's header row instead of a bar of their own.                                          |
 | Contextual footer                        | `writing/DocumentFooter.tsx`, `LatexContextTools.tsx`, heading/table/object toolbars                         | Shared one-line strip under the document. The selected object's options sit on the left in a stable portal destination that keeps fields mounted inside one nonmodal object inspector at every pane width. Caret position and word count sit on the right. |
@@ -230,11 +230,11 @@ in the footer, not in an extra row or on the document paper.
 
 ### Find and replace
 
-| Control                        | Role and behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Find / match case / whole word | Search supported prose. Search transactions stay out of undo history and the save lane.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Previous / next / close        | Navigate matches or close find; Enter/Shift+Enter and Escape use the same shared interactions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Replace / Replace all          | Offered while the document is editable. A replacement is an ordinary text edit, so it is written to the LaTeX source the same way typing is. The source owner takes one changed text block per update, so Replace all edits one block, writes it, and continues after a paint (`replaceByBlock` in `useLatexVisualSearch.ts`); it stops when a block is refused, during composition, or as soon as the document is anything other than what its previous replacement left (typing, undo, a newer file), and each block is one undo step. Pass the hook a stable `commit` callback, not an inline function. |
+| Control                        | Role and behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Find / match case / whole word | Search supported prose. Search transactions stay out of undo history and the save lane.                                                                                                                                                                                                                                                                                                                                                                                    |
+| Previous / next / close        | Navigate matches or close find; Enter/Shift+Enter and Escape use the same shared interactions.                                                                                                                                                                                                                                                                                                                                                                             |
+| Replace / Replace all          | Offered while editable. Replacements use ordinary native text edits. `replaceByBlock` in `useLatexVisualSearch.ts` commits one text block, continues after a paint, and gives each block one undo step. Accepted position-neutral projection metadata repairs do not interrupt it. It stops on a refused block, composition, user typing/undo, external adoption, or any other semantic document change. Pass the hook a stable `commit` callback, not an inline function. |
 
 ### Contextual footer
 
@@ -716,6 +716,21 @@ lists and undo. MathLive supplies structured math input; fonts are bundled
 locally, sounds and the optional compute engine are disabled. No web service
 or TeX process participates in a writing transaction.
 
+`latexSourceEditPlan.ts` carries explicit original-coordinate patch scripts and a
+captured `LatexEditorSourceSnapshot`, which also supplies the editor's root and
+setup context rather than duplicate props. `rootSource` is the physical root's
+exact native text; `setupSource` is the assembled declaration context, never a write
+destination. Producers do not infer a whole-file change by diffing serialized
+documents. Source IDs, ranges and list trivia are disposable parser facts.
+Persistence owners authorize scripts through stable document identity and working
+`editVersion`, then apply them through the existing `applyEdit` save lane.
+Returning to identical bytes after another working edit does not revive a stale
+snapshot. Revision-only save receipts and same-directory, same-owner filename
+renames preserve edit authority and history; directory/context or owner changes
+do not. `LatexSourceStep` stores exact physical inverses keyed by document identity
+in the existing ProseMirror history. Accepted metadata-only repairs use
+position-neutral steps, not range replacements or a second undo stack.
+
 The transaction guard verifies the exact source generation and validates the
 changed block. Immutable ProseMirror nodes cache their JSON and signatures; plain
 text and object edits reparse only their replacement block. Structural changes
@@ -815,9 +830,13 @@ compares the receipt with the build revisions before saving a copy.
 `LatexBuildService.status` verifies dependency evidence but never starts a
 compiler. A stale status keeps the old artifact readable, marks its descriptor
 stale and removes visual source authorization from that response. The client
-rebuilds when a stale PDF is opened and on Ctrl/Cmd+S while PDF is visible.
-Typing does not schedule a build; the shared scheduler and setting are pending. Open-PDF requests wait for file saves and build availability, and do not
-retry after an attempt until the PDF is reopened. Explicit Rebuild remains available. Existing
+uses the device-local PDF compilation preference. On save, the default, rebuilds
+on Ctrl/Cmd+S from any view and when a stale PDF is opened. Auto-compile schedules
+settled source changes after two seconds, including the included-file revision keys
+reported by the Visual project. Manual requests no automatic builds. The existing
+build coordinator continues to own execution and coalesced reruns. Requests wait
+for source saves, field drafts, toolchain availability and existing builds; an
+unchanged failed source is not retried in a loop. Explicit Rebuild remains available. Existing
 root resolution, cancellation, bounded compile stabilization, immutable
 artifacts and PDF navigation remain owned by the existing build/reader path.
 
@@ -1254,14 +1273,16 @@ Missing files, cycles, unsupported dynamic includes and bounded expansion limits
 block Visual with an explanation while leaving PDF available.
 
 The assembled preamble supplies layout and package inventory. The edit mapper
-separates preamble and body changes, checks span ownership, and patches the owning
-files without flattening includes. Cross-file selections are rejected. The changed
-block's original offset disambiguates insertions at file boundaries. File watchers
-refresh dependencies; optimistic buffers are checked before publication. Each file
-uses the existing shared revision-checked save session, including files open in
-another Source view. Sessions survive view switches and retain pending removed
-dependencies until their saves finish. Build/export wait for saves or save errors.
-These are coordinated file saves, not an atomic filesystem transaction.
+checks each explicit patch against its expansion occurrence and physical owner.
+Each zero-width insertion carries its own `before`/`after` boundary affinity;
+the mapper never chooses a file from a preferred path or a whole-source diff.
+Synthetic include separators cannot be edited. Identical repeated-include
+patches are deduplicated; conflicting alias edits are refused. Any operation
+requiring two physical files is refused before either owner mutates.
+Each file uses the existing shared revision-checked save session, including files
+open in another Source view. Sessions survive view switches and retain pending
+removed dependencies until their saves finish. Build/export wait for saves or
+save errors. These are coordinated file saves, not an atomic filesystem transaction.
 
 Write uses the root's directory for figure paths. Required packages and declarations
 are mapped back to their source files in the preamble; the default table is
@@ -1346,6 +1367,17 @@ object is later moved or removed. A field slot is retired only after its exact
 record has a stored recovery copy; failed transfers keep the original and pause
 editing until the user resolves it. Round-trip signatures are cached for immutable
 nodes. Recovery storage writes happen after painting or on explicit exit.
+
+Live list transactions retain their known item correspondence, including repeated
+items with identical text. Recovery JSON omits native source maps. Rebinding
+proves surviving list-item correspondence from authored content rather than trusting cached numeric offsets;
+ambiguous origins remain readable recovery instead of being published. New
+ownerless table seeds can rebuild parser metadata from their retained raw source.
+Once a raw-block edit is accepted, Cancel/Escape must finish its recovery
+checkpoint before retiring the raw copy. A failed checkpoint keeps the source
+field read-only and its recovery intact; retrying completion does not publish
+the edit again.
+
 Pagination waits 220 ms after input and maps existing decorations while waiting;
 measurements and resize-observer refreshes run after painting, not on every input.
 The current-page indicator also defers its initial geometry read until after
@@ -1772,6 +1804,63 @@ mounted. Print preparation mounts all eligible content. Geometry is published on
 after a current natural-flow pass, and a bounded cache reuses it across openings
 with matching source, typography, references and math setup. Cold unmeasured blocks
 use temporary height estimates while small background batches establish geometry.
+Opening readiness is independent of document-wide preparation. The paper is
+revealed after the intended viewport's reading fonts, previews and measured layout
+are ready. A new document starts at its first page; reopening during the renderer
+session restores the last compatible source-block anchor. Navigation during
+preparation supersedes that opening target. Parsing still prepares the complete
+source-backed model; far page numbers remain provisional until preceding geometry
+is known. Static opening feedback does not expose an estimated page as finished.
+
+The bundled reading font pool and the resolved prose family are prepared before
+accepting geometry. A failed or stalled font admits fallback metrics after a bounded
+two-second wait. Only relevant font dependencies enter the geometry key; unrelated
+UI font completion does not invalidate the editor. Later real metrics, source,
+macro, reference, ancestor or typography changes still invalidate incompatible
+geometry. Retention never grants validity to an old measurement.
+
+Recent viewport blocks remain mounted under a 128-block, 4 MiB estimated
+source/DOM admission budget, without a time expiry. Visible, selected and active
+blocks retain their separate admission rules. Geometry and passive formula markup
+share a 24 MiB estimated byte budget, including keys and entry overhead, with
+background results evicted before recently read results. Exact layout-context
+identities avoid repeating the full document reference/font setup in each key.
+There is no independent 512-formula ceiling; many small results can remain
+available within the byte budget. DOM eviction preserves compatible geometry and markup.
+Scroll direction and velocity enlarge forward overscan temporarily. Visible demand
+preempts idle preparation, admitting at most eight blocks per paint and measuring
+up to 32 required units separately from background cohorts of up to 64. Typing,
+composition and active scrolling defer background admission. Reading feedback
+reflects missing visible content rather than distant unfinished work.
+
+Scrolling uses one preparation mask per sheet, outside the editable DOM. Complete
+visible pages and one page ahead are admitted independently of thumbnail demand.
+The mask is installed before DOM admission and readiness updates run before paint.
+A paint-only clip admits settled physical sheets, keeping unfinished ink and page
+gaps hidden without changing source or measurement geometry. Newly mounted cached
+pages pass the same stability fence; unchanged previously revealed geometry can be
+reused. The mask preserves page geometry, hides intermediate block labels and
+reveals a settled page together. Active caret/selection pages retain interaction priority.
+Document and page preparation share a spinner, removed when preparation settles
+and static when the reader requests reduced motion.
+After five seconds, pending math/image dependencies resolve into localized source
+or unavailable-preview fallbacks with Retry, rather than holding the page indefinitely.
+Failed math fallbacks are reusable until an explicit retry or changed math context.
+Retry discards fallback geometry and waits for a new measurement of settled
+content before revealing the page again.
+No native TeX compilation is initiated by page preparation.
+
+Ready math markup appears immediately on cache hits. Prepared geometry remains
+in force while a cache miss renders, and unchanged remounts reuse natural units
+without triggering a full measurement pass. Viewport metadata changes and page-map
+publication preserve the latest visible source-block anchor, including an opaque
+block about to be mounted. A guarded correction after paint accounts for delayed
+browser layout without overriding newer navigation, selection or source changes.
+Cold mounted blocks reserve estimated boxes until geometry is ready; clicking a
+prose placeholder reveals it before native caret hit testing. Active prose and math
+editors retain natural layout. Measurement, thumbnails and print use natural
+content. Snapshot construction yields by time and operation count, never moving
+the editable document or its native selection.
 Run-in heading pairs and multi-column/minipage layouts retain their existing DOM.
 Complex containers and individual browser layout calls are not yet bounded by this
 adapter; production opening/typing targets still require qualification. Passive
@@ -1793,19 +1882,14 @@ exists per pass and is removed on completion or cancellation. Active custom
 editors and multi-column flow retain the existing measurement path; no second
 live editor is constructed. Its temporary switches live on the editor's outer
 container, outside ProseMirror's observed DOM, and are removed before yielding.
-Mounted offscreen paragraphs and display bodies receive their prepared intrinsic
-heights, including a paragraph's internal page gaps. Those units use the current
-measurement rather than a remembered browser size or the generic fallback;
-visible content retains natural layout. This avoids depending on a full pass
-through the live paper to seed Chromium's content-visibility sizing.
-Only prepared mounted units skip offscreen layout. Unprepared units and the
-small-document full-DOM path obtain real geometry; viewport admission bounds
-the number of newly mounted distant units.
-Cold viewport preparation admits at most four new units between paints and
-collects up to sixteen unmeasured units before requesting natural measurement.
-This bounds temporary mounted content while reducing full-document passes.
-Typing and composition pause admission; the final smaller cohort is measured
-without waiting for nonexistent units.
+Mounted paragraphs and display bodies use natural browser layout under the
+bounded viewport admission adapter. There is no second `content-visibility:auto`
+viewport cache: it can change predecessor sizes during anchor restoration. Opaque
+views alone represent distant content using compatible measured heights or cold
+estimates. Layout containment remains identical between reading and measurement.
+Cold viewport preparation prioritizes required content and nearby overscan before
+idle source-order work. Required content does not wait for an unrelated background
+cohort. The final smaller cohort is measured without waiting for nonexistent units.
 Geometry context lookup reuses the immutable document and position within the
 current layout generation. Changes to ancestors, first-child roles, source
 setup or typography invalidate that lookup; only the current document is held.
@@ -2058,13 +2142,26 @@ environments, including Enter and inline/display math insertion. Empty MathLive
 slots use the shared faint gray guides while editing, including fraction and
 root slots; guides do not appear in copied source or printed output.
 
-Complete `tikzpicture` blocks, including pgfplots axes, render as read-only
+Complete `tikzpicture` blocks, including pgfplots axes, can render as read-only
 artwork in figures or on their own. Recognition scans environment boundaries,
 without interpreting drawing commands. Caption edits cannot patch the drawing.
-The authenticated artwork endpoint calls `LatexTikzPreview`, which compiles the
-picture with the root document's preamble and current panel linewidth. The
-`preview` package crops the PDF; the existing PDF.js runtime paints it at paper
-size. A requesting client can ask for native raster paint at its pixel density.
+Mounting artwork or editing its source never admits execution. **Run this drawing
+preview** explicitly admits only that mounted preview's current environment,
+document identity, client preamble, drawing source and algorithm counter. Changing
+any of those requires a new action; layout-width changes may rerender the admitted
+text. Source and captions remain editable without running a preview.
+
+The warning discloses that host TeX/Lua has the environment's filesystem authority;
+`-no-shell-escape` is not a sandbox or a trust decision. The authenticated artwork
+endpoint requires an explicit host-execution declaration from its caller, and
+`LatexTikzPreview` also refuses omitted or wrong declarations before file reads,
+toolchain probing or process launch. This is a client declaration, not proof that
+the server verified a human click or trusted the workspace. The service compiles
+the submitted picture and preamble at the current panel linewidth. Client text is
+non-authoritative: artwork does not publish generated documents or establish the
+saved document's PDF currentness. The `preview` package crops the PDF; the existing
+PDF.js runtime paints it at paper size. A requesting client can ask for native
+raster paint at its pixel density.
 When `pdfinfo` and `pdftoppm` resolve in that environment, the backend checks page
 geometry before allocation, paints the cropped first page in an owned subprocess,
 and includes bounded PNG pixels alongside the PDF. Visual decodes those pixels
@@ -2075,22 +2172,47 @@ have separate timeouts; interruption cancels their owned process trees. Both pat
 keep captions editable and drawing source unchanged. Production responsiveness
 and native LyX parity require separate qualification.
 
-The service retains at most eight private build directories, each bounded
-to 16 MB, to reuse the compiler driver's incremental state. Every request still
+The service retains at most eight safely retired private build directories, each
+bounded to 16 MB, to preserve the compiler driver's aux state. Every request still
 invokes the driver; it never serves a PDF solely from a source-string cache.
-Before reuse it hashes recorded input contents, including package/font files,
-the root source and compiler executable, and checks the project's file names for
-changed search resolution. Changed or unverifiable inputs force recompilation.
-Source text is only rewritten when it changes. Failed, interrupted, oversized
-or unverifiable runs discard their directory; service shutdown closes retained
-directories. Tectonic, which has no `.fls` recorder, continues compiling each
-request. Runs use the shared toolchain and
-managed package installer, no shell escape, a concurrency limit, cancellation
-of its process tree, and bounded output and time. Project inputs are resolved
-through the validated document directory. Preview compilation leaves project
-files and ordinary document build status unchanged. Compiler failures display
-a diagnostic while keeping source intact. Document-body macro definitions,
-cross-picture references and externalization are not provided by this isolated
+Qualified incremental reuse hashes recorded input contents and resolved paths,
+including package/font files, the picture source, document source and compiler
+executable. Search evidence covers the actual explicit search roots, recorded
+input-name suffixes that could acquire local shadows, and literal file-lookup
+directories. Nonrecursive search does not walk unrelated `.git`, `node_modules`
+or build descendants. Explicit recursive search remains bounded; more than 2,048
+relevant inputs/search entries, unknown default search paths, dynamic lookups or
+unverifiable recorder evidence force reprocessing rather than weaken the proof.
+A successful, bounded run may retain aux state even when that proof is unknown,
+but the next request still forces another compiler pass. Source text is rewritten
+only when it changes.
+
+One directory permit covers preflight hashing, the run's resource scope, process
+and output-fiber retirement, postflight hashing and failure cleanup. A queued
+successor cannot enter while its predecessor's finalizers are still running.
+Ordinary failed, interrupted or oversized runs discard their directory; service
+shutdown joins active requests before removing safely retired directories.
+Failed process retirement instead quarantines the directory, refuses same-key
+successors and preserves its unresolved ownership marker through shutdown.
+
+Service startup reclaims only marked, contained directories from a demonstrably
+dead owner PID on the same host whose lease confirms settled process retirement.
+Live or uncertain PIDs, active/unresolved leases, malformed or absent markers,
+foreign-host leases and symlink escapes are left untouched. Thus crashed retained
+state is reclaimed without deleting another live instance's work; directories
+with unknown writers are deliberately not claimed as safely reclaimable.
+Tectonic, which has no `.fls` recorder, continues compiling each
+request. Runs use the shared toolchain, no shell escape, a concurrency limit,
+scoped cancellation and process retirement, and bounded output and execution time.
+Execution timeout begins only after global and per-workspace permit admission.
+Preview never invokes the managed package installer, and Tectonic previews use
+`--only-cached` rather than downloading bundle files. Missing-package diagnostics
+ask for the document's explicit **Build** action. Project inputs are resolved
+through the validated document directory. Preview compilation leaves ordinary
+document build status unchanged and writes only its private build files; this does
+not restrict the submitted TeX/Lua's own filesystem authority. Compiler failures
+display a diagnostic while keeping source intact. Document-body macro definitions,
+cross-picture references and externalization are not provided by this private
 preview. There are no drawing-editing controls in Visual.
 
 Standard report/book structure uses the existing rich-preview nodes for literal

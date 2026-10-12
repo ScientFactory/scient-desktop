@@ -67,6 +67,7 @@ export async function createLatexMeasurementSnapshot(
   });
   const stack = [frame(original, root)];
   let started = performance.now();
+  let operations = 0;
   while (stack.length) {
     const item = stack[stack.length - 1]!;
     const child = item.children.next();
@@ -86,9 +87,10 @@ export async function createLatexMeasurementSnapshot(
       shadow.adoptedStyleSheets = item.source.shadowRoot.adoptedStyleSheets;
       stack.push(frame(item.source.shadowRoot, shadow));
     } else stack.pop();
-    if (performance.now() - started >= 8) {
+    if (++operations >= 4096 || performance.now() - started >= 8) {
       if (!(await yieldForInput())) return null;
       started = performance.now();
+      operations = 0;
     }
   }
   // Attach once, after the copy is complete. No editable node or native selection

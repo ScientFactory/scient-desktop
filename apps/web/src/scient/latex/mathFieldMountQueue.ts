@@ -1,14 +1,19 @@
 const pending = new Map<() => void, () => number>();
 const priorities = new WeakMap<Element, number>();
+const visibleCallbacks = new WeakMap<Element, () => void>();
 let visibility: IntersectionObserver | undefined;
 
 /** One observer prioritizes the visible formulas without repeated layout reads. */
-export function observeMathReadingPriority(element: Element) {
+export function observeMathReadingPriority(element: Element, onVisible?: () => void) {
+  if (onVisible) visibleCallbacks.set(element, onVisible);
   priorities.set(element, 1);
   if (typeof IntersectionObserver !== "undefined") {
     visibility ??= new IntersectionObserver(
       (entries) => {
-        for (const entry of entries) priorities.set(entry.target, entry.isIntersecting ? 2 : 0);
+        for (const entry of entries) {
+          priorities.set(entry.target, entry.isIntersecting ? 2 : 0);
+          if (entry.isIntersecting) visibleCallbacks.get(entry.target)?.();
+        }
       },
       { rootMargin: "300px" },
     );
@@ -17,6 +22,7 @@ export function observeMathReadingPriority(element: Element) {
   return () => {
     visibility?.unobserve(element);
     priorities.delete(element);
+    visibleCallbacks.delete(element);
   };
 }
 

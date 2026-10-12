@@ -13,7 +13,10 @@ export function documentWasSaved(previous: DocumentSnapshot, next: DocumentSnaps
     previous.publicationSource !== null &&
     next.publicationSource !== previous.publicationSource &&
     next.baselineSource === previous.publicationSource &&
-    next.baselineRevision !== previous.baselineRevision
+    (next.baselineRevision !== previous.baselineRevision ||
+      (previous.publicationIntent?.createOnly === true &&
+        previous.currentMissing &&
+        !next.currentMissing))
   );
 }
 

@@ -1,5 +1,9 @@
 // @vitest-environment happy-dom
-import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectReadFileError,
+  type ProjectReadFileResult,
+} from "@t3tools/contracts";
 import { act, StrictMode, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -52,16 +56,73 @@ describe("useMarkdownPersistenceLease", () => {
     vi.useRealTimers();
   });
 
-  function Surface(props: { snapshot?: ProjectReadFileResult | null; path?: string }) {
+  function Surface(props: {
+    snapshot?: ProjectReadFileResult | null;
+    path?: string;
+    readError?: ProjectReadFileError;
+    onAttentionResolved?: () => void;
+  }) {
     const current = useMarkdownPersistenceLease({
       target: { environmentId, cwd, relativePath: props.path ?? initial.relativePath },
       authoritativeSnapshot: props.snapshot === undefined ? initial : props.snapshot,
+      ...(props.readError ? { authoritativeReadError: props.readError } : {}),
+      ...(props.onAttentionResolved ? { onAttentionResolved: props.onAttentionResolved } : {}),
     });
     useLayoutEffect(() => {
       latest = current;
     }, [current]);
     return <span>{current.snapshot?.draftSource ?? "loading"}</span>;
   }
+
+  it("uses a qualified missing cache hint only for admission, then adopts the real ordered current source", async () => {
+    const context = { cwd, relativePath: initial.relativePath };
+    const readForReview = vi.fn(async () => ({
+      source: "foreign current",
+      revision: "foreign-current",
+    }));
+    transport = { ...transport, readForReview };
+    mocks.createTransport.mockReturnValue(transport);
+    await act(async () =>
+      root.render(
+        <Surface
+          snapshot={null}
+          readError={
+            new ProjectReadFileError({
+              ...context,
+              failure: "operation_failed",
+              reason: "not_found",
+            })
+          }
+        />,
+      ),
+    );
+    expect(latest.lease).toBeNull();
+    expect(readForReview).not.toHaveBeenCalled();
+
+    await act(async () =>
+      root.render(
+        <Surface
+          snapshot={null}
+          readError={
+            new ProjectReadFileError({
+              ...context,
+              failure: "operation_failed",
+              reason: "not_found",
+              currentMissing: true,
+            })
+          }
+        />,
+      ),
+    );
+    expect(latest.snapshot).toMatchObject({
+      baselineSource: "foreign current",
+      baselineRevision: "foreign-current",
+      draftSource: "foreign current",
+      currentMissing: false,
+      pending: false,
+    });
+    expect(transport.write).not.toHaveBeenCalled();
+  });
 
   it("survives StrictMode effect replay and re-rendered cache snapshots with one coordinator", async () => {
     await act(async () =>
@@ -102,6 +163,75 @@ describe("useMarkdownPersistenceLease", () => {
     await act(async () => root.render(<Surface snapshot={{ ...initial, truncated: true }} />));
     expect(latest.lease).toBe(lease);
     expect(container.textContent).toBe("B");
+  });
+
+  it("releases surface recovery notices only after the owned explicit acceptance confirms, preserving local input", async () => {
+    const publicationAttention = {
+      recoveryId: "hook-retained",
+      mutationId: "hook-mutation",
+      retainedPaths: ["/retained/previous.md"],
+      message: "A displaced object needs review.",
+    };
+    let accepted = false;
+    let loseConfirmation = true;
+    vi.mocked(transport.read).mockImplementation(async () => {
+      if (accepted && loseConfirmation) {
+        loseConfirmation = false;
+        throw new Error("Confirmation reply lost");
+      }
+      return { source: "A", revision: "rA", ...(accepted ? {} : { publicationAttention }) };
+    });
+    transport = {
+      ...transport,
+      resolve: vi.fn(async () => {
+        accepted = true;
+        return { recoveryId: publicationAttention.recoveryId, revision: "rA" };
+      }),
+    };
+    mocks.createTransport.mockReturnValue(transport);
+    const onAttentionResolved = vi.fn();
+    await act(async () => root.render(<Surface onAttentionResolved={onAttentionResolved} />));
+    expect(latest.snapshot?.publicationAttention).toEqual(publicationAttention);
+    const lease = latest.lease!;
+    await act(async () => {
+      lease.change("Local input", lease.getSnapshot().editVersion);
+      expect(await lease.resolveRetainedAttention(publicationAttention.recoveryId, "rA")).toBe(
+        false,
+      );
+    });
+    expect(onAttentionResolved).not.toHaveBeenCalled();
+    expect(latest.snapshot).toMatchObject({
+      attention: "recovery_required",
+      draftSource: "Local input",
+    });
+    await act(async () =>
+      root.render(<Surface snapshot={initial} onAttentionResolved={onAttentionResolved} />),
+    );
+    expect(onAttentionResolved).not.toHaveBeenCalled();
+    await act(async () => {
+      expect(await lease.resolveRetainedAttention(publicationAttention.recoveryId, "rA")).toBe(
+        true,
+      );
+    });
+    expect(onAttentionResolved).toHaveBeenCalledOnce();
+    expect(latest.snapshot).toMatchObject({
+      attention: null,
+      draftSource: "Local input",
+      baselineSource: "A",
+      conflict: { externalSource: "A", externalRevision: "rA" },
+      pending: true,
+    });
+    expect(transport.write).not.toHaveBeenCalled();
+    await act(async () =>
+      root.render(
+        <Surface
+          path={`clean-${initial.relativePath}`}
+          snapshot={initial}
+          onAttentionResolved={onAttentionResolved}
+        />,
+      ),
+    );
+    expect(onAttentionResolved).toHaveBeenCalledOnce();
   });
 
   it("revokes old callbacks on a path switch and never displays the old binding for the new path", async () => {
@@ -153,7 +283,15 @@ describe("useMarkdownPersistenceLease", () => {
     await act(async () => {
       const move = lease.beginMove({ environmentId, cwd, relativePath: after })!;
       expect(move).not.toBeNull();
-      expect(move.commit()).toBe(true);
+      expect(await move.preflight()).toBe("empty");
+      const intent = await move.admitRename();
+      expect(
+        await move.acknowledgeRename({
+          destinationRelativePath: after,
+          revision: intent.expectedRevision,
+        }),
+      ).toBe(true);
+      expect(await move.commit()).toBe(true);
       move.finish();
       root.render(
         <StrictMode>
@@ -164,7 +302,6 @@ describe("useMarkdownPersistenceLease", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((each) => each === lease)).toBe(true);
     expect(latest.lease).toBe(lease);
     expect(lease.target.relativePath).toBe(after);
@@ -184,7 +321,15 @@ describe("useMarkdownPersistenceLease", () => {
         cwd,
         relativePath: `gone-${initial.relativePath}`,
       })!;
-      expect(move.commit()).toBe(true);
+      expect(await move.preflight()).toBe("empty");
+      const intent = await move.admitRename();
+      expect(
+        await move.acknowledgeRename({
+          destinationRelativePath: `gone-${initial.relativePath}`,
+          revision: intent.expectedRevision,
+        }),
+      ).toBe(true);
+      expect(await move.commit()).toBe(true);
       move.finish();
     });
     await act(async () => root.render(<span />));

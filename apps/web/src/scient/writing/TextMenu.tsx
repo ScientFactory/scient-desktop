@@ -13,10 +13,14 @@ export type TextMenuContents = {
 
 /** Shared categories; each editor supplies only commands its source can store. */
 export function TextMenuItems(props: TextMenuContents) {
-  const category = (label: string, children: ReactNode) => (
+  const category = (label: string, children: ReactNode, compact = false) => (
     <MenuSub>
       <MenuSubTrigger>{label}</MenuSubTrigger>
-      <MenuSubPopup className="w-max min-w-48" data-dock-command-scope={props.commandScope}>
+      <MenuSubPopup
+        width={compact ? "compact" : "default"}
+        className={compact ? "w-max" : "w-max min-w-48"}
+        data-dock-command-scope={props.commandScope}
+      >
         {children}
       </MenuSubPopup>
     </MenuSub>
@@ -26,7 +30,9 @@ export function TextMenuItems(props: TextMenuContents) {
       {category("Paragraph style", props.paragraphStyle)}
       {category("Formatting", props.formatting)}
       {props.alignment ? category("Alignment", props.alignment) : null}
-      {props.direction ? category(props.directionLabel ?? "Direction", props.direction) : null}
+      {props.direction
+        ? category(props.directionLabel ?? "Direction", props.direction, true)
+        : null}
     </>
   );
 }

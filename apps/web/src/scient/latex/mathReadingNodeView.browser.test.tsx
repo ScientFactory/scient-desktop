@@ -14,6 +14,7 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
 import { latexPaginationKey, setLatexPaginationDimensions } from "./latexVisualPaginationExtension";
@@ -60,6 +61,7 @@ async function mount(body: string, preamble = "") {
   root = createRoot(host);
   function Harness() {
     const [text, setText] = useState(source);
+    const owner = useLatexVisualTestOwner(text);
     const [disabled, updateDisabled] = useState(false);
     useLayoutEffect(() => {
       replace = (next) => {
@@ -73,13 +75,14 @@ async function mount(body: string, preamble = "") {
         draftKey={draftKey}
         fileRevision="synthetic-r1"
         source={text}
+        sourceSnapshot={owner.snapshot}
         disabled={disabled}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
-        onEdit={(expected, next) => {
-          if (expected !== source) return false;
-          replace(next);
-          return true;
+        onEdit={(request) => {
+          const outcome = owner.edit(request, request.edit.source === source);
+          if (outcome.accepted) replace(outcome.snapshot.source);
+          return outcome;
         }}
       />
     );

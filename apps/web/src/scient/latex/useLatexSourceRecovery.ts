@@ -40,13 +40,7 @@ export function useLatexSourceRecovery(
       const snapshot = lease.getSnapshot();
       if (!snapshot.pending || snapshot.draftSource === snapshot.baselineSource) return;
       ownDraft = { source: snapshot.draftSource, baseRevision: snapshot.baselineRevision };
-      checkpointVisualDraft(
-        key,
-        snapshot.draftSource,
-        snapshot.baselineSource,
-        snapshot.draftSource,
-        snapshot.baselineRevision,
-      );
+      checkpointVisualDraft(key, snapshot.draftSource, snapshot.baselineRevision);
     };
     checkpoint();
     const stop = lease.subscribe(() => {

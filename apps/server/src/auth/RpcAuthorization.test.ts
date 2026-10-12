@@ -2,6 +2,7 @@ import {
   AuthDiagnosticsReadScope,
   AuthEnvironmentMaintainScope,
   AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthPreviewOperateScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
@@ -15,6 +16,7 @@ import {
   EnvironmentFilePath,
   type AuthEnvironmentScope,
   ProviderInstanceId,
+  ProjectWriteFileError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -292,6 +294,158 @@ describe("RPC scope middleware", () => {
       });
       expect(handled).toEqual([]);
     }).pipe(Effect.scoped),
+  );
+});
+
+describe("retained file recovery authorization", () => {
+  const tested = [
+    WS_METHODS.projectsListFileVersions,
+    WS_METHODS.projectsDiscardFileVersion,
+    WS_METHODS.projectsResolveFileMutation,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+
+  it.effect.each(
+    [false, true].flatMap((canWrite) =>
+      ["current-revision", null].map((currentRevision) => ({ canWrite, currentRevision })),
+    ),
+  )(
+    "preserves evidence until write authority is granted: write=$canWrite, current=$currentRevision",
+    ({ canWrite, currentRevision }) =>
+      Effect.gen(function* () {
+        const input = { cwd: "/workspace", relativePath: "notes.md" };
+        const attention = {
+          recoveryId: "recovery-1",
+          mutationId: "mutation-1",
+          retainedPaths: ["/workspace/.scient/retained/one"],
+          message: "Review retained publication.",
+        };
+        let retained = true;
+        let unresolved = true;
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.projectsListFileVersions, () =>
+                Effect.sync(() => ({
+                  versions: retained
+                    ? [
+                        {
+                          versionId: "version-1",
+                          mutationId: "mutation-1",
+                          retainedPath: attention.retainedPaths[0]!,
+                          revision: "retained-revision",
+                          byteLength: 7,
+                          retainedAt: 123,
+                        },
+                      ]
+                    : [],
+                  retainedBytes: retained ? 7 : 0,
+                  limitBytes: null,
+                  attention: unresolved ? attention : null,
+                })),
+              ),
+              group.toLayerHandler(WS_METHODS.projectsDiscardFileVersion, (request) =>
+                Effect.sync(() => {
+                  retained = false;
+                  return { versionId: request.versionId };
+                }),
+              ),
+              group.toLayerHandler(WS_METHODS.projectsResolveFileMutation, (request) =>
+                request.currentRevision !== currentRevision
+                  ? Effect.fail(
+                      new ProjectWriteFileError({
+                        ...input,
+                        failure: currentRevision === null ? "target_changed" : "revision_conflict",
+                        ...(currentRevision === null ? {} : { currentRevision }),
+                        mutationId: "mutation-1",
+                        publicationOutcome: "retained-attention",
+                        recoveryId: "recovery-1",
+                        retainedPaths: attention.retainedPaths,
+                      }),
+                    )
+                  : Effect.sync(() => {
+                      unresolved = false;
+                      return { recoveryId: request.recoveryId, revision: currentRevision };
+                    }),
+              ),
+              RpcAuthorization.layer(
+                canWrite
+                  ? [AuthFilesystemReadScope, AuthFilesystemWriteScope]
+                  : [AuthFilesystemReadScope],
+              ),
+            ),
+          ),
+        );
+        expect((yield* client[WS_METHODS.projectsListFileVersions](input)).attention).toEqual(
+          attention,
+        );
+        const discard = yield* client[WS_METHODS.projectsDiscardFileVersion]({
+          ...input,
+          versionId: "version-1",
+        }).pipe(Effect.result);
+        const staleResolution = yield* client[WS_METHODS.projectsResolveFileMutation]({
+          ...input,
+          recoveryId: "recovery-1",
+          currentRevision: currentRevision === null ? "reviewed-revision" : null,
+          choice: "accept-current",
+        }).pipe(Effect.flip);
+        if (!canWrite) {
+          expect(discard).toMatchObject({
+            _tag: "Failure",
+            failure: {
+              _tag: "EnvironmentAuthorizationError",
+              requiredPermission: AuthFilesystemWriteScope,
+            },
+          });
+          expect(staleResolution).toMatchObject({
+            _tag: "EnvironmentAuthorizationError",
+            requiredPermission: AuthFilesystemWriteScope,
+          });
+          expect(
+            yield* client[WS_METHODS.projectsResolveFileMutation]({
+              ...input,
+              recoveryId: "recovery-1",
+              currentRevision,
+              choice: "accept-current",
+            }).pipe(Effect.flip),
+          ).toMatchObject({
+            _tag: "EnvironmentAuthorizationError",
+            requiredPermission: AuthFilesystemWriteScope,
+          });
+          expect(retained).toBe(true);
+          expect(unresolved).toBe(true);
+        } else {
+          expect(discard).toMatchObject({ _tag: "Success", success: { versionId: "version-1" } });
+          expect(staleResolution).toMatchObject({
+            _tag: "ProjectWriteFileError",
+            failure: currentRevision === null ? "target_changed" : "revision_conflict",
+            ...(currentRevision === null ? {} : { currentRevision }),
+            mutationId: "mutation-1",
+            publicationOutcome: "retained-attention",
+            recoveryId: "recovery-1",
+            retainedPaths: attention.retainedPaths,
+          });
+          if (currentRevision === null)
+            expect(staleResolution).not.toHaveProperty("currentRevision");
+          expect((yield* client[WS_METHODS.projectsListFileVersions](input)).attention).toEqual(
+            attention,
+          );
+          expect(
+            yield* client[WS_METHODS.projectsResolveFileMutation]({
+              ...input,
+              recoveryId: "recovery-1",
+              currentRevision,
+              choice: "accept-current",
+            }),
+          ).toEqual({ recoveryId: "recovery-1", revision: currentRevision });
+          expect((yield* client[WS_METHODS.projectsListFileVersions](input)).attention).toBeNull();
+        }
+      }).pipe(Effect.scoped),
   );
 });
 

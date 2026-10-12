@@ -5,8 +5,11 @@ import {
   keepBothVersions,
 } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import type { MarkdownPersistenceTarget } from "../markdownEditor/persistence/markdownPersistenceRegistry";
+import { createTestCheckpointStore } from "../markdownEditor/persistence/markdownDraftCheckpointTestkit";
 import { LatexDocumentInputs } from "./latexDocumentInputs";
 import { prepareLatexDocument } from "./prepareLatexDocument";
+import { changeLatexDocumentCompiler } from "./changeLatexDocumentCompiler";
+import { declaredLatexCompiler } from "./latexCompiler";
 
 vi.mock("../markdownEditor/persistence/markdownPersistenceTransport", () => ({
   createMarkdownPersistenceTransport: vi.fn(),
@@ -42,6 +45,7 @@ function setup(initial: Record<string, string>) {
     return { source, revision: revision(source) };
   };
   const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: createTestCheckpointStore(),
     debounceMs: 60_000,
     reconcile: () => keepBothVersions,
     createTransport: (file) => ({
@@ -262,5 +266,122 @@ describe("document preparation without a mounted Visual editor", () => {
     expect((await prepareLatexDocument(target, h.options)).ok).toBe(false);
     expect(h.writes).toEqual([]);
     chapter.release();
+  });
+});
+
+describe("compiler changes through the document owner", () => {
+  it("saves pending source and Visual fields before persisting the root compiler", async () => {
+    const h = setup({
+      "main.tex": "\\documentclass{article}\n\\input{chapter}\n",
+      "chapter.tex": "old chapter",
+    });
+    const root = await h.open("main.tex");
+    const chapter = await h.open("chapter.tex");
+    root.change(
+      `${root.getSnapshot().draftSource}% pending source\n`,
+      root.getSnapshot().editVersion,
+    );
+    let pendingField = true;
+    h.inputs.register({
+      target: { ...target, relativePath: "chapter.tex" },
+      root: "main.tex",
+      pending: () => pendingField,
+      finish: () => {
+        if (pendingField) chapter.change("pending Visual field", chapter.getSnapshot().editVersion);
+        pendingField = false;
+        return true;
+      },
+    });
+    const result = await changeLatexDocumentCompiler({
+      target,
+      lease: root,
+      compiler: "xelatex",
+      blocked: () => false,
+      isActive: () => true,
+      prepare: async () => {
+        const prepared = await prepareLatexDocument(target, { ...h.options, selected: root });
+        return prepared.ok ? prepared : null;
+      },
+    });
+    expect(result).toEqual({ ok: true });
+    const reopened = await h.options.read(target);
+    expect(declaredLatexCompiler(reopened.source)).toBe("xelatex");
+    expect(reopened.source).toBe(
+      "% !TEX program = xelatex\n\\documentclass{article}\n\\input{chapter}\n% pending source\n",
+    );
+    expect(h.disk.get("chapter.tex")).toBe("pending Visual field");
+    expect(root.getSnapshot().pending).toBe(false);
+    root.release();
+    chapter.release();
+  });
+
+  it("refuses a fragment owner without saving or changing either file", async () => {
+    const h = setup({ "main.tex": "\\input{chapter}", "chapter.tex": "chapter" });
+    const chapter = await h.open("chapter.tex");
+    const result = await changeLatexDocumentCompiler({
+      target,
+      lease: chapter,
+      compiler: "lualatex",
+      blocked: () => false,
+      isActive: () => true,
+      prepare: async () => {
+        const prepared = await prepareLatexDocument(target, { ...h.options, selected: chapter });
+        return prepared.ok ? prepared : null;
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(h.writes).toEqual([]);
+    expect(h.disk.get("main.tex")).toBe("\\input{chapter}");
+    expect(chapter.getSnapshot().draftSource).toBe("chapter");
+    chapter.release();
+  });
+
+  it("retains both sides of a root conflict without inserting an engine declaration", async () => {
+    const h = setup({ "main.tex": "original root" });
+    const root = await h.open("main.tex");
+    root.change("pending local root", root.getSnapshot().editVersion);
+    h.disk.set("main.tex", "outside root");
+    const result = await changeLatexDocumentCompiler({
+      target,
+      lease: root,
+      compiler: "xelatex",
+      blocked: () => false,
+      isActive: () => true,
+      prepare: async () => {
+        const prepared = await prepareLatexDocument(target, { ...h.options, selected: root });
+        return prepared.ok ? prepared : null;
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(h.writes).toEqual([]);
+    expect(h.disk.get("main.tex")).toBe("outside root");
+    expect(root.getSnapshot().draftSource).toBe("pending local root");
+    expect(root.getSnapshot().conflict).not.toBeNull();
+    root.release();
+  });
+
+  it("does not touch source or pending fields while recovery is blocked", async () => {
+    const h = setup({ "main.tex": "root" });
+    const root = await h.open("main.tex");
+    root.retainPendingInput({ message: "unfinished field", payload: { text: "retained" } });
+    const result = await changeLatexDocumentCompiler({
+      target,
+      lease: root,
+      compiler: "pdflatex",
+      blocked: () => true,
+      isActive: () => true,
+      prepare: async () => {
+        const prepared = await prepareLatexDocument(target, { ...h.options, selected: root });
+        return prepared.ok ? prepared : null;
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(root.getPendingInput()).toEqual({
+      message: "unfinished field",
+      payload: { text: "retained" },
+    });
+    expect(root.getSnapshot().draftSource).toBe("root");
+    expect(h.writes).toEqual([]);
+    root.release();
   });
 });

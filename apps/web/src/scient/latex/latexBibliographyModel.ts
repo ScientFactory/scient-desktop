@@ -1,4 +1,6 @@
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments } from "./latexSourceSyntax";
+import { applyDocumentSourcePatches } from "@scientfactory/scient-document";
+import { latexOwnedSourcePatch, type LatexSourceEdit } from "./latexSourceEditPlan";
 
 export interface BibliographyField {
   name: string;
@@ -522,7 +524,7 @@ export function addBibliographyEntry(
 }
 
 /** Rebase one entry edit over unrelated writing; concurrent edits to that entry are rejected. */
-export function mergeBibliographyChange(
+function mergeBibliographyChange(
   expected: string,
   next: string,
   current: string,
@@ -571,4 +573,51 @@ export function mergeBibliographyChange(
   );
   if (index < 0) return null;
   return addBibliographyEntry(current, kind, key, replacement.raw, containers[index]?.insertAt);
+}
+
+/** Rebase and retain the single entry/container boundary that owns this operation. */
+export function mergeBibliographySourceEdit(
+  expected: string,
+  next: string,
+  current: string,
+  kind: "bibitem" | "bibtex",
+): { source: string; edit: LatexSourceEdit } | null {
+  const merged = mergeBibliographyChange(expected, next, current, kind);
+  if (merged === null) return null;
+  if (merged === current) return { source: current, edit: { source: current, patches: [] } };
+  const before = kind === "bibtex" ? bibtexEntries(current) : manualBibliography(current);
+  const after = kind === "bibtex" ? bibtexEntries(merged) : manualBibliography(merged);
+  if (before.error || after.error) return null;
+  const keys = changedBibliographyKeys(before.entries, after.entries);
+  if (keys.length !== 1) return null;
+  const original = before.entries.find((entry) => entry.key === keys[0]);
+  const replacement = after.entries.find((entry) => entry.key === keys[0]);
+  let from: number, to: number, value: string;
+  if (original) {
+    from = original.from;
+    to = original.to;
+    value = replacement?.raw ?? "";
+  } else {
+    if (!replacement) return null;
+    from =
+      kind === "bibtex"
+        ? current.length
+        : (manualBibliography(current).containers[
+            manualBibliography(merged).containers.findIndex(
+              (container) =>
+                replacement.from > container.from && replacement.to <= container.insertAt,
+            )
+          ]?.insertAt ?? -1);
+    if (from < 0) return null;
+    to = from;
+    // Only the authoring insertion boundary owns added separators.
+    value = merged.slice(from, from + merged.length - current.length);
+  }
+  const patch = latexOwnedSourcePatch(current, from, to, value, "before");
+  const edit: LatexSourceEdit = {
+    source: current,
+    patches: patch ? [patch] : [],
+  };
+  if (applyDocumentSourcePatches(current, edit.patches) !== merged) return null;
+  return { source: merged, edit };
 }

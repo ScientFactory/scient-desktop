@@ -1,500 +1,942 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import "fake-indexeddb/auto";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { EnvironmentId } from "@t3tools/contracts";
+import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  indexedDbMarkdownDrafts,
+  type DocumentRenameIntent,
+  type MarkdownDraftCheckpointStore,
+} from "~/scient/markdownEditor/persistence/markdownDraftCheckpoint";
+import { FileSaveCoordinator, type FileSaveCoordinatorOptions } from "./fileSaveCoordinator";
 
-import { FileSaveCoordinator } from "./fileSaveCoordinator";
-
-function deferred<E = never>() {
-  let resolve!: (result: AtomCommandResult<void, E>) => void;
-  const promise = new Promise<AtomCommandResult<void, E>>((resolvePromise) => {
-    resolve = resolvePromise;
+type Result = { readonly revision: string };
+const owners: FileSaveCoordinator<Result, Error>[] = [];
+const keys = new Set<string>();
+let sequence = 0;
+function open(
+  options: Partial<FileSaveCoordinatorOptions<Result, Error>> &
+    Pick<FileSaveCoordinatorOptions<Result, Error>, "persist">,
+) {
+  const key = options.journal?.key ?? `generic-save-${++sequence}`;
+  keys.add(key);
+  const owner = new FileSaveCoordinator<Result, Error>({
+    debounceMs: 500,
+    initialSource: "A",
+    initialRevision: "rA",
+    journal: { key, store: indexedDbMarkdownDrafts },
+    classifyFailure: () => "transient",
+    revisionFromResult: (result) => result.revision,
+    onPendingChange: () => {},
+    onConfirmed: () => {},
+    ...options,
   });
-  return { promise, resolve };
+  owners.push(owner);
+  return owner;
 }
+function refused() {
+  return AsyncResult.failure<Result, Error>(Cause.fail(new Error("Publication refused")));
+}
+const attention = {
+  recoveryId: "review",
+  mutationId: "prior",
+  retainedPaths: ["draft.copy"],
+  message: "Retained publication",
+};
 
-describe("FileSaveCoordinator", () => {
-  afterEach(() => {
-    vi.useRealTimers();
+beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }));
+afterEach(async () => {
+  for (const owner of owners) owner.retire();
+  await Promise.all(owners.map((owner) => owner.ready()));
+  owners.length = 0;
+  for (const key of keys) {
+    const copy = await indexedDbMarkdownDrafts.read(key);
+    if (copy) await indexedDbMarkdownDrafts.replace(key, copy.token, undefined);
+  }
+  keys.clear();
+  vi.useRealTimers();
+});
+
+describe("durable generic file publication", () => {
+  it("reconstructs the lost-ACK identity and frozen source separately from newer input without overwriting outside D", async () => {
+    let disk = { source: "A", revision: "rA" };
+    let loseAcknowledgement = true;
+    const receipts = new Map<
+      string,
+      { source: string; expected: string | undefined; result: Result }
+    >();
+    let kind: "transient" | "target_changed" = "transient";
+    const persist = async (
+      source: string,
+      expected: string | undefined,
+      mutationId: string,
+    ): Promise<AtomCommandResult<Result, Error>> => {
+      const receipt = receipts.get(mutationId);
+      if (receipt) {
+        if (receipt.source !== source || receipt.expected !== expected)
+          throw new Error("Mutation identity changed");
+        return AsyncResult.success(receipt.result);
+      }
+      if (expected !== disk.revision) {
+        kind = "target_changed";
+        return refused();
+      }
+      disk = { source, revision: `r${source}` };
+      const result = { revision: disk.revision };
+      receipts.set(mutationId, { source, expected, result });
+      if (loseAcknowledgement) {
+        loseAcknowledgement = false;
+        throw new Error("Lost acknowledgement");
+      }
+      return AsyncResult.success(result);
+    };
+    const first = open({
+      persist,
+      classifyFailure: () => kind,
+      publicationOutcome: () => (kind === "target_changed" ? "unchanged" : null),
+    });
+    await first.ready();
+    first.change("B");
+    await expect(first.flush()).resolves.toBe(false);
+    first.change("C");
+    await first.ready();
+    const key = [...keys][0]!;
+    const journal = (await indexedDbMarkdownDrafts.read(key))!;
+    expect(journal).toMatchObject({
+      draftSource: "C",
+      publicationIntent: { source: "B", expectedRevision: "rA" },
+    });
+    const originalId = journal.publicationIntent!.mutationId;
+    first.retire();
+    disk = { source: "D", revision: "rD" };
+    let restored = "";
+    const renderer = open({
+      persist,
+      journal: { key, store: indexedDbMarkdownDrafts },
+      initialSource: "D",
+      initialRevision: "rD",
+      onRestoredSource: (source) => {
+        restored = source;
+      },
+      classifyFailure: () => kind,
+      publicationOutcome: () => (kind === "target_changed" ? "unchanged" : null),
+    });
+    await renderer.ready();
+    expect(restored).toBe("C");
+    await expect(renderer.flush()).resolves.toBe(false);
+    expect(disk).toEqual({ source: "D", revision: "rD" });
+    expect(receipts.get(originalId)).toEqual({
+      source: "B",
+      expected: "rA",
+      result: { revision: "rB" },
+    });
+    expect(renderer.reviewRequired).toBe(true);
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+      baselineSource: "B",
+      baselineRevision: "rB",
+      draftSource: "C",
+      publicationOutcome: "unchanged",
+      publicationIntent: { source: "C", expectedRevision: "rB" },
+    });
   });
 
-  it("debounces edits and persists only the latest contents", async () => {
-    vi.useFakeTimers();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const onPendingChange = vi.fn();
-    const onConfirmed = vi.fn();
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
+  it("keeps accepted physical absence across reconstruction and typing until explicit create-only recreation", async () => {
+    let disk: { source: string; revision: string } | null = null;
+    let retained = true;
+    const persist = async (
+      source: string,
+      expected: string | undefined,
+      _id: string,
+      createOnly?: boolean,
+    ) => {
+      if (createOnly ? disk !== null : disk?.revision !== expected) return refused();
+      disk = { source, revision: `r${source}` };
+      return AsyncResult.success({ revision: disk.revision });
+    };
+    const first = open({
       persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange,
-      onConfirmed,
+      initialAttention: attention,
+      readForRecovery: async () => ({
+        missing: true,
+        revision: null,
+        publicationAttention: retained ? attention : null,
+      }),
+      resolveRecovery: async () => {
+        retained = false;
+        return { revision: null };
+      },
     });
-
-    coordinator.change("first");
-    await vi.advanceTimersByTimeAsync(300);
-    coordinator.change("latest");
-    await vi.advanceTimersByTimeAsync(499);
-    expect(persist).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(1);
-    expect(persist).toHaveBeenCalledOnce();
-    expect(persist).toHaveBeenCalledWith("latest", "revision-1");
-    expect(onConfirmed).toHaveBeenCalledWith("latest", undefined);
-    expect(onPendingChange.mock.calls).toEqual([[true], [true], [false]]);
-  });
-
-  it("holds persistence while suspended and resumes with the latest buffer", async () => {
-    vi.useFakeTimers();
-    const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
+    await first.ready();
+    first.change("B");
+    await expect(first.resolveRetainedAttention("review", null)).resolves.toBe(true);
+    const key = [...keys][0]!;
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+      currentMissing: true,
+      genericSaveState: { acceptedMissingHold: true },
     });
-
-    coordinator.setSuspended(true);
-    coordinator.change("first checkpoint");
+    first.retire();
+    const renderer = open({ persist, journal: { key, store: indexedDbMarkdownDrafts } });
+    await renderer.ready();
+    expect(renderer.currentMissing).toBe(true);
+    renderer.change("C");
+    renderer.syncConfirmedFileRevision("watcher", "outside cached source");
+    renderer.retryPending("watcher");
+    renderer.discardPending("watcher");
     await vi.advanceTimersByTimeAsync(5_000);
-    coordinator.change("final checkpoint");
-    expect(persist).not.toHaveBeenCalled();
-
-    coordinator.setSuspended(false);
-    await vi.advanceTimersByTimeAsync(500);
-    expect(persist).toHaveBeenCalledExactlyOnceWith("final checkpoint", "revision-1");
-  });
-
-  it("flushes immediately and reports whether the latest buffer was confirmed", async () => {
-    vi.useFakeTimers();
-    const persist = vi
-      .fn()
-      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("temporarily unavailable"))))
-      .mockResolvedValueOnce(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
+    await expect(renderer.flush()).resolves.toBe(false);
+    expect(disk).toBeNull();
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+      draftSource: "C",
+      currentMissing: true,
     });
-
-    coordinator.change("recoverable buffer");
-    await expect(coordinator.flush()).resolves.toBe(false);
-    expect(coordinator.hasPendingChanges).toBe(true);
-    await expect(coordinator.flush()).resolves.toBe(true);
-    expect(coordinator.hasPendingChanges).toBe(false);
-    expect(persist).toHaveBeenCalledTimes(2);
+    expect(renderer.recreateMissingCurrent("stale rendered source")).toBe(true);
+    await expect(renderer.flush()).resolves.toBe(true);
+    expect(disk).toEqual({ source: "C", revision: "rC" });
+    expect(renderer.currentMissing).toBe(false);
   });
 
-  it("flushes a newer edit queued behind an in-flight write", async () => {
-    vi.useFakeTimers();
-    const firstWrite = deferred();
-    const persist = vi
-      .fn()
-      .mockReturnValueOnce(firstWrite.promise)
-      .mockResolvedValueOnce(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => (persist.mock.calls.length === 1 ? "revision-2" : "revision-3"),
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
-    });
-
-    coordinator.change("first");
-    await vi.advanceTimersByTimeAsync(500);
-    coordinator.change("latest");
-    const flushed = coordinator.flush();
-    firstWrite.resolve(AsyncResult.success(undefined));
-    await expect(flushed).resolves.toBe(true);
-
-    expect(persist.mock.calls).toEqual([
-      ["first", "revision-1"],
-      ["latest", "revision-2"],
-    ]);
-  });
-
-  it("keeps pending state until an edit made during a write is also saved", async () => {
-    vi.useFakeTimers();
-    const firstWrite = deferred();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockReturnValueOnce(firstWrite.promise)
-      .mockResolvedValueOnce(AsyncResult.success(undefined));
-    const onPendingChange = vi.fn();
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange,
-      onConfirmed: vi.fn(),
-    });
-
-    coordinator.change("first");
-    await vi.advanceTimersByTimeAsync(500);
-    coordinator.change("latest");
-    await vi.advanceTimersByTimeAsync(500);
-    expect(persist).toHaveBeenCalledTimes(1);
-
-    firstWrite.resolve(AsyncResult.success(undefined));
-    await vi.runAllTimersAsync();
-    expect(persist).toHaveBeenCalledTimes(2);
-    expect(persist).toHaveBeenLastCalledWith("latest", "revision-2");
-    expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
-  });
-
-  it("saves an edit made inside the debounce window when the editor closes", async () => {
-    vi.useFakeTimers();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
-    });
-
-    coordinator.change("unsaved");
-    coordinator.dispose();
-    await vi.runAllTimersAsync();
-
-    expect(persist).toHaveBeenCalledOnce();
-    expect(persist).toHaveBeenCalledWith("unsaved", "revision-1");
-  });
-
-  it.each([false, true])(
-    "keeps an edit pending after write permission is removed (closing=%s)",
-    async (closeEditor) => {
-      vi.useFakeTimers();
-      let canWrite = true;
-      const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
-      const onPendingChange = vi.fn();
-      const coordinator = new FileSaveCoordinator({
-        debounceMs: 500,
-        initialRevision: "revision-1",
-        revisionFromResult: () => "revision-2",
-        canPersist: () => canWrite,
-        persist,
-        onPendingChange,
-        onConfirmed: vi.fn(),
+  it.each(["read", "CAS", "quota"] as const)(
+    "never dispatches when journal admission fails at %s",
+    async (stage) => {
+      let disk = "A";
+      const store: MarkdownDraftCheckpointStore = {
+        read: async () => {
+          if (stage === "read") throw new Error("Storage unavailable");
+          return undefined;
+        },
+        replace: async () => {
+          if (stage === "quota") throw new Error("Quota exceeded");
+          return false;
+        },
+      };
+      const owner = open({
+        journal: { key: `failed-${stage}`, store },
+        persist: async (source) => {
+          disk = source;
+          return AsyncResult.success({ revision: "rB" });
+        },
       });
-
-      coordinator.change("unsaved");
-      canWrite = false;
-      if (closeEditor) coordinator.dispose();
-      await vi.runAllTimersAsync();
-
-      expect(persist).not.toHaveBeenCalled();
-      expect(onPendingChange).toHaveBeenLastCalledWith(true);
+      owner.change("B");
+      await expect(owner.flush()).resolves.toBe(false);
+      expect(disk).toBe("A");
+      expect(owner.hasPendingChanges).toBe(true);
     },
   );
 
-  it("flushes an edit made while a write was in flight when the editor closes", async () => {
-    vi.useFakeTimers();
-    const inFlight = deferred();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockReturnValueOnce(inFlight.promise)
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
+  it.each(["CAS", "quota"] as const)(
+    "keeps the draft recoverable and admits no transport when exact intent commit fails at %s",
+    async (stage) => {
+      const key = `publication-admission-${stage}`;
+      let disk = "A";
+      const store: MarkdownDraftCheckpointStore = {
+        read: (at) => indexedDbMarkdownDrafts.read(at),
+        replace: async (at, expected, next) => {
+          if (next?.publicationIntent != null) {
+            if (stage === "quota")
+              throw new Error("Quota exceeded while admitting the frozen mutation");
+            return false;
+          }
+          return indexedDbMarkdownDrafts.replace(at, expected, next);
+        },
+      };
+      const owner = open({
+        journal: { key, store },
+        persist: async (source) => {
+          disk = source;
+          return AsyncResult.success({ revision: "rB" });
+        },
+      });
+      await owner.ready();
+      owner.change("B");
+      await owner.ready();
+      await expect(owner.flush()).resolves.toBe(false);
+      expect(disk).toBe("A");
+      expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+        draftSource: "B",
+        publicationIntent: null,
+      });
+    },
+  );
+
+  it.each([
+    "target_changed",
+    "recovery_required",
+    "mutation_unavailable",
+    "mutation_intent_conflict",
+    "operation",
+  ] as const)(
+    "retains %s and the newest draft through typing, external reads, discard, retry and reconstruction",
+    async (kind) => {
+      let disk = "A";
+      const persist = async (source: string) => {
+        if (source === "C") disk = source;
+        return refused();
+      };
+      const owner = open({ persist, classifyFailure: () => kind });
+      await owner.ready();
+      owner.change("B");
+      await expect(owner.flush()).resolves.toBe(false);
+      owner.change("C");
+      owner.syncConfirmedFileRevision("rD", "D");
+      owner.discardPending("rD");
+      owner.retryPending("rD");
+      await expect(owner.flush()).resolves.toBe(false);
+      await owner.ready();
+      const key = [...keys][0]!;
+      owner.retire();
+      const renderer = open({
+        persist,
+        classifyFailure: () => kind,
+        journal: { key, store: indexedDbMarkdownDrafts },
+      });
+      await renderer.ready();
+      await expect(renderer.flush()).resolves.toBe(false);
+      expect(disk).toBe("A");
+      expect(renderer.hasPendingChanges).toBe(true);
+      expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+        draftSource: "C",
+        publicationIntent: { source: "B" },
+        genericSaveState: { failureKind: kind },
+      });
+    },
+  );
+
+  it("binds an unchanged review to current source and revision, then reconstructs its hold without acknowledging the refused draft", async () => {
+    let disk = { source: "D", revision: "rD" };
+    let kind: "target_changed" | "transient" = "target_changed";
+    let acknowledgedId: string | null = null;
+    const persist = async (source: string, expected: string | undefined, id: string) => {
+      if (expected !== disk.revision) return refused();
+      acknowledgedId = id;
+      disk = { source, revision: `r${source}` };
+      return AsyncResult.success({ revision: disk.revision });
+    };
+    const owner = open({
       persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
+      classifyFailure: () => kind,
+      publicationOutcome: () => (kind === "target_changed" ? "unchanged" : null),
+      readForRecovery: async () => ({ source: disk.source, revision: disk.revision }),
     });
-
-    coordinator.change("first");
-    await vi.advanceTimersByTimeAsync(500);
-    coordinator.change("latest");
-    coordinator.dispose();
-    inFlight.resolve(AsyncResult.success(undefined));
-    await vi.runAllTimersAsync();
-
-    expect(persist).toHaveBeenCalledTimes(2);
-    expect(persist).toHaveBeenLastCalledWith("latest", "revision-2");
+    await owner.ready();
+    owner.change("B");
+    await expect(owner.flush()).resolves.toBe(false);
+    const key = [...keys][0]!;
+    const refusedId = (await indexedDbMarkdownDrafts.read(key))!.publicationIntent!.mutationId;
+    await expect(owner.reviewUnchangedRefusal("rA")).resolves.toBe(false);
+    await expect(owner.reviewUnchangedRefusal("rD")).resolves.toBe(true);
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+      baselineSource: "D",
+      baselineRevision: "rD",
+      draftSource: "B",
+      publicationIntent: null,
+    });
+    owner.retire();
+    const renderer = open({
+      persist,
+      journal: { key, store: indexedDbMarkdownDrafts },
+      initialSource: "D",
+      initialRevision: "rD",
+    });
+    await renderer.ready();
+    await expect(renderer.flush()).resolves.toBe(false);
+    expect(disk.source).toBe("D");
+    expect(acknowledgedId).toBeNull();
+    kind = "transient";
+    renderer.change("C");
+    await expect(renderer.flush()).resolves.toBe(true);
+    expect(disk).toEqual({ source: "C", revision: "rC" });
+    expect(acknowledgedId).not.toBe(refusedId);
   });
 
-  it("does not rewrite a write that lands while the editor closes", async () => {
-    vi.useFakeTimers();
-    const inFlight = deferred();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockReturnValueOnce(inFlight.promise)
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
+  it("fences an old renderer's late acknowledgement and future writes from its successor journal", async () => {
+    const admitted = Promise.withResolvers<void>();
+    const acknowledgement = Promise.withResolvers<AtomCommandResult<Result, Error>>();
+    const first = open({
+      persist: async () => {
+        admitted.resolve();
+        return acknowledgement.promise;
+      },
     });
-
-    coordinator.change("only");
-    await vi.advanceTimersByTimeAsync(500);
-    coordinator.dispose();
-    inFlight.resolve(AsyncResult.success(undefined));
-    await vi.runAllTimersAsync();
-
-    expect(persist).toHaveBeenCalledOnce();
+    await first.ready();
+    first.change("B");
+    const oldFlush = first.flush();
+    await admitted.promise;
+    const key = [...keys][0]!;
+    const successor = open({
+      journal: { key, store: indexedDbMarkdownDrafts },
+      persist: async () => refused(),
+      classifyFailure: () => "conflict",
+    });
+    await successor.ready();
+    successor.change("C");
+    await successor.ready();
+    const owned = await indexedDbMarkdownDrafts.read(key);
+    acknowledgement.resolve(AsyncResult.success({ revision: "rB" }));
+    await expect(oldFlush).resolves.toBe(false);
+    first.change("stale owner input");
+    await expect(first.flush()).resolves.toBe(false);
+    expect(await indexedDbMarkdownDrafts.read(key)).toEqual(owned);
+    first.retire();
+    await expect(first.flush()).resolves.toBe(false);
   });
 
-  it("retries a failed write when the editor closes", async () => {
-    vi.useFakeTimers();
-    const persist = vi
-      .fn()
-      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("write failed"))))
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
+  it("persists exact reviewed authorization before resolution and resumes its confirmation after renderer loss", async () => {
+    let disk = { source: "A", revision: "rA" };
+    let retained = true;
+    let failConfirmation = true;
+    let authorization: string | null = null;
+    const first = open({
+      initialAttention: attention,
+      persist: async () => refused(),
+      readForRecovery: async () => {
+        if (!retained && failConfirmation) {
+          failConfirmation = false;
+          throw new Error("Confirmation disconnected");
+        }
+        return {
+          source: disk.source,
+          revision: disk.revision,
+          publicationAttention: retained ? attention : null,
+        };
+      },
+      resolveRecovery: async (review) => {
+        const copy = await indexedDbMarkdownDrafts.read([...keys][0]!);
+        expect(copy?.genericSaveState?.pendingReview).toEqual(review);
+        authorization = review.currentRevision;
+        retained = false;
+        return { revision: review.currentRevision };
+      },
     });
-
-    coordinator.change("latest");
-    await vi.advanceTimersByTimeAsync(500);
-    expect(persist).toHaveBeenCalledOnce();
-
-    coordinator.dispose();
-    await vi.runAllTimersAsync();
-
-    expect(persist).toHaveBeenCalledTimes(2);
-    expect(persist).toHaveBeenLastCalledWith("latest", "revision-1");
+    await first.ready();
+    first.change("B");
+    await expect(first.resolveRetainedAttention("review", "rA")).resolves.toBe(false);
+    const key = [...keys][0]!;
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+      genericSaveState: {
+        authorizedRecovery: { recoveryId: "review", currentRevision: "rA" },
+        pendingReview: { recoveryId: "review", currentRevision: "rA" },
+      },
+    });
+    first.retire();
+    const renderer = open({
+      initialAttention: attention,
+      journal: { key, store: indexedDbMarkdownDrafts },
+      readForRecovery: async () => ({
+        source: disk.source,
+        revision: disk.revision,
+        publicationAttention: retained ? attention : null,
+      }),
+      resolveRecovery: async () => {
+        throw new Error("Confirmed authorization must not resolve again");
+      },
+      persist: async (source, expected) => {
+        if (disk.revision !== expected) return refused();
+        disk = { source, revision: `r${source}` };
+        return AsyncResult.success({ revision: disk.revision });
+      },
+    });
+    await renderer.ready();
+    await expect(renderer.resolveRetainedAttention("review", "rA")).resolves.toBe(true);
+    expect(authorization).toBe("rA");
+    await expect(renderer.flush()).resolves.toBe(false);
+    expect(disk.source).toBe("A");
+    renderer.change("C");
+    await expect(renderer.flush()).resolves.toBe(true);
+    expect(disk).toEqual({ source: "C", revision: "rC" });
   });
 
-  it("leaves the file pending when the latest write fails", async () => {
-    vi.useFakeTimers();
-    const onPendingChange = vi.fn();
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist: vi
-        .fn()
-        .mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("write failed")))),
-      onPendingChange,
-      revisionFromResult: () => "revision-2",
-      onConfirmed: vi.fn(),
-    });
+  it.each(["before", "after", "receipt"] as const)(
+    "refuses missing acceptance when a pathname appears at %s",
+    async (stage) => {
+      let read = 0;
+      const owner = open({
+        initialAttention: attention,
+        persist: async () => refused(),
+        readForRecovery: async () =>
+          ++read === (stage === "before" ? 1 : stage === "after" ? 2 : 0)
+            ? { source: "D", revision: "rD" }
+            : { missing: true, revision: null },
+        resolveRecovery: async () => ({ revision: stage === "receipt" ? "rD" : null }),
+      });
+      await owner.ready();
+      owner.change("B");
+      await expect(owner.resolveRetainedAttention("review", null)).resolves.toBe(false);
+      expect(owner.currentMissing).toBe(false);
+      expect(owner.publicationAttention).toEqual(attention);
+      await expect(owner.flush()).resolves.toBe(false);
+    },
+  );
 
-    coordinator.change("latest");
-    await vi.advanceTimersByTimeAsync(500);
-    await Promise.resolve();
-    expect(onPendingChange).toHaveBeenCalledWith(true);
-    expect(onPendingChange).not.toHaveBeenCalledWith(false);
+  it("retains typed input during ordered confirmation and requires explicit action after acceptance", async () => {
+    const confirming = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let retained = true;
+    let disk = "A";
+    const owner = open({
+      initialAttention: attention,
+      persist: async (source) => {
+        disk = source;
+        return AsyncResult.success({ revision: "rB" });
+      },
+      readForRecovery: async () => {
+        if (!retained) {
+          confirming.resolve();
+          await release.promise;
+        }
+        return { source: "A", revision: "rA", publicationAttention: retained ? attention : null };
+      },
+      resolveRecovery: async () => {
+        retained = false;
+        return { revision: "rA" };
+      },
+    });
+    await owner.ready();
+    owner.change("B");
+    const accepting = owner.resolveRetainedAttention("review", "rA");
+    await confirming.promise;
+    owner.change("C");
+    release.resolve();
+    await expect(accepting).resolves.toBe(true);
+    await expect(owner.flush()).resolves.toBe(false);
+    expect(disk).toBe("A");
+    owner.retryPending("rA");
+    await expect(owner.flush()).resolves.toBe(true);
+    expect(disk).toBe("C");
   });
 
-  it("adopts external revisions only while there is no pending local edit", async () => {
-    vi.useFakeTimers();
-    const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-4",
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
+  it("debounces shared input, respects suspension and flushes the actual newest source on final disposal", async () => {
+    let disk = "A";
+    const owner = open({
+      persist: async (source) => {
+        disk = source;
+        return AsyncResult.success({ revision: `r${source}` });
+      },
     });
-
-    coordinator.syncConfirmedFileRevision("revision-2");
-    coordinator.change("local edit");
-    coordinator.syncConfirmedFileRevision("revision-3");
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(persist).toHaveBeenCalledWith("local edit", "revision-2");
-    coordinator.dispose();
-    await vi.runAllTimersAsync();
-    expect(persist).toHaveBeenCalledOnce();
+    await owner.ready();
+    owner.change("B");
+    await vi.advanceTimersByTimeAsync(300);
+    owner.change("C");
+    await vi.advanceTimersByTimeAsync(499);
+    expect(disk).toBe("A");
+    await vi.advanceTimersByTimeAsync(1);
+    await owner.flush();
+    expect(disk).toBe("C");
+    owner.setSuspended(true);
+    owner.change("D");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(disk).toBe("C");
+    owner.dispose();
+    await owner.flush();
+    expect(disk).toBe("D");
+    owner.change("retired edit");
+    await owner.flush();
+    expect(disk).toBe("D");
   });
 
-  it("discards a pending local buffer without persisting it", async () => {
-    vi.useFakeTimers();
-    const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
-    const onPendingChange = vi.fn();
-    const onResolutionApplied = vi.fn();
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange,
-      onConfirmed: vi.fn(),
-      onResolutionApplied,
+  it("retains a denied draft and publishes it only after write permission returns", async () => {
+    let canWrite = false;
+    let disk = "A";
+    const owner = open({
+      canPersist: () => canWrite,
+      persist: async (source) => {
+        disk = source;
+        return AsyncResult.success({ revision: "rB" });
+      },
     });
-
-    coordinator.change("local edit");
-    coordinator.discardPending("revision-agent");
-    await vi.runAllTimersAsync();
-
-    expect(persist).not.toHaveBeenCalled();
-    expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
-    expect(onResolutionApplied).toHaveBeenCalledOnce();
-    coordinator.dispose();
-    await vi.runAllTimersAsync();
-    expect(persist).not.toHaveBeenCalled();
+    await owner.ready();
+    owner.change("B");
+    await expect(owner.flush()).resolves.toBe(false);
+    expect(disk).toBe("A");
+    canWrite = true;
+    await expect(owner.flush()).resolves.toBe(true);
+    expect(disk).toBe("B");
   });
 
-  it("retries a conflicted buffer against the explicitly accepted disk revision", async () => {
-    vi.useFakeTimers();
-    const conflict = AsyncResult.failure(Cause.fail(new Error("revision conflict")));
-    const persist = vi
-      .fn()
-      .mockResolvedValueOnce(conflict)
-      .mockResolvedValueOnce(AsyncResult.success(undefined));
-    const onFailure = vi.fn();
-    const onResolutionApplied = vi.fn();
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-local",
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
-      onFailure,
-      onResolutionApplied,
+  it("journals a rename before dispatch and moves input typed during it into the destination checkpoint", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("generic-rename"),
+      cwd: "/repo",
+      relativePath: "a.txt",
+    };
+    const destination = { ...from, relativePath: "b.txt" };
+    const key = projectFileOperationKey(from);
+    keys.add(projectFileOperationKey(destination));
+    const owner = open({
+      journal: { key, store: indexedDbMarkdownDrafts },
+      persist: async () => refused(),
     });
-
-    coordinator.change("local edit");
-    await vi.advanceTimersByTimeAsync(500);
-    expect(onFailure).toHaveBeenCalledWith("local edit", conflict);
-
-    coordinator.retryPending("revision-agent");
-    await vi.runAllTimersAsync();
-    expect(persist.mock.calls).toEqual([
-      ["local edit", "revision-1"],
-      ["local edit", "revision-agent"],
-    ]);
-    expect(onResolutionApplied).toHaveBeenCalledOnce();
+    await owner.ready();
+    const intent = (await owner.beginRename(from, destination))!;
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({ renameIntent: intent });
+    owner.change("C");
+    await expect(owner.flush()).resolves.toBe(false);
+    owner.retire();
+    const renderer = open({
+      journal: { key, store: indexedDbMarkdownDrafts },
+      persist: async () => refused(),
+    });
+    await renderer.ready();
+    const replay = (await renderer.beginRename(from, destination))!;
+    expect(replay).toEqual(intent);
+    await expect(
+      renderer.acknowledgeRename(replay, { destinationRelativePath: "b.txt", revision: "rA" }),
+    ).resolves.toBe(true);
+    expect(await indexedDbMarkdownDrafts.read(key)).toBeUndefined();
+    expect(await indexedDbMarkdownDrafts.read(projectFileOperationKey(destination))).toMatchObject({
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: "C",
+      renameIntent: {
+        mutationId: intent.mutationId,
+        acknowledgement: { destinationRelativePath: "b.txt", revision: "rA" },
+      },
+    });
   });
 
-  it("applies discard only after an in-flight write settles", async () => {
-    vi.useFakeTimers();
-    const firstWrite = deferred<Error>();
-    const persist = vi.fn().mockReturnValue(firstWrite.promise);
-    const onPendingChange = vi.fn();
-    const onResolutionApplied = vi.fn();
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-local",
-      onPendingChange,
-      onConfirmed: vi.fn(),
-      onResolutionApplied,
+  it("preserves a refused rename receipt and newer input when the destination journal belongs to another owner", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("generic-rename-collision"),
+      cwd: "/repo",
+      relativePath: "a.txt",
+    };
+    const destination = { ...from, relativePath: "b.txt" };
+    const key = projectFileOperationKey(from);
+    const destinationKey = projectFileOperationKey(destination);
+    keys.add(destinationKey);
+    const foreign = {
+      token: "foreign-destination",
+      baselineSource: "D",
+      baselineRevision: "rD",
+      draftSource: "E",
+      conflict: true,
+    };
+    await indexedDbMarkdownDrafts.replace(destinationKey, undefined, foreign);
+    const owner = open({
+      journal: { key, store: indexedDbMarkdownDrafts },
+      persist: async () => refused(),
     });
+    await owner.ready();
+    const intent = (await owner.beginRename(from, destination))!;
+    owner.change("C");
+    await expect(
+      owner.acknowledgeRename(intent, { destinationRelativePath: "b.txt", revision: "rA" }),
+    ).resolves.toBe(false);
+    expect(await indexedDbMarkdownDrafts.read(destinationKey)).toEqual(foreign);
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+      draftSource: "C",
+      renameIntent: {
+        mutationId: intent.mutationId,
+        acknowledgement: { destinationRelativePath: "b.txt", revision: "rA" },
+      },
+    });
+    owner.retire();
+    const renderer = open({
+      journal: { key, store: indexedDbMarkdownDrafts },
+      persist: async () => refused(),
+    });
+    await renderer.ready();
+    const replay = (await renderer.beginRename(from, destination))!;
+    expect(replay.acknowledgement).toEqual({ destinationRelativePath: "b.txt", revision: "rA" });
+    expect(replay.mutationId).toBe(intent.mutationId);
+    expect(renderer.isRenameCurrent(replay)).toBe(true);
+    renderer.retire();
+    expect(renderer.isRenameCurrent(replay)).toBe(false);
+  });
+  it.each(["path_exists", "revision_conflict"])(
+    "releases a definitive %s rename only after durable admission and preserves newer typing",
+    async (failure) => {
+      const from = {
+        environmentId: EnvironmentId.make(`rename-refusal-${failure}`),
+        cwd: "/repo",
+        relativePath: "a.txt",
+      };
+      const destination = { ...from, relativePath: "b.txt" };
+      const key = projectFileOperationKey(from);
+      let admitClear!: () => void;
+      let clearing!: () => void;
+      const clearStarted = new Promise<void>((resolve) => {
+        clearing = resolve;
+      });
+      const clearAdmission = new Promise<void>((resolve) => {
+        admitClear = resolve;
+      });
+      let holdClear = false;
+      const store: MarkdownDraftCheckpointStore = {
+        read: indexedDbMarkdownDrafts.read,
+        replace: async (rowKey, token, next) => {
+          if (holdClear && next?.renameIntent === null) {
+            holdClear = false;
+            clearing();
+            await clearAdmission;
+          }
+          return indexedDbMarkdownDrafts.replace(rowKey, token, next);
+        },
+      };
+      const persisted: string[] = [];
+      const owner = open({
+        journal: { key, store },
+        persist: async (source) => {
+          persisted.push(source);
+          return AsyncResult.success({ revision: `r${source}` });
+        },
+      });
+      await owner.ready();
+      const original = (await owner.beginRename(from, destination))!;
+      await owner.rejectRename(original, new Error("Lost transport reply"));
+      owner.change("C");
+      await owner.ready();
+      holdClear = true;
+      const rejected = owner.rejectRename(original, { failure });
+      await clearStarted;
+      expect(owner.getRenameIntent()?.mutationId).toBe(original.mutationId);
+      expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+        renameIntent: original,
+        draftSource: "C",
+      });
+      const replacement: { value: DocumentRenameIntent | null | undefined } = { value: undefined };
+      const nextRename = owner
+        .beginRename(from, { ...destination, relativePath: "c.txt" })
+        .then((value) => {
+          replacement.value = value;
+        });
+      await Promise.resolve();
+      expect(replacement.value).toBeUndefined();
+      expect(persisted).toEqual([]);
+      owner.change("D");
+      admitClear();
+      await expect(rejected).resolves.toBe(true);
+      await nextRename;
+      expect(replacement.value?.destination.relativePath).toBe("c.txt");
+      expect(replacement.value?.mutationId).not.toBe(original.mutationId);
+      expect(persisted).toEqual(["D"]);
+      expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+        draftSource: "D",
+        renameIntent: replacement.value,
+      });
+    },
+  );
 
-    coordinator.change("local edit");
-    await vi.advanceTimersByTimeAsync(500);
-    coordinator.discardPending("revision-agent");
-    expect(onResolutionApplied).not.toHaveBeenCalled();
+  it.each(["CAS", "throw"] as const)(
+    "holds the original rename and blocks new-name transport when refusal clearing fails at %s",
+    async (mode) => {
+      const from = {
+        environmentId: EnvironmentId.make(`rename-clear-${mode}`),
+        cwd: "/repo",
+        relativePath: "a.txt",
+      };
+      const key = projectFileOperationKey(from);
+      let refuseClear = false;
+      const store: MarkdownDraftCheckpointStore = {
+        read: indexedDbMarkdownDrafts.read,
+        replace: async (rowKey, token, next) => {
+          if (refuseClear && next?.renameIntent === null) {
+            if (mode === "throw") throw new Error("Storage unavailable");
+            return false;
+          }
+          return indexedDbMarkdownDrafts.replace(rowKey, token, next);
+        },
+      };
+      const persist = vi.fn(async () => AsyncResult.success({ revision: "unexpected" }));
+      const owner = open({ journal: { key, store }, persist });
+      await owner.ready();
+      const original = (await owner.beginRename(from, { ...from, relativePath: "b.txt" }))!;
+      owner.change("C");
+      await owner.ready();
+      refuseClear = true;
+      await expect(owner.rejectRename(original, { failure: "path_exists" })).resolves.toBe(false);
+      await expect(owner.beginRename(from, { ...from, relativePath: "c.txt" })).resolves.toBeNull();
+      await expect(owner.flush()).resolves.toBe(false);
+      expect(persist).not.toHaveBeenCalled();
+      expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+        draftSource: "C",
+        renameIntent: original,
+      });
+    },
+  );
 
-    firstWrite.resolve(AsyncResult.failure(Cause.fail(new Error("revision conflict"))));
-    await vi.runAllTimersAsync();
+  it.each([
+    new Error("Reply lost"),
+    { failure: "target_changed", publicationOutcome: "retained-attention" },
+    { failure: "path_exists", publicationOutcome: "retained-attention" },
+  ])(
+    "keeps ambiguous or retained rename identity through retry and reconstruction",
+    async (error) => {
+      const from = {
+        environmentId: EnvironmentId.make(`rename-ambiguous-${++sequence}`),
+        cwd: "/repo",
+        relativePath: "a.txt",
+      };
+      const destination = { ...from, relativePath: "b.txt" };
+      const key = projectFileOperationKey(from);
+      const options = {
+        journal: { key, store: indexedDbMarkdownDrafts },
+        persist: async () => refused(),
+        publicationOutcome: (cause: unknown) =>
+          typeof cause === "object" &&
+          cause !== null &&
+          "publicationOutcome" in cause &&
+          cause.publicationOutcome === "retained-attention"
+            ? ("retained-attention" as const)
+            : null,
+      };
+      const owner = open(options);
+      await owner.ready();
+      const original = (await owner.beginRename(from, destination))!;
+      await expect(owner.rejectRename(original, error)).resolves.toBe(true);
+      await expect(
+        owner.beginRename(from, { ...destination, relativePath: "c.txt" }),
+      ).resolves.toBeNull();
+      await expect(owner.beginRename(from, destination)).resolves.toEqual(original);
+      owner.retire();
+      const restored = open(options);
+      await restored.ready();
+      await expect(restored.beginRename(from, destination)).resolves.toEqual(original);
+    },
+  );
 
-    expect(persist).toHaveBeenCalledOnce();
-    expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
-    expect(onResolutionApplied).toHaveBeenCalledOnce();
+  it("clears only rejected rename state, not another publication's retained recovery", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("rename-unrelated-recovery"),
+      cwd: "/repo",
+      relativePath: "a.txt",
+    };
+    const key = projectFileOperationKey(from);
+    const owner = open({
+      journal: { key, store: indexedDbMarkdownDrafts },
+      persist: async () => refused(),
+    });
+    await owner.ready();
+    const intent = (await owner.beginRename(from, { ...from, relativePath: "b.txt" }))!;
+    owner.change("C");
+    owner.observePublicationAttention(attention);
+    await expect(owner.rejectRename(intent, { failure: "path_exists" })).resolves.toBe(true);
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+      draftSource: "C",
+      renameIntent: null,
+      publicationAttention: attention,
+    });
+    await expect(owner.flush()).resolves.toBe(false);
+    expect(owner.publicationAttention).toEqual(attention);
   });
 
-  it("retries after an in-flight conflict and remains pending after a second conflict", async () => {
-    vi.useFakeTimers();
-    const firstWrite = deferred<Error>();
-    const conflict: AtomCommandResult<void, Error> = AsyncResult.failure(
-      Cause.fail(new Error("revision conflict")),
-    );
-    const persist = vi.fn().mockReturnValueOnce(firstWrite.promise).mockResolvedValueOnce(conflict);
-    const onFailure = vi.fn();
-    const onPendingChange = vi.fn();
-    const onResolutionApplied = vi.fn();
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-local",
-      onPendingChange,
-      onConfirmed: vi.fn(),
-      onFailure,
-      onResolutionApplied,
+  it.each(["CAS", "throw"] as const)(
+    "adopts the durable destination despite source retirement %s and never replays its source mutation after restart",
+    async (mode) => {
+      const from = {
+        environmentId: EnvironmentId.make(`rename-retirement-${mode}`),
+        cwd: "/repo",
+        relativePath: "a.txt",
+      };
+      const destination = { ...from, relativePath: "b.txt" };
+      const key = projectFileOperationKey(from);
+      const destinationKey = projectFileOperationKey(destination);
+      keys.add(destinationKey);
+      let typeDuringDestination = true;
+      let owner!: FileSaveCoordinator<Result, Error>;
+      const store: MarkdownDraftCheckpointStore = {
+        read: indexedDbMarkdownDrafts.read,
+        replace: async (rowKey, token, next) => {
+          if (rowKey === key && next === undefined) {
+            if (mode === "throw") throw new Error("Storage disconnected during retirement");
+            return false;
+          }
+          if (rowKey === destinationKey && typeDuringDestination) {
+            typeDuringDestination = false;
+            owner.change("D");
+          }
+          return indexedDbMarkdownDrafts.replace(rowKey, token, next);
+        },
+      };
+      const sourcePersist = vi.fn(async () => refused());
+      owner = open({ journal: { key, store }, persist: sourcePersist });
+      await owner.ready();
+      const intent = (await owner.beginRename(from, destination))!;
+      owner.change("C");
+      const acknowledgement = { destinationRelativePath: destination.relativePath, revision: "rA" };
+      await expect(owner.acknowledgeRename(intent, acknowledgement)).resolves.toBe(true);
+      expect(owner.isRenameCurrent(intent)).toBe(false);
+      owner.change("stale source callback");
+      await expect(owner.flush()).resolves.toBe(false);
+      expect(sourcePersist).not.toHaveBeenCalled();
+      expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+        draftSource: "D",
+        renameIntent: { mutationId: intent.mutationId, acknowledgement },
+      });
+      expect(await indexedDbMarkdownDrafts.read(destinationKey)).toMatchObject({
+        draftSource: "D",
+      });
+      const destinationWrites: string[] = [];
+      const adopted = open({
+        journal: { key: destinationKey, store },
+        persist: async (source) => {
+          destinationWrites.push(source);
+          return AsyncResult.success({ revision: `r${source}` });
+        },
+      });
+      await adopted.ready();
+      expect(adopted.getRenameIntent()).toBeNull();
+      await expect(adopted.flush()).resolves.toBe(true);
+      adopted.change("E");
+      await expect(adopted.flush()).resolves.toBe(true);
+      expect(destinationWrites).toEqual(["D", "E"]);
+      const authoritativeDestination = await indexedDbMarkdownDrafts.read(destinationKey);
+      const sourceRestart = open({ journal: { key, store }, persist: sourcePersist });
+      await sourceRestart.ready();
+      const replay = (await sourceRestart.beginRename(from, destination))!;
+      expect(replay.mutationId).toBe(intent.mutationId);
+      expect(replay.acknowledgement).toEqual(acknowledgement);
+      await expect(sourceRestart.acknowledgeRename(replay, acknowledgement)).resolves.toBe(true);
+      expect(await indexedDbMarkdownDrafts.read(destinationKey)).toEqual(authoritativeDestination);
+      expect(sourcePersist).not.toHaveBeenCalled();
+      await expect(
+        adopted.beginRename(destination, { ...destination, relativePath: "c.txt" }),
+      ).resolves.toMatchObject({
+        from: destination,
+        destination: { ...destination, relativePath: "c.txt" },
+        source: "E",
+        expectedRevision: "rE",
+      });
+    },
+  );
+
+  it("does not erase a foreign source owner when obsolete receipt deletion loses its CAS", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("rename-retirement-foreign"),
+      cwd: "/repo",
+      relativePath: "a.txt",
+    };
+    const destination = { ...from, relativePath: "b.txt" };
+    const key = projectFileOperationKey(from);
+    const destinationKey = projectFileOperationKey(destination);
+    keys.add(destinationKey);
+    const foreign = {
+      token: "foreign-source-owner",
+      baselineSource: "\u0000outside",
+      baselineRevision: "rOutside",
+      draftSource: "\u0000newer",
+      conflict: true,
+    };
+    const store: MarkdownDraftCheckpointStore = {
+      read: indexedDbMarkdownDrafts.read,
+      replace: async (rowKey, token, next) => {
+        if (rowKey === key && next === undefined)
+          await indexedDbMarkdownDrafts.replace(rowKey, token, foreign);
+        return indexedDbMarkdownDrafts.replace(rowKey, token, next);
+      },
+    };
+    const owner = open({ journal: { key, store }, persist: async () => refused() });
+    await owner.ready();
+    const intent = (await owner.beginRename(from, destination))!;
+    owner.change("C");
+    await expect(
+      owner.acknowledgeRename(intent, { destinationRelativePath: "b.txt", revision: "rA" }),
+    ).resolves.toBe(true);
+    expect(await indexedDbMarkdownDrafts.read(key)).toEqual(foreign);
+    expect(await indexedDbMarkdownDrafts.read(destinationKey)).toMatchObject({
+      baselineSource: "A",
+      draftSource: "C",
     });
-
-    coordinator.change("local edit");
-    await vi.advanceTimersByTimeAsync(500);
-    coordinator.retryPending("revision-agent");
-    firstWrite.resolve(conflict);
-    await vi.runAllTimersAsync();
-
-    expect(persist.mock.calls).toEqual([
-      ["local edit", "revision-1"],
-      ["local edit", "revision-agent"],
-    ]);
-    expect(onFailure).toHaveBeenCalledTimes(2);
-    expect(onPendingChange.mock.calls.at(-1)).toEqual([true]);
-    expect(onPendingChange).not.toHaveBeenCalledWith(false);
-    expect(onResolutionApplied).toHaveBeenCalledOnce();
-  });
-
-  it("ignores editor changes emitted after disposal", async () => {
-    vi.useFakeTimers();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const onPendingChange = vi.fn();
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange,
-      onConfirmed: vi.fn(),
-    });
-
-    coordinator.dispose();
-    coordinator.change("stale contents");
-    await vi.runAllTimersAsync();
-
-    expect(persist).not.toHaveBeenCalled();
-    expect(onPendingChange).not.toHaveBeenCalled();
-  });
-
-  it("does not persist confirmed contents again on disposal", async () => {
-    vi.useFakeTimers();
-    const persist = vi
-      .fn<(contents: string) => Promise<AtomCommandResult<void, never>>>()
-      .mockResolvedValue(AsyncResult.success(undefined));
-    const coordinator = new FileSaveCoordinator({
-      debounceMs: 500,
-      initialRevision: "revision-1",
-      persist,
-      revisionFromResult: () => "revision-2",
-      onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
-    });
-
-    coordinator.change("temporary edit");
-    await vi.advanceTimersByTimeAsync(500);
-    coordinator.change("original contents");
-    await vi.advanceTimersByTimeAsync(500);
-    expect(persist).toHaveBeenCalledTimes(2);
-
-    coordinator.dispose();
-    await vi.runAllTimersAsync();
-
-    expect(persist).toHaveBeenCalledTimes(2);
   });
 });

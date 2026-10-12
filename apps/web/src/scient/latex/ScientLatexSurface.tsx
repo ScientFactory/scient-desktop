@@ -12,7 +12,6 @@ import {
   type EnvironmentId,
   type ScientLatexBuildSnapshot,
   type ScientLatexDiagnostic,
-  type ScientLatexManagedInstallState,
   type ScientLatexSyncUnavailableReason,
   type ScopedThreadRef,
   type FileCitation,
@@ -45,7 +44,7 @@ import {
 import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { type DraftId } from "~/composerDraftStore";
-import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import type { LatexFilePresentationRequest, OpenFileOptions } from "~/rightPanelStore";
@@ -74,6 +73,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "~/compon
 import { ReaderButton, IfRowHidden, ReaderRowContext } from "../writing/DocumentReaderControls";
 import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
 import type { DocumentDownloadActions } from "../documentExport/DocumentDownloadMenu";
+import { planVisualProjectEdit } from "./latexProjectVisual";
+import {
+  createLatexEditorSourceSnapshot,
+  invertLatexSourcePatches,
+  type LatexEditorSourceSnapshot,
+  type LatexVisualEditOutcome,
+  type LatexVisualEditRequest,
+} from "./latexSourceEditPlan";
 import { ReaderBarHostContext, type ReaderBarHost } from "../writing/readerBarHost";
 const LatexProjectVisualEditor = lazy(() =>
   import("./LatexProjectVisualEditor").then((module) => ({
@@ -81,8 +88,10 @@ const LatexProjectVisualEditor = lazy(() =>
   })),
 );
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
+import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 import { readLatexBuildStatus, requestLatexForwardSync, requestLatexInverseSync } from "./client";
 import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
+import { LatexDocumentPreparation } from "./latexOpeningPresentation";
 import {
   cancelLatexBuild,
   notifyLatexBindingChange,
@@ -120,7 +129,20 @@ import { useLatexSourceIdentity } from "./visualPdfPublication";
 import { prepareLatexDocument } from "./prepareLatexDocument";
 import { latexDocumentInputs } from "./latexDocumentInputs";
 import { useLatexAutoBuild } from "./useLatexAutoBuild";
+import {
+  DEFAULT_LATEX_COMPILATION,
+  LATEX_COMPILATION_STORAGE_KEY,
+  normalizeLatexCompilation,
+} from "./latexCompilation";
 import { observeLatexHeaderFit } from "./observeLatexHeaderFit";
+import { LatexCompilerMenu } from "./LatexCompilerControl";
+import { changeLatexDocumentCompiler } from "./changeLatexDocumentCompiler";
+import { useLatexDocumentCompiler } from "./useLatexDocumentCompiler";
+import {
+  declaredLatexCompiler,
+  isLatexCompilerUnavailable,
+  type LatexCompilerChoice,
+} from "./latexCompiler";
 
 import "./scient-latex.css";
 
@@ -215,6 +237,8 @@ function syncUnavailableLabel(reason: ScientLatexSyncUnavailableReason): string 
       return "Navigation index missing";
     case "index-invalid":
       return "Navigation index damaged";
+    case "source-stale":
+      return "Build required";
     case "navigator-unavailable":
       return "Navigation needs repair";
     case "navigator-failed":
@@ -466,10 +490,6 @@ interface LatexViewerPaneProps {
   readonly viewer: LatexViewerState;
   readonly toolchainMissing: boolean;
   readonly failureLine: string | null;
-  readonly canInstallManaged: boolean;
-  readonly managedInstall: ScientLatexManagedInstallState | null;
-  readonly installRequesting: boolean;
-  readonly onInstall: () => void;
   readonly syncNavigation?: PdfSyncNavigation;
 }
 
@@ -485,10 +505,6 @@ const LatexViewerPane = memo(function LatexViewerPane({
   viewer,
   toolchainMissing,
   failureLine,
-  canInstallManaged,
-  managedInstall,
-  installRequesting,
-  onInstall,
   syncNavigation,
 }: LatexViewerPaneProps) {
   return (
@@ -504,13 +520,9 @@ const LatexViewerPane = memo(function LatexViewerPane({
           />
         </Suspense>
       ) : toolchainMissing ? (
-        <LatexToolchainSetupCard
-          canInstallManaged={canInstallManaged}
-          managedInstall={managedInstall}
-          installRequesting={installRequesting}
-          toolchainMissing={toolchainMissing}
-          onInstall={onInstall}
-        />
+        <div className="scient-latex-placeholder">
+          <p>Install LaTeX tools using the document notice above to create its PDF.</p>
+        </div>
       ) : viewer === "diagnostics" ? (
         <div className="scient-latex-placeholder">
           <CircleAlert className="size-5 text-destructive" aria-hidden="true" />
@@ -605,7 +617,14 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const [visualProjectState, setVisualProjectState] = useState<{
     pending: boolean;
     error: string | null;
+    sourceKey?: string;
   }>({ pending: false, error: null });
+  const [storedCompilation] = useLocalStorage(
+    LATEX_COMPILATION_STORAGE_KEY,
+    DEFAULT_LATEX_COMPILATION,
+    Schema.String,
+  );
+  const compilationMode = normalizeLatexCompilation(storedCompilation);
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [wordExportOpen, setWordExportOpen] = useState(false);
   // The build messages card is temporary: a click anywhere else closes it.
@@ -646,6 +665,28 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     [],
   );
   const { persistence } = props;
+  const workingSnapshot = useSyncExternalStore(
+    persistence?.subscribe ?? noSubscription,
+    () => persistence?.getSnapshot() ?? null,
+  );
+  const sourceBinding = useRef<{
+    documentId: string | null;
+    editVersion: number;
+    snapshot: LatexEditorSourceSnapshot;
+  } | null>(null);
+  const workingSource = workingSnapshot?.draftSource ?? props.contents;
+  if (
+    sourceBinding.current === null ||
+    sourceBinding.current.documentId !== documentId ||
+    sourceBinding.current.editVersion !== (workingSnapshot?.editVersion ?? -1) ||
+    sourceBinding.current.snapshot.source !== workingSource
+  )
+    sourceBinding.current = {
+      documentId,
+      editVersion: workingSnapshot?.editVersion ?? -1,
+      snapshot: createLatexEditorSourceSnapshot(workingSource),
+    };
+  const editorSourceSnapshot = sourceBinding.current.snapshot;
   const sourceRecovery = useLatexSourceRecovery(persistence, visualDraftKey, preferredMode);
   // Unsaved, saving, or waiting on a conflict or a failed save.
   const sourcePending = useSyncExternalStore(
@@ -739,21 +780,73 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       if (documentWasSaved(before, next) && target !== null) notifyLatexBindingChange(target);
     });
   }, [persistence, target]);
-  const handleInstallToolchain = useCallback(() => {
-    if (target !== null) requestManagedLatexInstall(target);
-  }, [target]);
   // Visual and Source edit one working source, the session's. An edit made on
   // any other text is refused.
   const handleVisualEdit = useCallback(
-    (expected: string, next: string) => {
-      if (persistence === null) return false;
-      const snapshot = persistence.getSnapshot();
-      if (snapshot.editingBlocked || snapshot.error !== null || snapshot.conflict !== null)
-        return false;
-      if (snapshot.draftSource !== expected) return false;
-      if (expected === next) return true;
-      if (sourceRecovery.blocked) return false;
-      return persistence.change(next, snapshot.editVersion);
+    (request: LatexVisualEditRequest): LatexVisualEditOutcome => {
+      const refuse = (reason: string): LatexVisualEditOutcome => ({ accepted: false, reason });
+      if (persistence === null) return refuse("The source session is unavailable.");
+      const bound = sourceBinding.current;
+      const current = persistence.getSnapshot();
+      if (bound === null) return refuse("The source snapshot is unavailable.");
+      if (
+        current.editingBlocked ||
+        current.error !== null ||
+        current.conflict !== null ||
+        sourceRecovery.blocked
+      )
+        return refuse("The source session is waiting for recovery or another operation.");
+      if (
+        request.snapshot.id !== bound.snapshot.id ||
+        bound.documentId !== persistence.documentId ||
+        bound.editVersion !== current.editVersion ||
+        bound.snapshot.source !== current.draftSource
+      )
+        return refuse("The source changed while this edit was being prepared.");
+      const path = persistence.target.relativePath;
+      const file = {
+        contents: current.draftSource,
+        revision: current.baselineRevision,
+        truncated: false,
+        owner: { documentId: persistence.documentId, editVersion: bound.editVersion },
+      };
+      const plan = planVisualProjectEdit(
+        {
+          source: bound.snapshot.source,
+          spans: [{ from: 0, to: file.contents.length, path, sourceFrom: 0, occurrence: 1 }],
+          paths: [path],
+          missing: [],
+          errors: [],
+        },
+        request.edit,
+        new Map([[path, file]]),
+        path,
+      );
+      if (plan.error) return refuse(plan.error);
+      const edit = plan.edits.get(path);
+      if (!edit)
+        return {
+          accepted: true,
+          snapshot: bound.snapshot,
+          inverseEdit: { source: bound.snapshot.source, patches: [] },
+        };
+      const outcome = persistence.applyEdit(edit);
+      if (!outcome.accepted) return refuse(`The source edit was refused (${outcome.reason}).`);
+      const accepted = persistence.getSnapshot();
+      const nextSnapshot = createLatexEditorSourceSnapshot(accepted.draftSource);
+      sourceBinding.current = {
+        documentId: persistence.documentId,
+        editVersion: accepted.editVersion,
+        snapshot: nextSnapshot,
+      };
+      return {
+        accepted: true,
+        snapshot: nextSnapshot,
+        inverseEdit: {
+          source: accepted.draftSource,
+          patches: invertLatexSourcePatches(file.contents, edit.patches),
+        },
+      };
     },
     [persistence, sourceRecovery.blocked],
   );
@@ -780,10 +873,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     revealPending && (preferredMode === "pdf" || preferredMode === "visual")
       ? "split"
       : preferredMode;
-  const sourceIdentity = useLatexSourceIdentity(
-    props.contents,
-    !sourcePending && build.snapshot?.state === "succeeded",
-  );
+  const sourceIdentity = useLatexSourceIdentity(props.contents, !sourcePending);
   const compiledRevision = build.snapshot?.visualSourceRevisions?.[props.relativePath];
   const pdfMatchesBuffer =
     sourceIdentity !== null &&
@@ -833,14 +923,32 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     setSyncNotice(null);
   }, [descriptorRevision]);
 
-  // An answer computed for one draft is not an answer for the next.
+  useLayoutEffect(() => {
+    syncRequestRef.current += 1;
+    setForwardSyncTarget(null);
+  }, [
+    props.environmentId,
+    props.cwd,
+    props.relativePath,
+    props.contents,
+    props.revision,
+    sourceIdentity?.revision,
+    compiledRevision,
+    descriptor,
+    build.snapshot?.state,
+    build.snapshot?.rootRelativePath,
+    build.snapshot?.pendingRerun,
+    status.stale,
+  ]);
+
+  // External refreshes and freshness hints invalidate answers even without a local edit.
   useEffect(() => {
     if (persistence === null) return;
-    let editVersion = persistence.getSnapshot().editVersion;
+    let previous = persistence.getSnapshot();
     return persistence.subscribe(() => {
-      const next = persistence.getSnapshot().editVersion;
-      if (next === editVersion) return;
-      editVersion = next;
+      const next = persistence.getSnapshot();
+      if (next === previous) return;
+      previous = next;
       syncRequestRef.current += 1;
     });
   }, [persistence]);
@@ -865,9 +973,29 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         });
         return;
       }
-      // Positions are those of the compiled file, and a draft has moved on from it.
-      if (persistence?.getSnapshot().pending) {
+      const current = persistence?.getSnapshot();
+      if (current?.pending) {
         setSyncNotice(UNSAVED_SYNC_NOTICE);
+        return;
+      }
+      if (
+        !pdfMatchesBuffer ||
+        sourceIdentity === null ||
+        status.stale ||
+        snapshot.pendingRerun ||
+        (current !== undefined &&
+          (current.baselineRevision !== compiledRevision ||
+            current.draftSource !== sourceIdentity.source ||
+            current.reading ||
+            current.currentMissing ||
+            current.error !== null ||
+            current.conflict !== null ||
+            current.editingBlocked))
+      ) {
+        setSyncNotice({
+          label: "Build required",
+          message: "This source revision has not been compiled into the displayed PDF.",
+        });
         return;
       }
       const issued = syncRequestRef.current + 1;
@@ -879,6 +1007,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         artifactId: descriptor.artifactId,
         revisionId: descriptor.revisionId,
         sourceRelativePath: props.relativePath,
+        sourceRevision: sourceIdentity.revision,
         line: position.line,
         column: position.column,
         ...(pdfPageRef.current === null ? {} : { pageHint: pdfPageRef.current }),
@@ -904,7 +1033,18 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           });
         });
     },
-    [build.snapshot, descriptor, persistence, props.cwd, props.environmentId, props.relativePath],
+    [
+      build.snapshot,
+      descriptor,
+      persistence,
+      props.cwd,
+      props.environmentId,
+      props.relativePath,
+      sourceIdentity,
+      compiledRevision,
+      pdfMatchesBuffer,
+      status.stale,
+    ],
   );
 
   const inverseSyncEnabled = mode === "split" && splitPreview === "pdf";
@@ -921,7 +1061,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         descriptor === null ||
         descriptor._tag !== "generated-pdf" ||
         snapshot.state !== "succeeded" ||
-        descriptor.bindingStatus !== "current"
+        descriptor.bindingStatus !== "current" ||
+        status.stale ||
+        snapshot.pendingRerun
       ) {
         setSyncNotice({
           label: "Build required",
@@ -932,6 +1074,19 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       const issued = syncRequestRef.current + 1;
       syncRequestRef.current = issued;
       setSyncNotice(null);
+      const targetSnapshots = new Map(
+        Object.keys(snapshot.visualSourceRevisions ?? {}).map(
+          (relativePath) =>
+            [
+              relativePath,
+              markdownPersistenceRegistry.getTargetSnapshot({
+                environmentId: props.environmentId,
+                cwd: props.cwd,
+                relativePath,
+              }),
+            ] as const,
+        ),
+      );
       void requestLatexInverseSync(props.environmentId, {
         workspaceRoot: props.cwd,
         rootRelativePath: snapshot.rootRelativePath,
@@ -947,21 +1102,40 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
             return;
           }
-          // The line belongs to the compiled file; an unsaved draft of it has other lines.
+          const target = markdownPersistenceRegistry.getTargetSnapshot({
+            environmentId: props.environmentId,
+            cwd: props.cwd,
+            relativePath: result.relativePath,
+          });
+          const targetInputPending = markdownPersistenceRegistry
+            .getSnapshot()
+            .some(
+              (entry) =>
+                entry.environmentId === props.environmentId &&
+                entry.cwd === props.cwd &&
+                entry.relativePath === result.relativePath &&
+                entry.pending,
+            );
           if (
-            markdownPersistenceRegistry
-              .getSnapshot()
-              .some(
-                (entry) =>
-                  entry.pending &&
-                  entry.environmentId === props.environmentId &&
-                  entry.cwd === props.cwd &&
-                  entry.relativePath === result.relativePath,
-              )
+            result.sourceRevision !== snapshot.visualSourceRevisions?.[result.relativePath] ||
+            targetInputPending ||
+            (target !== null &&
+              (target.pending ||
+                target.reading ||
+                target.currentMissing ||
+                target.error !== null ||
+                target.conflict !== null ||
+                target.editingBlocked ||
+                target.baselineRevision !== result.sourceRevision ||
+                target.draftSource !== target.baselineSource))
           ) {
-            setSyncNotice(UNSAVED_SYNC_NOTICE);
+            setSyncNotice({
+              label: "Build required",
+              message: "The matching source has changed since this PDF was compiled.",
+            });
             return;
           }
+          if (target !== targetSnapshots.get(result.relativePath)) return;
           visualSourceRequest.current += 1;
           setVisualSourceReveal({
             path: result.relativePath,
@@ -970,6 +1144,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             ...(selectedText === undefined ? {} : { selectedText }),
             rootRelativePath: snapshot.rootRelativePath,
             requestId: visualSourceRequest.current,
+            sourceRevision: result.sourceRevision,
           });
         })
         .catch((error: unknown) => {
@@ -980,7 +1155,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           });
         });
     },
-    [build.snapshot, descriptor, props.cwd, props.environmentId],
+    [build.snapshot, descriptor, props.cwd, props.environmentId, status.stale],
   );
   const syncNavigation = useMemo<PdfSyncNavigation | undefined>(
     () =>
@@ -1055,7 +1230,38 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     return result;
   }, [target, props.truncated, persistence]);
   const pdfVisible = activePreview === "pdf";
+  const compilerSource = useSyncExternalStore(
+    persistence?.subscribe ?? noSubscription,
+    () => persistence?.getSnapshot().draftSource ?? props.contents,
+  );
+  const compilerState = useLatexDocumentCompiler({
+    target,
+    selectedPath: props.relativePath,
+    selectedSource: compilerSource,
+    refreshKey: build.toolchain?.probedAtEpochMs ?? null,
+    offline: status.offline,
+    report: build.toolchainReport ?? null,
+  });
+  const selectedCompiler =
+    compilerState.source === null ? null : declaredLatexCompiler(compilerState.source);
+  const compilerUnavailable =
+    !status.offline &&
+    selectedCompiler !== null &&
+    isLatexCompilerUnavailable(compilerState.report, selectedCompiler);
   const buildBlocked = props.truncated || sourceNeedsAttention || visualProjectState.error !== null;
+  const [changingCompiler, setChangingCompiler] = useState(false);
+  const compilerEditBlocked =
+    props.truncated ||
+    sourceRecovery.blocked ||
+    sourceNeedsAttention ||
+    visualProjectState.error !== null;
+  const compilerOwner = useRef({ target, persistence, blocked: compilerEditBlocked });
+  useLayoutEffect(() => {
+    compilerOwner.current = { target, persistence, blocked: compilerEditBlocked };
+    return () => {
+      compilerOwner.current = { target: null, persistence: null, blocked: true };
+    };
+  }, [target, persistence, compilerEditBlocked]);
   const buildRequestInFlight = useRef(false);
   const saveAndBuild = useCallback(
     async (reprobe = false, compile = true) => {
@@ -1063,18 +1269,179 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       buildRequestInFlight.current = true;
       try {
         const prepared = await prepareDocument();
-        if (prepared?.isCurrent() && compile && target !== null)
+        if (prepared?.isCurrent() && compile && !compilerUnavailable && target !== null)
           requestLatexRebuild(target, { reprobeToolchain: reprobe });
       } finally {
         buildRequestInFlight.current = false;
       }
     },
-    [buildBlocked, prepareDocument, target],
+    [buildBlocked, compilerUnavailable, prepareDocument, target],
   );
+  const installBuildIntent = useRef<{
+    target: LatexBuildTarget;
+    persistence: typeof persistence;
+    selectedPath: string;
+    selectedSource: string;
+    rootSource: string | null;
+    editVersion: number | null;
+    lastEditAt: number;
+  } | null>(null);
+  const handleInstallToolchain = useCallback(() => {
+    if (
+      target === null ||
+      !build.canInstallManaged ||
+      status.offline ||
+      status.busy ||
+      compilerEditBlocked ||
+      renaming ||
+      buildRequestInFlight.current
+    )
+      return;
+    // Only this explicit document action authorizes a build after installation.
+    installBuildIntent.current = {
+      target,
+      persistence,
+      selectedPath: props.relativePath,
+      selectedSource: compilerSource,
+      rootSource: compilerState.source,
+      editVersion: persistence?.getSnapshot().editVersion ?? null,
+      lastEditAt,
+    };
+    requestManagedLatexInstall(target);
+  }, [
+    target,
+    build.canInstallManaged,
+    status.offline,
+    status.busy,
+    compilerEditBlocked,
+    renaming,
+    persistence,
+    props.relativePath,
+    compilerSource,
+    compilerState.source,
+    lastEditAt,
+  ]);
+  useEffect(() => {
+    const intent = installBuildIntent.current;
+    if (intent === null) return;
+    if (
+      intent.target !== target ||
+      intent.persistence !== persistence ||
+      intent.selectedPath !== props.relativePath
+    ) {
+      installBuildIntent.current = null;
+      return;
+    }
+    if (
+      intent.selectedSource !== compilerSource ||
+      intent.rootSource !== compilerState.source ||
+      intent.editVersion !== (persistence?.getSnapshot().editVersion ?? null) ||
+      intent.lastEditAt !== lastEditAt ||
+      compilerEditBlocked ||
+      renaming
+    ) {
+      installBuildIntent.current = null;
+      setSyncNotice({
+        label: "Rebuild required",
+        message:
+          "The document changed or needs attention. Review it, then choose Rebuild PDF after installation.",
+      });
+      return;
+    }
+    if (build.installRequesting || isActiveLatexInstall(build.managedInstall)) return;
+    if (build.error !== null || build.managedInstall?.state === "failed") {
+      installBuildIntent.current = null;
+      return;
+    }
+    if (build.managedInstall?.state !== "ready" || status.offline || status.busy) return;
+    // Completion is not proof that this document's compiler can run.
+    if (!compilerState.report?.kind || compilerUnavailable) return;
+    installBuildIntent.current = null;
+    void saveAndBuild();
+  }, [
+    target,
+    persistence,
+    props.relativePath,
+    compilerSource,
+    compilerState.source,
+    compilerState.report,
+    compilerUnavailable,
+    lastEditAt,
+    compilerEditBlocked,
+    renaming,
+    build.installRequesting,
+    build.managedInstall,
+    build.error,
+    status.offline,
+    status.busy,
+    saveAndBuild,
+  ]);
+  const changeCompiler = async (compiler: LatexCompilerChoice) => {
+    if (!target || !persistence || buildRequestInFlight.current || status.busy || status.offline)
+      return;
+    if (compiler !== "automatic" && isLatexCompilerUnavailable(compilerState.report, compiler))
+      return;
+    buildRequestInFlight.current = true;
+    preparing.current += 1;
+    setChangingCompiler(true);
+    try {
+      const result = await changeLatexDocumentCompiler({
+        target,
+        lease: persistence,
+        compiler,
+        prepare: prepareDocument,
+        blocked: () => compilerOwner.current.blocked,
+        isActive: () =>
+          compilerOwner.current.target === target &&
+          compilerOwner.current.persistence === persistence,
+      });
+      if (!result.ok) setSyncNotice({ label: "Compiler not changed", message: result.message });
+      else requestLatexRebuild(target, { reprobeToolchain: true });
+    } catch (error) {
+      setSyncNotice({
+        label: "Compiler not changed",
+        message: error instanceof Error ? error.message : "Could not save the compiler change.",
+      });
+    } finally {
+      preparing.current -= 1;
+      buildRequestInFlight.current = false;
+      setChangingCompiler(false);
+    }
+  };
+  const compilerControlProps = {
+    source: compilerState.source,
+    report: compilerState.report,
+    capabilityError: compilerState.capabilityError,
+    offline: status.offline,
+    busy: changingCompiler || status.busy,
+    rootPath: target?.relativePath ?? null,
+    blockedReason:
+      target === null
+        ? "Resolve the document root before choosing its compiler."
+        : target.relativePath !== props.relativePath
+          ? "The compiler belongs to the root document. Open it to change the compiler."
+          : props.truncated || persistence === null
+            ? "This source is read-only; its compiler cannot be changed here."
+            : compilerEditBlocked
+              ? "Resolve recovery or the document's save notice before changing its compiler."
+              : compilerState.sourceError,
+    onChange: (compiler: LatexCompilerChoice) => {
+      void changeCompiler(compiler);
+    },
+    onOpenRoot:
+      target !== null && target.relativePath !== props.relativePath
+        ? () =>
+            onOpenFileSource(target.relativePath, undefined, {
+              latexRootRelativePath: target.relativePath,
+            })
+        : null,
+  };
   const requestAutoBuild = useCallback(() => {
     void saveAndBuild();
   }, [saveAndBuild]);
   useLatexAutoBuild({
+    mode: compilationMode,
+    documentKey: `${props.environmentId}\0${props.cwd}\0${target?.relativePath ?? props.relativePath}`,
     visible: pdfVisible,
     needsBuild:
       status.stale || descriptor === null || (sourceIdentity !== null && !pdfMatchesBuffer),
@@ -1082,12 +1449,19 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       !target ||
       !status.canRebuild ||
       buildBlocked ||
+      compilerUnavailable ||
       sourcePending ||
       visualProjectState.pending ||
       hasLocalVisualDraft,
     busy: status.busy,
     toolchainReady: !!build.toolchain?.kind,
-    sourceKey: (target?.relativePath ?? "") + "\0" + props.revision + "\0" + lastEditAt,
+    sourceKey: JSON.stringify([
+      props.revision,
+      workingSnapshot?.editVersion,
+      workingSnapshot?.baselineRevision,
+      lastEditAt,
+      visualProjectState.sourceKey,
+    ]),
     requestBuild: requestAutoBuild,
   });
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -1105,14 +1479,14 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       if (!ownsSave(event)) return;
       event.preventDefault();
       event.stopPropagation();
-      void saveAndBuild(false, pdfVisible && !!build.toolchain?.kind);
+      void saveAndBuild(false, compilationMode !== "manual" && !!build.toolchain?.kind);
     };
     window.addEventListener("keydown", save, true);
     return () => {
       releaseClaim();
       window.removeEventListener("keydown", save, true);
     };
-  }, [saveAndBuild, pdfVisible, build.toolchain?.kind]);
+  }, [saveAndBuild, compilationMode, build.toolchain?.kind]);
 
   // Every mode with a right-hand pane: PDF, Visual, and Split's PDF or Visual.
   const mergesReaderBar = showRightPane;
@@ -1176,7 +1550,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         type="button"
         className="scient-latex-action scient-latex-build-action"
         aria-label={status.canCancel ? "Cancel PDF build" : "Rebuild PDF"}
-        disabled={target === null || (!status.canCancel && (!status.canRebuild || buildBlocked))}
+        disabled={
+          target === null ||
+          (!status.canCancel && (!status.canRebuild || buildBlocked || compilerUnavailable))
+        }
         onClick={() => {
           if (status.canCancel && target) cancelLatexBuild(target);
           else void saveAndBuild(true);
@@ -1304,15 +1681,16 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // An in-place rename waits while Visual holds unsaved input, or a build,
   // export or toolchain installation is being prepared or requested.
   const renameReady = useRef(!renameBlocked);
-  // Anything on its way, or any build at all: checked again during the rename.
+  // Completed builds stay under the old name and are reopened, rather than
+  // followed in place. Only work still in flight blocks namespace admission.
   const buildBusy =
     build.requesting ||
     build.installRequesting ||
     build.managedInstall !== null ||
-    !(
-      build.snapshot === null ||
-      (build.snapshot.state === "idle" && build.snapshot.descriptor === null)
-    );
+    build.snapshot?.state === "queued" ||
+    build.snapshot?.state === "running" ||
+    build.snapshot?.state === "publishing" ||
+    build.snapshot?.pendingRerun === true;
   useLayoutEffect(() => {
     renameReady.current = !renameBlocked && !buildBusy;
   }, [renameBlocked, buildBusy]);
@@ -1341,6 +1719,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const exportItems = exportMenu(false);
   const documentMenuItems = (withExport = true) => (
     <>
+      {withExport ? <LatexCompilerMenu {...compilerControlProps} /> : null}
       {mode === "split" ? (
         // Here only while the row has no room for its PDF/Visual switch.
         <IfRowHidden selector=".scient-latex-split-modes">
@@ -1410,6 +1789,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         </ScientTooltip>
       ) : status.offline ? (
         <span className="scient-latex-status-label">Build status unavailable</span>
+      ) : status.busy ? (
+        <span className="scient-latex-status-label" role="status">
+          {status.label}
+          {descriptor !== null ? " · Previous PDF" : null}
+        </span>
       ) : status.state === "failed" ? (
         <ScientTooltip
           content={
@@ -1427,6 +1811,26 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             <span className="scient-latex-chip-text">Build failed · View details</span>
           </button>
         </ScientTooltip>
+      ) : descriptor?._tag === "generated-pdf" &&
+        (status.stale ||
+          sourcePending ||
+          visualProjectState.pending ||
+          hasLocalVisualDraft ||
+          compiledRevision === undefined ||
+          (sourceIdentity !== null && sourceIdentity.revision !== compiledRevision)) ? (
+        <ScientTooltip
+          content={
+            status.staleReason ?? "Save and rebuild to update the PDF from the current source."
+          }
+        >
+          <span className="scient-latex-status-label" role="status">
+            Rebuild required
+          </span>
+        </ScientTooltip>
+      ) : descriptor?._tag === "generated-pdf" && sourceIdentity === null ? (
+        <span className="scient-latex-status-label" role="status">
+          Checking PDF source
+        </span>
       ) : null}
       {target === null &&
       (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
@@ -1526,6 +1930,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       ? {
           documentActions: (
             <>
+              <LatexCompilerMenu {...compilerControlProps} plain />
               {exportMenu(true)}
               {props.templateActions}
             </>
@@ -1581,6 +1986,23 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           )}
         </div>
       </div>
+      {status.toolchainMissing ||
+      compilerUnavailable ||
+      build.installRequesting ||
+      isActiveLatexInstall(build.managedInstall) ? (
+        <LatexToolchainSetupCard
+          canInstallManaged={build.canInstallManaged}
+          managedInstall={build.managedInstall}
+          installRequesting={build.installRequesting}
+          toolchainMissing={status.toolchainMissing}
+          requiredCompiler={compilerUnavailable ? selectedCompiler : null}
+          downloadBytes={compilerState.report?.downloadBytes ?? null}
+          disabled={
+            status.offline || status.busy || compilerEditBlocked || renaming || target === null
+          }
+          onInstall={handleInstallToolchain}
+        />
+      ) : null}
 
       {(diagnostics.length > 0 || status.state === "failed") && diagnosticsOpen ? (
         // Floats over the document: opening it moves nothing underneath.
@@ -1758,7 +2180,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
             {showVisual || visualOpened ? (
               <div style={{ display: showVisual ? "contents" : "none" }}>
                 <ReaderBarHostContext value={readerBarHost(showVisual ? readerSlot : null, true)}>
-                  <Suspense fallback={<LatexPendingViewer label="Opening Visual view…" />}>
+                  <Suspense fallback={<LatexDocumentPreparation />}>
                     <LatexProjectVisualEditor
                       sourceNavigation={showVisual ? visualNavigation : null}
                       citationSource={
@@ -1799,6 +2221,13 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                         )
                       }
                       rootRelativePath={resolvedRootRelativePath}
+                      rootResolutionMessage={
+                        resolution.pending
+                          ? "Finding the document…"
+                          : (resolution.error ?? "Choose the document to compile in the toolbar.")
+                      }
+                      onRetryRootResolution={resolution.error ? resolution.retry : undefined}
+                      rootResolutionPending={resolution.pending}
                       compiledBibliography={
                         build.snapshot?.rootRelativePath === resolvedRootRelativePath &&
                         build.snapshot.state === "succeeded" &&
@@ -1810,10 +2239,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                       // this editor, while its drafts move with `draftKey`.
                       key={documentId ?? visualDraftKey}
                       {...(documentId === null ? {} : { editorInstanceKey: documentId })}
-                      source={props.contents}
+                      source={workingSource}
+                      sourceSnapshot={editorSourceSnapshot}
                       onLocalDraftChange={reportLocalVisualDraft}
                       draftKey={visualDraftKey}
-                      fileRevision={props.revision}
+                      fileRevision={workingSnapshot?.baselineRevision ?? props.revision}
                       environmentId={props.environmentId}
                       cwd={props.cwd}
                       relativePath={props.relativePath}
@@ -1861,10 +2291,6 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                   viewer={status.viewer}
                   toolchainMissing={status.toolchainMissing}
                   failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
-                  canInstallManaged={build.canInstallManaged}
-                  managedInstall={build.managedInstall}
-                  installRequesting={build.installRequesting}
-                  onInstall={handleInstallToolchain}
                   {...(syncNavigation === undefined ? {} : { syncNavigation })}
                 />
               </ReaderBarHostContext>

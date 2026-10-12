@@ -1605,6 +1605,54 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "pairs the development backend with its staged publication helper instead of a stale native build",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-publication-helper-test-",
+        });
+        const stagedHelper = path.join(
+          baseDir,
+          "apps/server/dist/file-exchange/scient-file-publication",
+        );
+        const staleHelper = path.join(
+          baseDir,
+          "native/file-exchange/darwin-arm64/scient-file-publication",
+        );
+        for (const helper of [stagedHelper, staleHelper]) {
+          yield* fileSystem.makeDirectory(path.dirname(helper), { recursive: true });
+          yield* fileSystem.writeFileString(helper, "binary");
+        }
+
+        yield* Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const config = yield* configuration.resolvePrimary;
+          assert.equal(config.bootstrap.filePublicationHelperPath, stagedHelper);
+        }).pipe(
+          Effect.provide(
+            DesktopBackendConfiguration.layer.pipe(
+              Layer.provideMerge(layerServerExposure),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(DesktopWslServerTree.layerTest()),
+              Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+              Layer.provideMerge(
+                layerEnvironment(baseDir, {
+                  dirname: path.join(baseDir, "apps/desktop/src"),
+                  devServerUrl: "http://127.0.0.1:5733",
+                  isPackaged: false,
+                  platform: "darwin",
+                  processArch: "arm64",
+                }),
+              ),
+            ),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("resolves the development SyncTeX helper from the Scient-owned native tree", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

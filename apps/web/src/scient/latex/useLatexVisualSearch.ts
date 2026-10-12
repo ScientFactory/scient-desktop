@@ -1,4 +1,5 @@
 import { Extension, type Editor } from "@tiptap/core";
+import type { Transaction } from "@tiptap/pm/state";
 import { useEditorState } from "@tiptap/react";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -10,6 +11,8 @@ import {
 } from "../markdownEditor/prosemirror/search";
 import type { ScientFindBarController, ScientFindBarState } from "../writing/ScientFindBar";
 import { afterEditorPaint } from "./afterEditorPaint";
+
+export const LATEX_PROJECTION_METADATA_REPAIR = "latexProjectionMetadataRepair";
 
 /** Reuse document-text search without sending search transactions through the save lane. */
 export const LatexVisualSearch = Extension.create({
@@ -44,22 +47,43 @@ function replaceByBlock(
   }
   const order = [...blocks.keys()].sort((a, b) => b - a);
   let expected = editor.state.doc;
+  const trackMetadataRepair = ({ transaction }: { transaction: Transaction }) => {
+    if (transaction.getMeta(LATEX_PROJECTION_METADATA_REPAIR) && transaction.before === expected)
+      expected = transaction.doc;
+  };
+  editor.on("transaction", trackMetadataRepair);
+  const stop = () => {
+    cancel();
+    editor.off("transaction", trackMetadataRepair);
+  };
   const replaceBlock = (index: number) => {
     cancel = () => {};
     const matches = blocks.get(order[index]!);
-    if (!matches || editor.isDestroyed || !editor.isEditable || editor.view.composing) return;
-    if (editor.state.doc !== expected) return;
+    if (
+      !matches ||
+      editor.isDestroyed ||
+      !editor.isEditable ||
+      editor.view.composing ||
+      editor.state.doc !== expected
+    ) {
+      stop();
+      return;
+    }
     let transaction = editor.state.tr;
     for (const match of matches.toReversed())
       transaction = transaction.insertText(replacement, match.from, match.to);
     editor.view.dispatch(index === 0 ? transaction.scrollIntoView() : transaction);
     // The editor refuses an edit its source cannot hold.
-    if (editor.state.doc === expected || !commit()) return;
+    if (editor.state.doc === expected || !commit()) {
+      stop();
+      return;
+    }
     expected = editor.state.doc;
     if (index + 1 < order.length) cancel = afterEditorPaint(() => replaceBlock(index + 1));
+    else editor.off("transaction", trackMetadataRepair);
   };
   replaceBlock(0);
-  return () => cancel();
+  return stop;
 }
 
 /**

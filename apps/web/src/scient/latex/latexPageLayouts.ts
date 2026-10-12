@@ -1,5 +1,5 @@
 import { latexLengthInches } from "./latexVisualLayout";
-import { latexWithoutComments } from "./latexPackages";
+import { latexWithoutComments, latexPreambleEnd } from "./latexSourceSyntax";
 import { latexDirectionOpening, type LatexLanguageSetup } from "./latexLanguage";
 
 /** Balanced layout arguments retain source offsets; no TeX is evaluated. */
@@ -119,7 +119,7 @@ export function latexLayoutSpacing(source: string) {
 
 /** Common fancyhdr slots and geometry offsets, scoped to the literal root preamble. */
 export function latexRunningPageStyle(source: string) {
-  const clean = latexWithoutComments(source.split(/\\begin\{document\}/u)[0] ?? "");
+  const clean = latexWithoutComments(source.slice(0, latexPreambleEnd(source)));
   let style = "plain",
     depth = 0,
     skip = 0;

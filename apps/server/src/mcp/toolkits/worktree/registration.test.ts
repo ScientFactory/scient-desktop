@@ -46,6 +46,7 @@ import * as LegacyV1ThreadImporter from "../../../orchestration-v2/legacy/Legacy
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
+import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 
 const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)(
   {},
@@ -93,6 +94,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(DocumentHostBroker.DocumentHostBroker)({}),
   Layer.mock(GeneratedDocumentStore.GeneratedDocumentStore)({}),
   Layer.mock(LatexBuildService.LatexBuildService)({}),
+  Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
   ProjectCloneTracker.layer.pipe(Layer.provide(layerRepositories)),
   Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),

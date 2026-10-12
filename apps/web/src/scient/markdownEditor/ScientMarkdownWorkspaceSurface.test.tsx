@@ -15,6 +15,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { resolveChatShortcutCommand } from "../../keybindings";
 import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
 import { MarkdownPersistenceRegistry } from "./persistence/markdownPersistenceRegistry";
+import { createTestCheckpointStore } from "./persistence/markdownDraftCheckpointTestkit";
 
 import {
   ScientMarkdownWorkspaceSurface as ProductionScientMarkdownWorkspaceSurface,
@@ -69,6 +70,7 @@ function ScientMarkdownWorkspaceSurface(props: TestSurfaceProps) {
       beginMove: () => null,
       getSnapshot: coordinator.getSnapshot,
       getPendingInput: () => null,
+      getRenameIntent: () => null,
       canEditPendingInput: () => true,
       claimPendingInput: () => true,
       releasePendingInputClaim: () => {},
@@ -83,6 +85,14 @@ function ScientMarkdownWorkspaceSurface(props: TestSurfaceProps) {
       applyEdit: coordinator.applyEdit.bind(coordinator),
       noteFreshnessHint: (reason) => coordinator.noteFreshnessHint(reason),
       flushNow: () => coordinator.flushNow(),
+      recreateMissingCurrent: () => coordinator.recreateMissingCurrent(),
+      noteMutationFailure: (error, mutationId) =>
+        coordinator.noteMutationFailure(error, mutationId),
+      resolveRetainedAttention: (recoveryId, currentRevision) =>
+        coordinator.resolveRetainedAttention(recoveryId, currentRevision),
+      reviewRetainedCurrent: (recoveryId) => coordinator.reviewRetainedCurrent(recoveryId),
+      reviewUnchangedRefusal: (currentRevision) =>
+        coordinator.reviewUnchangedRefusal(currentRevision),
       retry: () => coordinator.retry(),
       refresh: () => coordinator.refresh(),
       resolveWithLocal: (revision) => coordinator.resolveWithLocal(revision),
@@ -120,14 +130,21 @@ describe("ScientMarkdownWorkspaceSurface", () => {
   const roots: ReturnType<typeof createRoot>[] = [];
 
   afterEach(async () => {
-    while (roots.length > 0) {
-      const root = roots.pop();
-      if (root) await act(() => root.unmount());
+    // Final-unmount retirement is a browser task, not a wall-clock wait.
+    if (!vi.isFakeTimers()) vi.useFakeTimers();
+    try {
+      while (roots.length > 0) {
+        const root = roots.pop();
+        if (root) await act(() => root.unmount());
+      }
+      await act(() => vi.advanceTimersByTimeAsync(0));
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      document.body.replaceChildren();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    document.body.replaceChildren();
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
   async function mountPersistenceFixture(props: TestSurfaceProps) {
@@ -152,6 +169,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     const source = "# Result [@smith]\n\nTail\n";
     const write = vi.fn(async () => ({ revision: "r1" }));
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write,
         read: async () => ({ source, revision: "r0" }),
@@ -242,6 +260,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const source = "# Result [@smith]\n\nTail\n";
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write: async () => ({ revision: "r1" }),
         read: async () => ({ source, revision: "r0" }),
@@ -314,6 +333,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const source = "# Result [@smith]\n\nTail\n";
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write: async () => ({ revision: "r1" }),
         read: async () => ({ source, revision: "r0" }),
@@ -516,10 +536,10 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       "AOriginal",
     ]);
     await act(() => coordinator.flushNow());
-    expect(persist).toHaveBeenCalledExactlyOnceWith({
-      source: "AOriginal",
-      expectedRevision: "r0",
-      editVersion: 1,
+    expect(coordinator.getSnapshot()).toMatchObject({
+      baselineSource: "AOriginal",
+      baselineRevision: "r1",
+      pending: false,
     });
   });
 
@@ -608,13 +628,12 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       resolve({ revision: "r1" });
       await flushing;
     });
-    expect(persist).toHaveBeenLastCalledWith({
-      source: "Latest edit",
-      expectedRevision: "r1",
-      editVersion: 2,
-    });
     expect(controller.view!.state.doc.textContent).toBe("Latest edit");
-    expect(coordinator.getSnapshot()).toMatchObject({ pending: false, baselineRevision: "r2" });
+    expect(coordinator.getSnapshot()).toMatchObject({
+      pending: false,
+      baselineSource: "Latest edit",
+      baselineRevision: "r2",
+    });
   });
 
   it("serializes rapid real shortcuts without losing CRLF or Unicode content", async () => {
@@ -685,29 +704,28 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       await act(() => shortcut("b", "KeyB"));
       const queue = synchronize.mock.instances[0] as MarkdownPersistenceCoordinator;
       await act(() => vi.advanceTimersByTimeAsync(500));
-      expect(persist).toHaveBeenCalledExactlyOnceWith({
-        source: "**שלום 🌍**\r\n",
-        expectedRevision: "r0",
-        editVersion: 5,
+      expect(queue.getSnapshot()).toMatchObject({
+        baselineSource: source,
+        publicationSource: "**שלום 🌍**\r\n",
+        inFlight: true,
+        pending: true,
       });
 
       await act(() => shortcut("i", "KeyI"));
-      expect(persist).toHaveBeenCalledTimes(1);
+      expect(queue.getSnapshot().publicationSource).toBe("**שלום 🌍**\r\n");
       await act(async () => {
         const flushed = queue.flushNow();
         resolveFirst({ revision: "r1" });
         await flushed;
       });
 
-      expect(persist).toHaveBeenCalledTimes(2);
-      expect(persist).toHaveBeenLastCalledWith({
-        source: "***שלום 🌍***\r\n",
-        expectedRevision: "r1",
-        editVersion: 6,
-      });
       expect(controller.session.session.draftSource).toBe("***שלום 🌍***\r\n");
       expect(controller.session.session.draftSource).not.toMatch(/(^|[^\r])\n/);
-      expect(queue.getSnapshot().pending).toBe(false);
+      expect(queue.getSnapshot()).toMatchObject({
+        baselineSource: "***שלום 🌍***\r\n",
+        baselineRevision: "r2",
+        pending: false,
+      });
       expect(onPendingChange).toHaveBeenLastCalledWith(false);
     } finally {
       vi.useRealTimers();
@@ -768,11 +786,6 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     await act(() => coordinator.flushNow());
     await act(() => coordinator.resolveWithLocal("r1"));
     expect(read).toHaveBeenCalledTimes(2);
-    expect(persist).toHaveBeenLastCalledWith({
-      source: "My draft",
-      expectedRevision: "r1",
-      editVersion: 1,
-    });
     expect(controller.session.session).toMatchObject({
       baselineSource: "My draft",
       baselineRevision: "r2",
@@ -891,6 +904,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
 
   it("uses the shared compact popover treatment for link editing", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers();
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -923,9 +937,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
     ).find((node) => node.textContent?.trim().startsWith("Link"))!;
     await act(() => linkItem.click());
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
+    await act(() => vi.advanceTimersByTimeAsync(50));
 
     const popup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
     const viewport = popup?.querySelector<HTMLElement>("[data-slot='popover-viewport']");
@@ -1094,6 +1106,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
 
   it("edits an existing wiki link through the shared picker and commits only a chosen target", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers();
     const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
     const onDraftSourceChange = vi.fn();
     const onWikiLinkSelected = vi.fn();
@@ -1148,7 +1161,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
         ),
       ).toBe(true);
     });
-    await act(() => new Promise((resolve) => window.setTimeout(resolve, 0)));
+    await act(() => vi.advanceTimersByTimeAsync(0));
 
     const popup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
     const search = popup?.querySelector<HTMLInputElement>("[aria-label='Search Markdown files']");
@@ -1183,7 +1196,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
         ),
       ).toBe(true);
     });
-    await act(() => new Promise((resolve) => window.setTimeout(resolve, 0)));
+    await act(() => vi.advanceTimersByTimeAsync(0));
     const reopenedPopup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
     const reopenedSearch = reopenedPopup?.querySelector<HTMLInputElement>(
       "[aria-label='Search Markdown files']",
@@ -1502,76 +1515,129 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(coordinator.getSnapshot().pending).toBe(false);
   });
 
-  it("recovers a lost response through an identical retry and ordered verification", async () => {
+  it("recovers a lost response only through its retained receipt and preserves disconnected newer edits", async () => {
     vi.useFakeTimers();
-    const persist = vi.fn().mockRejectedValueOnce("transient").mockRejectedValueOnce("conflict");
-    const read = vi.fn(async () => ({ source: "My draft", revision: "r1" }));
+    let disk = { source: "Original", revision: "r0" };
+    const receipts = new Map<string, { intent: MarkdownSaveIntent; revision: string }>();
+    const replayStarted = Promise.withResolvers<MarkdownSaveIntent>();
+    const replayAcknowledgement = Promise.withResolvers<void>();
+    let loseAcknowledgement = true;
+    const persist = async (intent: MarkdownSaveIntent) => {
+      const receipt = receipts.get(intent.mutationId);
+      if (receipt) {
+        if (
+          receipt.intent.source !== intent.source ||
+          receipt.intent.expectedRevision !== intent.expectedRevision ||
+          receipt.intent.editVersion !== intent.editVersion ||
+          receipt.intent.createOnly !== intent.createOnly
+        )
+          throw "collision";
+        replayStarted.resolve(intent);
+        await replayAcknowledgement.promise;
+        return { revision: receipt.revision };
+      }
+      if (intent.expectedRevision !== disk.revision) throw "conflict";
+      disk = { source: intent.source, revision: `r${receipts.size + 1}` };
+      receipts.set(intent.mutationId, { intent: { ...intent }, revision: disk.revision });
+      if (loseAcknowledgement) {
+        loseAcknowledgement = false;
+        throw "transient";
+      }
+      return { revision: disk.revision };
+    };
+    const onSaveConfirmed = vi.fn();
     const { controller, coordinator } = await mountPersistenceFixture({
       source: "Original",
       revision: "r0",
       ariaLabel: "Lost receipt",
       persist,
-      read,
+      read: async () => disk,
+      onSaveConfirmed,
     });
     let flushed!: Promise<boolean>;
     await act(() => {
       flushed = coordinator.flushNow();
     });
     await act(() => vi.advanceTimersByTimeAsync(250));
-    expect(await flushed).toBe(true);
-    expect(persist.mock.calls[0]?.[0]).toBe(persist.mock.calls[1]?.[0]);
-    expect(read).toHaveBeenCalledOnce();
-    expect(controller.session.session).toMatchObject({
+    const intent = await replayStarted.promise;
+    expect(disk).toEqual({ source: "My draft", revision: "r1" });
+    expect(onSaveConfirmed).not.toHaveBeenCalled();
+    expect(coordinator.getSnapshot()).toMatchObject({
+      baselineSource: "Original",
+      publicationIntent: intent,
+      pending: true,
+    });
+    await act(async () => {
+      controller.replaceUserSource("Newer edit");
+      coordinator.setConnected(false);
+      replayAcknowledgement.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(await flushed).toBe(false);
+    expect(await coordinator.flushNow()).toBe(false);
+    expect(coordinator.getSnapshot()).toMatchObject({
       baselineSource: "My draft",
       baselineRevision: "r1",
-      conflict: null,
+      draftSource: "Newer edit",
+      publicationIntent: null,
+      pending: true,
     });
-    vi.useRealTimers();
+    expect(controller.view!.state.doc.textContent).toBe("Newer edit");
+    expect(onSaveConfirmed).toHaveBeenCalledExactlyOnceWith("My draft", "r1");
+    await expect(persist({ ...intent, source: "Newer edit" })).rejects.toBe("collision");
+    await act(async () => {
+      coordinator.setConnected(true);
+      expect(await coordinator.flushNow()).toBe(true);
+    });
+    expect(disk).toEqual({ source: "Newer edit", revision: "r2" });
+    expect(coordinator.getSnapshot()).toMatchObject({
+      baselineSource: "Newer edit",
+      baselineRevision: "r2",
+      pending: false,
+    });
+    expect(onSaveConfirmed).toHaveBeenLastCalledWith("Newer edit", "r2");
   });
 
   it("destroys its editor without disposing the shared persistence owner on unmount", async () => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    const dispose = vi.spyOn(MarkdownPersistenceCoordinator.prototype, "dispose");
-    const destroy = vi.spyOn(ScientMarkdownEditorView.prototype, "destroy");
-    const host = document.createElement("div");
-    document.body.append(host);
-    const root = createRoot(host);
-
-    await act(() =>
-      root.render(
-        <ScientMarkdownWorkspaceSurface
-          source="# Results\n"
-          revision="r0"
-          ariaLabel="Results"
-          persist={vi.fn(async () => ({ revision: "r1" }))}
-          onPendingChange={vi.fn()}
-          onSaveConfirmed={vi.fn()}
-          onSaveFailure={vi.fn()}
-          onExternalConflict={vi.fn()}
-        />,
-      ),
-    );
-    expect(host.querySelector(".ProseMirror")).not.toBeNull();
-
-    await act(() => root.unmount());
-
-    await vi.waitFor(() => {
-      expect(dispose).not.toHaveBeenCalled();
-      expect(destroy).toHaveBeenCalledOnce();
+    vi.useFakeTimers();
+    const { root, controller, coordinator } = await mountPersistenceFixture({
+      source: "# Results\n",
+      revision: "r0",
+      ariaLabel: "Results",
+      persist: async () => ({ revision: "r1" }),
     });
-    expect(host.querySelector(".ProseMirror")).toBeNull();
+    const view = controller.view!;
+    expect(view.dom.isConnected).toBe(true);
+    await act(() => root.render(null));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(view.isDestroyed).toBe(true);
+    expect(controller.view).toBeNull();
+    expect(coordinator.getSnapshot()).toMatchObject({ draftSource: "My draft", pending: true });
+    expect(await coordinator.flushNow()).toBe(true);
+    expect(coordinator.getSnapshot()).toMatchObject({
+      baselineSource: "My draft",
+      baselineRevision: "r1",
+      pending: false,
+    });
   });
 
   it("keeps its persistence owner and editor alive through React Strict Mode effect rehearsal", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    const dispose = vi.spyOn(MarkdownPersistenceCoordinator.prototype, "dispose");
-    const destroy = vi.spyOn(ScientMarkdownEditorView.prototype, "destroy");
+    vi.useFakeTimers();
+    const persist = async () => ({ revision: "r1" });
+    const coordinator = new MarkdownPersistenceCoordinator({
+      source: "# Results\n",
+      revision: "r0",
+      write: persist,
+      read: async () => ({ source: "# Results\n", revision: "r0" }),
+      classifyFailure: () => "terminal",
+    });
     const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
     const onPendingChange = vi.fn();
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-
+    roots.push(root);
     await act(() =>
       root.render(
         <StrictMode>
@@ -1579,73 +1645,86 @@ describe("ScientMarkdownWorkspaceSurface", () => {
             source="# Results\n"
             revision="r0"
             ariaLabel="Results"
-            persist={vi.fn(async () => ({ revision: "r1" }))}
+            coordinator={coordinator}
+            persist={persist}
             onPendingChange={onPendingChange}
-            onSaveConfirmed={vi.fn()}
-            onSaveFailure={vi.fn()}
-            onExternalConflict={vi.fn()}
           />
         </StrictMode>,
       ),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(host.querySelector(".ProseMirror")).not.toBeNull();
-    const mountedControllers = mount.mock.instances as unknown as ScientMarkdownEditorView[];
-    const activeController = mountedControllers.find(
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(host.querySelectorAll(".ProseMirror")).toHaveLength(1);
+    const activeController = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
       (controller) => controller.view?.dom.isConnected,
-    );
-    expect(activeController).not.toBeUndefined();
-    await act(() => {
-      const view = activeController!.view!;
-      view.dispatch(view.state.tr.insertText("Edited", 1));
-    });
+    )!;
+    const view = activeController.view!;
+    await act(() => view.dispatch(view.state.tr.insertText("Edited", 1)));
+    const draft = coordinator.getSnapshot().draftSource;
+    expect(draft).toContain("Edited");
+    expect(view.isDestroyed).toBe(false);
     expect(onPendingChange).toHaveBeenCalledWith(true);
-    const disposedBeforeFinalUnmount = dispose.mock.calls.length;
-    const destroyedBeforeFinalUnmount = destroy.mock.calls.length;
-
-    await act(() => root.unmount());
-    await vi.waitFor(() => {
-      expect(dispose).toHaveBeenCalledTimes(disposedBeforeFinalUnmount);
-      expect(destroy).toHaveBeenCalledTimes(destroyedBeforeFinalUnmount + 1);
-    });
+    await act(() => root.render(null));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(view.isDestroyed).toBe(true);
+    expect(host.querySelector(".ProseMirror")).toBeNull();
+    expect(coordinator.getSnapshot()).toMatchObject({ draftSource: draft, pending: true });
+    expect(await coordinator.flushNow()).toBe(true);
+    expect(coordinator.getSnapshot()).toMatchObject({ baselineSource: draft, pending: false });
   });
 
   it("leaves one editor without disposing file persistence through repeated switches", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    const dispose = vi.spyOn(MarkdownPersistenceCoordinator.prototype, "dispose");
-    const destroy = vi.spyOn(ScientMarkdownEditorView.prototype, "destroy");
+    vi.useFakeTimers();
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const retained: Array<{ coordinator: MarkdownPersistenceCoordinator; draft: string }> = [];
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-
+    roots.push(root);
+    let previousView: NonNullable<ScientMarkdownEditorView["view"]> | undefined;
     for (let index = 0; index < 12; index += 1) {
+      const source = `# Document ${index}\n`;
+      const persist = async () => ({ revision: `saved-${index}` });
+      const coordinator = new MarkdownPersistenceCoordinator({
+        source,
+        revision: `r${index}`,
+        write: persist,
+        read: async () => ({ source, revision: `r${index}` }),
+        classifyFailure: () => "terminal",
+      });
       await act(() =>
         root.render(
           <ScientMarkdownWorkspaceSurface
             key={`document-${index}`}
-            source={`# Document ${index}\n`}
+            source={source}
             revision={`r${index}`}
             ariaLabel={`Document ${index}`}
-            persist={vi.fn(async () => ({ revision: `saved-${index}` }))}
-            onPendingChange={vi.fn()}
-            onSaveConfirmed={vi.fn()}
-            onSaveFailure={vi.fn()}
-            onExternalConflict={vi.fn()}
+            coordinator={coordinator}
+            persist={persist}
           />,
         ),
       );
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await act(() => vi.advanceTimersByTimeAsync(0));
+      if (previousView) expect(previousView.isDestroyed).toBe(true);
       expect(host.querySelectorAll(".ProseMirror")).toHaveLength(1);
       expect(host.querySelector("h1")?.textContent).toContain(`Document ${index}`);
+      const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+        (candidate) => candidate.view?.dom.isConnected,
+      )!;
+      const draft = `Retained draft ${index}`;
+      await act(() => controller.replaceUserSource(draft));
+      retained.push({ coordinator, draft });
+      previousView = controller.view!;
     }
-
-    await act(() => root.unmount());
-    await vi.waitFor(() => {
-      expect(dispose).not.toHaveBeenCalled();
-      expect(destroy).toHaveBeenCalledTimes(12);
-    });
+    await act(() => root.render(null));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(previousView!.isDestroyed).toBe(true);
     expect(host.querySelector(".ProseMirror")).toBeNull();
+    for (const { coordinator, draft } of retained) {
+      expect(coordinator.getSnapshot()).toMatchObject({ draftSource: draft, pending: true });
+      expect(await coordinator.flushNow()).toBe(true);
+      expect(coordinator.getSnapshot()).toMatchObject({ baselineSource: draft, pending: false });
+    }
   });
 
   it("owns editor shortcuts without leaking them to app shortcuts or nested source fields", async () => {

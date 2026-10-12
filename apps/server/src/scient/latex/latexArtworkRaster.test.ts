@@ -72,6 +72,7 @@ it.live(
             cwd: "/synthetic",
             environment: {},
             ratio: 2,
+            onRetirementFailure: Effect.die("The fixture process must prove retirement."),
           }),
         ),
         Effect.timeoutOption("4 seconds"),

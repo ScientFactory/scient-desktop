@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FileCitation } from "@t3tools/contracts";
 import { MarkdownSourceSurface, useFileLineReveal } from "~/components/files/FilePreviewPanel";
 import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
@@ -21,6 +21,8 @@ export interface LatexVisualSourceReveal {
   readonly precise?: boolean;
   readonly column?: number | null;
   readonly selectedText?: string;
+  /** PDF coordinates belong only to this admitted, unedited source revision. */
+  readonly sourceRevision?: string;
 }
 
 /** Reveal source in Split without replacing or focusing the preview. */
@@ -52,14 +54,43 @@ export function LatexVisualSourcePane(
   const disk = query.authoritativeData;
   const source =
     snapshot?.draftSource ?? (disk?.readOnly || disk?.truncated ? disk.contents : undefined);
+  const compiledRevealCurrent =
+    reveal.sourceRevision === undefined ||
+    (disk?.revision === reveal.sourceRevision &&
+      !disk.truncated &&
+      !query.isPending &&
+      query.readError === null &&
+      (lease !== null || disk.readOnly) &&
+      (snapshot === null ||
+        (!snapshot.pending &&
+          !snapshot.reading &&
+          !snapshot.currentMissing &&
+          !snapshot.editingBlocked &&
+          snapshot.error === null &&
+          snapshot.conflict === null &&
+          snapshot.baselineRevision === reveal.sourceRevision &&
+          snapshot.draftSource === snapshot.baselineSource)));
+  const [rejectedCompiledReveal, setRejectedCompiledReveal] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (
+      reveal.sourceRevision !== undefined &&
+      disk !== null &&
+      !query.isPending &&
+      !snapshot?.reading &&
+      (lease !== null || disk.readOnly) &&
+      !compiledRevealCurrent
+    )
+      setRejectedCompiledReveal(reveal.requestId);
+  }, [reveal, disk, query.isPending, snapshot?.reading, lease, compiledRevealCurrent]);
+  const revealCurrent = compiledRevealCurrent && rejectedCompiledReveal !== reveal.requestId;
   const range = useMemo(
     () =>
-      source === undefined
+      source === undefined || !revealCurrent
         ? null
         : reveal.citation
           ? resolveLatexCitationSource(source, reveal.citation)
           : latexSourceRevealRange(source, reveal),
-    [source, reveal],
+    [source, reveal, revealCurrent],
   );
   const line =
     source !== undefined && range
@@ -70,7 +101,8 @@ export function LatexVisualSourcePane(
       ? source.slice(0, Math.max(range.from, range.to - 1)).split("\n").length
       : line;
   const [dismissedRequest, setDismissedRequest] = useState<number | null>(null);
-  const navigationMarked = !reveal.citation && dismissedRequest !== reveal.requestId;
+  const navigationMarked =
+    revealCurrent && !reveal.citation && dismissedRequest !== reveal.requestId;
   const { onPostRender } = useFileLineReveal(
     reveal.path,
     reveal.citation || navigationMarked ? line : null,

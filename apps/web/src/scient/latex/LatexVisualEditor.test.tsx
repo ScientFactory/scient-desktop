@@ -38,11 +38,17 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import {
+  createLatexVisualTestOwner,
+  stubLatexReadingFonts,
+  useLatexVisualTestOwner,
+} from "./latexVisualTestOwner";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
 import { mathSourceCompletions } from "./latexMathCompletion";
-import { clearVisualDraft } from "./visualDrafts";
+import { clearVisualDraft, readPersistedVisualDraft } from "./visualDrafts";
 import { clearTypingDraft } from "./visualTyping";
 import { scientificStatementsFixture } from "./scientificStatements.fixture";
+import { readStoredRecovery } from "./visualRecovery";
 import { projectLatexVisualDocument } from "./latexVisualDocument";
 import { latexFigureSource } from "./figureSource";
 import { latexEquationReferencesKey } from "./latexEquationReferences";
@@ -67,7 +73,7 @@ describe("writing editor source transactions", () => {
   let current: string;
   let confirmed: string | null;
   const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, "getAnimations");
-  const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+  let restoreFonts = () => {};
   const writes = vi.fn();
   const flushReferences = vi.fn<() => Promise<boolean>>();
   const tex = (body: string) =>
@@ -78,10 +84,7 @@ describe("writing editor source transactions", () => {
       configurable: true,
       value: () => [],
     });
-    Object.defineProperty(document, "fonts", {
-      configurable: true,
-      value: Object.assign(new EventTarget(), { ready: Promise.resolve(), status: "loaded" }),
-    });
+    restoreFonts = stubLatexReadingFonts();
     writes.mockReset();
     confirmed = null;
     flushReferences.mockReset().mockResolvedValue(false);
@@ -106,8 +109,7 @@ describe("writing editor source transactions", () => {
     if (originalGetAnimations)
       Object.defineProperty(Element.prototype, "getAnimations", originalGetAnimations);
     else Reflect.deleteProperty(Element.prototype, "getAnimations");
-    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
-    else Reflect.deleteProperty(document, "fonts");
+    restoreFonts();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -213,20 +215,6 @@ describe("writing editor source transactions", () => {
     });
     await act(() => field.blur());
   }
-  async function selectOption(label: string, optionLabel: string) {
-    const trigger = document.body.querySelector<HTMLButtonElement>(
-      `button[aria-label="${label}"]`,
-    )!;
-    expect(trigger).not.toBeNull();
-    const details = trigger.closest("details");
-    if (details && !details.open) await act(() => details.querySelector("summary")!.click());
-    await act(() => trigger.click());
-    const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      (item) => item.textContent?.trim() === optionLabel,
-    );
-    expect(option, optionLabel).toBeDefined();
-    await act(() => option!.click());
-  }
   async function focusReferenceLabel(label: string) {
     const field = container.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${label}"]`)!;
     expect(field).not.toBeNull();
@@ -243,26 +231,35 @@ describe("writing editor source transactions", () => {
     return position;
   }
   /** `headerSlot` hosts the reader controls the way the LaTeX surface's header does. */
-  async function mount(body = "Hello", preamble = "", headerSlot: HTMLElement | null = null) {
+  async function mount(
+    body = "Hello",
+    preamble = "",
+    headerSlot: HTMLElement | null = null,
+    registerFinishEditing?: (finish: (() => boolean) | null) => void,
+  ) {
     current = tex(body).replace("\\begin{document}", preamble + "\\begin{document}");
     function Harness() {
       const [source, setSource] = useState(current);
+      const owner = useLatexVisualTestOwner(source);
       const editorElement = (
         <LatexVisualEditor
           draftKey="synthetic-editor-test"
           fileRevision="r1"
           source={source}
+          sourceSnapshot={owner.snapshot}
           disabled={false}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
+          {...(registerFinishEditing ? { registerFinishEditing } : {})}
           flushReferenceEdits={flushReferences}
           confirmedReferenceSource={() => confirmed}
-          onEdit={(expected, next) => {
-            if (current !== expected) return false;
-            writes(expected, next);
-            current = next;
-            setSource(next);
-            return true;
+          onEdit={(request) => {
+            const outcome = owner.edit(request, current === request.edit.source);
+            if (!outcome.accepted) return outcome;
+            writes(request.edit.source, outcome.snapshot.source);
+            current = outcome.snapshot.source;
+            setSource(current);
+            return outcome;
           }}
         />
       );
@@ -584,10 +581,7 @@ Control & 1 \\\\
         bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click(),
       );
       // Each block is written to the source before the next is edited.
-      await vi.waitFor(async () => {
-        await act(() => {});
-        expect(current).not.toContain("cat");
-      });
+      await act(() => vi.waitFor(() => expect(current).not.toContain("cat")));
       expect(current).toContain("\\section{A dog}");
       expect(current).toContain("First dog here, and a second dog.");
       expect(current).toContain("No match in this one.");
@@ -1089,6 +1083,48 @@ Control & 1 \\\\
     },
   );
 
+  it("keeps an accepted raw edit recoverable when Cancel and Escape cannot checkpoint it", async () => {
+    const raw = "\\custom{Original}";
+    const draft = "\\custom{Retained}";
+    const finish: { current: (() => boolean) | null } = { current: null };
+    await mount(raw, "", null, (callback) => {
+      finish.current = callback;
+    });
+    await act(() => container.querySelector<HTMLElement>(".scient-latex-visual-raw pre")!.click());
+    const field = () =>
+      container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Block LaTeX source']");
+    await setField(field()!, draft);
+    expect(readStoredRecovery("synthetic-editor-test")?.text).toContain(draft);
+    const quota = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+      throw new DOMException("Synthetic quota failure", "QuotaExceededError");
+    });
+    const button = (name: string) =>
+      [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+        (item) => item.textContent === name,
+      )!;
+    await act(() => button("Apply LaTeX").click());
+    expect(current).toBe(tex(draft));
+    expect(writes).toHaveBeenCalledOnce();
+    expect(readPersistedVisualDraft("synthetic-editor-test")).toBeNull();
+    await act(() => button("Cancel").click());
+    expect(field()?.value).toBe(draft);
+    expect(readStoredRecovery("synthetic-editor-test")?.text).toContain(draft);
+    await act(() =>
+      field()!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(field()?.value).toBe(draft);
+    expect(finish.current?.()).toBe(false);
+    quota.mockRestore();
+    await act(() => button("Cancel").click());
+    expect(field()).toBeNull();
+    expect(readPersistedVisualDraft("synthetic-editor-test")?.source).toBe(tex(draft));
+    expect(readStoredRecovery("synthetic-editor-test")).toBeNull();
+    expect(writes).toHaveBeenCalledOnce();
+    expect(finish.current?.()).toBe(true);
+  });
+
   it("edits prose and nested equations in the supplied theorem/proof/remark document", async () => {
     const marker = "\\begin{document}";
     const body = scientificStatementsFixture
@@ -1137,6 +1173,151 @@ Control & 1 \\\\
     expect(editor().state.doc.firstChild!.type.name).toBe("latexScientific");
     expect(editor().state.doc.firstChild!.childCount).toBe(2);
     expect(current).toContain("\\begin{theorem}[Result]\nFirst\n\n second\n\\end{theorem}");
+  });
+
+  it("restores exact CRLF and list trivia through native split undo and redo", async () => {
+    await mount(
+      "\\begin{itemize}\r\n  \\item First words\r\n\r\n  \\item Second.\r\n\\end{itemize}",
+    );
+    const original = current;
+    let caret = -1;
+    editor().state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "First words") caret = position + "First".length;
+    });
+    expect(caret).toBeGreaterThan(0);
+    await act(() => {
+      editor().commands.setTextSelection(caret);
+      expect(editor().commands.splitListItem("listItem")).toBe(true);
+    });
+    const split = current;
+    expect(split).not.toBe(original);
+    expect(projectLatexVisualDocument(split).content.content![0]!.content).toHaveLength(3);
+    await act(() => editor().commands.undo());
+    expect(current).toBe(original);
+    await act(() => editor().commands.redo());
+    expect(current).toBe(split);
+  });
+
+  it.each([0, 1])(
+    "splits repeated live list item %i with exact undo and redo",
+    async (itemIndex) => {
+      await mount("\\begin{itemize}\r\n\\item Same words\r\n  \\item Same words\r\n\\end{itemize}");
+      const original = current;
+      const positions: number[] = [];
+      editor().state.doc.descendants((node, position) => {
+        if (node.isText && node.text === "Same words") positions.push(position + 4);
+      });
+      expect(positions).toHaveLength(2);
+      await act(() => {
+        editor().commands.setTextSelection(positions[itemIndex]!);
+        editor().commands.splitListItem("listItem");
+      });
+      const split = current;
+      expect(split).not.toBe(original);
+      const list = projectLatexVisualDocument(split).content.content![0]!;
+      expect(
+        list.content!.map((item) =>
+          item.content![0]!.content!.map((node) => node.text ?? "").join(""),
+        ),
+      ).toEqual(
+        itemIndex === 0 ? ["Same", "words", "Same words"] : ["Same words", "Same", "words"],
+      );
+      await act(() => editor().commands.undo());
+      expect(current).toBe(original);
+      await act(() => editor().commands.redo());
+      expect(current).toBe(split);
+    },
+  );
+
+  it("keeps distinct native undo events when two nonadjacent typing edits coalesce", async () => {
+    await mount("First words.\n\nSecond words.");
+    const original = current;
+    let first = -1,
+      second = -1;
+    editor().state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "First words.") first = position;
+      if (node.isText && node.text === "Second words.") second = position;
+    });
+    expect(first).toBeGreaterThan(0);
+    expect(second).toBeGreaterThan(first);
+    await act(() => {
+      editor().commands.setTextSelection(first);
+      editor().commands.insertContent("A ");
+      editor().commands.setTextSelection(second + 2);
+      editor().commands.insertContent("B ");
+    });
+    expect(current).toBe(
+      original
+        .replace("First words.", "A First words.")
+        .replace("Second words.", "B Second words."),
+    );
+    await act(() => editor().commands.undo());
+    expect(current).toBe(original.replace("First words.", "A First words."));
+    await act(() => editor().commands.undo());
+    expect(current).toBe(original);
+  });
+
+  it("keeps separate native undo events when composition postpones their publication", async () => {
+    await mount("First words.\n\nSecond words.");
+    const original = current;
+    let first = -1,
+      second = -1;
+    editor().state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "First words.") first = position;
+      if (node.isText && node.text === "Second words.") second = position;
+    });
+    await act(() => {
+      editor().view.dom.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      expect(editor().view.composing).toBe(true);
+      editor().commands.setTextSelection(first);
+      editor().commands.insertContent("A ");
+      editor().commands.setTextSelection(second + 2);
+      editor().commands.insertContent("B ");
+      expect(current).toBe(original);
+      editor().view.dom.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    });
+    expect(current).toBe(
+      original
+        .replace("First words.", "A First words.")
+        .replace("Second words.", "B Second words."),
+    );
+    await act(() => editor().commands.undo());
+    expect(current).toBe(original.replace("First words.", "A First words."));
+    await act(() => editor().commands.undo());
+    expect(current).toBe(original);
+  });
+
+  it("splits the correct native list item immediately after typing shifts its range", async () => {
+    await mount(
+      "\\begin{itemize}\r\n  \\item First words\r\n\r\n  \\item Second words\r\n\\end{itemize}",
+    );
+    const original = current;
+    let first = -1,
+      second = -1;
+    editor().state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "First words") first = position;
+      if (node.isText && node.text === "Second words") second = position + "Second".length;
+    });
+    await act(() => {
+      editor().commands.setTextSelection(first);
+      editor().commands.insertContent("A long ");
+      editor().commands.setTextSelection(second + "A long ".length);
+      expect(editor().commands.splitListItem("listItem")).toBe(true);
+    });
+    const split = current;
+    const nativeList = projectLatexVisualDocument(split).content.content![0]!;
+    expect(
+      nativeList.content!.map((item) =>
+        item.content![0]!.content!.map((node) => node.text ?? "").join(""),
+      ),
+    ).toEqual(["A long First words", "Second", "words"]);
+    await act(() => editor().commands.undo());
+    expect(current).toBe(original.replace("First words", "A long First words"));
+    await act(() => editor().commands.undo());
+    expect(current).toBe(original);
+    await act(() => editor().commands.redo());
+    await act(() => editor().commands.redo());
+    expect(current).toBe(split);
   });
 
   it("does not write on mount; spaces, Enter and undo save real source", async () => {
@@ -1219,19 +1400,22 @@ Control & 1 \\\\
 `;
     function Harness() {
       const [source, setSource] = useState(current);
+      const owner = useLatexVisualTestOwner(source);
       return (
         <LatexVisualEditor
           draftKey="synthetic-front-matter-test"
           fileRevision="r1"
           source={source}
+          sourceSnapshot={owner.snapshot}
           disabled={false}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
-          onEdit={(expected, next) => {
-            if (current !== expected) return false;
-            current = next;
-            setSource(next);
-            return true;
+          onEdit={(request) => {
+            const outcome = owner.edit(request, current === request.edit.source);
+            if (!outcome.accepted) return outcome;
+            current = outcome.snapshot.source;
+            setSource(current);
+            return outcome;
           }}
         />
       );
@@ -1812,6 +1996,7 @@ Theory & Proofs \\\\
 
   it("inserts a table from the document toolbar picker", async () => {
     await mount("Before");
+    const original = current;
     await insertMenuItem("Table");
     const insert = document.body.querySelector<HTMLElement>(
       "[data-scient-table-size-cell-row='3'][data-scient-table-size-cell-column='4']",
@@ -1820,6 +2005,17 @@ Theory & Proofs \\\\
     await act(() => {});
     expect(current).toContain("\\begin{table}[htbp]");
     expect(current).toContain("\\begin{tabular}");
+    expect(
+      container.querySelector("[contenteditable][aria-label='Table row 3 column 4']"),
+    ).not.toBeNull();
+    const inserted = current;
+    await act(() => editor().commands.undo());
+    expect(current).toBe(original);
+    expect(
+      container.querySelector("[contenteditable][aria-label='Table row 3 column 4']"),
+    ).toBeNull();
+    await act(() => editor().commands.redo());
+    expect(current).toBe(inserted);
     expect(
       container.querySelector("[contenteditable][aria-label='Table row 3 column 4']"),
     ).not.toBeNull();
@@ -1942,20 +2138,25 @@ Theory & Proofs \\\\
   });
 
   it("discards obsolete undo history when external source is adopted", async () => {
-    const renderEditor = (source: string) => (
-      <LatexVisualEditor
-        draftKey="synthetic-editor-test"
-        fileRevision="external-test"
-        source={source}
-        disabled={false}
-        onEdit={(expected, next) => {
-          writes(expected, next);
-          return true;
-        }}
-        onEditingChange={() => {}}
-        onOpenSource={() => {}}
-      />
-    );
+    const renderEditor = (source: string) => {
+      const owner = createLatexVisualTestOwner(source);
+      return (
+        <LatexVisualEditor
+          draftKey="synthetic-editor-test"
+          fileRevision="external-test"
+          source={source}
+          sourceSnapshot={owner.snapshot}
+          disabled={false}
+          onEdit={(request) => {
+            const outcome = owner.edit(request);
+            if (outcome.accepted) writes(request.edit.source, outcome.snapshot.source);
+            return outcome;
+          }}
+          onEditingChange={() => {}}
+          onOpenSource={() => {}}
+        />
+      );
+    };
     await act(async () => {
       root.render(renderEditor(tex("Hello")));
     });
@@ -1977,20 +2178,25 @@ Theory & Proofs \\\\
   it("keeps the body caret after an external source change so typing cannot replace the title", async () => {
     const titled = (body: string) =>
       `\\documentclass{article}\n\\title{Keep this title}\n\\begin{document}\n\\maketitle\n\n${body}\n\\end{document}\n`;
-    const renderEditor = (source: string) => (
-      <LatexVisualEditor
-        draftKey="synthetic-title-selection-test"
-        fileRevision="external-title-test"
-        source={source}
-        disabled={false}
-        onEdit={(expected, next) => {
-          writes(expected, next);
-          return true;
-        }}
-        onEditingChange={() => {}}
-        onOpenSource={() => {}}
-      />
-    );
+    const renderEditor = (source: string) => {
+      const owner = createLatexVisualTestOwner(source);
+      return (
+        <LatexVisualEditor
+          draftKey="synthetic-title-selection-test"
+          fileRevision="external-title-test"
+          source={source}
+          sourceSnapshot={owner.snapshot}
+          disabled={false}
+          onEdit={(request) => {
+            const outcome = owner.edit(request);
+            if (outcome.accepted) writes(request.edit.source, outcome.snapshot.source);
+            return outcome;
+          }}
+          onEditingChange={() => {}}
+          onOpenSource={() => {}}
+        />
+      );
+    };
     await act(async () => root.render(renderEditor(titled("First paragraph"))));
     await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
     let bodyPosition = -1;

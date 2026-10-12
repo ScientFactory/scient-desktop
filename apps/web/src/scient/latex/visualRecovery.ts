@@ -13,6 +13,7 @@ import {
   parseTypingDraft,
   readTypingDraft,
   typingDraftIdentity,
+  rebindVisualTypingContent,
 } from "./visualTyping";
 
 type TypingDraft = NonNullable<ReturnType<typeof readTypingDraft>>;
@@ -227,12 +228,11 @@ function park(key: string, entry: ParkedEntry): boolean {
 function typingEntry(draft: TypingDraft, snapshot: string): ParkedEntry {
   let source: string | null = null;
   try {
-    source =
-      applyLatexVisualDocumentChange(
-        draft.baseSource,
-        projectLatexVisualDocument(draft.baseSource),
-        draft.content,
-      )?.source ?? null;
+    const projection = projectLatexVisualDocument(draft.baseSource);
+    const content = rebindVisualTypingContent(draft.content, projection.content);
+    if (content)
+      source =
+        applyLatexVisualDocumentChange(draft.baseSource, projection, content)?.source ?? null;
   } catch {
     source = null;
   }
@@ -524,7 +524,7 @@ export function journalAppliedRecovery(
 ): boolean {
   const inSourceSlot = !recovery.parked && recovery.identity.startsWith(LIVE_SOURCE);
   if (inSourceSlot) releasePersistedVisualDraft(key);
-  checkpointVisualDraft(key, recovery.source, replaced.source, recovery.source, replaced.revision);
+  checkpointVisualDraft(key, recovery.source, replaced.revision);
   const written = flushVisualDraft(key);
   // The source slot now holds the applied work as the live draft, or still the
   // same recovered source. Either way it is the journal and must not be removed

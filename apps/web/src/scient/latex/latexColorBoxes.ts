@@ -1,6 +1,10 @@
 import { latexLayoutLength } from "./latexPageLayouts";
-import { latexSourceCommands, latexSourceArgument } from "./latexSourceSyntax";
-import { latexPreambleEnd, latexWithoutComments } from "./latexPackages";
+import {
+  latexSourceCommands,
+  latexSourceArgument,
+  latexPreambleEnd,
+  latexWithoutComments,
+} from "./latexSourceSyntax";
 /** Literal xcolor expressions and a bounded tcolorbox adapter; no TeX execution. */
 const basic: Record<string, string> = {
   black: "#000000",

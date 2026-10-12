@@ -21,6 +21,11 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import {
+  createLatexVisualTestOwner,
+  stubLatexReadingFonts,
+  type LatexVisualTestOwner,
+} from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import { clearTypingDraft, readTypingDraft } from "./visualTyping";
 import { readStoredRecovery } from "./visualRecovery";
@@ -36,15 +41,21 @@ describe("pending fields across outside document changes", () => {
   let shown: string;
   let finish: (() => boolean) | null;
   let acceptWrites: boolean;
+  let owner: LatexVisualTestOwner;
+  let revision: string;
   const writes = vi.fn();
   const pending = vi.fn();
+  let restoreFonts = () => {};
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    restoreFonts = stubLatexReadingFonts();
     vi.useFakeTimers();
     writes.mockReset();
     pending.mockReset();
     localStorage.clear();
     shown = SOURCE;
+    owner = createLatexVisualTestOwner(shown);
+    revision = "r1";
     finish = null;
     acceptWrites = true;
     container = document.createElement("div");
@@ -56,6 +67,7 @@ describe("pending fields across outside document changes", () => {
     container.remove();
     clearVisualDraft(KEY);
     clearTypingDraft(KEY);
+    restoreFonts();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -64,8 +76,9 @@ describe("pending fields across outside document changes", () => {
       root.render(
         <LatexVisualEditor
           draftKey={KEY}
-          fileRevision="r1"
+          fileRevision={revision}
           source={shown}
+          sourceSnapshot={owner.observe(shown)}
           disabled={false}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
@@ -73,11 +86,11 @@ describe("pending fields across outside document changes", () => {
           registerFinishEditing={(callback) => {
             finish = callback;
           }}
-          onEdit={(expected, next) => {
-            writes(expected, next);
-            if (!acceptWrites || expected !== shown) return false;
-            shown = next;
-            return true;
+          onEdit={(request) => {
+            writes(request.edit.source, request.edit);
+            const outcome = owner.edit(request, acceptWrites && request.edit.source === shown);
+            if (outcome.accepted) shown = outcome.snapshot.source;
+            return outcome;
           }}
         />,
       ),
@@ -183,6 +196,44 @@ describe("pending fields across outside document changes", () => {
       }
     },
   );
+
+  it("keeps a composing field attached across a save acknowledgement", async () => {
+    await mount();
+    const captured = owner.snapshot.id;
+    await act(() => {
+      field().focus();
+      field().dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    });
+    await typeTitle();
+    revision = "r2";
+    await render();
+    await advance(500);
+    expect(owner.snapshot.id).toBe(captured);
+    expect(field().value).toBe("Local unfinished title");
+    expect(readStoredRecovery(KEY)).toBeNull();
+    await act(() =>
+      field().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })),
+    );
+    await advance(500);
+    expect(shown).toBe(SOURCE.replace("Original title", "Local unfinished title"));
+    expect(finish?.()).toBe(true);
+  });
+
+  it("retains field input when an outside A→B→A returns the same bytes under a new owner version", async () => {
+    await mount();
+    await typeTitle();
+    const captured = owner.snapshot.id;
+    shown = SOURCE.replace("Original title", "Outside title");
+    await render();
+    shown = SOURCE;
+    await render();
+    await advance(500);
+    expect(owner.snapshot.id).not.toBe(captured);
+    expect(shown).toBe(SOURCE);
+    expect(field().value).toBe("Local unfinished title");
+    expect(readStoredRecovery(KEY)?.text).toBe("Local unfinished title");
+    expect(finish?.()).toBe(false);
+  });
 
   it("blocks a synchronous finish request while IME owns pending input", async () => {
     await mount();

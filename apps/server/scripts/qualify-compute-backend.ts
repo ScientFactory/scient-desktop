@@ -216,6 +216,7 @@ const program = Effect.gen(function* () {
   const workspaceLayer = WorkspaceFileSystem.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+    Layer.provide(ServerConfig.layerTest(projectRoot, stateRoot)),
     Layer.provide(NodeServices.layer),
   );
 

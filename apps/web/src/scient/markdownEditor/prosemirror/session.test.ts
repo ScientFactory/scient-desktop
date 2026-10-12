@@ -64,7 +64,7 @@ describe("ScientProseMirrorSession", () => {
     });
 
     expect(session.state.doc.textContent).toBe("Local draft");
-    expect(session.createSaveIntent()).toEqual({
+    expect(session.createSaveIntent()).toMatchObject({
       source: "Local draft\n",
       expectedRevision: "sha256:disk",
       editVersion: 1,
@@ -115,11 +115,14 @@ describe("ScientProseMirrorSession", () => {
     session.applyTransaction(session.state.tr.insertText("Edited ", 1, 1), "user");
 
     expect(onUserSourceChange).toHaveBeenCalledOnce();
-    expect(onUserSourceChange).toHaveBeenCalledWith("Edited Paragraph\n", {
-      source: "Edited Paragraph\n",
-      expectedRevision: "sha256:before",
-      editVersion: 1,
-    });
+    expect(onUserSourceChange).toHaveBeenCalledWith(
+      "Edited Paragraph\n",
+      expect.objectContaining({
+        source: "Edited Paragraph\n",
+        expectedRevision: "sha256:before",
+        editVersion: 1,
+      }),
+    );
   });
 
   it("adopts a clean external update without emitting user save intent", () => {
@@ -205,7 +208,7 @@ describe("ScientProseMirrorSession", () => {
     });
     session.replaceUserSource("# After\n");
     const intent = onUserSourceChange.mock.calls[0]?.[1];
-    expect(intent).toEqual({ source: "# After\n", expectedRevision: "r0", editVersion: 1 });
+    expect(intent).toMatchObject({ source: "# After\n", expectedRevision: "r0", editVersion: 1 });
     expect(session.state.doc.firstChild?.type.name).toBe("heading");
 
     session.confirmSave(intent!, "r1");
@@ -228,7 +231,7 @@ describe("ScientProseMirrorSession", () => {
     session.applyTransaction(session.state.tr.insertText("two ", 1, 1), "user");
     session.confirmSave(intents[0]!, "r1");
 
-    expect(beginMarkdownSave(session.session)).toEqual({
+    expect(beginMarkdownSave(session.session)).toMatchObject({
       source: "two one zero\n",
       expectedRevision: "r1",
       editVersion: 2,

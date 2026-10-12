@@ -1,6 +1,9 @@
 import type { JSONContent } from "@tiptap/core";
 import hebrewTemplate from "./fixtures/hebrew-math-and-tables.tex?raw";
 import { describe, expect, it } from "vite-plus/test";
+import { applyDocumentSourcePatches } from "@scientfactory/scient-document";
+import { invertLatexSourcePatches } from "./latexSourceEditPlan";
+import { latexDocumentBoundary } from "./latexSourceSyntax";
 import {
   adoptLatexVisualContent,
   applyLatexVisualDocumentChange,
@@ -15,6 +18,8 @@ import {
   serializeLatexVisualBlock,
   projectLatexVisualDocument,
   updateLatexVisualLayoutSource,
+  prepareLatexDocumentTitle,
+  latexVisualBlockSourceEdit,
 } from "./latexVisualDocument";
 
 const text = (value: string): JSONContent => ({ type: "text", text: value });
@@ -702,12 +707,13 @@ Text
       margin: "2.5cm",
       paragraphStyle: "spaced",
     });
-    expect(changed).toContain("\\documentclass[twoside,12pt,a4paper]{article}");
-    expect(changed).toContain("\\usepackage[colorlinks]{hyperref}");
-    expect(changed).toContain("\\usepackage[margin=2.5cm,a4paper]{geometry}");
-    expect(changed).toContain("\\setlength{\\parindent}{0pt}");
-    expect(changed).toContain("\\setlength{\\parskip}{0.75em}");
-    expect(changed).toContain("Text");
+    expect(changed?.source).toContain("\\documentclass[twoside,12pt,a4paper]{article}");
+    expect(changed?.source).toContain("\\usepackage[colorlinks]{hyperref}");
+    expect(changed?.source).toContain("\\usepackage[margin=2.5cm,a4paper]{geometry}");
+    expect(changed?.source).toContain("\\setlength{\\parindent}{0pt}");
+    expect(changed?.source).toContain("\\setlength{\\parskip}{0.75em}");
+    expect(changed?.source).toContain("Text");
+    expect(applyDocumentSourcePatches(source, changed!.edit.patches)).toBe(changed!.source);
     expect(
       updateLatexVisualLayoutSource(source, {
         paper: "letter",
@@ -725,7 +731,7 @@ Text
           margin: "1in",
           paragraphStyle: "indented",
         },
-      ),
+      )?.source,
     ).toContain(
       "\\documentclass[10pt,letterpaper]{article}\n\\usepackage[margin=1in,letterpaper]{geometry}",
     );
@@ -795,5 +801,370 @@ Value & \\unsupported{x^2} \\\\
       },
     ]);
     expect(result).not.toBeNull();
+  });
+});
+
+describe("owned native source operations", () => {
+  it("retains separate authored boundaries across a compound paragraph edit", () => {
+    const source = document("First.\n \t\nSecond.\n\nUntouched.");
+    const projection = projectLatexVisualDocument(source);
+    const content = structuredClone(projection.content);
+    content.content![0]!.content = [text("Edited first.")];
+    content.content![1]!.content = [text("Edited second.")];
+    const change = applyLatexVisualDocumentChange(source, projection, content)!;
+    expect(change.source).toBe(
+      source.replace("First.", "Edited first.").replace("Second.", "Edited second."),
+    );
+    expect(applyDocumentSourcePatches(source, change.edit.patches)).toBe(change.source);
+    const gap = source.indexOf("\n \t\n");
+    expect(
+      change.edit.patches.every(
+        (patch) => patch.end <= gap || patch.start >= gap + "\n \t\n".length,
+      ),
+    ).toBe(true);
+    expect(
+      applyDocumentSourcePatches(
+        change.source,
+        invertLatexSourcePatches(source, change.edit.patches),
+      ),
+    ).toBe(source);
+  });
+
+  it("retains independent title declaration ranges, comments and CRLF trivia", () => {
+    const source =
+      "\\documentclass{article}\r\n\\title {Old}\r\n% unrelated declaration trivia 😀\r\n\\author {Author}\r\n\\date{}\r\n\\begin{document}\r\n\\maketitle\r\n\r\nBody.\r\n\\end{document}";
+    const projection = projectLatexVisualDocument(source);
+    const content = structuredClone(projection.content);
+    Object.assign(content.content![0]!.attrs!, { title: "New", author: "Writer" });
+    const change = applyLatexVisualDocumentChange(source, projection, content)!;
+    expect(change.source).toBe(source.replace("{Old}", "{New}").replace("{Author}", "{Writer}"));
+    expect(applyDocumentSourcePatches(source, change.edit.patches)).toBe(change.source);
+    expect(
+      applyDocumentSourcePatches(
+        change.source,
+        invertLatexSourcePatches(source, change.edit.patches),
+      ),
+    ).toBe(source);
+  });
+
+  it("converts a title paragraph using original deletion and insertion coordinates", () => {
+    const source = document("Research Title\n\nA body paragraph.");
+    const change = prepareLatexDocumentTitle(source, 0)!;
+    expect(applyDocumentSourcePatches(source, change.edit.patches)).toBe(change.source);
+    expect(change.source).toContain("\\title{Research Title}");
+    expect(change.source).toContain("\n\\maketitle\n");
+    expect(change.source).toContain("A body paragraph.");
+    expect(
+      applyDocumentSourcePatches(
+        change.source,
+        invertLatexSourcePatches(source, change.edit.patches),
+      ),
+    ).toBe(source);
+  });
+
+  it("keeps packages from assembled declaration files instead of duplicating them in the root", () => {
+    const root =
+      "\\documentclass{article}\n\\input{setup}\n\\begin{document}\n\\input{body}\n\\end{document}";
+    const assembled =
+      "\\documentclass{article}\n\\usepackage{amssymb}\n\\begin{document}\nText.\n\\end{document}";
+    const source = "Text.";
+    const projection = projectLatexVisualDocument(source, 0, assembled);
+    const content: JSONContent = {
+      type: "doc",
+      content: [
+        paragraph(""),
+        {
+          type: "latexDisplayMath",
+          attrs: { tex: "\\mathbb{R}", wrapper: "bracket" },
+        },
+      ],
+    };
+    const change = applyLatexVisualDocumentChange(source, projection, content, {
+      rootSource: root,
+      setupSource: assembled,
+      allowRootUpdates: true,
+    })!;
+    expect(change.edit.root).toBeUndefined();
+    expect(applyDocumentSourcePatches(source, change.edit.patches)).toBe(change.source);
+    expect(change.source).toContain("\\mathbb{R}");
+  });
+
+  it("emits a physical-root requirement insertion without swallowing root includes", () => {
+    const root =
+      "\\documentclass{article}\n% keep root comment\n\\begin{document}\n\\input{body}\n\\end{document}";
+    const source = "Text.";
+    const content: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "latexDisplayMath",
+          attrs: { tex: "\\mathbb{R}", wrapper: "bracket" },
+        },
+      ],
+    };
+    const change = applyLatexVisualDocumentChange(
+      source,
+      projectLatexVisualDocument(source, 0, root),
+      content,
+      { rootSource: root, setupSource: root, allowRootUpdates: true },
+    )!;
+    const changedRoot = applyDocumentSourcePatches(root, change.edit.root!.patches);
+    expect(changedRoot).toContain("\\usepackage{amssymb}\n");
+    expect(changedRoot).toContain("% keep root comment\n");
+    expect(changedRoot).toContain("\\input{body}");
+    expect(change.edit.root!.patches.every((patch) => patch.start === patch.end)).toBe(true);
+    expect(applyDocumentSourcePatches(source, change.edit.patches)).toBe(change.source);
+  });
+
+  it("edits list items independently and preserves surviving child and separator spelling", () => {
+    const source = document(
+      "\\begin{itemize}\r\n  \\item  Alpha~one.\r\n\r\n  \\item\tBeta~two.\r\n\\end{itemize}",
+    );
+    const projection = projectLatexVisualDocument(source);
+    const content = structuredClone(projection.content);
+    content.content![0]!.content![0]!.content![0]!.content![0]!.text = "Changed one.";
+    content.content![0]!.content![1]!.content![0]!.content![0]!.text = "Changed two.";
+    const change = applyLatexVisualDocumentChange(source, projection, content)!;
+    expect(change.source).toContain(
+      "\\begin{itemize}\r\n  \\item  Changed one.\r\n\r\n  \\item\tChanged two.\r\n\\end{itemize}",
+    );
+    expect(applyDocumentSourcePatches(source, change.edit.patches)).toBe(change.source);
+    expect(
+      applyDocumentSourcePatches(
+        change.source,
+        invertLatexSourcePatches(source, change.edit.patches),
+      ),
+    ).toBe(source);
+  });
+
+  it.each(["insert", "delete", "reorder", "convert"] as const)(
+    "preserves surviving list item bytes during %s",
+    (operation) => {
+      const source = document(
+        "\\begin{itemize}\n  \\item  First~item.\n\n  \\item\tSecond~item.\n\\end{itemize}",
+      );
+      const projection = projectLatexVisualDocument(source);
+      const content = structuredClone(projection.content);
+      const list = content.content![0]!;
+      if (operation === "insert")
+        list.content!.push({ type: "listItem", content: [paragraph("New item.")] });
+      if (operation === "delete") list.content!.shift();
+      if (operation === "reorder") list.content!.reverse();
+      if (operation === "convert") list.type = "orderedList";
+      const change = applyLatexVisualDocumentChange(source, projection, content)!;
+      expect(change.source).toContain("\\item\tSecond~item.\n");
+      if (operation !== "delete") expect(change.source).toContain("\\item  First~item.\n\n");
+      expect(applyDocumentSourcePatches(source, change.edit.patches)).toBe(change.source);
+      expect(
+        applyDocumentSourcePatches(
+          change.source,
+          invertLatexSourcePatches(source, change.edit.patches),
+        ),
+      ).toBe(source);
+    },
+  );
+
+  it("splits list prose without normalizing surviving TeX token spelling", () => {
+    const source = document("\\begin{itemize}\n  \\item  One~two three~four.\n\\end{itemize}");
+    const projection = projectLatexVisualDocument(source);
+    const content = structuredClone(projection.content);
+    const list = content.content![0]!;
+    const original = list.content![0]!;
+    list.content = [
+      { ...original, content: [paragraph("One\u00a0two")] },
+      { ...original, content: [paragraph("three\u00a0four.")] },
+    ];
+    const change = applyLatexVisualDocumentChange(source, projection, content)!;
+    expect(change.source).toContain("One~two");
+    expect(change.source).toContain("three~four.");
+    expect(applyDocumentSourcePatches(source, change.edit.patches)).toBe(change.source);
+    expect(
+      applyDocumentSourcePatches(
+        change.source,
+        invertLatexSourcePatches(source, change.edit.patches),
+      ),
+    ).toBe(source);
+  });
+
+  it.each(["join", "lift", "nest"] as const)(
+    "preserves native list paragraph spelling during %s",
+    (operation) => {
+      const source = document(
+        "\\begin{itemize}\n  \\item  First~item.\n\n  \\item\tSecond~item.\n\\end{itemize}",
+      );
+      const projection = projectLatexVisualDocument(source);
+      const content = structuredClone(projection.content);
+      const list = content.content![0]!;
+      const first = list.content![0]!,
+        second = list.content![1]!;
+      if (operation === "join") {
+        first.content = [
+          {
+            ...first.content![0],
+            content: [...first.content![0]!.content!, ...second.content![0]!.content!],
+          },
+        ];
+        list.content = [first];
+      }
+      if (operation === "lift") content.content = [first.content![0]!, second.content![0]!];
+      if (operation === "nest") {
+        first.content!.push({ ...list, content: [second] });
+        list.content = [first];
+      }
+      const change = applyLatexVisualDocumentChange(source, projection, content)!;
+      expect(change.source).toContain("First~item.");
+      expect(change.source).toContain("Second~item.");
+      expect(applyDocumentSourcePatches(source, change.edit.patches)).toBe(change.source);
+      expect(
+        applyDocumentSourcePatches(
+          change.source,
+          invertLatexSourcePatches(source, change.edit.patches),
+        ),
+      ).toBe(source);
+    },
+  );
+
+  it("refreshes nested list ranges after an accepted structural edit before subsequent typing", () => {
+    const source = document(
+      "\\begin{itemize}\n\\item First~item.\n\\item Second~item.\n\\end{itemize}",
+    );
+    const projection = projectLatexVisualDocument(source);
+    const reordered = structuredClone(projection.content);
+    reordered.content![0]!.content!.reverse();
+    const first = applyLatexVisualDocumentChange(source, projection, reordered)!;
+    const typed = structuredClone(first.projection.content);
+    typed.content![0]!.content![0]!.content![0]!.content![0]!.text += " Added.";
+    const second = applyLatexVisualDocumentChange(first.source, first.projection, typed)!;
+    expect(second.source).toBe(first.source.replace("Second~item.", "Second~item. Added."));
+    expect(applyDocumentSourcePatches(first.source, second.edit.patches)).toBe(second.source);
+  });
+
+  it.each(["\\item[Custom] Label", "\\item First % native comment\n"] as const)(
+    "keeps unsupported list syntax source-owned: %s",
+    (item) => {
+      const source = document(`\\begin{itemize}\n${item}\n\\end{itemize}`);
+      const projection = projectLatexVisualDocument(source);
+      expect(projection.rawBlocks).toBe(1);
+      expect(
+        applyLatexVisualDocumentChange(source, projection, {
+          type: "doc",
+          content: [paragraph("replacement")],
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("keeps outside edits outside an owning generator and uses an exact inverse for materialization", () => {
+    const source =
+      "\\documentclass{article}\n\\newcount\\n\n\\begin{document}\nBefore.\n\n\\n=0\\loop\\advance\\n by 1 Paragraph \\the\\n.\\par\\ifnum\\n<2\\repeat\n\nAfter.\n\\end{document}";
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.generated).toBeDefined();
+    const outside = structuredClone(projection.content);
+    outside.content!.at(-1)!.content = [text("Edited after.")];
+    const outsideChange = applyLatexVisualDocumentChange(source, projection, outside)!;
+    expect(outsideChange.source).toBe(source.replace("After.", "Edited after."));
+    expect(outsideChange.materializedGenerator).toBe(false);
+    expect(applyDocumentSourcePatches(source, outsideChange.edit.patches)).toBe(
+      outsideChange.source,
+    );
+    const inside = structuredClone(projection.content);
+    inside.content![1]!.content = [text("Edited generated paragraph.")];
+    const insideChange = applyLatexVisualDocumentChange(source, projection, inside)!;
+    expect(insideChange.materializedGenerator).toBe(true);
+    expect(insideChange.source).toContain("Edited generated paragraph.");
+    expect(insideChange.source).not.toContain("\\loop");
+    expect(applyDocumentSourcePatches(source, insideChange.edit.patches)).toBe(insideChange.source);
+    expect(
+      applyDocumentSourcePatches(
+        insideChange.source,
+        invertLatexSourcePatches(source, insideChange.edit.patches),
+      ),
+    ).toBe(source);
+  });
+
+  it("guards explicit raw replacement ranges and preserves unrelated opaque neighbors", () => {
+    const source = document("\\unknown{raw}\n\nText.");
+    const projection = projectLatexVisualDocument(source);
+    const block = projection.blocks[0]!;
+    const edit = latexVisualBlockSourceEdit(source, block, "\\unknown{new}")!;
+    expect(applyDocumentSourcePatches(source, edit.patches)).toBe(source.replace("{raw}", "{new}"));
+    expect(
+      latexVisualBlockSourceEdit(source.replace("{raw}", "{other}"), block, "\\unknown{new}"),
+    ).toBeNull();
+  });
+});
+
+describe("owned layout declaration boundaries", () => {
+  it("edits only active geometry and paragraph declarations across unrelated preamble bytes", () => {
+    const source =
+      "\\documentclass{article}\r\n% \\usepackage[margin=9in]{geometry}\r\n\\usepackage[margin=1in]{geometry}\r\n% keep 😀 native comment\r\n\\setlength{\\parindent}{1.5em}\r\n\\input{unrelated-setup}\r\n\\setlength{\\parskip}{0pt plus 1pt}\r\n\\begin{document}\r\nBody.\r\n\\end{document}";
+    const changed = updateLatexVisualLayoutSource(source, {
+      margin: "2cm",
+      paragraphStyle: "spaced",
+    })!;
+    expect(changed.source).toBe(
+      source
+        .replace("\\usepackage[margin=1in]{geometry}", "\\usepackage[margin=2cm]{geometry}")
+        .replace("\\setlength{\\parindent}{1.5em}", "\\setlength{\\parindent}{0pt}")
+        .replace("\\setlength{\\parskip}{0pt plus 1pt}", "\\setlength{\\parskip}{0.75em}"),
+    );
+    expect(applyDocumentSourcePatches(source, changed.edit.patches)).toBe(changed.source);
+    expect(
+      applyDocumentSourcePatches(
+        changed.source,
+        invertLatexSourcePatches(source, changed.edit.patches),
+      ),
+    ).toBe(source);
+  });
+
+  it("retains literal fake document boundaries and bytes after endinput", () => {
+    const source =
+      "\\documentclass{article}\n\\verb|\\begin{document}|\n\\begin{document}\nText.\n\\endinput\nIgnored \\unknown{opaque}";
+    const projection = projectLatexVisualDocument(source);
+    const content = structuredClone(projection.content);
+    content.content![0]!.content = [text("Changed.")];
+    const changed = applyLatexVisualDocumentChange(source, projection, content)!;
+    expect(changed.source).toBe(source.replace("Text.", "Changed."));
+    expect(applyDocumentSourcePatches(source, changed.edit.patches)).toBe(changed.source);
+  });
+});
+
+describe("title creation uses lossless document boundary facts", () => {
+  it.each(["\\begin {document}", "\\begin % native boundary note\r\n{document}"])(
+    "never inserts into the native opening command: %s",
+    (opening) => {
+      const source = "\\documentclass{article}\r\n" + opening + "\r\nBody.\r\n\\end{document}";
+      const prepared = prepareLatexDocumentTitle(source);
+      if (!prepared) throw new Error("Valid native title creation was refused");
+      const boundary = latexDocumentBoundary(prepared.source);
+      if (!boundary) throw new Error("Title creation corrupted the document boundary");
+      expect(prepared.source.slice(boundary.from, boundary.bodyFrom)).toBe(opening);
+      expect(prepared.source.slice(boundary.bodyFrom, boundary.bodyTo)).toBe(
+        "\r\n\\maketitle\r\n\r\nBody.\r\n",
+      );
+      expect(
+        applyDocumentSourcePatches(
+          prepared.source,
+          invertLatexSourcePatches(source, prepared.edit.patches),
+        ),
+      ).toBe(source);
+    },
+  );
+
+  it("does not treat a literal title command as an existing printed title", () => {
+    const source =
+      "\\documentclass{article}\r\n\\begin{document}\r\n\\verb|\\maketitle| literal.\r\n\\end{document}";
+    const prepared = prepareLatexDocumentTitle(source);
+    if (!prepared) throw new Error("A literal command incorrectly prevented title creation");
+    const boundary = latexDocumentBoundary(prepared.source)!;
+    expect(prepared.source.slice(boundary.bodyFrom, boundary.bodyTo)).toBe(
+      "\r\n\\maketitle\r\n\r\n\\verb|\\maketitle| literal.\r\n",
+    );
+    expect(
+      applyDocumentSourcePatches(
+        prepared.source,
+        invertLatexSourcePatches(source, prepared.edit.patches),
+      ),
+    ).toBe(source);
   });
 });

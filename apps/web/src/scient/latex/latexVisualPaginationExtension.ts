@@ -16,13 +16,21 @@ import { latexCounterLabel } from "./latexDocumentStructure";
 import { latexGapHeightIndex } from "./latexGapHeightIndex";
 import {
   finishLatexViewportMeasurements,
+  captureLatexViewportAnchor,
   latexViewportContext,
   latexViewportMeasurement,
+  latexViewportPreparedElement,
+  latexViewportOpening,
   latexViewportUnit,
   recordLatexViewportMeasurement,
   type ViewportMeasurement,
 } from "./latexViewport";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
+import {
+  latexReadingFontEvent,
+  latexReadingFontKey,
+  prepareLatexReadingFonts,
+} from "./latexReadingFonts";
 import {
   createLatexMeasurementSnapshot,
   type LatexMeasurementGeometry,
@@ -481,12 +489,18 @@ export function* measureLatexDocument(
       columnDisplacement += planned.height - rect.height / scale;
       return;
     }
-    if (dom.hasAttribute("data-latex-viewport-closed")) {
-      const geometry = latexViewportMeasurement(view, node, position);
+    const prepared = latexViewportUnit(view, node, position)
+      ? latexViewportMeasurement(view, node, position)
+      : null;
+    if (
+      dom.hasAttribute("data-latex-viewport-closed") ||
+      (prepared && unchanged(sourceElement(dom)))
+    ) {
+      const geometry = prepared;
       if (node.type.name === "paragraph")
         cache.set(node, {
           width: rect.width / scale,
-          height: rect.height / scale,
+          height: geometry?.height ?? rect.height / scale,
           font: "viewport",
           lines: [],
         });
@@ -956,6 +970,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       let signature = "";
       let measuredDocument: DocumentNode | null = null;
       let typography = "";
+      let fontKey = "";
       let lineCache = new WeakMap<DocumentNode, CachedLines>();
       let spacingCache: ParagraphSpacingCache = new WeakMap();
       let blockCache = new WeakMap<DocumentNode, CachedUnits>();
@@ -1006,8 +1021,20 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
         const supported =
           naturalBlocks.every((old, index) => {
             const node = view.state.doc.child(index);
-            const element = old.measurement.element;
-            if (!element.isConnected || element.parentElement !== root) return false;
+            let element = old.measurement.element;
+            if (!element.isConnected || element.parentElement !== root) {
+              const replacement = view.nodeDOM(old.position);
+              if (
+                node !== old.node ||
+                !(replacement instanceof HTMLElement) ||
+                !latexViewportPreparedElement(view, replacement)
+              )
+                return false;
+              element = replacement;
+              const measurement = { ...old.measurement, element };
+              naturalBlocks![index] = { ...old, measurement };
+              blockCache.set(node, measurement);
+            }
             if (node === old.node && !directDirtyBlocks.has(element)) return true;
             // Resize notifications also follow our page widgets and focus/style
             // updates on unchanged object views. Reuse their natural geometry
@@ -1075,21 +1102,25 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       };
       const scroll = () => root.closest<HTMLElement>(".scient-latex-visual-scroll");
       const anchor = () => {
+        if (latexViewportOpening(view)) return null;
         const viewport = scroll();
         if (!viewport) return null;
         const box = viewport.getBoundingClientRect();
-        const point = view.hasFocus()
-          ? view.state.selection.head
-          : view.posAtCoords({
-              left: Math.max(
-                box.left + 24,
-                root.getBoundingClientRect().left + root.getBoundingClientRect().width / 2,
-              ),
-              top: box.top + Math.min(60, box.height / 3),
-            })?.pos;
-        if (point === undefined) return null;
-        const top = view.coordsAtPos(point).top;
-        return top >= box.top && top <= box.bottom ? { position: point, top, viewport } : null;
+        if (!view.hasFocus()) return captureLatexViewportAnchor(view);
+        const point = view.state.selection.head;
+        if (point !== undefined) {
+          const top = view.coordsAtPos(point).top;
+          if (top >= box.top && top <= box.bottom)
+            return {
+              position: point,
+              top,
+              viewport,
+              restore() {
+                viewport.scrollTop += view.coordsAtPos(point!).top - top;
+              },
+            };
+        }
+        return captureLatexViewportAnchor(view);
       };
       const paginate = async () => {
         cancelPagination = null;
@@ -1144,7 +1175,6 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             };
           });
         };
-        const pinned = anchor();
         const focusedObject = document.activeElement;
         const scrollBefore = scroll();
         const scrollTopBefore = scrollBefore?.scrollTop;
@@ -1162,6 +1192,9 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           focusedBox.bottom >= viewportBefore.top &&
           focusedBox.top <= viewportBefore.bottom;
         try {
+          await prepareLatexReadingFonts(root);
+          if (!stillCurrent()) return;
+          fontKey = latexReadingFontKey(root);
           // Hiding only our widgets exposes natural flow without replacing the
           // editable DOM or touching its native selection and composition.
           const style = getComputedStyle(root);
@@ -1205,6 +1238,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
               const element = view.nodeDOM(position);
               if (element instanceof Element) markDirty(element);
             }
+            const spacingAnchor = anchor();
             view.dispatch(
               view.state.tr
                 .setMeta(latexPaginationKey, {
@@ -1215,6 +1249,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
                 })
                 .setMeta("addToHistory", false),
             );
+            spacingAnchor?.restore();
             schedule();
             return;
           }
@@ -1484,6 +1519,9 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           if (signature !== nextSignature || measuredDocument !== view.state.doc) {
             signature = nextSignature;
             measuredDocument = view.state.doc;
+            // Resolve the latest reading position after all asynchronous stages.
+            // This also respects scrolls made while the snapshot was measuring.
+            const committedAnchor = anchor();
             view.dispatch(
               view.state.tr
                 .setMeta(latexPaginationKey, {
@@ -1623,12 +1661,11 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
                 } satisfies PaginationUpdate)
                 .setMeta("addToHistory", false),
             );
+            committedAnchor?.restore();
             if (columnBreaksChanged) schedule();
           }
           onPageCount(plan.pageCount);
           finishLatexViewportMeasurements(view);
-          if (pinned && followViewport && root.isConnected)
-            pinned.viewport.scrollTop += view.coordsAtPos(pinned.position).top - pinned.top;
           const active = document.activeElement;
           const viewport = scroll();
           if (
@@ -1670,6 +1707,24 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       // after a quiet interval, with a bounded wait, rather than after every
       // DOM batch. Typing still owns the longer 220 ms quiet interval above.
       const layoutChanged = (event?: Event) => {
+        if (
+          event instanceof CustomEvent &&
+          event.type === "scient-latex-math-preview" &&
+          event.detail?.cached &&
+          event.target instanceof Element &&
+          latexViewportPreparedElement(
+            view,
+            event.target.closest("[data-latex-viewport]") ?? event.target,
+          )
+        )
+          return;
+        // A snapshot is immutable. Later completed previews request another pass
+        // instead of repeatedly cancelling the geometry cohort already in flight.
+        if (measuring && event?.type === "scient-latex-math-preview") {
+          if (event.target instanceof Element) markDirty(event.target, true);
+          requested = true;
+          return;
+        }
         generation++;
         if (event?.target instanceof Element) markDirty(event.target, true);
         if (!disposed) layoutTask.schedule(schedule);
@@ -1681,7 +1736,11 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
         cancelPagination = null;
         layoutChanged();
       };
-      const fontsChanged = () => {
+      const fontsChanged = (event?: Event) => {
+        if (disposed || (event && !latexReadingFontEvent(root, event))) return;
+        const next = latexReadingFontKey(root);
+        if (next === fontKey) return;
+        fontKey = next;
         invalidate();
         layoutChanged();
       };
@@ -1793,6 +1852,21 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
         const next = sourceElements();
         if (next.size === observed.size && [...next].every((element) => observed.has(element)))
           return;
+        const exchanged = [...next, ...observed].filter(
+          (element) => !next.has(element) || !observed.has(element),
+        );
+        if (
+          exchanged.every(
+            (element) =>
+              element !== root &&
+              (element.isConnected
+                ? latexViewportPreparedElement(view, element)
+                : element.getAttribute("data-latex-viewport-prepared") === "true"),
+          )
+        ) {
+          observe();
+          return;
+        }
         refreshObservedBlocks = true;
         layoutChanged();
       });
@@ -1806,7 +1880,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       root.addEventListener("compositionstart", compositionStart, true);
       root.addEventListener("compositionend", compositionEnd, true);
       document.fonts?.addEventListener("loadingdone", fontsChanged);
-      void document.fonts?.ready.then(fontsChanged);
+      void prepareLatexReadingFonts(root).then(() => fontsChanged());
       schedule();
       return {
         update(_view, previous) {

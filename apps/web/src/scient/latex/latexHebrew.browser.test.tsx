@@ -1,3 +1,4 @@
+import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/core";
@@ -34,19 +35,23 @@ async function mount(input: string) {
   root = createRoot(host);
   function Harness() {
     const [text, setText] = useState(input);
+    const owner = useLatexVisualTestOwner(text);
     return (
       <LatexVisualEditor
+        sourceSnapshot={owner.snapshot}
         source={text}
         draftKey={draftKey}
         fileRevision="r1"
         disabled={false}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
-        onEdit={(expected, next) => {
-          if (expected !== source) return false;
-          source = next;
-          setText(next);
-          return true;
+        onEdit={(request) => {
+          const result = owner.edit(request);
+          if (result.accepted) {
+            source = result.snapshot.source;
+            setText(source);
+          }
+          return result;
         }}
       />
     );

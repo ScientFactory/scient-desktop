@@ -13,8 +13,10 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { createLatexVisualTestOwner, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import { pdfFitWidthScale } from "../pdf/pdfReaderModel";
+import { isMacKeyboard } from "../keyboard/keys";
 import { createNewDocumentSource } from "../documents/documentTemplates";
 import "./scient-latex.css";
 
@@ -83,6 +85,18 @@ describe("visual LaTeX page layout", () => {
   let container: HTMLDivElement;
   let root: Root;
 
+  const readingViewReady = () =>
+    expect
+      .poll(
+        () =>
+          container
+            .querySelector(".scient-latex-visual-document")
+            ?.getAttribute("data-latex-opening"),
+        { timeout: 5_000 },
+      )
+      .toBe("false");
+  const undoKeyboard = () =>
+    userEvent.keyboard(isMacKeyboard() ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}");
   it.each(["english", "hebrew"] as const)(
     "renders a new %s document's section immediately and updates imported heading levels",
     async (language) => {
@@ -91,19 +105,23 @@ describe("visual LaTeX page layout", () => {
         .replace("\\par", "test\n\n\\section{Existing}");
       function Harness() {
         const [source, setSource] = useState(current);
+        const owner = useLatexVisualTestOwner(source);
         return (
           <LatexVisualEditor
+            sourceSnapshot={owner.snapshot}
             draftKey="browser-statement-test"
             fileRevision="r1"
             source={source}
             disabled={false}
             onEditingChange={() => {}}
             onOpenSource={() => {}}
-            onEdit={(expected, next) => {
-              if (expected !== current) return false;
-              current = next;
-              setSource(next);
-              return true;
+            onEdit={(request) => {
+              const result = owner.edit(request);
+              if (result.accepted) {
+                current = result.snapshot.source;
+                setSource(current);
+              }
+              return result;
             }}
           />
         );
@@ -114,6 +132,7 @@ describe("visual LaTeX page layout", () => {
         .toBeTruthy();
       const document = container.querySelector<HTMLElement>(".scient-latex-visual-document")!;
       const editor = (document as HTMLElement & { editor: Editor }).editor;
+      await readingViewReady();
       const selectText = (text: string) => {
         editor.state.doc.descendants((node, position) => {
           if (node.isTextblock && node.textContent === text)
@@ -133,10 +152,10 @@ describe("visual LaTeX page layout", () => {
       expect(parseFloat(getComputedStyle(section).fontSize)).toBeGreaterThan(
         parseFloat(getComputedStyle(document).fontSize),
       );
-      expect(getComputedStyle(section, "::before").content).toContain("counter(scient-section)");
+      expect(getComputedStyle(section, "::before").content).toBe('"1"');
       editor.commands.updateAttributes("heading", { unnumbered: true });
       await expect.poll(() => current).toContain("\\section*{test}");
-      expect(getComputedStyle(section, "::before").content).toBe("none");
+      expect(["none", '""', ""]).toContain(getComputedStyle(section, "::before").content);
 
       // A parsed heading still carries its original command after setNode.
       selectText("Existing");
@@ -144,9 +163,7 @@ describe("visual LaTeX page layout", () => {
       await expect.poll(() => current).toContain("\\subsection{Existing}");
       const subsection = document.querySelector("h2")!;
       expect(subsection.getAttribute("data-latex-command")).toBe("subsection");
-      expect(getComputedStyle(subsection, "::before").content).toContain(
-        "counter(scient-subsection)",
-      );
+      expect(getComputedStyle(subsection, "::before").content).toBe('"0.1"');
       editor.commands.setNode("paragraph");
       await expect.poll(() => current).not.toContain("\\subsection{Existing}");
       expect(
@@ -165,21 +182,24 @@ describe("visual LaTeX page layout", () => {
     const theirs = JSON.stringify({ source: tex("Another view"), baseRevision: "r1" });
     let current = tex("Old base");
     let revision = "r1";
+    const owner = createLatexVisualTestOwner(current);
     const render = () =>
       root.render(
         <LatexVisualEditor
           source={current}
+          sourceSnapshot={owner.observe(current)}
           fileRevision={revision}
           draftKey={key}
           disabled={false}
           singleFileDocument
           onEditingChange={() => {}}
           onOpenSource={() => {}}
-          onEdit={(expected, next) => {
-            if (current !== expected) return false;
-            current = next;
+          onEdit={(request) => {
+            const outcome = owner.edit(request, current === request.edit.source);
+            if (!outcome.accepted) return outcome;
+            current = outcome.snapshot.source;
             render();
-            return true;
+            return outcome;
           }}
         />,
       );
@@ -232,9 +252,11 @@ Body.
     const writes = vi.fn();
     function Harness() {
       const [source, setSource] = useState(current);
+      const owner = useLatexVisualTestOwner(source);
       return (
         <LatexVisualEditor
           source={source}
+          sourceSnapshot={owner.snapshot}
           disabled={false}
           draftKey="browser-statement-test"
           fileRevision="r1"
@@ -243,12 +265,13 @@ Body.
           registerFinishEditing={(next) => {
             finishing.current = next;
           }}
-          onEdit={(expected, next) => {
-            writes(expected, next);
-            if (current !== expected) return false;
-            current = next;
-            setSource(next);
-            return true;
+          onEdit={(request) => {
+            const outcome = owner.edit(request, current === request.edit.source);
+            if (!outcome.accepted) return outcome;
+            writes(request.edit.source, outcome.snapshot.source);
+            current = outcome.snapshot.source;
+            setSource(current);
+            return outcome;
           }}
         />
       );
@@ -257,6 +280,7 @@ Body.
     await expect
       .poll(() => container.querySelector(".scient-latex-statement-title-text"))
       .toBeTruthy();
+    await readingViewReady();
     const editor = (
       container.querySelector(".scient-latex-visual-document") as HTMLElement & { editor: Editor }
     ).editor;
@@ -319,12 +343,14 @@ Body.
       "\\documentclass[letterpaper]{article}\n\\begin{document}\n" +
       "A paragraph with enough ordinary text to lay out the editor.\n\n".repeat(35) +
       "\\end{document}";
-    const onEdit = vi.fn(() => true);
+    const owner = createLatexVisualTestOwner(source);
+    const onEdit = vi.fn(owner.edit);
     root.render(
       <LatexVisualEditor
         draftKey="browser-statement-test"
         fileRevision="r1"
         source={source}
+        sourceSnapshot={owner.snapshot}
         disabled={false}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
@@ -361,19 +387,22 @@ Body.
     let current = original;
     function Harness() {
       const [source, setSource] = useState(current);
+      const owner = useLatexVisualTestOwner(source);
       return (
         <LatexVisualEditor
           draftKey="browser-statement-test"
           fileRevision="r1"
           source={source}
+          sourceSnapshot={owner.snapshot}
           disabled={false}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
-          onEdit={(expected, next) => {
-            if (expected !== current) return false;
-            current = next;
-            setSource(next);
-            return true;
+          onEdit={(request) => {
+            const outcome = owner.edit(request, request.edit.source === current);
+            if (!outcome.accepted) return outcome;
+            current = outcome.snapshot.source;
+            setSource(current);
+            return outcome;
           }}
         />
       );
@@ -386,6 +415,7 @@ Body.
           | null
       )?.editor;
     await expect.poll(editor).toBeTruthy();
+    await readingViewReady();
     expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
     const live = editor()!;
     let italicFrom = -1,
@@ -403,8 +433,8 @@ Body.
     );
     const changed = original.replace("{italic}", "{changed}").replace(" after.", " ending.");
     await expect.poll(() => current).toBe(changed);
-    live.commands.focus();
-    await userEvent.keyboard("{Control>}z{/Control}");
+    live.view.focus();
+    await undoKeyboard();
     await expect.poll(() => current).toBe(original);
     expect(editor()).toBe(live);
     expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
@@ -423,22 +453,28 @@ Body.
     const acknowledgements: ReturnType<typeof setTimeout>[] = [];
     function Harness() {
       const [host, setHost] = useState({ source: original, revision: "r1" });
+      const [owner] = useState(() => createLatexVisualTestOwner(original));
       return (
         <LatexVisualEditor
           draftKey="browser-statement-test"
           fileRevision={host.revision}
-          source={host.source}
+          source={owner.snapshot.source}
+          sourceSnapshot={owner.snapshot}
           disabled={false}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
-          onEdit={(expected, next) => {
-            if (expected !== current) return false;
-            current = next;
+          onEdit={(request) => {
+            const outcome = owner.edit(request, request.edit.source === current);
+            if (!outcome.accepted) return outcome;
+            current = outcome.snapshot.source;
             const acknowledgedRevision = `r${++revision}`;
             acknowledgements.push(
-              setTimeout(() => setHost({ source: next, revision: acknowledgedRevision }), 150),
+              setTimeout(
+                () => setHost({ source: outcome.snapshot.source, revision: acknowledgedRevision }),
+                150,
+              ),
             );
-            return true;
+            return outcome;
           }}
         />
       );
@@ -446,9 +482,10 @@ Body.
     try {
       root.render(<Harness />);
       await expect.poll(editor).toBeTruthy();
+      await readingViewReady();
       const live = editor()!;
       live.commands.setTextSelection(1);
-      live.commands.focus();
+      live.view.focus();
       for (let index = 0; index < 12; index++) {
         await userEvent.keyboard("m");
         await new Promise((resolve) => setTimeout(resolve, 220));
@@ -456,8 +493,8 @@ Body.
       await expect.poll(() => current).toBe(original.replace("Before", "m".repeat(12) + "Before"));
       await new Promise((resolve) => setTimeout(resolve, 500));
       for (let count = 0; count < 12 && current !== original; count++) {
-        live.commands.focus();
-        await userEvent.keyboard("{Control>}z{/Control}");
+        live.view.focus();
+        await undoKeyboard();
         await new Promise((resolve) => setTimeout(resolve, 400));
       }
       await expect.poll(() => current).toBe(original);
@@ -471,19 +508,22 @@ Body.
     let current = "\\documentclass{article}\n\\begin{document}\nBefore\n\\end{document}";
     function Harness() {
       const [text, setText] = useState(current);
+      const owner = useLatexVisualTestOwner(text);
       return (
         <LatexVisualEditor
           draftKey="browser-statement-test"
           fileRevision="r1"
           source={text}
+          sourceSnapshot={owner.snapshot}
           disabled={false}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
-          onEdit={(expected, next) => {
-            if (expected !== current) return false;
-            current = next;
-            setText(next);
-            return true;
+          onEdit={(request) => {
+            const outcome = owner.edit(request, request.edit.source === current);
+            if (!outcome.accepted) return outcome;
+            current = outcome.snapshot.source;
+            setText(current);
+            return outcome;
           }}
         />
       );
@@ -521,19 +561,22 @@ Proof body.
     let current = original;
     function Harness() {
       const [source, setSource] = useState(current);
+      const owner = useLatexVisualTestOwner(source);
       return (
         <LatexVisualEditor
           draftKey="browser-statement-test"
           fileRevision="r1"
           source={source}
+          sourceSnapshot={owner.snapshot}
           disabled={false}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
-          onEdit={(expected, next) => {
-            if (expected !== current) return false;
-            current = next;
-            setSource(next);
-            return true;
+          onEdit={(request) => {
+            const outcome = owner.edit(request, request.edit.source === current);
+            if (!outcome.accepted) return outcome;
+            current = outcome.snapshot.source;
+            setSource(current);
+            return outcome;
           }}
         />
       );
@@ -546,6 +589,7 @@ Proof body.
           | null
       )?.editor;
     await expect.poll(editor).toBeTruthy();
+    await readingViewReady();
     await expect
       .poll(() => container.querySelectorAll(".scient-latex-scientific-body").length)
       .toBe(2);
@@ -625,19 +669,22 @@ Proof body.
     let current = "\\documentclass{article}\n\\begin{document}\n" + raw + "\n\\end{document}";
     function Harness() {
       const [text, setText] = useState(current);
+      const owner = useLatexVisualTestOwner(text);
       return (
         <LatexVisualEditor
           draftKey="browser-statement-test"
           fileRevision="r1"
           source={text}
+          sourceSnapshot={owner.snapshot}
           disabled={false}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
-          onEdit={(expected, next) => {
-            if (expected !== current) return false;
-            current = next;
-            setText(next);
-            return true;
+          onEdit={(request) => {
+            const outcome = owner.edit(request, request.edit.source === current);
+            if (!outcome.accepted) return outcome;
+            current = outcome.snapshot.source;
+            setText(current);
+            return outcome;
           }}
         />
       );
@@ -653,15 +700,17 @@ Proof body.
   });
 
   it("keeps content out of gaps and honors the explicit break after Contents", async () => {
+    const owner = createLatexVisualTestOwner(source);
     root.render(
       <LatexVisualEditor
         draftKey="browser-pagination-test"
         fileRevision="r1"
         source={source}
+        sourceSnapshot={owner.snapshot}
         disabled={false}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
-        onEdit={() => true}
+        onEdit={owner.edit}
       />,
     );
     await expect

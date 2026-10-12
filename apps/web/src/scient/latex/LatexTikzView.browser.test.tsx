@@ -1,9 +1,9 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ScientLatexArtworkRequest } from "@t3tools/contracts";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
 const captured = vi.hoisted(() => ({
-  requests: [] as Array<{ widthInches: number; source: string; algorithmNumber?: number }>,
+  requests: [] as Array<ScientLatexArtworkRequest>,
   response: { _tag: "unavailable", message: "Synthetic compiler response" } as
     | { _tag: "unavailable"; message: string }
     | {
@@ -14,11 +14,7 @@ const captured = vi.hoisted(() => ({
   pdfLoads: vi.fn(),
 }));
 vi.mock("@t3tools/client-runtime/state/scient-latex", () => ({
-  renderEnvironmentLatexArtwork: ({
-    request,
-  }: {
-    request: { widthInches: number; source: string; algorithmNumber?: number };
-  }) => {
+  renderEnvironmentLatexArtwork: ({ request }: { request: ScientLatexArtworkRequest }) => {
     captured.requests.push(request);
     return request;
   },
@@ -32,6 +28,13 @@ vi.mock("~/state/session", () => ({ readPreparedConnection: () => ({}) }));
 vi.mock("../pdf/pdfRuntime", () => ({ startPdfDocumentLoad: captured.pdfLoads }));
 
 import { LatexTikzArtwork } from "./LatexTikzView";
+
+async function runPreview(panel: HTMLElement) {
+  await expect
+    .poll(() => panel.querySelector("button")?.textContent)
+    .toBe("Run this drawing preview");
+  panel.querySelector("button")!.click();
+}
 
 it.each(["scient-latex-figure-panel", "scient-latex-compiled-algorithm"])(
   "requests artwork at the unscaled width of %s after observing layout",
@@ -55,10 +58,12 @@ it.each(["scient-latex-figure-panel", "scient-latex-compiled-algorithm"])(
           algorithmNumber={3}
         />,
       );
+      await runPreview(panel);
       await expect.poll(() => captured.requests.length).toBe(1);
       expect(captured.requests[0]!.widthInches).toBe(panel.clientWidth / 96);
       expect(captured.requests[0]!.source).toBe(source);
       expect(captured.requests[0]!.algorithmNumber).toBe(3);
+      expect(captured.requests[0]!.authorization).toBe("execute-host-tex");
       panel.style.transform = "scale(0.7)";
       panel.style.width = "690px";
       await expect.poll(() => captured.requests.length).toBe(2);
@@ -107,6 +112,7 @@ it("decodes an isolated raster without starting PDF paint and retains its physic
         relativePath="main.tex"
       />,
     );
+    await runPreview(panel);
     await expect.poll(() => panel.querySelector("canvas")?.hidden).toBe(false);
     const painted = panel.querySelector("canvas")!;
     expect([painted.width, painted.height]).toEqual([8, 4]);
@@ -151,6 +157,7 @@ it("retains the PDF renderer for responses without native pixels", async () => {
         relativePath="main.tex"
       />,
     );
+    await runPreview(panel);
     await expect.poll(() => panel.querySelector("canvas")?.hidden).toBe(false);
     const painted = panel.querySelector("canvas")!;
     expect([painted.width, painted.height]).toEqual([192, 96]);
@@ -198,6 +205,7 @@ it("releases a raster that finishes decoding after its editor is unmounted", asy
         relativePath="main.tex"
       />,
     );
+    await runPreview(panel);
     await expect.poll(() => decode.mock.calls.length).toBe(1);
     const canvas = panel.querySelector("canvas")!;
     const paint = vi.spyOn(canvas.getContext("2d")!, "drawImage");
@@ -214,3 +222,66 @@ it("releases a raster that finishes decoding after its editor is unmounted", asy
     captured.response = { _tag: "unavailable", message: "Synthetic compiler response" };
   }
 });
+
+it.each(["source", "preamble", "relativePath", "cwd", "environmentId", "algorithmNumber"] as const)(
+  "requires a new action when the preview %s changes",
+  async (field) => {
+    captured.requests.length = 0;
+    captured.response = { _tag: "unavailable", message: "Synthetic compiler response" };
+    const panel = document.createElement("div");
+    panel.className = "scient-latex-figure-panel";
+    panel.style.width = "420px";
+    document.body.append(panel);
+    const root = createRoot(panel);
+    const original = {
+      source: String.raw`\begin{tikzpicture}\draw(0,0)--(1,1);\end{tikzpicture}`,
+      preamble: "\\usepackage{tikz}",
+      environmentId: EnvironmentId.make("admission-test"),
+      cwd: "/synthetic",
+      relativePath: "main.tex",
+      algorithmNumber: 1,
+    };
+    const changes = {
+      source: String.raw`\begin{tikzpicture}\draw(0,0)--(2,2);\end{tikzpicture}`,
+      preamble: "\\usepackage{tikz}\n\\newcommand{\\example}{changed}",
+      environmentId: EnvironmentId.make("different-environment"),
+      cwd: "/different-project",
+      relativePath: "different.tex",
+      algorithmNumber: 2,
+    };
+    try {
+      root.render(<LatexTikzArtwork {...original} />);
+      await expect.poll(() => panel.textContent).toContain("this is not a sandbox");
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      expect(captured.requests).toEqual([]);
+      await runPreview(panel);
+      await expect.poll(() => captured.requests.length).toBe(1);
+      expect(captured.requests[0]).toMatchObject({
+        authorization: "execute-host-tex",
+        preamble: original.preamble,
+        source: original.source,
+        workspaceRoot: original.cwd,
+        relativePath: original.relativePath,
+      });
+      root.render(<LatexTikzArtwork {...original} {...{ [field]: changes[field] }} />);
+      await expect
+        .poll(() => panel.querySelector("button")?.textContent)
+        .toBe("Run this drawing preview");
+      expect(panel.querySelector("canvas")?.hidden).toBe(true);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      expect(captured.requests.length).toBe(1);
+      // Returning to previously admitted text must not revive the old action.
+      root.render(<LatexTikzArtwork {...original} />);
+      await expect
+        .poll(() => panel.querySelector("button")?.textContent)
+        .toBe("Run this drawing preview");
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      expect(captured.requests.length).toBe(1);
+      await runPreview(panel);
+      await expect.poll(() => captured.requests.length).toBe(2);
+    } finally {
+      root.unmount();
+      panel.remove();
+    }
+  },
+);

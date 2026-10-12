@@ -33,6 +33,7 @@ export const DesktopBackendBootstrap = Schema.Struct({
   /** Server -> desktop: commands for those tabs. */
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
+  filePublicationHelperPath: Schema.optionalKey(TrimmedNonEmptyString),
   syncTexNavigatorPath: Schema.optionalKey(TrimmedNonEmptyString),
 });
 

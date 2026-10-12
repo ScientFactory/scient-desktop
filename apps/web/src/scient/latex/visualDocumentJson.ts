@@ -27,17 +27,43 @@ export function visualDocumentJson(doc: DocumentNode): JSONContent {
   return json;
 }
 
-/** Reuse unchanged block encodings without changing the durable recovery format. */
+function authoredAttributes(this: JSONContent, key: string, value: unknown): unknown {
+  if (
+    key !== "attrs" ||
+    typeof this.type !== "string" ||
+    !value ||
+    typeof value !== "object" ||
+    !("sourceId" in value || "sourceMeta" in value)
+  )
+    return value;
+  const attrs = { ...(value as Record<string, unknown>) };
+  const metadata = attrs.sourceMeta;
+  delete attrs.sourceId;
+  delete attrs.sourceMeta;
+  // A split item may still belong to its original item. This offset groups
+  // intent only; recovery verifies surviving semantics before binding ranges.
+  if (
+    this.type === "listItem" &&
+    metadata &&
+    typeof metadata === "object" &&
+    "from" in metadata &&
+    typeof metadata.from === "number"
+  )
+    attrs.sourceMeta = { from: metadata.from };
+  return attrs;
+}
+
+/** Reuse authored block encodings in the existing recovery JSON envelope. */
 export function serializedVisualDocument(doc: DocumentNode): string {
   const content: string[] = [];
   doc.forEach((node) => {
     let json = serialized.get(node);
     if (json === undefined) {
-      json = JSON.stringify(node.toJSON());
+      json = JSON.stringify(node.toJSON(), authoredAttributes);
       serialized.set(node, json);
     }
     content.push(json);
   });
-  const envelope = JSON.stringify(documentEnvelope(doc));
+  const envelope = JSON.stringify(documentEnvelope(doc), authoredAttributes);
   return content.length ? `${envelope.slice(0, -1)},"content":[${content.join(",")}]}` : envelope;
 }

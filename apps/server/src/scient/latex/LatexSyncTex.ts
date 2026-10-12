@@ -25,57 +25,29 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProcessRunner from "../../processRunner.ts";
+import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import * as GeneratedDocumentStore from "../documentArtifacts/GeneratedDocumentStore.ts";
 import * as SyncTexRuntime from "./SyncTexRuntime.ts";
 import { parseSyncTexForwardLocation, parseSyncTexInverseLocations } from "./syncTexOutput.ts";
+import {
+  collectLatexBuildEvidence,
+  decodePublishedLatexBuildEvidence,
+  latexEvidenceMatches,
+  type PublishedLatexBuildEvidence,
+} from "./latexBuildEvidence.ts";
 
-const SyncTexNavigationMetadataV1 = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
-  workspaceRoot: Schema.String,
-  rootRelativePath: Schema.String,
-  compileDirectory: Schema.String,
-  outputFileName: Schema.String,
-  command: Schema.String,
-  binDirectory: Schema.NullOr(Schema.String),
-});
-const SyncTexNavigationMetadataV2 = Schema.Struct({
-  schemaVersion: Schema.Literal(2),
-  workspaceRoot: Schema.String,
-  rootRelativePath: Schema.String,
-  compileDirectory: Schema.String,
-  outputFileName: Schema.String,
-  /** Resolve the current contained install at request time; never persist an executable path. */
-  managed: Schema.Boolean,
-});
 const SyncTexNavigationMetadata = Schema.Struct({
-  schemaVersion: Schema.Literal(3),
+  schemaVersion: Schema.Literal(4),
   workspaceRoot: Schema.String,
   rootRelativePath: Schema.String,
   compileDirectory: Schema.String,
   outputFileName: Schema.String,
+  evidenceFileName: Schema.String,
 });
 type SyncTexNavigationMetadata = typeof SyncTexNavigationMetadata.Type;
-const SyncTexNavigationMetadataJson = Schema.fromJsonString(
-  Schema.Union([
-    SyncTexNavigationMetadataV1,
-    SyncTexNavigationMetadataV2,
-    SyncTexNavigationMetadata,
-  ]),
-);
+const SyncTexNavigationMetadataJson = Schema.fromJsonString(SyncTexNavigationMetadata);
 const encodeNavigationMetadata = Schema.encodeSync(SyncTexNavigationMetadataJson);
-const decodeNavigationMetadataFile = Schema.decodeUnknownOption(SyncTexNavigationMetadataJson);
-const decodeNavigationMetadata = (source: string): Option.Option<SyncTexNavigationMetadata> =>
-  Option.map(decodeNavigationMetadataFile(source), (metadata) =>
-    metadata.schemaVersion === 3
-      ? metadata
-      : {
-          schemaVersion: 3,
-          workspaceRoot: metadata.workspaceRoot,
-          rootRelativePath: metadata.rootRelativePath,
-          compileDirectory: metadata.compileDirectory,
-          outputFileName: metadata.outputFileName,
-        },
-  );
+const decodeNavigationMetadata = Schema.decodeUnknownOption(SyncTexNavigationMetadataJson);
 
 interface PublishedSyncTexInput {
   readonly artifactId: ArtifactId;
@@ -84,6 +56,7 @@ interface PublishedSyncTexInput {
   readonly rootRelativePath: string;
   readonly compileDirectory: string;
   readonly syncTexPath: string;
+  readonly evidenceFileName: string;
 }
 
 const NAVIGATION_TIMEOUT = "10 seconds";
@@ -127,6 +100,7 @@ export const make = Effect.gen(function* () {
   const runtime = yield* SyncTexRuntime.SyncTexRuntime;
   const hostPlatform = yield* HostProcess.Platform;
   const crypto = yield* Crypto.Crypto;
+  const workspaceFiles = yield* WorkspaceFileSystem;
   const authority = ArtifactAuthority.make(yield* environment.getEnvironmentId);
 
   const navigationDirectory = (artifactId: ArtifactId, revisionId: ArtifactRevisionId) =>
@@ -205,11 +179,12 @@ export const make = Effect.gen(function* () {
       const outputStem = path.basename(sourcePath).replace(/\.synctex(?:\.gz)?$/iu, "");
       const outputFileName = `${outputStem}.pdf`;
       const metadata: SyncTexNavigationMetadata = {
-        schemaVersion: 3,
+        schemaVersion: 4,
         workspaceRoot: input.workspaceRoot,
         rootRelativePath: normalizeRelativePath(input.rootRelativePath),
         compileDirectory: input.compileDirectory,
         outputFileName,
+        evidenceFileName: input.evidenceFileName,
       };
       const indexFileName = `${outputStem}.synctex${sourcePath.endsWith(".gz") ? ".gz" : ""}`;
       yield* fileSystem.makeDirectory(path.dirname(finalDirectory), { recursive: true });
@@ -247,6 +222,7 @@ export const make = Effect.gen(function* () {
     readonly directory: string;
     readonly metadata: SyncTexNavigationMetadata;
     readonly outputPath: string;
+    readonly receipt: PublishedLatexBuildEvidence;
   }
 
   const loadNavigation = (input: {
@@ -301,20 +277,96 @@ export const make = Effect.gen(function* () {
         metadataRoot === null ||
         !pathsEqual(metadata.compileDirectory, path.dirname(metadataRoot.absolutePath)) ||
         path.basename(metadata.outputFileName) !== metadata.outputFileName ||
-        !metadata.outputFileName.toLowerCase().endsWith(".pdf")
+        !metadata.outputFileName.toLowerCase().endsWith(".pdf") ||
+        path.basename(metadata.evidenceFileName) !== metadata.evidenceFileName
       ) {
         return unavailable(
           "invalid-source",
           "The requested source does not belong to this PDF revision.",
         );
       }
+      const receiptText = yield* fileSystem
+        .readFileString(path.join(config.latexDir, "evidence", metadata.evidenceFileName))
+        .pipe(Effect.orElseSucceed(() => null));
+      const receipt = receiptText === null ? null : decodePublishedLatexBuildEvidence(receiptText);
+      if (
+        receipt === null ||
+        receipt.artifactId !== input.artifactId ||
+        receipt.revisionId !== input.revisionId ||
+        receipt.evidence.rootRelativePath !== metadata.rootRelativePath ||
+        receipt.sourceRevisions === undefined ||
+        receipt.mutationEpoch === undefined ||
+        receipt.evidence.truncated
+      ) {
+        return unavailable(
+          "source-stale",
+          "This PDF has no proven compiled source revision. Rebuild the document.",
+        );
+      }
+      const current = yield* validateSources(input.workspaceRoot, receipt);
+      if (current !== null) return current;
       return {
         _tag: "available" as const,
         directory,
         metadata,
         outputPath: path.join(directory, metadata.outputFileName),
+        receipt,
       };
     });
+
+  const validateSources = Effect.fnUntraced(
+    function* (workspaceRoot: string, receipt: PublishedLatexBuildEvidence) {
+      const stale = unavailable(
+        "source-stale",
+        "The source changed since this PDF was compiled. Rebuild the document.",
+      );
+      if (
+        (yield* workspaceFiles.getMutationEpoch({ cwd: workspaceRoot })) !== receipt.mutationEpoch
+      )
+        return stale;
+      if (
+        receipt.evidence.dependencies.some(
+          (dependency) => workspaceSource(workspaceRoot, dependency.path) === null,
+        )
+      )
+        return stale;
+      for (const [relativePath, revision] of Object.entries(receipt.sourceRevisions ?? {})) {
+        if (workspaceSource(workspaceRoot, relativePath) === null) return stale;
+        const source = yield* workspaceFiles
+          .readFile({ cwd: workspaceRoot, relativePath })
+          .pipe(Effect.option);
+        if (
+          Option.isNone(source) ||
+          source.value.truncated ||
+          source.value.publicationAttention !== undefined ||
+          source.value.revision !== revision
+        )
+          return stale;
+      }
+      const current = yield* collectLatexBuildEvidence({
+        workspaceRoot,
+        rootRelativePath: receipt.evidence.rootRelativePath,
+        dependencies: receipt.evidence.dependencies.map((dependency) => dependency.path),
+        truncated: receipt.evidence.truncated,
+        nowEpochMs: receipt.evidence.recordedAtEpochMs,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+      return !latexEvidenceMatches(receipt.evidence, current.evidence) ||
+        (yield* workspaceFiles.getMutationEpoch({ cwd: workspaceRoot })) !== receipt.mutationEpoch
+        ? stale
+        : null;
+    },
+    Effect.catch(() =>
+      Effect.succeed(
+        unavailable(
+          "source-stale",
+          "The current source publication could not be verified. Resolve file recovery and rebuild the document.",
+        ),
+      ),
+    ),
+  );
 
   const runNavigation = (input: {
     readonly metadata: SyncTexNavigationMetadata;
@@ -356,8 +408,15 @@ export const make = Effect.gen(function* () {
       if (source === null) {
         return unavailable("invalid-source", "The requested source path is outside the workspace.");
       }
+      if (navigation.receipt.sourceRevisions?.[source.relativePath] !== input.sourceRevision)
+        return unavailable(
+          "source-stale",
+          "This source position does not belong to the compiled revision.",
+        );
       const resolvedRuntime = yield* resolveNavigator;
       if (resolvedRuntime._tag === "unavailable") return resolvedRuntime;
+      const beforeQuery = yield* validateSources(input.workspaceRoot, navigation.receipt);
+      if (beforeQuery !== null) return beforeQuery;
       const position =
         input.pageHint === undefined
           ? `${input.line}:${input.column ?? 0}:${source.absolutePath}`
@@ -416,6 +475,8 @@ export const make = Effect.gen(function* () {
             location = parseSyncTexForwardLocation(`${retry.value.stdout}\n${retry.value.stderr}`);
         }
       }
+      const current = yield* loadNavigation(input);
+      if (current._tag === "unavailable") return current;
       return location === null
         ? unavailable("position-unmapped", "No PDF position is mapped to this source line.")
         : ({
@@ -434,6 +495,8 @@ export const make = Effect.gen(function* () {
       if (navigation._tag === "unavailable") return navigation;
       const resolvedRuntime = yield* resolveNavigator;
       if (resolvedRuntime._tag === "unavailable") return resolvedRuntime;
+      const beforeQuery = yield* validateSources(input.workspaceRoot, navigation.receipt);
+      if (beforeQuery !== null) return beforeQuery;
       const result = yield* runNavigation({
         ...navigation,
         command: resolvedRuntime.command,
@@ -479,9 +542,19 @@ export const make = Effect.gen(function* () {
           path.isAbsolute(relative)
         )
           continue;
+        const relativePath = normalizeRelativePath(relative);
+        const sourceRevision = navigation.receipt.sourceRevisions?.[relativePath];
+        if (sourceRevision === undefined)
+          return unavailable(
+            "source-stale",
+            "The matching source has no proven compiled revision. Rebuild the document.",
+          );
+        const current = yield* loadNavigation(input);
+        if (current._tag === "unavailable") return current;
         return {
           _tag: "found",
-          relativePath: normalizeRelativePath(relative),
+          relativePath,
+          sourceRevision,
           line: location.line,
           column: location.column,
         } satisfies ScientLatexInverseSyncResult;

@@ -9,7 +9,10 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
-import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import type {
+  MarkdownPersistenceLease,
+  MarkdownPersistenceMoveTransaction,
+} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -20,10 +23,6 @@ import {
 
 /** How long the views may take to follow a moved document before they are remounted. */
 const FOLLOW_TIMEOUT_MS = 3_000;
-
-function folderOf(path: string): string {
-  return path.slice(0, path.lastIndexOf("/") + 1);
-}
 
 /**
  * No tab of this thread already shows the destination: it would take over.
@@ -94,27 +93,32 @@ export function useInPlaceRename(input: {
     [],
   );
 
-  const moveInPlace = async (destination: string): Promise<RenameOpenDocumentResult> => {
+  const moveInPlace = async (
+    destination: string,
+    transaction?: MarkdownPersistenceMoveTransaction,
+  ): Promise<RenameOpenDocumentResult> => {
     if (lease === null || relativePath === null) return { kind: "legacy-required" };
     const from = relativePath;
-    if (folderOf(from) !== folderOf(destination) || !input.canMove(from, destination))
-      return { kind: "legacy-required" };
+    const followsInPlace = input.canMove(from, destination);
     if (input.sourceBusy?.(from)) return { kind: "legacy-required", reason: "busy" };
     const outcome = await renameOpenDocument({
       lease,
+      ...(transaction ? { transaction, removeEmptyFolders: true as const } : {}),
       destination: {
         environmentId: input.environmentId,
         cwd: input.cwd,
         relativePath: destination,
       },
-      rename: async (expectedRevision) => {
+      rename: async (expectedRevision, mutationId, intent) => {
         const result = await renameFile({
-          environmentId: input.environmentId,
+          environmentId: intent.from.environmentId,
           input: {
-            cwd: input.cwd,
-            relativePath: from,
-            destinationRelativePath: destination,
+            cwd: intent.from.cwd,
+            relativePath: intent.from.relativePath,
+            destinationRelativePath: intent.destination.relativePath,
             expectedRevision,
+            mutationId,
+            ...(intent.removeEmptyFolders ? { removeEmptyFolders: true } : {}),
           },
         });
         if (result._tag === "Success")
@@ -131,8 +135,12 @@ export function useInPlaceRename(input: {
       destinationFree: () =>
         destinationTabFree(input.threadRef, destination) &&
         (input.destinationStorageFree?.(destination) ?? true),
-      reopen: (to, revision) => input.reopen(from, to, revision),
       follow: (to) => {
+        if (!followsInPlace) {
+          input.reopen(from, to, lease.getSnapshot().baselineRevision);
+          setSurfaceGeneration((generation) => generation + 1);
+          return;
+        }
         input.moveViewState(from, to);
         input.moveTab(from, to);
         clearProjectFileQueryData(input.environmentId, input.cwd, from);

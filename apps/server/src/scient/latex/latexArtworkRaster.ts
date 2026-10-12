@@ -41,6 +41,7 @@ export const makeLatexArtworkRaster = Effect.gen(function* () {
     cwd: string,
     environment: Readonly<Record<string, string>>,
     timeout: "2 seconds" | "5 seconds",
+    onRetirementFailure: Effect.Effect<void>,
   ) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
@@ -52,7 +53,14 @@ export const makeLatexArtworkRaster = Effect.gen(function* () {
             cwd,
             environment,
           }),
-          (handle) => handle.cancel.pipe(Effect.ignoreCause()),
+          (handle) =>
+            handle.cancel.pipe(
+              Effect.andThen(handle.exitCode),
+              Effect.catchCause((cause) =>
+                onRetirementFailure.pipe(Effect.andThen(Effect.failCause(cause))),
+              ),
+              Effect.orDie,
+            ),
         );
         const transcript = yield* Ref.make("");
         const output = yield* handle.output.pipe(
@@ -74,6 +82,7 @@ export const makeLatexArtworkRaster = Effect.gen(function* () {
       cwd: string;
       environment: Readonly<Record<string, string>>;
       ratio: number;
+      onRetirementFailure: Effect.Effect<void>;
     }) {
       const inherited = { ...hostEnvironment, ...input.environment };
       const info = resolveExecutable("pdfinfo", platform, inherited);
@@ -85,6 +94,7 @@ export const makeLatexArtworkRaster = Effect.gen(function* () {
         input.cwd,
         input.environment,
         "2 seconds",
+        input.onRetirementFailure,
       );
       const size = text === null ? null : artworkRasterSize(text, input.ratio);
       if (!size) return null;
@@ -108,6 +118,7 @@ export const makeLatexArtworkRaster = Effect.gen(function* () {
         input.cwd,
         input.environment,
         "5 seconds",
+        input.onRetirementFailure,
       );
       if (painted === null || (yield* fileSystem.stat(pngPath)).size > 6_000_000n) return null;
       const bytes = yield* fileSystem.readFile(pngPath);

@@ -63,11 +63,6 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain('aria-label="Choose LaTeX document to compile"');
   });
 
-  it("carries the selected root through SyncTeX source navigation", () => {
-    expect(surfaceSource).toContain("latexRootRelativePath: snapshot.rootRelativePath");
-    expect(panelSource).toContain("latexRootRelativePath={latexRootRelativePath}");
-  });
-
   it("consumes an automatic Split presentation without changing the saved user preference", () => {
     expect(surfaceSource).toContain("props.latexPresentationRequest?.mode ?? initialPreviewMode()");
     expect(surfaceSource).toContain("setPreferredMode(request.mode)");

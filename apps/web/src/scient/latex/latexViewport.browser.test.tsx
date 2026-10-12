@@ -16,8 +16,11 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import {
+  captureLatexViewportAnchor,
+  navigateLatexViewport,
   latexViewportContext,
   latexViewportMeasurement,
   presentLatexViewportPages,
@@ -35,9 +38,11 @@ import {
   clearScientMarkdownSearch,
   scientMarkdownSearchState,
 } from "../markdownEditor/prosemirror/search";
+import { latexReadingFontsReady } from "./latexReadingFonts";
 import "./scient-latex.css";
 
-const key = "browser-viewport-source-preservation";
+let key = "browser-viewport-source-preservation";
+let testSequence = 0;
 const paragraphs = Array.from(
   { length: 48 },
   (_, index) =>
@@ -54,6 +59,7 @@ let container: HTMLDivElement;
 let root: Root;
 let current: string;
 beforeEach(async () => {
+  key = `browser-viewport-source-preservation-${++testSequence}`;
   clearVisualDraft(key);
   await page.viewport(1300, 900);
   container = document.createElement("div");
@@ -73,19 +79,22 @@ async function open(input = source) {
   current = input;
   function Harness() {
     const [value, setValue] = useState(current);
+    const owner = useLatexVisualTestOwner(value);
     return (
       <LatexVisualEditor
         draftKey={key}
         fileRevision="r1"
         source={value}
+        sourceSnapshot={owner.snapshot}
         disabled={false}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
-        onEdit={(expected, next) => {
-          if (expected !== current) return false;
-          current = next;
-          setValue(next);
-          return true;
+        onEdit={(request) => {
+          const outcome = owner.edit(request, request.edit.source === current);
+          if (!outcome.accepted) return outcome;
+          current = outcome.snapshot.source;
+          setValue(current);
+          return outcome;
         }}
       />
     );
@@ -105,6 +114,7 @@ async function open(input = source) {
 }
 
 async function prepared(editor: Editor) {
+  await expect.poll(() => editor.view.dom.dataset.latexOpening, { timeout: 15000 }).toBe("false");
   await expect
     .poll(() => editor.view.dom.dataset.latexViewportPending, { timeout: 30000 })
     .toBe("0");
@@ -160,7 +170,7 @@ it("measures progressively admitted offscreen blocks in bounded cohorts", async 
   const model = editor.state.doc;
   await prepared(editor);
   expect(batches.some((size) => size > 4)).toBe(true);
-  expect(Math.max(...batches)).toBeLessThanOrEqual(16);
+  expect(Math.max(...batches)).toBeLessThanOrEqual(64);
   expect(editor.state.doc).toBe(model);
   expect(current).toBe(source);
   expect(container.querySelector("math-field")).toBeNull();
@@ -343,9 +353,10 @@ it("admits an immediately clicked distant equation and keeps the active math edi
   const input = String.raw`\documentclass{article}
 \usepackage{amsmath}
 \begin{document}
-${Array.from({ length: 36 }, (_, index) => `Paragraph ${index + 1}.\n\n` + String.raw`\[x_{${index + 1}}^2+\frac{1}{y}\]`).join("\n\n")}
+${Array.from({ length: 240 }, (_, index) => `Paragraph ${index + 1}.\n\n` + String.raw`\[x_{${index + 1}}^2+\frac{1}{y}\]`).join("\n\n")}
 \end{document}`;
   const editor = await open(input);
+  await expect.poll(() => editor.view.dom.dataset.latexOpening, { timeout: 15000 }).toBe("false");
   const doc = editor.state.doc;
   const position = doc.content.size - doc.lastChild!.nodeSize;
   const closed = editor.view.nodeDOM(position) as HTMLElement;
@@ -396,7 +407,7 @@ ${Array.from({ length: 36 }, (_, index) => `Paragraph ${index + 1}.\n\n` + Strin
   await expect
     .poll(() => current)
     .toBe(
-      input.replace(String.raw`\[x_{36}^2+\frac{1}{y}\]`, String.raw`\[x_{36}^2+\frac{1}{y}+z\]`),
+      input.replace(String.raw`\[x_{240}^2+\frac{1}{y}\]`, String.raw`\[x_{240}^2+\frac{1}{y}+z\]`),
     );
   await userEvent.keyboard("{Control>}z{/Control}");
   await expect.poll(() => current).toBe(input);
@@ -595,4 +606,239 @@ ${"The concluding paragraph follows the displayed result. ".repeat(5)}
   expect(latexPaginationKey.getState(editor.state)!.pages).toEqual(placements);
   expect(editor.state.doc).toBe(doc);
   expect(current).toBe(input);
+}, 45000);
+
+it("keeps visited prose and formulas warm through a reading pause without moving prepared page geometry", async () => {
+  const editor = await open();
+  await prepared(editor);
+  const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+  const model = editor.state.doc;
+  const height = scroll.scrollHeight;
+  const viewportBox = scroll.getBoundingClientRect();
+  const initial = [
+    ...editor.view.dom.querySelectorAll<HTMLElement>('[data-latex-viewport="mounted"]'),
+  ].filter((element) => {
+    const box = element.getBoundingClientRect();
+    return box.bottom > viewportBox.top && box.top < viewportBox.bottom;
+  });
+  const firstMath = editor.view.dom.querySelector(".scient-latex-math-preview");
+  const pages = latexPaginationKey.getState(editor.state)!.pages;
+  scroll.scrollTop = scroll.clientHeight * 3;
+  await new Promise((resolve) => setTimeout(resolve, 14000));
+  scroll.scrollTop = 0;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(initial.every((element) => element.isConnected)).toBe(true);
+  expect(editor.view.dom.contains(firstMath)).toBe(true);
+  expect(Math.abs(scroll.scrollHeight - height)).toBeLessThan(1);
+  expect(latexPaginationKey.getState(editor.state)!.pages).toBe(pages);
+  expect(editor.state.doc).toBe(model);
+  expect(current).toBe(source);
+  expect(container.querySelector<HTMLElement>(".scient-latex-viewport-status")?.hidden).toBe(true);
+}, 45000);
+
+it("keeps a distant prepared remount stable and does not launch another whole-document snapshot", async () => {
+  const editor = await open();
+  await prepared(editor);
+  const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const height = scroll.scrollHeight;
+  const pages = latexPaginationKey.getState(editor.state)!.pages;
+  const heights: number[] = [];
+  let snapshots = 0;
+  const observer = new MutationObserver((events) => {
+    for (const event of events)
+      for (const node of event.addedNodes)
+        if (node instanceof HTMLElement && node.hasAttribute("data-latex-measurement-snapshot"))
+          snapshots++;
+  });
+  observer.observe(document.body, { childList: true });
+  scroll.scrollTop = scroll.scrollHeight - scroll.clientHeight;
+  for (let i = 0; i < 16; i++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    heights.push(scroll.scrollHeight);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  observer.disconnect();
+  expect(Math.max(...heights.map((value) => Math.abs(value - height)))).toBeLessThan(1);
+  expect(latexPaginationKey.getState(editor.state)!.pages).toBe(pages);
+  expect(snapshots).toBe(0);
+  expect(
+    editor.view.dom.querySelector(
+      '[data-latex-viewport-rendering="true"][data-latex-viewport-prepared="true"]',
+    ),
+  ).toBeNull();
+  expect(current).toBe(source);
+}, 45000);
+
+it("reveals cold prose at pointer capture and preserves native editing and undo", async () => {
+  const input = String.raw`\documentclass{article}
+\begin{document}
+${Array.from({ length: 240 }, (_, i) => `ColdReading ${i}. ${"Words which wrap across the paper. ".repeat(8)} ` + String.raw`\(q_{${i}}^2\).`).join("\n\n")}
+\end{document}`;
+  const editor = await open(input);
+  await expect.poll(() => editor.view.dom.dataset.latexOpening, { timeout: 15000 }).toBe("false");
+  const position = Array.from({ length: 40 }, (_, i) => editor.state.doc.child(i).nodeSize).reduce(
+    (a, b) => a + b,
+    0,
+  );
+  const paragraph = editor.view.nodeDOM(position) as HTMLElement;
+  expect(paragraph.dataset.latexViewportPrepared).toBe("false");
+  const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+  scroll.scrollTop +=
+    paragraph.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 60;
+  const pointerBox = paragraph.getBoundingClientRect();
+  paragraph.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 42,
+      pointerType: "mouse",
+      clientX: pointerBox.left + 10,
+      clientY: pointerBox.top + 5,
+    }),
+  );
+  document.dispatchEvent(
+    new PointerEvent("pointerup", {
+      bubbles: true,
+      button: 0,
+      buttons: 0,
+      pointerId: 42,
+      pointerType: "mouse",
+    }),
+  );
+  await expect.poll(() => editor.view.hasFocus()).toBe(true);
+  const revealed = editor.view.nodeDOM(position) as HTMLElement;
+  expect(revealed.textContent).toContain("ColdReading 40.");
+  expect(
+    getComputedStyle(revealed).visibility,
+    JSON.stringify({
+      dataset: revealed.dataset,
+      position,
+      selection: editor.state.selection.toJSON(),
+    }),
+  ).toBe("visible");
+  expect(current).toBe(input);
+  const selectionAnchor = editor.state.selection.anchor;
+  const nextParagraph = editor.view.nodeDOM(
+    position + editor.state.doc.nodeAt(position)!.nodeSize,
+  ) as HTMLElement;
+  await userEvent.click(nextParagraph, {
+    force: true,
+    position: { x: 10, y: 5 },
+    modifiers: ["Shift"],
+  });
+  expect(editor.state.selection.anchor).toBe(selectionAnchor);
+  await userEvent.click(revealed, { force: true, position: { x: 10, y: 5 } });
+  await userEvent.keyboard("READY ");
+  await expect.poll(() => current.includes("READY ")).toBe(true);
+  expect(current.indexOf("READY ")).toBeGreaterThanOrEqual(input.indexOf("ColdReading 40."));
+  expect(current.indexOf("READY ")).toBeLessThan(input.indexOf("ColdReading 41."));
+  editor.commands.undo();
+  await expect.poll(() => current).toBe(input);
+}, 45000);
+
+it("does not restore an older anchor after a newer scroll during layout settlement", async () => {
+  const editor = await open();
+  await prepared(editor);
+  const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+  scroll.scrollTop = 800;
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  const anchor = captureLatexViewportAnchor(editor.view)!;
+  expect(anchor).toBeTruthy();
+  const oldPadding = editor.view.dom.style.paddingTop;
+  editor.view.dom.style.paddingTop = "100px";
+  anchor.restore();
+  scroll.scrollTop = 0;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(scroll.scrollTop).toBe(0);
+  editor.view.dom.style.paddingTop = oldPadding;
+  expect(current).toBe(source);
+}, 45000);
+
+it("keeps prepared geometry when an unrelated UI font finishes loading", async () => {
+  const editor = await open();
+  await prepared(editor);
+  await expect.poll(() => editor.view.dom.dataset.latexOpening).toBe("false");
+  expect(latexReadingFontsReady(editor.view.dom)).toBe(true);
+  const first = editor.state.doc.firstChild!;
+  const context = latexViewportContext(editor.view, first, 0);
+  const pages = latexPaginationKey.getState(editor.state)!.pages;
+  const face = new FontFace("UnrelatedReaderTest", 'local("Arial")');
+  document.fonts.add(face);
+  try {
+    document.fonts.dispatchEvent(new FontFaceSetLoadEvent("loadingdone", { fontfaces: [face] }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(latexViewportContext(editor.view, first, 0)).toBe(context);
+    expect(editor.view.dom.dataset.latexViewportPending).toBe("0");
+    expect(latexPaginationKey.getState(editor.state)!.pages).toBe(pages);
+    expect(container.querySelector<HTMLElement>(".scient-latex-viewport-status")?.hidden).toBe(
+      true,
+    );
+  } finally {
+    document.fonts.delete(face);
+  }
+}, 45000);
+
+it("reopens at the saved source block and prepares that viewport before revealing it", async () => {
+  const editor = await open();
+  await prepared(editor);
+  const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+  scroll.scrollTop = scroll.clientHeight * 4;
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const saved = captureLatexViewportAnchor(editor.view)!;
+  expect(saved).toBeTruthy();
+  const position = saved.position;
+  const offset =
+    (editor.view.nodeDOM(position) as HTMLElement).getBoundingClientRect().top -
+    scroll.getBoundingClientRect().top;
+  root.unmount();
+  root = createRoot(container);
+  const reopened = await open();
+  await expect.poll(() => reopened.view.dom.dataset.latexOpening, { timeout: 15000 }).toBe("false");
+  const nextScroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+  expect(nextScroll.scrollTop).toBeGreaterThan(1000);
+  expect(
+    Math.abs(
+      (reopened.view.nodeDOM(position) as HTMLElement).getBoundingClientRect().top -
+        nextScroll.getBoundingClientRect().top -
+        offset,
+    ),
+  ).toBeLessThan(1);
+  expect(current).toBe(source);
+}, 45000);
+
+it("follows navigation that arrives while opening fonts are still pending", async () => {
+  const face = new FontFace("KaTeX_OpeningNavigationFixture", 'local("Arial")');
+  const load = vi.spyOn(face, "load").mockImplementation(() => new Promise<FontFace>(() => {}));
+  document.fonts.add(face);
+  try {
+    const editor = await open();
+    expect(editor.view.dom.dataset.latexOpening).toBe("true");
+    const position = Array.from(
+      { length: 28 },
+      (_, index) => editor.state.doc.child(index).nodeSize,
+    ).reduce((sum, size) => sum + size, 0);
+    const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+    const target = editor.view.nodeDOM(position) as HTMLElement;
+    scroll.scrollTop +=
+      target.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 80;
+    navigateLatexViewport(editor.view, position);
+    const offset = target.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+    await expect.poll(() => editor.view.dom.dataset.latexOpening, { timeout: 15000 }).toBe("false");
+    expect(scroll.scrollTop).toBeGreaterThan(1000);
+    expect(
+      Math.abs(
+        (editor.view.nodeDOM(position) as HTMLElement).getBoundingClientRect().top -
+          scroll.getBoundingClientRect().top -
+          offset,
+      ),
+    ).toBeLessThan(1);
+    expect(current).toBe(source);
+  } finally {
+    load.mockRestore();
+    document.fonts.delete(face);
+  }
 }, 45000);

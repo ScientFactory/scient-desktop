@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { latexDocumentLanguage } from "../latex/latexLanguage";
+import { declaredLatexCompiler, updateLatexCompilerSource } from "../latex/latexCompiler";
 import { assembleVisualProject, type VisualProjectFile } from "../latex/latexProjectVisual";
 import { latexGuidance } from "../latex/latexGuidance";
 import { rewriteGuidedPlaces } from "../latex/latexGuidanceText";
@@ -124,6 +125,48 @@ describe("new documents", () => {
     const language = latexDocumentLanguage(source);
     expect(language.main).toBe("hebrew");
     expect(language.hebrewFont).toBe("Times New Roman");
+  });
+
+  it("applies a new-document preference while preserving Hebrew's Unicode requirement", () => {
+    expect(
+      declaredLatexCompiler(
+        createNewDocumentSource({
+          format: "latex",
+          template: "article",
+          language: "english",
+          compiler: "lualatex",
+        }),
+      ),
+    ).toBe("lualatex");
+    expect(
+      declaredLatexCompiler(
+        createNewDocumentSource({
+          format: "latex",
+          template: "article",
+          language: "hebrew",
+          compiler: "pdflatex",
+        }),
+      ),
+    ).toBe("xelatex");
+    const hebrewLua = createNewDocumentSource({
+      format: "latex",
+      template: "article",
+      language: "hebrew",
+      compiler: "lualatex",
+    });
+    expect(declaredLatexCompiler(hebrewLua)).toBe("lualatex");
+    expect(latexDocumentLanguage(hebrewLua).main).toBe("hebrew");
+  });
+
+  it("retains a compiler choice across template changes without mistaking it for written content", () => {
+    const chosen = updateLatexCompilerSource(article, "lualatex");
+    expect(isUntouchedNewLatexDocument(chosen, "article", "english")).toBe(true);
+    const switched = switchNewLatexDocument(chosen, "lab-report", "hebrew");
+    expect(declaredLatexCompiler(switched)).toBe("lualatex");
+    expect(isUntouchedNewLatexDocument(switched, "lab-report", "hebrew")).toBe(true);
+    expect(
+      isUntouchedNewLatexDocument(switched + "\\par Real writing", "lab-report", "hebrew"),
+    ).toBe(false);
   });
 
   it("opens every template in Visual without a source-only block, in each language", () => {
