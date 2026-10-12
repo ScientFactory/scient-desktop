@@ -10,7 +10,7 @@ export type SourceCitationTarget = ScopedThreadRef & {
   latexRootRelativePath?: string | undefined;
 };
 const revisions = new Map<string, string>();
-export function sourceCitationRevision(source: string) {
+function sourceCitationRevision(source: string) {
   const existing = revisions.get(source);
   if (existing) return existing;
   const revision = `sha256:${bytesToHex(sha256(new TextEncoder().encode(source)))}`;
