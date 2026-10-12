@@ -110,7 +110,7 @@ describe("CursorAdapterV2", () => {
           providerInstanceId: instanceId,
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
-          browserToolsAvailable: true,
+          capabilities: new Set(["preview"]),
         });
         let sentWithMcpOverride = true;
         const modelSelection = { instanceId, model: "composer-2.5" };
@@ -1101,17 +1101,22 @@ describe("CursorAdapterV2", () => {
       if (Option.isSome(terminal)) assert.equal(terminal.value.status, "completed");
       assert.lengthOf(opened, 1);
       assert.lengthOf(sent, 1);
+      assert.notProperty(sent[0]?.options ?? {}, "mcpServers");
       assert.deepEqual(
-        sent[0]?.options?.mcpServers,
+        opened[0]?.options.mcpServers,
         mode === "present"
           ? {
               scient: {
                 type: "http",
-                url: sendCredential.endpoint,
-                headers: { Authorization: sendCredential.authorizationHeader },
+                url: credential.endpoint,
+                headers: { Authorization: credential.authorizationHeader },
               },
             }
           : undefined,
+      );
+      assert.equal(
+        (yield* mcpSessions.read(threadId))?.authorizationHeader,
+        mode === "missing" ? undefined : sendCredential.authorizationHeader,
       );
       const logged = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
         open: loggedCursorAgentOptions(opened[0]!.options),

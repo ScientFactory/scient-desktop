@@ -154,8 +154,9 @@ describe("Cursor skills", () => {
             enabled: true,
           },
         ];
-        expect(yield* discoverCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
         expect(yield* probeCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+        const machineCatalog = yield* makeCursorMachineSkillCatalog({ HOME: userHome });
+        expect(yield* machineCatalog).toEqual(expected.filter((skill) => skill.scope === "user"));
       }),
     ));
 
