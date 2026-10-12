@@ -85,6 +85,7 @@ import {
   inheritedForkPrefixIsNative,
 } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
+import { pendingStartInterruptEffect } from "./scient-fork/PendingStartInterrupt.ts";
 import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
 import { isQueueUsageLimited } from "@t3tools/shared/scientQueuedRunSend";
 import {
@@ -10170,7 +10171,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         message: command.reason ?? "Interrupt requested",
       };
 
+      // SCIENT-FORK:START — unoffered held input can settle without a new native receipt.
       const settledHeldOwner = heldBeforeStop !== undefined && providerTurn?.status !== "running";
+      // SCIENT-FORK:END
       // Background work can outlive a provider switch, such as a Codex dev
       // server left running when the thread moved to Claude. Stop also reaches
       // each other live provider thread that owns pending work; that
@@ -10230,8 +10233,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       if (
+        // SCIENT-FORK:START — a running start waits for ownership proof; absence of a receipt is not proof of non-admission.
         (providerTurn === undefined && (run.status === "preparing" || run.status === "starting")) ||
         settledHeldOwner
+        // SCIENT-FORK:END
       ) {
         const attempt = projection.attempts.find(
           (candidate) => candidate.id === run.activeAttemptId,
@@ -10439,9 +10444,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       );
 
-      // Native acceptance can precede the ingestor's provider-turn receipt.
-      // Keep that run blocking and its start alive; the durable interrupt
-      // resolves the owned turn receipt before calling the adapter.
+      // SCIENT-FORK:START — resolve a pending receipt through Scient's exact-attempt control.
+      let pendingInterrupt: PendingOrchestrationEffectV2 | undefined;
       if (providerTurn === undefined) {
         const attempt = projection.attempts.find(
           (candidate) => candidate.id === run.activeAttemptId,
@@ -10453,34 +10457,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Run ${command.runId} has no active attempt to interrupt.`,
           });
         }
-        yield* emitEvent({
-          type: "turn-item.updated",
+        pendingInterrupt = pendingStartInterruptEffect({
+          commandId: command.commandId,
           threadId: command.threadId,
           runId: run.id,
-          nodeId: rootNode.id,
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: interruptRequestItem,
+          expectedAttemptId: attempt.id,
+          providerSessionId,
+          providerThreadId: providerThread.id,
         });
-        if (command.holdQueue !== false) yield* holdQueuedRuns;
-        yield* stopRemainingWork();
-        yield* Ref.update(effects, (existing) => [
-          ...existing,
-          {
-            id: `effect:${command.commandId}:provider-run.interrupt:${attempt.id}`,
-            commandId: command.commandId,
-            threadId: command.threadId,
-            request: {
-              type: "provider-run.interrupt",
-              runId: run.id,
-              expectedAttemptId: attempt.id,
-              providerSessionId,
-              providerThreadId: providerThread.id,
-            },
-          } satisfies PendingOrchestrationEffectV2,
-        ]);
-        return cancelledHeldSteer;
       }
+      // SCIENT-FORK:END
       yield* emitEvent({
         type: "turn-item.updated",
         threadId: command.threadId,
@@ -10492,6 +10478,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       if (command.holdQueue !== false) yield* holdQueuedRuns;
       yield* stopRemainingWork();
+      // SCIENT-FORK:START — keep the shared Stop plan; only its native control effect differs.
+      if (providerTurn === undefined) {
+        yield* Ref.update(effects, (existing) => [...existing, pendingInterrupt!]);
+        return cancelledHeldSteer;
+      }
+      // SCIENT-FORK:END
       yield* stopRemainingWork();
       yield* Ref.update(effects, (existing) => [
         ...existing,
