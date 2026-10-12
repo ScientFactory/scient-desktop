@@ -43,6 +43,20 @@ the stable scheduler and production gate.
   from the checksum-pinned 0.6.21 installer without signing
   secrets or publication authority. Release Smoke uses synthetic artifacts and
   remains a separate workflow/manifest check.
+- Linux Packaging builds an unsigned x64 AppImage on Ubuntu for desktop,
+  native, assembly, or dependency changes. Ordinary renderer/server source
+  edits alone do not select it. Unknown diffs run qualification; failure,
+  cancellation, or an unexplained skip blocks the existing required `Test`
+  check on PRs and merge groups. It has no signing secrets or publication step.
+  The job extracts the real AppImage, checks archived branding and external
+  runtimes, executes SyncTeX/Whisper and the resource-monitor protocol, and
+  verifies desktop survival/shutdown and archived-icon registration under
+  isolated XDG state, Xvfb, and a private D-Bus session. Capture helper execution
+  is checked without claiming live KDE/Hyprland compositor acceptance.
+  A second AppImage from the same retained stage restores only the five
+  duplicate ASAR trees for a controlled compressed-size comparison; retained
+  archive bytes and external resource bytes/modes must match. This measures
+  the cleanup on identical inputs, not a download comparison between releases.
 - Windows loose-file validation retains an 80-file core budget. Pinned voice
   and Windows/WSL Cursor inventories are admitted separately only after their
   exact file sets pass validation; missing or extra component files fail even
