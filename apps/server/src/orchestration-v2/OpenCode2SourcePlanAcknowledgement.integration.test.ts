@@ -31,7 +31,7 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import { openCode2ReplayRuntime } from "./Adapters/OpenCode2AdapterV2.testkit.ts";
-import type { ProviderAdapterV2TurnInput } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderReplayEntry } from "@t3tools/contracts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 
@@ -295,6 +295,9 @@ it.effect.each(
       replyData("permission.list", []),
       out("session.form.list", { sessionID: SESSION }),
       replyData("session.form.list", []),
+      // The resumed native session has no title; synchronize it before instructions.
+      out("session.update", { sessionID: SESSION, title: thread.title }),
+      reply("session.update", null),
       out("session.instructions.entry.put", {
         sessionID: SESSION,
         key: "t3-code",

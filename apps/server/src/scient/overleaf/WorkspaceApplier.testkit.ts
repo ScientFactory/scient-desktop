@@ -94,6 +94,7 @@ export const fixture = Effect.fnUntraced(
           },
         });
         return WorkspaceFileSystem.of({
+          getMetadata: () => Effect.die("getMetadata is not used by the workspace applier fixture"),
           ...methods,
           readFile,
           viewFile: readFile,

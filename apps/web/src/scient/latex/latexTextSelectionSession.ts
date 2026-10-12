@@ -18,6 +18,8 @@ export function installLatexTextSelectionSession(field: HTMLTextAreaElement): ()
         direction = field.selectionDirection;
       const value = field.value;
       return {
+        content: { text: value.slice(start, end), from: start, to: end, kind: "source" },
+        isCurrent: () => field.isConnected && field.value === value,
         path: [...latexContainerScope(field), field.getAttribute("aria-label") ?? "Text"],
         scopes: () =>
           field.closest('td,th,.scient-latex-rich-preview[data-kind="table"]')

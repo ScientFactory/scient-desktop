@@ -7,6 +7,8 @@ import {
   PdfSourceDescriptor,
 } from "@scientfactory/document-artifacts";
 import { EnvironmentId, ThreadId, type ScientDocumentHostRequest } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { ThreadRightPanelState } from "~/rightPanelStore";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
@@ -14,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   renderDocumentPagePdfForHost: vi.fn(),
   openScient: vi.fn(),
   openFile: vi.fn(),
+  byThreadKey: {} as Record<string, ThreadRightPanelState>,
 }));
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: { renderHtmlPdf: mocks.renderHtmlPdf },
@@ -43,7 +46,10 @@ const request = (operation: ScientDocumentHostRequest["operation"], input: unkno
     operation,
     input,
   }) as ScientDocumentHostRequest;
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.byThreadKey = {};
+});
 
 describe("controlled document host", () => {
   it("renders a signed HTML source without opening or synchronizing an interactive tab", async () => {
@@ -139,6 +145,101 @@ describe("controlled document host", () => {
     expect(mocks.openFile).toHaveBeenCalledExactlyOnceWith(
       { environmentId, threadId },
       "papers/chapter.tex",
+      undefined,
+      { latexPreviewMode: "split", latexRootRelativePath: "papers/main.tex" },
+    );
+  });
+  it.each([
+    { path: "papers/chapter.tex" },
+    { path: "papers/main.tex" },
+    { path: "papers/other-chapter.tex", root: "papers/main.tex" },
+  ])(
+    "leaves an open document at $path and its pending reveal untouched",
+    async ({ path, root }) => {
+      const panel: ThreadRightPanelState = {
+        isOpen: true,
+        activeSurfaceId: "file:notes.md",
+        surfaces: [
+          {
+            id: "file:notes.md",
+            kind: "file",
+            relativePath: "notes.md",
+            revealLine: null,
+            revealRequestId: 0,
+          },
+          {
+            id: `file:${path}`,
+            kind: "file",
+            relativePath: path,
+            revealLine: 42,
+            revealRequestId: 7,
+            ...(root ? { latexRootRelativePath: root } : {}),
+          },
+        ],
+      };
+      mocks.byThreadKey[scopedThreadKey({ environmentId, threadId })] = panel;
+      await executeScientDocumentHostRequest(
+        environmentId,
+        null,
+        request("documentLatexPresent", {
+          sourcePath: "papers/chapter.tex",
+          rootSourcePath: "papers/main.tex",
+        }),
+      );
+      expect(mocks.openFile).not.toHaveBeenCalled();
+      expect(mocks.byThreadKey[scopedThreadKey({ environmentId, threadId })]).toBe(panel);
+    },
+  );
+  it("does not reopen an existing document after the panel was closed", async () => {
+    mocks.byThreadKey[scopedThreadKey({ environmentId, threadId })] = {
+      isOpen: false,
+      activeSurfaceId: "file:papers/main.tex",
+      surfaces: [
+        {
+          id: "file:papers/main.tex",
+          kind: "file",
+          relativePath: "papers/main.tex",
+          revealLine: null,
+          revealRequestId: 0,
+        },
+      ],
+    };
+    await executeScientDocumentHostRequest(
+      environmentId,
+      null,
+      request("documentLatexPresent", {
+        sourcePath: "papers/main.tex",
+        rootSourcePath: "papers/main.tex",
+      }),
+    );
+    expect(mocks.openFile).not.toHaveBeenCalled();
+  });
+  it("presents a new document even when the same path is open in another thread", async () => {
+    mocks.byThreadKey[scopedThreadKey({ environmentId, threadId: ThreadId.make("other-thread") })] =
+      {
+        isOpen: true,
+        activeSurfaceId: "file:papers/main.tex",
+        surfaces: [
+          {
+            id: "file:papers/main.tex",
+            kind: "file",
+            relativePath: "papers/main.tex",
+            revealLine: null,
+            revealRequestId: 0,
+          },
+        ],
+      };
+    await executeScientDocumentHostRequest(
+      environmentId,
+      null,
+      request("documentLatexPresent", {
+        sourcePath: "papers/main.tex",
+        rootSourcePath: "papers/main.tex",
+      }),
+    );
+    expect(mocks.openFile).toHaveBeenCalledExactlyOnceWith(
+      { environmentId, threadId },
+      "papers/main.tex",
       undefined,
       { latexPreviewMode: "split", latexRootRelativePath: "papers/main.tex" },
     );

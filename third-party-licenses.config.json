@@ -1,6 +1,19 @@
 {
   "packageOverrides": [
     {
+      "name": "franc",
+      "sourceUrl": "https://github.com/wooorm/franc",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": [
+          "Copyright (c) 2014 Titus Wormer <tituswormer@gmail.com>",
+          "Copyright (c) 2008 Kent S Johnson",
+          "Copyright (c) 2006 Jacob R Rideout <kde@jacobrideout.net>",
+          "Copyright (c) 2004 Maciej Ceglowski"
+        ]
+      }
+    },
+    {
       "name": "@unified-latex/unified-latex-util-parse",
       "sourceUrl": "https://github.com/siefkenj/unified-latex",
       "generatedNotice": {
@@ -257,6 +270,27 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2025 Stephen Crowe"]
       }
+    },
+    {
+      "license": "MIT",
+      "repositoryUrl": "https://github.com/iamEvanYT/electron-webauthn",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 iamEvan"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "@electron-webauthn/types",
+      "sourceUrl": "https://github.com/iamEvanYT/electron-webauthn",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 iamEvan"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "objc-js"
     },
     {
       "license": "MIT",

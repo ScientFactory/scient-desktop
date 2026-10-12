@@ -21,18 +21,19 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
-import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { scientToolProjectionForProvider } from "../../provider/ScientToolProjection.ts";
 import { prepareScientSkillTurn } from "../../scient/skills/ScientSkillInvocation.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
-import { ProviderAdapterOpenSessionError } from "../ProviderAdapter.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 
 export class CodexReplayTranscriptDecodeError extends Schema.TaggedError<CodexReplayTranscriptDecodeError>()(
@@ -213,7 +214,7 @@ export function layer(input: {
         const context = yield* Layer.build(layerReplay).pipe(
           Effect.mapError(
             (cause) =>
-              new ProviderAdapterOpenSessionError({
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
                 driver: CodexAdapterV2.CODEX_DRIVER_KIND,
                 providerSessionId: openInput.providerSessionId,
                 cause,
@@ -279,7 +280,7 @@ export function materializeScientClientIdentity(transcript: ProviderReplayTransc
               additionalContext: {
                 t3_code_runtime: {
                   kind: "application",
-                  value: buildRuntimeInstructions({
+                  value: buildScientRuntimeInstructions({
                     harness: "Codex",
                     model: typeof frame.params.model === "string" ? frame.params.model : "gpt-5.4",
                     reasoningEffort:
@@ -363,6 +364,8 @@ export interface IssuedCodexReplayScope {
   readonly instanceId: ProviderInstanceId;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  /** Whether this fixture's real skill planner delivers an empty catalog marker. */
+  readonly includeEmptySkillCatalogMarker?: boolean;
 }
 
 const decodeReplayCodexInput = Schema.decodeUnknownEffect(
@@ -397,83 +400,95 @@ export function withIssuedCodexMcpReplayExpectations(
   return {
     ...CodexOrchestratorReplayHarness,
     makeProviderAdapterRegistryLayer: (transcript, options) =>
-      makeCodexReplayRegistryLayer(transcript, {
-        ...options,
-        materializeExpectedOutbound: (entry) =>
-          Effect.gen(function* () {
-            const frame = entry.frame;
-            if (
-              !Predicate.isObject(frame) ||
-              !Predicate.isObject(frame.params) ||
-              typeof frame.method !== "string" ||
-              !["thread/start", "thread/resume", "thread/fork", "turn/start"].includes(frame.method)
-            )
-              return frame;
-            const scope = entry.label === undefined ? undefined : scopeForLabel(entry.label);
-            if (scope === undefined)
-              return yield* Effect.die(
-                "Native MCP replay request has no fixture-owned scope mapping.",
-              );
-            const issued = McpProviderSession.readMcpProviderSession(scope.threadId);
-            if (
-              issued === undefined ||
-              issued.providerInstanceId !== scope.instanceId ||
-              scope.modelSelection.instanceId !== scope.instanceId
-            ) {
-              return yield* Effect.die(
-                "Native MCP replay scope has no matching issued instance credential.",
-              );
-            }
-            const params = frame.params;
-            if (frame.method !== "turn/start") {
-              const native = CodexAdapterV2.codexThreadRuntimeParams({
-                configureMcp: true,
-                threadId: scope.threadId,
-                modelSelection: scope.modelSelection,
-                runtimePolicy: scope.runtimePolicy,
-              });
-              return {
-                ...frame,
-                params: {
-                  ...native,
-                  ...params,
-                  config: {
-                    ...(Predicate.isObject(params.config) ? params.config : {}),
-                    ...native.config,
+      Layer.unwrap(
+        Effect.gen(function* () {
+          const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+          return makeCodexReplayRegistryLayer(transcript, {
+            ...options,
+            materializeExpectedOutbound: (entry) =>
+              Effect.gen(function* () {
+                const frame = entry.frame;
+                if (
+                  !Predicate.isObject(frame) ||
+                  !Predicate.isObject(frame.params) ||
+                  typeof frame.method !== "string" ||
+                  !["thread/start", "thread/resume", "thread/fork", "turn/start"].includes(
+                    frame.method,
+                  )
+                )
+                  return frame;
+                const scope = entry.label === undefined ? undefined : scopeForLabel(entry.label);
+                if (scope === undefined)
+                  return yield* Effect.die(
+                    "Native MCP replay request has no fixture-owned scope mapping.",
+                  );
+                const issued = yield* mcpSessions.read(scope.threadId);
+                if (
+                  issued === undefined ||
+                  issued.providerInstanceId !== scope.instanceId ||
+                  scope.modelSelection.instanceId !== scope.instanceId
+                ) {
+                  return yield* Effect.die(
+                    "Native MCP replay scope has no matching issued instance credential.",
+                  );
+                }
+                const params = frame.params;
+                if (frame.method !== "turn/start") {
+                  const native = CodexAdapterV2.codexThreadRuntimeParams({
+                    mcpSession: issued,
+                    modelSelection: scope.modelSelection,
+                    runtimePolicy: scope.runtimePolicy,
+                  });
+                  return {
+                    ...frame,
+                    params: {
+                      ...native,
+                      ...params,
+                      config: {
+                        ...(Predicate.isObject(params.config) ? params.config : {}),
+                        ...native.config,
+                      },
+                    },
+                  };
+                }
+                if (typeof params.threadId !== "string")
+                  return yield* Effect.die(
+                    "Native MCP replay turn has no recorded native thread id.",
+                  );
+                const recordedInput = yield* decodeReplayCodexInput(params.input).pipe(
+                  Effect.orDie,
+                );
+                const codexInput = recordedInput.map((item) =>
+                  item.type === "text" &&
+                  scope.includeEmptySkillCatalogMarker === true &&
+                  issued.capabilities.has("skills:read")
+                    ? {
+                        ...item,
+                        text: emptyMcpReplayPrompt(CodexAdapterV2.CODEX_DRIVER_KIND, item.text),
+                      }
+                    : item,
+                );
+                const native = yield* CodexAdapterV2.buildCodexTurnStartParams({
+                  nativeThreadId: params.threadId,
+                  codexInput,
+                  runtimePolicy: scope.runtimePolicy,
+                  modelSelection: scope.modelSelection,
+                  hasT3Mcp: true,
+                  mcpCapabilities: toMcpCapabilities(issued.capabilities),
+                }).pipe(Effect.orDie);
+                return {
+                  ...frame,
+                  params: {
+                    ...native,
+                    ...params,
+                    input: codexInput,
+                    additionalContext: native.additionalContext,
+                    collaborationMode: native.collaborationMode,
                   },
-                },
-              };
-            }
-            if (typeof params.threadId !== "string")
-              return yield* Effect.die("Native MCP replay turn has no recorded native thread id.");
-            const recordedInput = yield* decodeReplayCodexInput(params.input).pipe(Effect.orDie);
-            const codexInput = recordedInput.map((item) =>
-              item.type === "text" && issued.capabilities.has("skills:read")
-                ? {
-                    ...item,
-                    text: emptyMcpReplayPrompt(CodexAdapterV2.CODEX_DRIVER_KIND, item.text),
-                  }
-                : item,
-            );
-            const native = yield* CodexAdapterV2.buildCodexTurnStartParams({
-              nativeThreadId: params.threadId,
-              codexInput,
-              runtimePolicy: scope.runtimePolicy,
-              modelSelection: scope.modelSelection,
-              hasT3Mcp: true,
-              mcpCapabilities: issued.capabilities,
-            }).pipe(Effect.orDie);
-            return {
-              ...frame,
-              params: {
-                ...native,
-                ...params,
-                input: codexInput,
-                additionalContext: native.additionalContext,
-                collaborationMode: native.collaborationMode,
-              },
-            };
-          }),
-      }),
+                };
+              }),
+          });
+        }),
+      ),
   };
 }

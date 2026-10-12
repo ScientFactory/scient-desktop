@@ -54,6 +54,8 @@ export function latexBasicBoxOpening(source: string) {
   } else if (!grouped) return null;
   const color = frame.attrs.command === "fbox" ? "black" : frame.attrs.color;
   if (!latexColorCss(color)) return null;
+  const centering = /^\s*\\centering\b\s*/u.exec(source.slice(from, to));
+  if (centering) from += centering[0].length;
   return {
     from,
     to,
@@ -65,6 +67,7 @@ export function latexBasicBoxOpening(source: string) {
       padding,
       borderWidth: frame.attrs.command === "colorbox" ? "0px" : borderWidth,
       width,
+      alignment: centering ? "center" : "start",
     },
   };
 }

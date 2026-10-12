@@ -220,6 +220,21 @@ export default defineConfig(({ mode }) => {
       tailwindPlugins(bundledDev),
     ],
     optimizeDeps: {
+      // The static barrel and dynamic picker share every Lucide icon. Keep
+      // them together so dev startup does not fetch one chunk per icon.
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: "lucide-icons",
+                test: /[/\\]lucide-react[/\\]dist[/\\]esm[/\\]icons[/\\]/,
+                includeDependenciesRecursively: false,
+              },
+            ],
+          },
+        },
+      },
       include: [
         "@clerk/react/internal",
         "@pierre/diffs",

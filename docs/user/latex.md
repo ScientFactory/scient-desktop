@@ -70,8 +70,16 @@ fields and unsupported paragraph containers; a separate root must be editable
 when its setup needs updating.
 Document fonts and standard abstract, contents and caption labels follow the
 root's language setup. Custom or unsupported setups remain accessible in Source;
-the compiled PDF is authoritative. Language and font configuration is edited in
-Source; use **Compiler** in the document menu beside **Export** for the document's compiler.
+the compiled PDF is authoritative. **Document > Document settings > Language**
+changes the main language between English and Hebrew in supported simple setups,
+including after you have written in the body. Apply preserves the body and
+explicit language passages, updates the root preamble, and can be undone with
+the document's Undo command. Existing Hebrew fonts are retained; first enabling
+Hebrew uses Times New Roman and selects a Unicode compiler when needed.
+Babel and custom language setups show their current language but stay controlled
+in Source. Compiler and font configuration can also be edited there. Changing a
+document's language does not change the language default for new documents.
+Use **Compiler** in the document menu beside **Export** for the document's compiler.
 
 ## Write visually, verify with TeX
 
@@ -443,7 +451,7 @@ inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
 indentation, paragraph spacing and line-spacing settings from the preamble.
-Use **Document > Document settings** for the document type, text size, paper,
+Use **Document > Document settings** for the document type, text size, paper, language,
 orientation, margins (Narrow, Normal, Wide, or Custom for each side) and
 paragraph style. Each setting shows what the document uses now; **Apply** writes
 only the settings you changed, and **Cancel** discards the draft. Blank custom

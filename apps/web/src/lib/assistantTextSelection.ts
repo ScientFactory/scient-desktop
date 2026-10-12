@@ -15,7 +15,17 @@ export type AssistantCitationSourceAnchor = {
   viewport: HTMLElement;
   /** A file reader owns re-resolving its live range; this is never serialized. */
   resolveRange?: () => Range | null;
+  /** Model selections (math/cells) supply their ink bounds instead of a DOM text range. */
+  resolveRects?: () => readonly DOMRect[];
+  selectionOwnerId?: string;
+  retainSelection?: () => (() => void) | null;
 };
+
+export function assistantCitationSourceRects(
+  anchor: AssistantCitationSourceAnchor,
+): readonly DOMRect[] {
+  return anchor.resolveRects?.() ?? [...anchor.range.getClientRects()];
+}
 
 export function findAssistantCitationSourceAnchor(
   document: Document,
@@ -191,13 +201,21 @@ function isUsableRange(root: HTMLElement, range: Range): boolean {
   return true;
 }
 
+function isUnselectable(text: Text): boolean {
+  const element = text.parentElement;
+  const view = element?.ownerDocument?.defaultView;
+  return !!element && !!view && view.getComputedStyle(element).userSelect === "none";
+}
+
 function selectedTextBoundary(range: Range, node: Node, last: boolean): Text | null {
   if (!range.intersectsNode(node)) return null;
   if (node.nodeType === 3) {
     const text = node as Text;
     const start = node === range.startContainer ? range.startOffset : 0;
     const end = node === range.endContainer ? range.endOffset : text.length;
-    return start < end ? text : null;
+    // Triple-click ranges run through unselectable rows (tool calls, timestamps,
+    // author headings) into the next response; that text is not selected.
+    return start < end && !isUnselectable(text) ? text : null;
   }
   for (
     let child = last ? node.lastChild : node.firstChild;

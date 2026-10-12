@@ -580,8 +580,9 @@ function equationReferences(
         });
     }
     if (
-      node.type.name === "latexRichPreview" &&
-      ["figure", "figureLayout"].includes(String(node.attrs.kind))
+      (node.type.name === "latexRichPreview" &&
+        ["figure", "figureLayout"].includes(String(node.attrs.kind))) ||
+      (node.type.name === "latexScientific" && node.attrs.layout?.kind === "framedFigure")
     ) {
       const meta = node.attrs.sourceMeta;
       const raw = latexWithoutComments(
@@ -590,9 +591,11 @@ function equationReferences(
           : String(node.attrs.raw ?? ""),
       );
       const captioned =
-        node.attrs.kind === "figureLayout"
-          ? meta?.captionRange != null
-          : latexVisualFloatHasCaption({ attrs: node.attrs });
+        node.attrs.layout?.kind === "framedFigure"
+          ? node.attrs.layout.captioned
+          : node.attrs.kind === "figureLayout"
+            ? meta?.captionRange != null
+            : latexVisualFloatHasCaption({ attrs: node.attrs });
       if (captioned) figureCounter++;
       if (/\\caption\s*\*/u.test(raw)) figuresReliable = false;
       const number = captioned && figuresReliable ? `${chapterPrefix()}${figureCounter}` : null;
@@ -602,7 +605,9 @@ function equationReferences(
       if (
         label &&
         node.attrs.captionRemoved !== true &&
-        ((node.attrs.kind === "figure" && captionAt >= 0 && labelAt > captionAt) ||
+        (((node.attrs.kind === "figure" || node.attrs.layout?.kind === "framedFigure") &&
+          captionAt >= 0 &&
+          labelAt > captionAt) ||
           (meta?.captionRange && meta?.labelRange?.from > meta.captionRange.from))
       )
         addLabel(label, { position, row: 0, number, kind: "figure", title: "Figure" });

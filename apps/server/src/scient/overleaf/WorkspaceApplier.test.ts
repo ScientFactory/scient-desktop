@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import { fixture } from "./WorkspaceApplier.testkit.ts";
 import * as NodeFSP from "node:fs/promises";
@@ -44,7 +45,7 @@ describe("Overleaf publication admission", () => {
         expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o600);
       }),
   );
-  if (process.platform === "darwin") {
+  if (HostProcess.Platform.defaultValue() === "darwin") {
     it.live(
       "publishes a rename destination before retaining its original source and advances the identity",
       () =>

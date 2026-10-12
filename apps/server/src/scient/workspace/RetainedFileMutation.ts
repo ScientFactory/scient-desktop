@@ -4,7 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -376,7 +376,7 @@ export async function syncDirectory(directory: string) {
     await handle.sync();
   } catch (e) {
     if (
-      HostProcessPlatform.defaultValue() !== "win32" ||
+      HostProcess.Platform.defaultValue() !== "win32" ||
       !["EINVAL", "EPERM", "EISDIR"].includes((e as NodeJS.ErrnoException).code ?? "")
     )
       throw e;
@@ -415,7 +415,7 @@ export async function assertPrivateRetention(directory: string) {
     !stat.isDirectory() ||
     stat.isSymbolicLink() ||
     (process.getuid && stat.uid !== process.getuid()) ||
-    (HostProcessPlatform.defaultValue() !== "win32" && (stat.mode & 0o077) !== 0)
+    (HostProcess.Platform.defaultValue() !== "win32" && (stat.mode & 0o077) !== 0)
   )
     throw new RetainedMutationError(
       "unavailable",

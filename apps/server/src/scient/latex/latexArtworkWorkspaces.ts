@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Content identities and owner PIDs guard private preview state.
 import * as NodeCrypto from "node:crypto";
-import * as NodeOs from "node:os";
+import * as NodeOS from "node:os";
 import type { ScientLatexArtworkResult } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -65,11 +65,11 @@ type Workspace = {
 export const makeLatexArtworkWorkspaces = Effect.fnUntraced(function* (parent: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   yield* fs.makeDirectory(parent, { recursive: true });
   const canonicalParent = yield* fs.realPath(parent);
   const instance = NodeCrypto.randomUUID();
-  const host = NodeOs.hostname();
+  const host = NodeOS.hostname();
   const admission = yield* Semaphore.make(1);
   const operations = yield* Scope.make();
   const workspaces = new Map<string, Workspace>();

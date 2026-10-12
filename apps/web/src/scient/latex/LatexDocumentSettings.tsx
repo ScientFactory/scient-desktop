@@ -5,6 +5,8 @@ import { Input } from "~/components/ui/input";
 import { LatexSelect } from "./LatexSelect";
 import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexVisualDocument";
 import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
+import { latexDocumentLanguage, type LatexWritingLanguage } from "./latexLanguage";
+import type { LatexDocumentSettingsUpdate } from "./latexDocumentSettingsSource";
 
 export type LatexDocumentSettingsSection = "page" | "style";
 
@@ -37,6 +39,7 @@ function currentSettings(source: string) {
   const margin: MarginChoice = !ownMargins ? "default" : (preset ?? "custom");
   return {
     profile,
+    language: latexDocumentLanguage(source),
     orientation: (profile.paperWidthIn > profile.paperHeightIn ? "landscape" : "portrait") as
       | "portrait"
       | "landscape",
@@ -81,7 +84,7 @@ function Choice<T extends string>(props: {
       role="radiogroup"
       aria-label={props.label}
       aria-disabled={props.disabled || undefined}
-      className="relative grid h-7 rounded-md border border-border bg-background p-0.5 aria-disabled:opacity-64"
+      className="relative grid h-8 sm:h-7 rounded-md border border-border bg-background p-0.5 aria-disabled:opacity-64"
       style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}
     >
       <span
@@ -135,14 +138,14 @@ export function LatexDocumentSettings(props: {
   onOpenChange: (open: boolean) => void;
   source: string;
   disabled: boolean;
-  onApply: (layout: Partial<LatexVisualLayoutUpdate>, expectedSource: string) => boolean;
+  onApply: (settings: LatexDocumentSettingsUpdate, expectedSource: string) => boolean;
   onOpenSource: () => void;
 }) {
   // The parent mounts a fresh settings form for each opening.
   const [original] = useState(props.source);
   const [current] = useState(() => currentSettings(original));
   const { profile } = current;
-  const [changes, setChanges] = useState<Partial<LatexVisualLayoutUpdate>>({});
+  const [changes, setChanges] = useState<LatexDocumentSettingsUpdate>({});
   const [marginChoice, setMarginChoice] = useState<MarginChoice>(current.margin);
   const [error, setError] = useState<string | null>(null);
   const customClass = !["article", "report", "book"].includes(profile.documentClass);
@@ -207,62 +210,95 @@ export function LatexDocumentSettings(props: {
           if (props.onApply(changes, original)) props.onOpenChange(false);
           else
             setError(
-              "These settings could not be applied. Check the margins and document type, or edit the settings in Source.",
+              "These settings could not be applied. Check the document setup or edit the settings in Source.",
             );
         }}
       >
         <fieldset className="grid grid-cols-2 gap-x-3 gap-y-2.5" disabled={locked}>
-          <Field label="Type">
+          <div className="col-span-2 grid min-w-0 grid-cols-3 gap-2">
+            <Field label="Type">
+              <LatexSelect
+                size="sm"
+                width="fluid"
+                value={changes.documentClass ?? profile.documentClass}
+                disabled={locked || customClass}
+                title={
+                  customClass
+                    ? "This document uses a custom class, controlled by its LaTeX setup."
+                    : undefined
+                }
+                onValueChange={(value) => update("documentClass", value, profile.documentClass)}
+                aria-label="Document type"
+                options={[
+                  ...(customClass
+                    ? [{ value: profile.documentClass, label: `${profile.documentClass} (custom)` }]
+                    : []),
+                  { value: "article", label: "Article" },
+                  { value: "report", label: "Report" },
+                  { value: "book", label: "Book" },
+                ]}
+              />
+            </Field>
+            <Field label="Text size">
+              <LatexSelect
+                size="sm"
+                width="fluid"
+                disabled={locked || customClass}
+                value={String(changes.baseFontPt ?? profile.baseFontPt)}
+                onValueChange={(value) =>
+                  update(
+                    "baseFontPt",
+                    Number(value) as LatexVisualLayoutUpdate["baseFontPt"],
+                    profile.baseFontPt,
+                  )
+                }
+                aria-label="Text size"
+                options={[10, 11, 12].map((size) => ({ value: String(size), label: `${size} pt` }))}
+              />
+            </Field>
+            <Field label="Paper">
+              <LatexSelect
+                size="sm"
+                width="fluid"
+                value={changes.paper ?? profile.paper}
+                onValueChange={(value) =>
+                  update("paper", value as LatexVisualLayoutUpdate["paper"], profile.paper)
+                }
+                disabled={locked}
+                aria-label="Paper size"
+                options={Object.entries(LATEX_PAPER_SIZES).map(([value, paper]) => ({
+                  value,
+                  label: paper.label,
+                }))}
+              />
+            </Field>
+          </div>
+          <Field label="Language">
             <LatexSelect
               size="sm"
-              value={changes.documentClass ?? profile.documentClass}
-              disabled={locked || customClass}
+              width="fluid"
+              value={changes.language ?? current.language.main}
+              disabled={locked || !current.language.canConfigure}
               title={
-                customClass
-                  ? "This document uses a custom class, controlled by its LaTeX setup."
+                !current.language.canConfigure
+                  ? "This document's language setup is controlled in Source."
                   : undefined
               }
-              onValueChange={(value) => update("documentClass", value, profile.documentClass)}
-              aria-label="Document type"
+              aria-label="Document language"
               options={[
-                ...(customClass
-                  ? [{ value: profile.documentClass, label: `${profile.documentClass} (custom)` }]
+                ...(!["english", "hebrew"].includes(current.language.main)
+                  ? [{ value: current.language.main, label: `${current.language.main} (Source)` }]
                   : []),
-                { value: "article", label: "Article" },
-                { value: "report", label: "Report" },
-                { value: "book", label: "Book" },
+                { value: "english", label: "English" },
+                { value: "hebrew", label: "Hebrew" },
               ]}
-            />
-          </Field>
-          <Field label="Text size">
-            <LatexSelect
-              size="sm"
-              disabled={locked || customClass}
-              value={String(changes.baseFontPt ?? profile.baseFontPt)}
-              onValueChange={(value) =>
-                update(
-                  "baseFontPt",
-                  Number(value) as LatexVisualLayoutUpdate["baseFontPt"],
-                  profile.baseFontPt,
-                )
-              }
-              aria-label="Text size"
-              options={[10, 11, 12].map((size) => ({ value: String(size), label: `${size} pt` }))}
-            />
-          </Field>
-          <Field label="Paper">
-            <LatexSelect
-              size="sm"
-              value={changes.paper ?? profile.paper}
-              onValueChange={(value) =>
-                update("paper", value as LatexVisualLayoutUpdate["paper"], profile.paper)
-              }
-              disabled={locked}
-              aria-label="Paper size"
-              options={Object.entries(LATEX_PAPER_SIZES).map(([value, paper]) => ({
-                value,
-                label: paper.label,
-              }))}
+              onValueChange={(value) => {
+                const language = value as LatexWritingLanguage;
+                setChanges(({ language: _previous, ...rest }) =>
+                  language === current.language.main ? rest : { ...rest, language },
+                );
+                setError(null);
+              }}
             />
           </Field>
           <Field label="Orientation">
@@ -280,6 +316,7 @@ export function LatexDocumentSettings(props: {
           <Field label="Margins">
             <LatexSelect
               size="sm"
+              width="fluid"
               value={marginChoice}
               onValueChange={(value) => chooseMargin(value as MarginChoice)}
               disabled={locked}
@@ -298,7 +335,7 @@ export function LatexDocumentSettings(props: {
               ]}
             />
           </Field>
-          <Field label="Paragraphs">
+          <Field label="Paragraph style">
             <Choice
               label="Paragraphs"
               value={changes.paragraphStyle ?? current.paragraphs}

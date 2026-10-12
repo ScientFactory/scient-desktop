@@ -1,37 +1,37 @@
 /* Run only against isolated, compiled helpers. No live workspace/profile is opened. */
-import assert from "node:assert/strict";
-import * as childProcess from "node:child_process";
-import * as fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import readline from "node:readline";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeReadline from "node:readline";
 
 const args = new Map(
   process.argv.slice(2).map((value) => {
     const split = value.indexOf("=");
-    assert(split > 0, "Use --name=value");
+    NodeAssert.ok(split > 0, "Use --name=value");
     return [value.slice(0, split), value.slice(split + 1)];
   }),
 );
 const helper = args.get("--helper");
 const probe = args.get("--probe-helper");
-assert(helper && path.isAbsolute(helper), "--helper must name the production helper");
-if (probe) assert(path.isAbsolute(probe));
+NodeAssert.ok(helper && NodePath.isAbsolute(helper), "--helper must name the production helper");
+if (probe) NodeAssert.ok(NodePath.isAbsolute(probe));
 const unsupportedRoot = args.get("--unsupported-root");
 if (unsupportedRoot)
-  assert(
-    path.isAbsolute(unsupportedRoot),
+  NodeAssert.ok(
+    NodePath.isAbsolute(unsupportedRoot),
     "--unsupported-root must name an actual non-clone volume directory",
   );
 const selection = args.get("--only") ?? "all";
-assert(
+NodeAssert.ok(
   ["all", "changed", "previous"].includes(selection),
   "--only must be all, changed or previous",
 );
 const owned = new Set();
 const evidence = [];
 function launch(executable, arguments_, environment = {}, extraPipe = false) {
-  const child = childProcess.spawn(executable, arguments_, {
+  const child = NodeChildProcess.spawn(executable, arguments_, {
     env: { ...process.env, ...environment },
     stdio: extraPipe ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
     windowsHide: true,
@@ -45,7 +45,7 @@ function launch(executable, arguments_, environment = {}, extraPipe = false) {
   child.stderr.on("data", (data) => {
     diagnostic += data;
   });
-  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+  NodeReadline.createInterface({ input: child.stdout }).on("line", (line) => {
     const index = waiters.findIndex((waiter) => waiter.predicate(line));
     if (index < 0) lines.push(line);
     else {
@@ -79,8 +79,8 @@ async function run(executable, arguments_) {
   process_.child.stdin.end();
   const reply = await process_.next((line) => line.startsWith("{"));
   const exit = await process_.retired;
-  assert.equal(exit.code, 0, exit.diagnostic);
-  assert.equal(exit.signal, null);
+  NodeAssert.equal(exit.code, 0, exit.diagnostic);
+  NodeAssert.equal(exit.signal, null);
   return JSON.parse(reply);
 }
 function operation(binding, kind, source, destination, authority = "strict-current-root") {
@@ -118,7 +118,7 @@ async function bind(executable, fixture, authority = "strict-current-root") {
     "-",
     "-",
   ]);
-  assert.equal(result.code, 0, JSON.stringify(result));
+  NodeAssert.equal(result.code, 0, JSON.stringify(result));
   return {
     rootPath: fixture.root,
     parentRelativePath: "sub",
@@ -139,7 +139,7 @@ async function bindParent(executable, rootPath, parentRelativePath = ".") {
     "-",
     "-",
   ]);
-  assert.equal(result.code, 0, JSON.stringify(result));
+  NodeAssert.equal(result.code, 0, JSON.stringify(result));
   return { rootPath, parentRelativePath, ...result.binding };
 }
 function directoryOperation(binding, kind, name) {
@@ -180,33 +180,33 @@ function frame(arguments_) {
 }
 async function retireLease(lease) {
   lease.child.stdin.end(Buffer.alloc(4));
-  assert.equal((await lease.retired).code, 0);
+  NodeAssert.equal((await lease.retired).code, 0);
 }
 async function command(lease, arguments_) {
   lease.child.stdin.write(frame(arguments_));
   const result = JSON.parse(await lease.next((line) => line.includes('"outcome"')));
   const retired = JSON.parse(await lease.next((line) => line.includes('"commandExit"')));
-  assert.equal(retired.commandExit, 0);
-  assert.equal(retired.commandSignal, 0);
-  assert.equal(retired.code, 0);
+  NodeAssert.equal(retired.commandExit, 0);
+  NodeAssert.equal(retired.commandSignal, 0);
+  NodeAssert.equal(retired.code, 0);
   return result;
 }
-async function fixture(body, base = os.tmpdir()) {
-  const temporary = await fs.mkdtemp(path.join(base, "scient-publication-qualification-"));
-  const canonical = await fs.realpath(temporary);
-  const root = path.join(canonical, "anchor", "root");
-  const record = path.join(canonical, "record");
-  const outside = path.join(canonical, "outside");
-  await fs.mkdir(path.join(root, "sub"), { recursive: true });
-  await fs.mkdir(record, { mode: 0o700 });
-  await fs.mkdir(outside);
-  if (process.platform === "win32") {
-    const account = childProcess.execFileSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], {
+async function fixture(body, base = NodeOS.tmpdir()) {
+  const temporary = await NodeFSP.mkdtemp(NodePath.join(base, "scient-publication-qualification-"));
+  const canonical = await NodeFSP.realpath(temporary);
+  const root = NodePath.join(canonical, "anchor", "root");
+  const record = NodePath.join(canonical, "record");
+  const outside = NodePath.join(canonical, "outside");
+  await NodeFSP.mkdir(NodePath.join(root, "sub"), { recursive: true });
+  await NodeFSP.mkdir(record, { mode: 0o700 });
+  await NodeFSP.mkdir(outside);
+  if (NodeOS.platform() === "win32") {
+    const account = NodeChildProcess.execFileSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], {
       encoding: "utf8",
     });
     const sid = account.match(/S-1-[\d-]+/u)?.[0];
-    assert(sid, "Current test principal SID unavailable");
-    childProcess.execFileSync(
+    NodeAssert.ok(sid, "Current test principal SID unavailable");
+    NodeChildProcess.execFileSync(
       "icacls.exe",
       [
         record,
@@ -219,11 +219,11 @@ async function fixture(body, base = os.tmpdir()) {
       ],
       { stdio: "pipe" },
     );
-  } else await fs.chmod(record, 0o700);
+  } else await NodeFSP.chmod(record, 0o700);
   try {
     await body({ temporary: canonical, root, record, outside });
   } finally {
-    await fs.rm(temporary, { recursive: true, force: true });
+    await NodeFSP.rm(temporary, { recursive: true, force: true });
   }
 }
 const deadline = setTimeout(() => {
@@ -236,40 +236,40 @@ const deadline = setTimeout(() => {
 deadline.unref();
 async function qualifyCreation() {
   const generic = await run(helper, ["--protocol=1", "capabilities"]);
-  assert.equal(
+  NodeAssert.equal(
     generic.atomicCreateMetadata,
     false,
     "Host inquiry cannot authorize an unspecified volume",
   );
-  assert.equal(
+  NodeAssert.equal(
     generic.atomicExchange,
-    process.platform === "darwin" || process.platform === "linux",
+    NodeOS.platform() === "darwin" || NodeOS.platform() === "linux",
   );
-  assert.equal(generic.atomicPublicationMetadata, false);
+  NodeAssert.equal(generic.atomicPublicationMetadata, false);
   await fixture(async (f) => {
-    const before = await fs.readdir(f.root);
+    const before = await NodeFSP.readdir(f.root);
     const rooted = await run(helper, ["--protocol=1", "capabilities", f.root]);
-    assert.equal(typeof rooted.atomicCreateMetadata, "boolean");
-    const recordGroup = (await fs.stat(f.record)).gid;
+    NodeAssert.equal(typeof rooted.atomicCreateMetadata, "boolean");
+    const recordGroup = (await NodeFSP.stat(f.record)).gid;
     const targetGroup = process.getgroups?.().find((group) => group !== recordGroup);
-    if (process.platform === "darwin" && targetGroup !== undefined)
-      await fs.chown(path.join(f.root, "sub"), process.getuid(), targetGroup);
-    const missing = path.join(f.root, "missing-parent");
+    if (NodeOS.platform() === "darwin" && targetGroup !== undefined)
+      await NodeFSP.chown(NodePath.join(f.root, "sub"), process.getuid(), targetGroup);
+    const missing = NodePath.join(f.root, "missing-parent");
     const unavailable = await run(helper, ["--protocol=1", "capabilities", missing]);
-    assert.equal(unavailable.atomicCreateMetadata, false);
+    NodeAssert.equal(unavailable.atomicCreateMetadata, false);
     let linked = null;
-    if (process.platform !== "win32") {
-      await fs.symlink(f.root, path.join(f.outside, "root-link"));
+    if (NodeOS.platform() !== "win32") {
+      await NodeFSP.symlink(f.root, NodePath.join(f.outside, "root-link"));
       linked = await run(helper, [
         "--protocol=1",
         "capabilities",
-        path.join(f.outside, "root-link"),
+        NodePath.join(f.outside, "root-link"),
       ]);
-      assert.equal(linked.atomicCreateMetadata, false);
+      NodeAssert.equal(linked.atomicCreateMetadata, false);
     }
-    assert.deepEqual(await fs.readdir(f.root), before);
-    await assert.rejects(fs.stat(missing), { code: "ENOENT" });
-    if (process.platform !== "darwin") assert.equal(rooted.atomicCreateMetadata, false);
+    NodeAssert.deepEqual(await NodeFSP.readdir(f.root), before);
+    await NodeAssert.rejects(NodeFSP.stat(missing), { code: "ENOENT" });
+    if (NodeOS.platform() !== "darwin") NodeAssert.equal(rooted.atomicCreateMetadata, false);
     evidence.push({
       case: "root-volume-capability-is-read-only-fails-closed-before-parent-admission",
       rooted,
@@ -278,18 +278,18 @@ async function qualifyCreation() {
     });
     const authority = rooted.strictCurrentRoot ? "strict-current-root" : "bound-object";
     const binding = await bind(helper, f, authority);
-    const staged = path.join(f.record, "stage");
-    const target = path.join(f.root, "sub", "created");
+    const staged = NodePath.join(f.record, "stage");
+    const target = NodePath.join(f.root, "sub", "created");
     const complete = "complete C\n".repeat(65536);
-    await fs.writeFile(staged, complete, { mode: 0o666 });
-    const sourceBefore = await fs.stat(staged, { bigint: true });
+    await NodeFSP.writeFile(staged, complete, { mode: 0o666 });
+    const sourceBefore = await NodeFSP.stat(staged, { bigint: true });
     const created = await run(helper, operation(binding, "create", "stage", "created", authority));
     if (!rooted.atomicCreateMetadata) {
-      assert.equal(created.outcome, "unchanged");
-      assert.notEqual(created.code, 0);
-      await assert.rejects(fs.stat(target), { code: "ENOENT" });
-      assert.equal(await fs.readFile(staged, "utf8"), complete);
-      assert.deepEqual(created.flush, {
+      NodeAssert.equal(created.outcome, "unchanged");
+      NodeAssert.notEqual(created.code, 0);
+      await NodeAssert.rejects(NodeFSP.stat(target), { code: "ENOENT" });
+      NodeAssert.equal(await NodeFSP.readFile(staged, "utf8"), complete);
+      NodeAssert.deepEqual(created.flush, {
         sourceFile: -1,
         destinationFile: -1,
         sourceDirectory: -1,
@@ -301,44 +301,44 @@ async function qualifyCreation() {
       });
       return;
     }
-    assert.equal(created.outcome, "applied");
-    assert.equal(created.code, 0, JSON.stringify(created));
-    assert.equal(await fs.readFile(target, "utf8"), complete);
-    assert.equal(await fs.readFile(staged, "utf8"), complete);
-    assert.equal(created.sourceBefore.ino, String(sourceBefore.ino));
-    assert.equal(created.sourceAfter.ino, created.sourceBefore.ino);
-    assert.notEqual(created.destinationAfter.ino, created.sourceAfter.ino);
-    const ordinary = path.join(f.root, "sub", "ordinary");
-    await fs.writeFile(ordinary, complete, { mode: 0o666 });
-    const actual = await fs.stat(target),
-      normal = await fs.stat(ordinary);
-    assert.equal(actual.mode & 0o777, normal.mode & 0o777);
-    assert.equal(actual.uid, normal.uid);
-    assert.equal(actual.gid, normal.gid);
+    NodeAssert.equal(created.outcome, "applied");
+    NodeAssert.equal(created.code, 0, JSON.stringify(created));
+    NodeAssert.equal(await NodeFSP.readFile(target, "utf8"), complete);
+    NodeAssert.equal(await NodeFSP.readFile(staged, "utf8"), complete);
+    NodeAssert.equal(created.sourceBefore.ino, String(sourceBefore.ino));
+    NodeAssert.equal(created.sourceAfter.ino, created.sourceBefore.ino);
+    NodeAssert.notEqual(created.destinationAfter.ino, created.sourceAfter.ino);
+    const ordinary = NodePath.join(f.root, "sub", "ordinary");
+    await NodeFSP.writeFile(ordinary, complete, { mode: 0o666 });
+    const actual = await NodeFSP.stat(target),
+      normal = await NodeFSP.stat(ordinary);
+    NodeAssert.equal(actual.mode & 0o777, normal.mode & 0o777);
+    NodeAssert.equal(actual.uid, normal.uid);
+    NodeAssert.equal(actual.gid, normal.gid);
     for (const value of Object.values(created.flush))
-      assert.equal(value, 0, JSON.stringify(created));
-    await fs.writeFile(target, "public later edit");
-    assert.equal(
-      await fs.readFile(staged, "utf8"),
+      NodeAssert.equal(value, 0, JSON.stringify(created));
+    await NodeFSP.writeFile(target, "public later edit");
+    NodeAssert.equal(
+      await NodeFSP.readFile(staged, "utf8"),
       complete,
       "The public inode must not be a hard link to the journal stage",
     );
     for (const kind of ["file", "symlink", "directory"]) {
       const name = `occupied-${kind}`,
-        occupied = path.join(f.root, "sub", name);
-      if (kind === "file") await fs.writeFile(occupied, "outside B");
-      else if (kind === "symlink") await fs.symlink(ordinary, occupied);
-      else await fs.mkdir(occupied);
-      const before = await fs.lstat(occupied);
+        occupied = NodePath.join(f.root, "sub", name);
+      if (kind === "file") await NodeFSP.writeFile(occupied, "outside B");
+      else if (kind === "symlink") await NodeFSP.symlink(ordinary, occupied);
+      else await NodeFSP.mkdir(occupied);
+      const before = await NodeFSP.lstat(occupied);
       const refused = await run(helper, operation(binding, "create", "stage", name));
-      assert.equal(refused.outcome, "unchanged");
-      assert.notEqual(refused.code, 0);
-      assert.equal((await fs.lstat(occupied)).ino, before.ino);
-      if (kind === "file") assert.equal(await fs.readFile(occupied, "utf8"), "outside B");
-      if (kind === "symlink") assert.equal(await fs.readlink(occupied), ordinary);
-      if (kind === "directory") assert.deepEqual(await fs.readdir(occupied), []);
-      assert.equal(await fs.readFile(staged, "utf8"), complete);
-      assert.deepEqual(refused.flush, {
+      NodeAssert.equal(refused.outcome, "unchanged");
+      NodeAssert.notEqual(refused.code, 0);
+      NodeAssert.equal((await NodeFSP.lstat(occupied)).ino, before.ino);
+      if (kind === "file") NodeAssert.equal(await NodeFSP.readFile(occupied, "utf8"), "outside B");
+      if (kind === "symlink") NodeAssert.equal(await NodeFSP.readlink(occupied), ordinary);
+      if (kind === "directory") NodeAssert.deepEqual(await NodeFSP.readdir(occupied), []);
+      NodeAssert.equal(await NodeFSP.readFile(staged, "utf8"), complete);
+      NodeAssert.deepEqual(refused.flush, {
         sourceFile: -1,
         destinationFile: -1,
         sourceDirectory: -1,
@@ -346,11 +346,13 @@ async function qualifyCreation() {
       });
       evidence.push({ case: `complete-create-occupied-${kind}-untouched`, refused });
     }
-    await fs.symlink(staged, path.join(f.record, "stage-link"));
+    await NodeFSP.symlink(staged, NodePath.join(f.record, "stage-link"));
     const badSource = await run(helper, operation(binding, "create", "stage-link", "bad-source"));
-    assert.equal(badSource.outcome, "unchanged");
-    assert.notEqual(badSource.code, 0);
-    await assert.rejects(fs.stat(path.join(f.root, "sub", "bad-source")), { code: "ENOENT" });
+    NodeAssert.equal(badSource.outcome, "unchanged");
+    NodeAssert.notEqual(badSource.code, 0);
+    await NodeAssert.rejects(NodeFSP.stat(NodePath.join(f.root, "sub", "bad-source")), {
+      code: "ENOENT",
+    });
     evidence.push({
       case: "complete-create-distinct-inode-normal-mode-group-source-private-no-final-source-follow",
       sourceGroup: String(sourceBefore.gid),
@@ -360,42 +362,42 @@ async function qualifyCreation() {
       badSource,
     });
   });
-  if (process.platform === "darwin") {
+  if (NodeOS.platform() === "darwin") {
     await fixture(async (f) => {
       const rooted = await run(helper, ["--protocol=1", "capabilities", f.root]);
       if (!rooted.atomicCreateMetadata) return;
-      const parent = path.join(f.root, "sub");
-      childProcess.execFileSync("/bin/chmod", [
+      const parent = NodePath.join(f.root, "sub");
+      NodeChildProcess.execFileSync("/bin/chmod", [
         "+a",
         "everyone deny read,file_inherit,only_inherit",
         parent,
       ]);
       const binding = await bind(helper, f);
       const complete = "ACL-complete C\n".repeat(4096);
-      await fs.writeFile(path.join(f.record, "stage"), complete, { mode: 0o666 });
-      const ordinary = path.join(parent, "ordinary");
-      await fs.writeFile(ordinary, complete, { mode: 0o666 });
+      await NodeFSP.writeFile(NodePath.join(f.record, "stage"), complete, { mode: 0o666 });
+      const ordinary = NodePath.join(parent, "ordinary");
+      await NodeFSP.writeFile(ordinary, complete, { mode: 0o666 });
       const result = await run(helper, operation(binding, "create", "stage", "created"));
-      assert.equal(result.outcome, "applied");
-      assert.equal(result.code, 0, JSON.stringify(result));
-      const target = path.join(parent, "created"),
-        actual = await fs.stat(target),
-        normal = await fs.stat(ordinary);
-      assert.equal(actual.size, Buffer.byteLength(complete));
-      assert.equal(actual.mode & 0o777, normal.mode & 0o777);
-      assert.equal(actual.uid, normal.uid);
-      assert.equal(actual.gid, normal.gid);
-      const acl = childProcess.execFileSync("/bin/ls", ["-le", target], { encoding: "utf8" });
-      assert(/everyone(?: inherited)? deny read/u.test(acl), acl);
-      await assert.rejects(fs.readFile(target), { code: "EACCES" });
-      await assert.rejects(fs.readFile(ordinary), { code: "EACCES" });
-      assert.equal(
+      NodeAssert.equal(result.outcome, "applied");
+      NodeAssert.equal(result.code, 0, JSON.stringify(result));
+      const target = NodePath.join(parent, "created"),
+        actual = await NodeFSP.stat(target),
+        normal = await NodeFSP.stat(ordinary);
+      NodeAssert.equal(actual.size, Buffer.byteLength(complete));
+      NodeAssert.equal(actual.mode & 0o777, normal.mode & 0o777);
+      NodeAssert.equal(actual.uid, normal.uid);
+      NodeAssert.equal(actual.gid, normal.gid);
+      const acl = NodeChildProcess.execFileSync("/bin/ls", ["-le", target], { encoding: "utf8" });
+      NodeAssert.ok(/everyone(?: inherited)? deny read/u.test(acl), acl);
+      await NodeAssert.rejects(NodeFSP.readFile(target), { code: "EACCES" });
+      await NodeAssert.rejects(NodeFSP.readFile(ordinary), { code: "EACCES" });
+      NodeAssert.equal(
         result.flush.destinationFile,
-        os.constants.errno.EACCES,
+        NodeOS.constants.errno.EACCES,
         "An applied clone with denied reopen needs durability attention, not fake success",
       );
-      assert.equal(result.flush.sourceFile, 0);
-      assert.equal(await fs.readFile(path.join(f.record, "stage"), "utf8"), complete);
+      NodeAssert.equal(result.flush.sourceFile, 0);
+      NodeAssert.equal(await NodeFSP.readFile(NodePath.join(f.record, "stage"), "utf8"), complete);
       evidence.push({
         case: "complete-create-inherits-actual-parent-deny-acl-normal-group-mode-and-truthful-denied-flush",
         result,
@@ -408,38 +410,49 @@ async function qualifyCreation() {
             const rooted = await run(probe, ["--protocol=1", "capabilities", f.root]);
             if (!rooted.atomicCreateMetadata) return;
             const binding = await bind(probe, f);
-            const staged = path.join(f.record, "stage");
-            await fs.writeFile(staged, "complete relocation C", { mode: 0o666 });
+            const staged = NodePath.join(f.record, "stage");
+            await NodeFSP.writeFile(staged, "complete relocation C", { mode: 0o666 });
             const child = launch(probe, operation(binding, "create", "stage", "created"), {
               [barrier === "BOUND"
                 ? "SCIENT_PUBLICATION_BARRIER"
                 : "SCIENT_PUBLICATION_CREATE_BARRIER"]: "1",
             });
             await child.next((line) => line === barrier);
-            const moved = path.join(f.outside, "moved");
-            await fs.rename(relocation === "root" ? f.root : path.join(f.root, "sub"), moved);
+            const moved = NodePath.join(f.outside, "moved");
+            await NodeFSP.rename(
+              relocation === "root" ? f.root : NodePath.join(f.root, "sub"),
+              moved,
+            );
             child.child.stdin.end("\n");
             const result = JSON.parse(await child.next((line) => line.includes('"outcome"')));
-            assert.equal((await child.retired).code, 0);
-            assert.notEqual(result.code, 0, "Changed current-root binding cannot be acknowledged");
-            const outside = path.join(moved, ...(relocation === "root" ? ["sub"] : []), "created");
+            NodeAssert.equal((await child.retired).code, 0);
+            NodeAssert.notEqual(
+              result.code,
+              0,
+              "Changed current-root binding cannot be acknowledged",
+            );
+            const outside = NodePath.join(
+              moved,
+              ...(relocation === "root" ? ["sub"] : []),
+              "created",
+            );
             if (barrier === "BOUND") {
-              assert.equal(result.outcome, "unchanged");
-              await assert.rejects(fs.stat(outside), { code: "ENOENT" });
-              assert.deepEqual(result.flush, {
+              NodeAssert.equal(result.outcome, "unchanged");
+              await NodeAssert.rejects(NodeFSP.stat(outside), { code: "ENOENT" });
+              NodeAssert.deepEqual(result.flush, {
                 sourceFile: -1,
                 destinationFile: -1,
                 sourceDirectory: -1,
                 destinationDirectory: -1,
               });
             } else {
-              assert.equal(result.outcome, "applied");
-              assert.equal(await fs.readFile(outside, "utf8"), "complete relocation C");
-              assert.notEqual(result.destinationAfter.ino, result.sourceAfter.ino);
+              NodeAssert.equal(result.outcome, "applied");
+              NodeAssert.equal(await NodeFSP.readFile(outside, "utf8"), "complete relocation C");
+              NodeAssert.notEqual(result.destinationAfter.ino, result.sourceAfter.ino);
               for (const value of Object.values(result.flush))
-                assert(value >= 0, JSON.stringify(result));
+                NodeAssert.ok(value >= 0, JSON.stringify(result));
             }
-            assert.equal(await fs.readFile(staged, "utf8"), "complete relocation C");
+            NodeAssert.equal(await NodeFSP.readFile(staged, "utf8"), "complete relocation C");
             evidence.push({
               case: `complete-create-${barrier.toLowerCase()}-${relocation}-relocation`,
               result,
@@ -449,7 +462,7 @@ async function qualifyCreation() {
   if (unsupportedRoot)
     await fixture(async (f) => {
       const rooted = await run(helper, ["--protocol=1", "capabilities", f.root]);
-      assert.equal(
+      NodeAssert.equal(
         rooted.atomicCreateMetadata,
         false,
         "--unsupported-root must be an actual unsupported volume",
@@ -459,7 +472,7 @@ async function qualifyCreation() {
         f,
         rooted.strictCurrentRoot ? "strict-current-root" : "bound-object",
       );
-      await fs.writeFile(path.join(f.record, "stage"), "C", { mode: 0o666 });
+      await NodeFSP.writeFile(NodePath.join(f.record, "stage"), "C", { mode: 0o666 });
       const refused = await run(
         helper,
         operation(
@@ -470,10 +483,10 @@ async function qualifyCreation() {
           rooted.strictCurrentRoot ? "strict-current-root" : "bound-object",
         ),
       );
-      assert.equal(refused.outcome, "unchanged");
-      assert.notEqual(refused.code, 0);
-      assert.deepEqual(await fs.readdir(path.join(f.root, "sub")), []);
-      assert.equal(await fs.readFile(path.join(f.record, "stage"), "utf8"), "C");
+      NodeAssert.equal(refused.outcome, "unchanged");
+      NodeAssert.notEqual(refused.code, 0);
+      NodeAssert.deepEqual(await NodeFSP.readdir(NodePath.join(f.root, "sub")), []);
+      NodeAssert.equal(await NodeFSP.readFile(NodePath.join(f.record, "stage"), "utf8"), "C");
       evidence.push({
         case: "actual-unsupported-volume-create-refuses-without-source-parent-admission",
         rooted,
@@ -483,97 +496,97 @@ async function qualifyCreation() {
 }
 async function qualifyChanged(capabilities) {
   await fixture(async (f) => {
-    const before = await fs.readdir(f.outside);
+    const before = await NodeFSP.readdir(f.outside);
     const binding = await bindParent(helper, f.outside);
-    assert.equal(binding.parent.type, "directory");
-    assert.deepEqual(await fs.readdir(f.outside), before);
+    NodeAssert.equal(binding.parent.type, "directory");
+    NodeAssert.deepEqual(await NodeFSP.readdir(f.outside), before);
     evidence.push({ case: "read-only-parent-binding-needs-no-private-directory", binding });
   });
   await fixture(async (f) => {
     const binding = await bindParent(helper, f.temporary);
-    const privatePath = path.join(f.temporary, "host-private");
+    const privatePath = NodePath.join(f.temporary, "host-private");
     const result = await run(helper, directoryOperation(binding, "private-create", "host-private"));
     if (!capabilities.privateRetentionDirectory) {
-      assert.equal(result.outcome, "unchanged");
-      assert.notEqual(result.code, 0);
-      await assert.rejects(fs.stat(privatePath), { code: "ENOENT" });
+      NodeAssert.equal(result.outcome, "unchanged");
+      NodeAssert.notEqual(result.code, 0);
+      await NodeAssert.rejects(NodeFSP.stat(privatePath), { code: "ENOENT" });
     } else {
-      assert.equal(result.outcome, "applied");
-      assert.equal(result.code, 0, JSON.stringify(result));
-      assert.equal(result.destinationAfter.type, "directory");
-      if (process.platform !== "win32")
-        assert.equal((await fs.stat(privatePath)).mode & 0o777, 0o700);
+      NodeAssert.equal(result.outcome, "applied");
+      NodeAssert.equal(result.code, 0, JSON.stringify(result));
+      NodeAssert.equal(result.destinationAfter.type, "directory");
+      if (NodeOS.platform() !== "win32")
+        NodeAssert.equal((await NodeFSP.stat(privatePath)).mode & 0o777, 0o700);
       const again = await run(
         helper,
         directoryOperation(binding, "private-create", "host-private"),
       );
-      assert.equal(again.outcome, "unchanged");
-      assert.equal(again.code, 0);
-      assert.equal(again.destinationAfter.ino, result.destinationAfter.ino);
+      NodeAssert.equal(again.outcome, "unchanged");
+      NodeAssert.equal(again.code, 0);
+      NodeAssert.equal(again.destinationAfter.ino, result.destinationAfter.ino);
     }
-    const broad = path.join(f.temporary, "broad");
-    await fs.mkdir(broad, { mode: 0o755 });
-    if (process.platform !== "win32") await fs.chmod(broad, 0o755);
-    const modeBefore = (await fs.stat(broad)).mode;
+    const broad = NodePath.join(f.temporary, "broad");
+    await NodeFSP.mkdir(broad, { mode: 0o755 });
+    if (NodeOS.platform() !== "win32") await NodeFSP.chmod(broad, 0o755);
+    const modeBefore = (await NodeFSP.stat(broad)).mode;
     const refused = await run(helper, directoryOperation(binding, "private-create", "broad"));
-    assert.equal(refused.outcome, "unchanged");
-    assert.notEqual(refused.code, 0);
-    assert.equal((await fs.stat(broad)).mode, modeBefore);
-    if (process.platform !== "win32") {
-      await fs.symlink(f.outside, path.join(f.temporary, "private-link"));
+    NodeAssert.equal(refused.outcome, "unchanged");
+    NodeAssert.notEqual(refused.code, 0);
+    NodeAssert.equal((await NodeFSP.stat(broad)).mode, modeBefore);
+    if (NodeOS.platform() !== "win32") {
+      await NodeFSP.symlink(f.outside, NodePath.join(f.temporary, "private-link"));
       const linked = await run(
         helper,
         directoryOperation(binding, "private-create", "private-link"),
       );
-      assert.equal(linked.outcome, "unchanged");
-      assert.notEqual(linked.code, 0);
-      assert.deepEqual(await fs.readdir(f.outside), []);
-      if (process.platform === "darwin") {
-        const aclDirectory = path.join(f.temporary, "private-mode-broad-acl");
-        await fs.mkdir(aclDirectory, { mode: 0o700 });
-        childProcess.execFileSync("/bin/chmod", ["+a", "everyone allow read", aclDirectory]);
-        const before = childProcess.execFileSync("/bin/ls", ["-led", aclDirectory], {
+      NodeAssert.equal(linked.outcome, "unchanged");
+      NodeAssert.notEqual(linked.code, 0);
+      NodeAssert.deepEqual(await NodeFSP.readdir(f.outside), []);
+      if (NodeOS.platform() === "darwin") {
+        const aclDirectory = NodePath.join(f.temporary, "private-mode-broad-acl");
+        await NodeFSP.mkdir(aclDirectory, { mode: 0o700 });
+        NodeChildProcess.execFileSync("/bin/chmod", ["+a", "everyone allow read", aclDirectory]);
+        const before = NodeChildProcess.execFileSync("/bin/ls", ["-led", aclDirectory], {
           encoding: "utf8",
         });
         const aclRefused = await run(
           helper,
           directoryOperation(binding, "private-create", "private-mode-broad-acl"),
         );
-        assert.equal(aclRefused.outcome, "unchanged");
-        assert.notEqual(aclRefused.code, 0);
-        assert.equal(
-          childProcess.execFileSync("/bin/ls", ["-led", aclDirectory], { encoding: "utf8" }),
+        NodeAssert.equal(aclRefused.outcome, "unchanged");
+        NodeAssert.notEqual(aclRefused.code, 0);
+        NodeAssert.equal(
+          NodeChildProcess.execFileSync("/bin/ls", ["-led", aclDirectory], { encoding: "utf8" }),
           before,
         );
         evidence.push({ case: "private-existing-broad-acl-is-refused-without-repair", aclRefused });
-        const deniedDirectory = path.join(f.temporary, "private-child-deny");
-        await fs.mkdir(deniedDirectory, { mode: 0o700 });
-        childProcess.execFileSync("/bin/chmod", [
+        const deniedDirectory = NodePath.join(f.temporary, "private-child-deny");
+        await NodeFSP.mkdir(deniedDirectory, { mode: 0o700 });
+        NodeChildProcess.execFileSync("/bin/chmod", [
           "+a",
           "everyone deny read,file_inherit,only_inherit",
           deniedDirectory,
         ]);
-        const denyBefore = childProcess.execFileSync("/bin/ls", ["-led", deniedDirectory], {
+        const denyBefore = NodeChildProcess.execFileSync("/bin/ls", ["-led", deniedDirectory], {
           encoding: "utf8",
         });
         const denyRefused = await run(
           helper,
           directoryOperation(binding, "private-create", "private-child-deny"),
         );
-        assert.equal(denyRefused.outcome, "unchanged");
-        assert.notEqual(denyRefused.code, 0);
-        assert.equal(
-          childProcess.execFileSync("/bin/ls", ["-led", deniedDirectory], { encoding: "utf8" }),
+        NodeAssert.equal(denyRefused.outcome, "unchanged");
+        NodeAssert.notEqual(denyRefused.code, 0);
+        NodeAssert.equal(
+          NodeChildProcess.execFileSync("/bin/ls", ["-led", deniedDirectory], { encoding: "utf8" }),
           denyBefore,
         );
-        assert.deepEqual(await fs.readdir(deniedDirectory), []);
+        NodeAssert.deepEqual(await NodeFSP.readdir(deniedDirectory), []);
         evidence.push({
           case: "private-existing-child-deny-is-refused-before-journal-access-without-repair",
           denyRefused,
         });
-        const inheritedParent = path.join(f.temporary, "broad-inherited-parent");
-        await fs.mkdir(inheritedParent);
-        childProcess.execFileSync("/bin/chmod", [
+        const inheritedParent = NodePath.join(f.temporary, "broad-inherited-parent");
+        await NodeFSP.mkdir(inheritedParent);
+        NodeChildProcess.execFileSync("/bin/chmod", [
           "+a",
           "everyone allow read,file_inherit,directory_inherit",
           inheritedParent,
@@ -583,20 +596,20 @@ async function qualifyChanged(capabilities) {
           helper,
           directoryOperation(inheritedBinding, "private-create", "journal"),
         );
-        assert.equal(born.outcome, "applied");
-        assert.equal(born.code, 0, JSON.stringify(born));
-        const privateChild = path.join(inheritedParent, "journal");
-        assert.equal((await fs.stat(privateChild)).mode & 0o777, 0o700);
-        const privateAcl = childProcess.execFileSync("/bin/ls", ["-led", privateChild], {
+        NodeAssert.equal(born.outcome, "applied");
+        NodeAssert.equal(born.code, 0, JSON.stringify(born));
+        const privateChild = NodePath.join(inheritedParent, "journal");
+        NodeAssert.equal((await NodeFSP.stat(privateChild)).mode & 0o777, 0o700);
+        const privateAcl = NodeChildProcess.execFileSync("/bin/ls", ["-led", privateChild], {
           encoding: "utf8",
         });
-        assert(!privateAcl.includes("everyone allow"), privateAcl);
-        await fs.writeFile(path.join(privateChild, "owner-child"), "owner access");
-        assert.equal(
-          await fs.readFile(path.join(privateChild, "owner-child"), "utf8"),
+        NodeAssert.ok(!privateAcl.includes("everyone allow"), privateAcl);
+        await NodeFSP.writeFile(NodePath.join(privateChild, "owner-child"), "owner access");
+        NodeAssert.equal(
+          await NodeFSP.readFile(NodePath.join(privateChild, "owner-child"), "utf8"),
           "owner access",
         );
-        assert.equal(
+        NodeAssert.equal(
           (await run(helper, directoryOperation(inheritedBinding, "private-create", "journal")))
             .code,
           0,
@@ -607,43 +620,47 @@ async function qualifyChanged(capabilities) {
         });
       }
       if (process.getuid?.() === 0) {
-        const foreign = path.join(f.temporary, "foreign-owner");
-        await fs.mkdir(foreign, { mode: 0o700 });
-        await fs.chown(foreign, 1, 1);
+        const foreign = NodePath.join(f.temporary, "foreign-owner");
+        await NodeFSP.mkdir(foreign, { mode: 0o700 });
+        await NodeFSP.chown(foreign, 1, 1);
         const ownerRefused = await run(
           helper,
           directoryOperation(binding, "private-create", "foreign-owner"),
         );
-        assert.equal(ownerRefused.outcome, "unchanged");
-        assert.notEqual(ownerRefused.code, 0);
-        assert.equal((await fs.stat(foreign)).uid, 1);
+        NodeAssert.equal(ownerRefused.outcome, "unchanged");
+        NodeAssert.notEqual(ownerRefused.code, 0);
+        NodeAssert.equal((await NodeFSP.stat(foreign)).uid, 1);
         evidence.push({ case: "private-wrong-owner-refused-without-repair", ownerRefused });
       }
     }
-    if (process.platform === "win32" && capabilities.privateRetentionDirectory) {
-      const deniedDirectory = path.join(f.temporary, "private-child-deny");
+    if (NodeOS.platform() === "win32" && capabilities.privateRetentionDirectory) {
+      const deniedDirectory = NodePath.join(f.temporary, "private-child-deny");
       const born = await run(
         helper,
         directoryOperation(binding, "private-create", "private-child-deny"),
       );
-      assert.equal(born.code, 0);
-      childProcess.execFileSync("icacls.exe", [deniedDirectory, "/deny", "*S-1-1-0:(OI)(IO)(R)"], {
-        stdio: "pipe",
-      });
-      const before = childProcess.execFileSync("icacls.exe", [deniedDirectory], {
+      NodeAssert.equal(born.code, 0);
+      NodeChildProcess.execFileSync(
+        "icacls.exe",
+        [deniedDirectory, "/deny", "*S-1-1-0:(OI)(IO)(R)"],
+        {
+          stdio: "pipe",
+        },
+      );
+      const before = NodeChildProcess.execFileSync("icacls.exe", [deniedDirectory], {
         encoding: "utf8",
       });
       const refused = await run(
         helper,
         directoryOperation(binding, "private-create", "private-child-deny"),
       );
-      assert.equal(refused.outcome, "unchanged");
-      assert.notEqual(refused.code, 0);
-      assert.equal(
-        childProcess.execFileSync("icacls.exe", [deniedDirectory], { encoding: "utf8" }),
+      NodeAssert.equal(refused.outcome, "unchanged");
+      NodeAssert.notEqual(refused.code, 0);
+      NodeAssert.equal(
+        NodeChildProcess.execFileSync("icacls.exe", [deniedDirectory], { encoding: "utf8" }),
         before,
       );
-      assert.deepEqual(await fs.readdir(deniedDirectory), []);
+      NodeAssert.deepEqual(await NodeFSP.readdir(deniedDirectory), []);
       evidence.push({
         case: "windows-private-existing-child-deny-refused-without-dacl-repair",
         refused,
@@ -659,20 +676,25 @@ async function qualifyChanged(capabilities) {
     const binding = await bindParent(helper, f.root, "sub");
     const created = await run(helper, directoryOperation(binding, "mkdir", "chapter"));
     if (!capabilities.sourceParentMkdir) {
-      assert.equal(created.outcome, "unchanged");
-      assert.notEqual(created.code, 0);
-      await assert.rejects(fs.stat(path.join(f.root, "sub", "chapter")), { code: "ENOENT" });
+      NodeAssert.equal(created.outcome, "unchanged");
+      NodeAssert.notEqual(created.code, 0);
+      await NodeAssert.rejects(NodeFSP.stat(NodePath.join(f.root, "sub", "chapter")), {
+        code: "ENOENT",
+      });
     } else {
-      assert.equal(created.outcome, "applied");
-      assert.equal(created.code, 0);
+      NodeAssert.equal(created.outcome, "applied");
+      NodeAssert.equal(created.code, 0);
       const child = await bindParent(helper, f.root, "sub/chapter");
       const nested = await run(helper, directoryOperation(child, "mkdir", "sections"));
-      assert.equal(nested.outcome, "applied");
-      assert.equal(nested.code, 0);
+      NodeAssert.equal(nested.outcome, "applied");
+      NodeAssert.equal(nested.code, 0);
       const occupied = await run(helper, directoryOperation(binding, "mkdir", "chapter"));
-      assert.equal(occupied.outcome, "unchanged");
-      assert.notEqual(occupied.code, 0);
-      assert.equal((await fs.readdir(path.join(f.root, "sub", "chapter"))).join(","), "sections");
+      NodeAssert.equal(occupied.outcome, "unchanged");
+      NodeAssert.notEqual(occupied.code, 0);
+      NodeAssert.equal(
+        (await NodeFSP.readdir(NodePath.join(f.root, "sub", "chapter"))).join(","),
+        "sections",
+      );
     }
     evidence.push({ case: "authorized-missing-source-parent-mkdir-is-exclusive", created });
   });
@@ -682,42 +704,44 @@ async function qualifyChanged(capabilities) {
       f,
       capabilities.strictCurrentRoot ? "strict-current-root" : "bound-object",
     );
-    const target = path.join(f.root, "sub", "source"),
-      staged = path.join(f.record, "stage");
-    await fs.writeFile(target, "preflight A", { mode: 0o644 });
-    await fs.writeFile(staged, "local C", { mode: 0o600 });
+    const target = NodePath.join(f.root, "sub", "source"),
+      staged = NodePath.join(f.record, "stage");
+    await NodeFSP.writeFile(target, "preflight A", { mode: 0o644 });
+    await NodeFSP.writeFile(staged, "local C", { mode: 0o600 });
     if (capabilities.atomicExchange) {
       const copied = await run(helper, operation(binding, "metadata", "source", "stage"));
-      assert.equal(copied.code, 0);
-      assert.equal(copied.outcome, "applied");
-      await fs.rename(target, path.join(f.root, "sub", "preflight"));
-      await fs.writeFile(target, "late outside B", { mode: 0o600 });
-      if (process.platform === "darwin") {
-        childProcess.execFileSync("/usr/bin/xattr", [
+      NodeAssert.equal(copied.code, 0);
+      NodeAssert.equal(copied.outcome, "applied");
+      await NodeFSP.rename(target, NodePath.join(f.root, "sub", "preflight"));
+      await NodeFSP.writeFile(target, "late outside B", { mode: 0o600 });
+      if (NodeOS.platform() === "darwin") {
+        NodeChildProcess.execFileSync("/usr/bin/xattr", [
           "-w",
           "com.scient.publication",
           "actual-displaced-B",
           target,
         ]);
-        childProcess.execFileSync("/bin/chmod", ["+a", "everyone deny write", target]);
+        NodeChildProcess.execFileSync("/bin/chmod", ["+a", "everyone deny write", target]);
       }
       const published = await run(helper, operation(binding, "exchange", "stage", "source"));
-      assert.equal(published.code, 0, JSON.stringify(published));
-      assert.equal(published.outcome, "applied");
-      assert.equal(await fs.readFile(target, "utf8"), "local C");
-      assert.equal(await fs.readFile(staged, "utf8"), "late outside B");
-      assert.equal((await fs.stat(target)).mode & 0o777, 0o600);
-      if (process.platform === "darwin") {
-        assert.equal(
-          childProcess
-            .execFileSync("/usr/bin/xattr", ["-p", "com.scient.publication", target], {
+      NodeAssert.equal(published.code, 0, JSON.stringify(published));
+      NodeAssert.equal(published.outcome, "applied");
+      NodeAssert.equal(await NodeFSP.readFile(target, "utf8"), "local C");
+      NodeAssert.equal(await NodeFSP.readFile(staged, "utf8"), "late outside B");
+      NodeAssert.equal((await NodeFSP.stat(target)).mode & 0o777, 0o600);
+      if (NodeOS.platform() === "darwin") {
+        NodeAssert.equal(
+          NodeChildProcess.execFileSync(
+            "/usr/bin/xattr",
+            ["-p", "com.scient.publication", target],
+            {
               encoding: "utf8",
-            })
-            .trim(),
+            },
+          ).trim(),
           "actual-displaced-B",
         );
-        const acl = childProcess.execFileSync("/bin/ls", ["-le", target], { encoding: "utf8" });
-        assert(acl.includes("everyone deny write"), acl);
+        const acl = NodeChildProcess.execFileSync("/bin/ls", ["-le", target], { encoding: "utf8" });
+        NodeAssert.ok(acl.includes("everyone deny write"), acl);
       }
       evidence.push({
         case: "exchange-copies-observed-mode-acl-xattr-before-visibility",
@@ -730,12 +754,12 @@ async function qualifyChanged(capabilities) {
         helper,
         operation(binding, "exchange", "stage", "source", authority),
       );
-      assert.equal(refused.outcome, "unchanged");
-      assert.notEqual(refused.code, 0);
-      assert.equal(await fs.readFile(target, "utf8"), "preflight A");
-      assert.equal(await fs.readFile(staged, "utf8"), "local C");
-      assert.equal((await fs.stat(target)).mode & 0o777, 0o644);
-      assert.equal((await fs.stat(staged)).mode & 0o777, 0o600);
+      NodeAssert.equal(refused.outcome, "unchanged");
+      NodeAssert.notEqual(refused.code, 0);
+      NodeAssert.equal(await NodeFSP.readFile(target, "utf8"), "preflight A");
+      NodeAssert.equal(await NodeFSP.readFile(staged, "utf8"), "local C");
+      NodeAssert.equal((await NodeFSP.stat(target)).mode & 0o777, 0o644);
+      NodeAssert.equal((await NodeFSP.stat(staged)).mode & 0o777, 0o600);
       evidence.push({
         case: "missing-atomic-metadata-refuses-before-any-exchange",
         authority,
@@ -748,9 +772,9 @@ async function qualifyChanged(capabilities) {
     if (!capabilities.sharedPublicationLease) {
       const lease = launch(helper, leaseArguments([{ ...binding, mode: "shared" }]));
       const refused = JSON.parse(await lease.next((line) => line.includes('"lease"')));
-      assert.equal(refused.lease, "refused");
-      assert.notEqual(refused.code, 0);
-      assert.equal((await lease.retired).code, 0);
+      NodeAssert.equal(refused.lease, "refused");
+      NodeAssert.notEqual(refused.code, 0);
+      NodeAssert.equal((await lease.retired).code, 0);
       evidence.push({ case: "unqualified-shared-coordination-is-explicitly-refused", refused });
       return;
     }
@@ -782,15 +806,15 @@ async function qualifyChanged(capabilities) {
         SCIENT_LEASE_TRY: "1",
       });
       const blocked = JSON.parse(await contender.next((line) => line.includes('"lease"')));
-      assert.equal(blocked.lease, "refused");
-      assert.notEqual(blocked.code, 0);
-      assert.equal((await contender.retired).code, 0);
+      NodeAssert.equal(blocked.lease, "refused");
+      NodeAssert.notEqual(blocked.code, 0);
+      NodeAssert.equal((await contender.retired).code, 0);
       evidence.push({
         case: "duplicate-parent-ex-dominates-sh-under-real-lock-contention",
         blocked,
       });
     }
-    await fs.writeFile(path.join(f.record, "stage"), "owned C");
+    await NodeFSP.writeFile(NodePath.join(f.record, "stage"), "owned C");
     const result = await command(
       exclusive,
       operation(
@@ -801,16 +825,18 @@ async function qualifyChanged(capabilities) {
         capabilities.strictCurrentRoot ? "strict-current-root" : "bound-object",
       ),
     );
-    assert.equal(result.code, 0);
-    assert.equal(result.outcome, "applied");
+    NodeAssert.equal(result.code, 0);
+    NodeAssert.equal(result.outcome, "applied");
     await retireLease(exclusive);
     const sharedOnly = launch(helper, leaseArguments([{ ...binding, mode: "shared" }]));
     await sharedOnly.next((line) => line.includes('"lease":"acquired"'));
     sharedOnly.child.stdin.write(frame(directoryOperation(binding, "mkdir", "forbidden")));
     const refused = JSON.parse(await sharedOnly.next((line) => line.includes('"lease":"refused"')));
-    assert.notEqual(refused.code, 0);
-    assert.equal((await sharedOnly.retired).code, 0);
-    await assert.rejects(fs.stat(path.join(f.root, "sub", "forbidden")), { code: "ENOENT" });
+    NodeAssert.notEqual(refused.code, 0);
+    NodeAssert.equal((await sharedOnly.retired).code, 0);
+    await NodeAssert.rejects(NodeFSP.stat(NodePath.join(f.root, "sub", "forbidden")), {
+      code: "ENOENT",
+    });
     evidence.push({
       case: "per-binding-shared-concurrency-ex-strongest-and-sh-no-namespace-authority",
       result,
@@ -822,7 +848,7 @@ async function qualifyChanged(capabilities) {
       const root = await bindParent(probe, f.root);
       const nested = await bindParent(probe, f.root, "sub");
       const outside = await bindParent(probe, f.outside);
-      const volume = await bindParent(probe, path.parse(f.root).root);
+      const volume = await bindParent(probe, NodePath.parse(f.root).root);
       const first = launch(
         probe,
         leaseArguments([
@@ -849,9 +875,9 @@ async function qualifyChanged(capabilities) {
         { SCIENT_LEASE_TRY: "1" },
       );
       const blocked = JSON.parse(await contender.next((line) => line.includes('"lease"')));
-      assert.equal(blocked.lease, "refused");
-      assert.notEqual(blocked.code, 0);
-      assert.equal((await contender.retired).code, 0);
+      NodeAssert.equal(blocked.lease, "refused");
+      NodeAssert.notEqual(blocked.code, 0);
+      NodeAssert.equal((await contender.retired).code, 0);
       const writer = launch(
         probe,
         leaseArguments([
@@ -875,46 +901,57 @@ async function qualifyChanged(capabilities) {
         SCIENT_PUBLICATION_BARRIER: "1",
       });
       await child.next((line) => line === "BOUND");
-      if (process.platform === "win32")
-        await assert.rejects(fs.rename(path.join(f.root, "sub"), path.join(f.outside, "moved")));
-      else await fs.rename(path.join(f.root, "sub"), path.join(f.outside, "moved"));
+      if (NodeOS.platform() === "win32")
+        await NodeAssert.rejects(
+          NodeFSP.rename(NodePath.join(f.root, "sub"), NodePath.join(f.outside, "moved")),
+        );
+      else await NodeFSP.rename(NodePath.join(f.root, "sub"), NodePath.join(f.outside, "moved"));
       child.child.stdin.end("\n");
       const result = JSON.parse(await child.next((line) => line.includes('"outcome"')));
-      assert.equal((await child.retired).code, 0);
-      if (process.platform === "win32") assert.equal(result.outcome, "applied");
+      NodeAssert.equal((await child.retired).code, 0);
+      if (NodeOS.platform() === "win32") NodeAssert.equal(result.outcome, "applied");
       else {
-        assert.equal(result.outcome, "unchanged");
-        assert.notEqual(result.code, 0);
-        await assert.rejects(fs.stat(path.join(f.outside, "moved", "chapter")), { code: "ENOENT" });
+        NodeAssert.equal(result.outcome, "unchanged");
+        NodeAssert.notEqual(result.code, 0);
+        await NodeAssert.rejects(NodeFSP.stat(NodePath.join(f.outside, "moved", "chapter")), {
+          code: "ENOENT",
+        });
       }
       evidence.push({
         case: "source-parent-mkdir-relocation-cannot-create-outside-authority",
         result,
       });
     });
-  if (probe && capabilities.atomicPublicationMetadata && process.platform === "darwin")
+  if (probe && capabilities.atomicPublicationMetadata && NodeOS.platform() === "darwin")
     for (const relocation of ["parent", "root"])
       await fixture(async (f) => {
         const binding = await bind(probe, f);
-        const target = path.join(f.root, "sub", "source");
-        await fs.writeFile(target, "actual displaced B", { mode: 0o600 });
-        await fs.writeFile(path.join(f.record, "stage"), "local C", { mode: 0o644 });
+        const target = NodePath.join(f.root, "sub", "source");
+        await NodeFSP.writeFile(target, "actual displaced B", { mode: 0o600 });
+        await NodeFSP.writeFile(NodePath.join(f.record, "stage"), "local C", { mode: 0o644 });
         const child = launch(probe, operation(binding, "exchange", "stage", "source"), {
           SCIENT_PUBLICATION_METADATA_BARRIER: "1",
         });
         await child.next((line) => line === "EXCHANGED");
-        const moved = path.join(f.outside, "moved");
-        await fs.rename(relocation === "parent" ? path.dirname(target) : f.root, moved);
-        const outsideTarget = path.join(moved, ...(relocation === "root" ? ["sub"] : []), "source");
-        const mode = (await fs.stat(outsideTarget)).mode & 0o777;
+        const moved = NodePath.join(f.outside, "moved");
+        await NodeFSP.rename(relocation === "parent" ? NodePath.dirname(target) : f.root, moved);
+        const outsideTarget = NodePath.join(
+          moved,
+          ...(relocation === "root" ? ["sub"] : []),
+          "source",
+        );
+        const mode = (await NodeFSP.stat(outsideTarget)).mode & 0o777;
         child.child.stdin.end("\n");
         const result = JSON.parse(await child.next((line) => line.includes('"outcome"')));
-        assert.equal((await child.retired).code, 0);
-        assert.equal(result.outcome, "applied");
-        assert.notEqual(result.code, 0);
-        assert.equal((await fs.stat(outsideTarget)).mode & 0o777, mode);
-        assert.equal(await fs.readFile(outsideTarget, "utf8"), "local C");
-        assert.equal(await fs.readFile(path.join(f.record, "stage"), "utf8"), "actual displaced B");
+        NodeAssert.equal((await child.retired).code, 0);
+        NodeAssert.equal(result.outcome, "applied");
+        NodeAssert.notEqual(result.code, 0);
+        NodeAssert.equal((await NodeFSP.stat(outsideTarget)).mode & 0o777, mode);
+        NodeAssert.equal(await NodeFSP.readFile(outsideTarget, "utf8"), "local C");
+        NodeAssert.equal(
+          await NodeFSP.readFile(NodePath.join(f.record, "stage"), "utf8"),
+          "actual displaced B",
+        );
         evidence.push({
           case: `post-exchange-${relocation}-relocation-denies-metadata-write`,
           result,
@@ -924,13 +961,13 @@ async function qualifyChanged(capabilities) {
 try {
   const capabilities = await run(helper, ["--protocol=1", "capabilities"]);
   evidence.push({ case: "capabilities", ...capabilities });
-  assert.equal(capabilities.publicationLease, true);
+  NodeAssert.equal(capabilities.publicationLease, true);
   if (selection !== "previous") await qualifyChanged(capabilities);
   if (selection !== "previous") await qualifyCreation();
   if (selection !== "changed") {
     if (!capabilities.strictCurrentRoot) {
       await fixture(async (f) => {
-        await fs.writeFile(path.join(f.root, "sub", "source"), "A");
+        await NodeFSP.writeFile(NodePath.join(f.root, "sub", "source"), "A");
         const refused = await run(helper, [
           "--protocol=1",
           "capture",
@@ -947,9 +984,12 @@ try {
           "source",
           "retained",
         ]);
-        assert.equal(refused.outcome, "unchanged");
-        assert.notEqual(refused.code, 0);
-        assert.equal(await fs.readFile(path.join(f.root, "sub", "source"), "utf8"), "A");
+        NodeAssert.equal(refused.outcome, "unchanged");
+        NodeAssert.notEqual(refused.code, 0);
+        NodeAssert.equal(
+          await NodeFSP.readFile(NodePath.join(f.root, "sub", "source"), "utf8"),
+          "A",
+        );
         evidence.push({
           case: "strict-policy-unavailable-refuses-before-capture",
           result: refused,
@@ -961,33 +1001,41 @@ try {
     }
     await fixture(async (f) => {
       const binding = await bind(helper, f);
-      const target = path.join(f.root, "sub", "manuscript");
-      await fs.writeFile(target, "late outside B", { mode: 0o600 });
-      await fs.writeFile(path.join(f.record, "stage"), "local C", { mode: 0o600 });
-      const writer = await fs.open(target, "r+");
+      const target = NodePath.join(f.root, "sub", "manuscript");
+      await NodeFSP.writeFile(target, "late outside B", { mode: 0o600 });
+      await NodeFSP.writeFile(NodePath.join(f.record, "stage"), "local C", { mode: 0o600 });
+      const writer = await NodeFSP.open(target, "r+");
       try {
         const result = await run(helper, operation(binding, "exchange", "stage", "manuscript"));
         if (!capabilities.atomicExchange) {
-          assert.equal(result.outcome, "unchanged");
-          assert.notEqual(result.code, 0);
-          assert.equal(await fs.readFile(target, "utf8"), "late outside B");
-          assert.equal(await fs.readFile(path.join(f.record, "stage"), "utf8"), "local C");
+          NodeAssert.equal(result.outcome, "unchanged");
+          NodeAssert.notEqual(result.code, 0);
+          NodeAssert.equal(await NodeFSP.readFile(target, "utf8"), "late outside B");
+          NodeAssert.equal(
+            await NodeFSP.readFile(NodePath.join(f.record, "stage"), "utf8"),
+            "local C",
+          );
           evidence.push({
             case: "atomic-replacement-unavailable-refuses-before-displacement",
             result,
           });
         } else {
-          assert.equal(result.outcome, "applied");
-          assert.equal(result.code, 0);
-          assert.equal(await fs.readFile(target, "utf8"), "local C");
-          assert.equal(await fs.readFile(path.join(f.record, "stage"), "utf8"), "late outside B");
-          await writer.write("held-writer D", 0, "utf8");
-          assert(
-            (await fs.readFile(path.join(f.record, "stage"), "utf8")).startsWith("held-writer D"),
+          NodeAssert.equal(result.outcome, "applied");
+          NodeAssert.equal(result.code, 0);
+          NodeAssert.equal(await NodeFSP.readFile(target, "utf8"), "local C");
+          NodeAssert.equal(
+            await NodeFSP.readFile(NodePath.join(f.record, "stage"), "utf8"),
+            "late outside B",
           );
-          assert.equal(await fs.readFile(target, "utf8"), "local C");
-          if (process.platform !== "win32")
-            assert.equal((await fs.stat(target)).mode & 0o777, 0o600);
+          await writer.write("held-writer D", 0, "utf8");
+          NodeAssert.ok(
+            (await NodeFSP.readFile(NodePath.join(f.record, "stage"), "utf8")).startsWith(
+              "held-writer D",
+            ),
+          );
+          NodeAssert.equal(await NodeFSP.readFile(target, "utf8"), "local C");
+          if (NodeOS.platform() !== "win32")
+            NodeAssert.equal((await NodeFSP.stat(target)).mode & 0o777, 0o600);
           evidence.push({ case: "exchange-retains-actual-entry-and-held-writer", result });
         }
       } finally {
@@ -996,41 +1044,53 @@ try {
     });
     await fixture(async (f) => {
       const binding = await bind(helper, f);
-      const source = path.join(f.root, "sub", "source");
-      await fs.writeFile(source, "outside B");
-      await fs.writeFile(path.join(f.record, "occupied"), "retained A");
+      const source = NodePath.join(f.root, "sub", "source");
+      await NodeFSP.writeFile(source, "outside B");
+      await NodeFSP.writeFile(NodePath.join(f.record, "occupied"), "retained A");
       const refused = await run(helper, operation(binding, "capture", "source", "occupied"));
-      assert.equal(refused.outcome, "unchanged");
-      assert.notEqual(refused.code, 0);
-      assert.equal(await fs.readFile(source, "utf8"), "outside B");
-      assert.equal(await fs.readFile(path.join(f.record, "occupied"), "utf8"), "retained A");
+      NodeAssert.equal(refused.outcome, "unchanged");
+      NodeAssert.notEqual(refused.code, 0);
+      NodeAssert.equal(await NodeFSP.readFile(source, "utf8"), "outside B");
+      NodeAssert.equal(
+        await NodeFSP.readFile(NodePath.join(f.record, "occupied"), "utf8"),
+        "retained A",
+      );
       const captured = await run(helper, operation(binding, "capture", "source", "captured"));
-      assert.equal(captured.outcome, "applied");
-      assert.equal(captured.code, 0);
-      await fs.writeFile(source, "newer C");
+      NodeAssert.equal(captured.outcome, "applied");
+      NodeAssert.equal(captured.code, 0);
+      await NodeFSP.writeFile(source, "newer C");
       const restore = await run(helper, operation(binding, "restore", "captured", "source"));
-      assert.equal(restore.outcome, "unchanged");
-      assert.notEqual(restore.code, 0);
-      assert.equal(await fs.readFile(source, "utf8"), "newer C");
-      assert.equal(await fs.readFile(path.join(f.record, "captured"), "utf8"), "outside B");
+      NodeAssert.equal(restore.outcome, "unchanged");
+      NodeAssert.notEqual(restore.code, 0);
+      NodeAssert.equal(await NodeFSP.readFile(source, "utf8"), "newer C");
+      NodeAssert.equal(
+        await NodeFSP.readFile(NodePath.join(f.record, "captured"), "utf8"),
+        "outside B",
+      );
       const linked = await run(helper, operation(binding, "link", "captured", "destination"));
-      assert.equal(linked.outcome, "applied");
-      assert.equal(linked.code, 0);
-      assert.equal(linked.sourceAfter.ino, linked.destinationAfter.ino);
-      await fs.writeFile(path.join(f.root, "sub", "destination"), "descriptor edit E");
-      assert.equal(await fs.readFile(path.join(f.record, "captured"), "utf8"), "descriptor edit E");
+      NodeAssert.equal(linked.outcome, "applied");
+      NodeAssert.equal(linked.code, 0);
+      NodeAssert.equal(linked.sourceAfter.ino, linked.destinationAfter.ino);
+      await NodeFSP.writeFile(NodePath.join(f.root, "sub", "destination"), "descriptor edit E");
+      NodeAssert.equal(
+        await NodeFSP.readFile(NodePath.join(f.record, "captured"), "utf8"),
+        "descriptor edit E",
+      );
       const blockedLink = await run(helper, operation(binding, "link", "occupied", "destination"));
-      assert.equal(blockedLink.outcome, "unchanged");
-      assert.notEqual(blockedLink.code, 0);
+      NodeAssert.equal(blockedLink.outcome, "unchanged");
+      NodeAssert.notEqual(blockedLink.code, 0);
       const installed = await run(helper, operation(binding, "move", "occupied", "installed"));
-      assert.equal(installed.outcome, "applied");
-      assert.equal(installed.code, 0);
-      assert.equal(await fs.readFile(path.join(f.root, "sub", "installed"), "utf8"), "retained A");
+      NodeAssert.equal(installed.outcome, "applied");
+      NodeAssert.equal(installed.code, 0);
+      NodeAssert.equal(
+        await NodeFSP.readFile(NodePath.join(f.root, "sub", "installed"), "utf8"),
+        "retained A",
+      );
       const restored = await run(helper, operation(binding, "restore", "captured", "restored"));
-      assert.equal(restored.outcome, "applied");
-      assert.equal(restored.code, 0);
-      assert.equal(
-        await fs.readFile(path.join(f.root, "sub", "restored"), "utf8"),
+      NodeAssert.equal(restored.outcome, "applied");
+      NodeAssert.equal(restored.code, 0);
+      NodeAssert.equal(
+        await NodeFSP.readFile(NodePath.join(f.root, "sub", "restored"), "utf8"),
         "descriptor edit E",
       );
       evidence.push({
@@ -1042,33 +1102,39 @@ try {
         restored,
       });
     });
-    if (process.platform !== "win32")
+    if (NodeOS.platform() !== "win32")
       await fixture(async (f) => {
         const binding = await bind(helper, f);
-        const referent = path.join(f.outside, "referent");
-        await fs.writeFile(referent, "outside must survive");
-        await fs.symlink(referent, path.join(f.root, "sub", "late:link"));
+        const referent = NodePath.join(f.outside, "referent");
+        await NodeFSP.writeFile(referent, "outside must survive");
+        await NodeFSP.symlink(referent, NodePath.join(f.root, "sub", "late:link"));
         const captured = await run(
           helper,
           operation(binding, "capture", "late:link", "retained:link"),
         );
-        assert.equal(captured.outcome, "applied");
-        assert.equal(captured.code, 0);
-        assert.equal(captured.destinationAfter.type, "symlink");
-        assert.equal(await fs.readlink(path.join(f.record, "retained:link")), referent);
-        assert.equal(await fs.readFile(referent, "utf8"), "outside must survive");
+        NodeAssert.equal(captured.outcome, "applied");
+        NodeAssert.equal(captured.code, 0);
+        NodeAssert.equal(captured.destinationAfter.type, "symlink");
+        NodeAssert.equal(
+          await NodeFSP.readlink(NodePath.join(f.record, "retained:link")),
+          referent,
+        );
+        NodeAssert.equal(await NodeFSP.readFile(referent, "utf8"), "outside must survive");
         evidence.push({ case: "captures-late-final-symlink-without-following-referent", captured });
       });
     await fixture(async (f) => {
       const binding = await bind(helper, f);
-      await fs.writeFile(path.join(f.root, "sub", "source"), "A");
-      await fs.rename(path.join(f.root, "sub"), path.join(f.outside, "old-parent"));
-      await fs.mkdir(path.join(f.root, "sub"));
-      await fs.writeFile(path.join(f.root, "sub", "source"), "replacement B");
+      await NodeFSP.writeFile(NodePath.join(f.root, "sub", "source"), "A");
+      await NodeFSP.rename(NodePath.join(f.root, "sub"), NodePath.join(f.outside, "old-parent"));
+      await NodeFSP.mkdir(NodePath.join(f.root, "sub"));
+      await NodeFSP.writeFile(NodePath.join(f.root, "sub", "source"), "replacement B");
       const refused = await run(helper, operation(binding, "capture", "source", "captured"));
-      assert.equal(refused.outcome, "unchanged");
-      assert.notEqual(refused.code, 0);
-      assert.equal(await fs.readFile(path.join(f.root, "sub", "source"), "utf8"), "replacement B");
+      NodeAssert.equal(refused.outcome, "unchanged");
+      NodeAssert.notEqual(refused.code, 0);
+      NodeAssert.equal(
+        await NodeFSP.readFile(NodePath.join(f.root, "sub", "source"), "utf8"),
+        "replacement B",
+      );
       evidence.push({ case: "stale-parent-identity-refuses-before-capture", refused });
     });
     if (probe) {
@@ -1077,8 +1143,8 @@ try {
         : ["capture", "move", "link"])
         await fixture(async (f) => {
           const binding = await bind(probe, f);
-          await fs.writeFile(path.join(f.root, "sub", "source"), "outside B");
-          await fs.writeFile(path.join(f.record, "stage"), "local C");
+          await NodeFSP.writeFile(NodePath.join(f.root, "sub", "source"), "outside B");
+          await NodeFSP.writeFile(NodePath.join(f.record, "stage"), "local C");
           const process_ = launch(
             probe,
             operation(
@@ -1090,66 +1156,73 @@ try {
             { SCIENT_PUBLICATION_BARRIER: "1" },
           );
           await process_.next((line) => line === "BOUND");
-          if (process.platform === "win32") {
-            await assert.rejects(fs.rename(path.join(f.root, "sub"), path.join(f.outside, "sub")));
-          } else await fs.rename(path.join(f.root, "sub"), path.join(f.outside, "sub"));
+          if (NodeOS.platform() === "win32") {
+            await NodeAssert.rejects(
+              NodeFSP.rename(NodePath.join(f.root, "sub"), NodePath.join(f.outside, "sub")),
+            );
+          } else
+            await NodeFSP.rename(NodePath.join(f.root, "sub"), NodePath.join(f.outside, "sub"));
           process_.child.stdin.end("\n");
           const result = JSON.parse(await process_.next((line) => line.startsWith("{")));
-          assert.equal((await process_.retired).code, 0);
-          if (process.platform !== "win32") {
-            assert.equal(result.outcome, "unchanged");
-            assert.notEqual(result.code, 0);
-            assert.equal(
-              await fs.readFile(path.join(f.outside, "sub", "source"), "utf8"),
+          NodeAssert.equal((await process_.retired).code, 0);
+          if (NodeOS.platform() !== "win32") {
+            NodeAssert.equal(result.outcome, "unchanged");
+            NodeAssert.notEqual(result.code, 0);
+            NodeAssert.equal(
+              await NodeFSP.readFile(NodePath.join(f.outside, "sub", "source"), "utf8"),
               "outside B",
             );
-            assert.equal(await fs.readFile(path.join(f.record, "stage"), "utf8"), "local C");
+            NodeAssert.equal(
+              await NodeFSP.readFile(NodePath.join(f.record, "stage"), "utf8"),
+              "local C",
+            );
           } else {
-            assert.equal(result.outcome, "applied");
-            assert.equal(result.code, 0);
+            NodeAssert.equal(result.outcome, "applied");
+            NodeAssert.equal(result.code, 0);
           }
           evidence.push({ case: `held-descendant-relocation-${kind}`, result });
         });
       for (const relocation of ["root", "ancestor", "root-replacement"])
         await fixture(async (f) => {
           const binding = await bind(probe, f);
-          await fs.writeFile(path.join(f.root, "sub", "source"), "authorized A");
+          await NodeFSP.writeFile(NodePath.join(f.root, "sub", "source"), "authorized A");
           const process_ = launch(probe, operation(binding, "capture", "source", "captured"), {
             SCIENT_PUBLICATION_BARRIER: "1",
           });
           await process_.next((line) => line === "BOUND");
-          const source = relocation === "ancestor" ? path.dirname(f.root) : f.root;
-          const moved = path.join(f.outside, "moved");
-          if (process.platform === "win32") await assert.rejects(fs.rename(source, moved));
+          const source = relocation === "ancestor" ? NodePath.dirname(f.root) : f.root;
+          const moved = NodePath.join(f.outside, "moved");
+          if (NodeOS.platform() === "win32")
+            await NodeAssert.rejects(NodeFSP.rename(source, moved));
           else {
-            await fs.rename(source, moved);
+            await NodeFSP.rename(source, moved);
             if (relocation === "root-replacement") {
-              await fs.mkdir(path.join(f.root, "sub"), { recursive: true });
-              await fs.writeFile(path.join(f.root, "sub", "source"), "foreign B");
+              await NodeFSP.mkdir(NodePath.join(f.root, "sub"), { recursive: true });
+              await NodeFSP.writeFile(NodePath.join(f.root, "sub", "source"), "foreign B");
             }
           }
           process_.child.stdin.end("\n");
           const result = JSON.parse(await process_.next((line) => line.startsWith("{")));
-          assert.equal((await process_.retired).code, 0);
-          if (process.platform === "darwin") {
-            assert.equal(result.outcome, "unchanged");
-            assert.notEqual(result.code, 0);
-          } else if (process.platform === "linux") {
+          NodeAssert.equal((await process_.retired).code, 0);
+          if (NodeOS.platform() === "darwin") {
+            NodeAssert.equal(result.outcome, "unchanged");
+            NodeAssert.notEqual(result.code, 0);
+          } else if (NodeOS.platform() === "linux") {
             // Landlock binds authority to the original root object, but changed path binding cannot acknowledge.
-            assert.equal(result.outcome, "applied");
-            assert.notEqual(result.code, 0);
-            assert.equal(
-              await fs.readFile(path.join(f.record, "captured"), "utf8"),
+            NodeAssert.equal(result.outcome, "applied");
+            NodeAssert.notEqual(result.code, 0);
+            NodeAssert.equal(
+              await NodeFSP.readFile(NodePath.join(f.record, "captured"), "utf8"),
               "authorized A",
             );
             if (relocation === "root-replacement")
-              assert.equal(
-                await fs.readFile(path.join(f.root, "sub", "source"), "utf8"),
+              NodeAssert.equal(
+                await NodeFSP.readFile(NodePath.join(f.root, "sub", "source"), "utf8"),
                 "foreign B",
               );
           } else {
-            assert.equal(result.outcome, "applied");
-            assert.equal(result.code, 0);
+            NodeAssert.equal(result.outcome, "applied");
+            NodeAssert.equal(result.code, 0);
           }
           evidence.push({ case: `authorized-${relocation}-relocation`, result });
         });
@@ -1175,7 +1248,7 @@ try {
             [
               "--lease=1",
               "shared",
-              path.join(f.root, "sub"),
+              NodePath.join(f.root, "sub"),
               ".",
               binding.parent.dev,
               binding.parent.ino,
@@ -1187,16 +1260,16 @@ try {
           );
           await second.next((line) => line === "LEASE_WAIT");
           first.child.stdin.end(Buffer.alloc(4));
-          assert.equal((await first.retired).code, 0);
+          NodeAssert.equal((await first.retired).code, 0);
           await second.next((line) => line.includes('"lease":"acquired"'));
           second.child.stdin.end(Buffer.alloc(4));
-          assert.equal((await second.retired).code, 0);
+          NodeAssert.equal((await second.retired).code, 0);
           evidence.push({ case: "cross-process-nested-root-identity-lease-serialization" });
         });
-      if (process.platform !== "win32")
+      if (NodeOS.platform() !== "win32")
         await fixture(async (f) => {
           const binding = await bind(probe, f);
-          await fs.writeFile(path.join(f.record, "stage"), "owned C");
+          await NodeFSP.writeFile(NodePath.join(f.record, "stage"), "owned C");
           const leaseArguments = [
             "--lease=1",
             "exclusive",
@@ -1236,9 +1309,12 @@ try {
           owner.child.stdio[3].end("\n");
           await owner.retired; // close waits the inherited stdout pipe until the actual writer exits.
           await successor.next((line) => line.includes('"lease":"acquired"'));
-          assert.equal(await fs.readFile(path.join(f.root, "sub", "published"), "utf8"), "owned C");
+          NodeAssert.equal(
+            await NodeFSP.readFile(NodePath.join(f.root, "sub", "published"), "utf8"),
+            "owned C",
+          );
           successor.child.stdin.end(Buffer.alloc(4));
-          assert.equal((await successor.retired).code, 0);
+          NodeAssert.equal((await successor.retired).code, 0);
           evidence.push({ case: "holder-sigkill-does-not-retire-inherited-native-writer-lock" });
         });
     }
@@ -1246,18 +1322,18 @@ try {
   console.log(
     JSON.stringify(
       {
-        platform: process.platform,
+        platform: NodeOS.platform(),
         arch: process.arch,
         observations: evidence,
         gaps: [
           ...(probe ? [] : ["Relocation and retirement probes require --probe-helper."]),
-          ...(process.platform === "win32"
+          ...(NodeOS.platform() === "win32"
             ? [
                 "Atomic replace-and-retain is unqualified and refused; Windows normal-save cutover remains blocked.",
                 "Reparse/junction, DACL/ADS and directory-flush qualification remains required.",
               ]
             : []),
-          ...(process.platform === "linux"
+          ...(NodeOS.platform() === "linux"
             ? [
                 "Landlock root-object authority does not enforce current-root pathname relocation.",
                 "Landlock does not constrain post-exchange metadata syscalls; ordinary publication is refused before displacement.",

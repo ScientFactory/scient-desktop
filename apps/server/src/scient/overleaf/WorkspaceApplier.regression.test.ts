@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import { fixture } from "./WorkspaceApplier.testkit.ts";
 import * as NodeFSP from "node:fs/promises";
@@ -28,7 +29,7 @@ async function put(cwd: string, files: Record<string, string>) {
 }
 
 describe("WorkspaceApplier immutable intent and original receipt regressions", () => {
-  if (process.platform === "darwin") {
+  if (HostProcess.Platform.defaultValue() === "darwin") {
     it.live(
       "resumes a persisted removal plan without replaying its original deletion over outside D",
       () => {

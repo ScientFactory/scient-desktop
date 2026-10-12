@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Table as TableIcon } from "lucide-react";
 
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
@@ -92,6 +92,7 @@ export function InsertMenu(props: {
   /** Attributes an editor needs on the popup, for example to scope its shortcuts. */
   readonly popupAttributes?: Readonly<Record<`data-${string}`, string>> | undefined;
 }) {
+  const ownerId = useId();
   const [ownOpen, setOwnOpen] = useState(false);
   const open = props.open ?? ownOpen;
   const setOpen = (next: boolean) => {
@@ -100,6 +101,14 @@ export function InsertMenu(props: {
   };
   const pendingCommand = useRef<(() => void) | null>(null);
   const commandOwnsFocus = useRef(false);
+  const returnToEditor = useRef(false);
+  const restoreSelection = (focus: boolean) =>
+    document.getElementById(ownerId)?.dispatchEvent(
+      new CustomEvent("scient-writing-restore-selection", {
+        bubbles: true,
+        detail: focus ? "focus" : "selection",
+      }),
+    );
   const run = (command: () => void) => {
     pendingCommand.current = command;
     commandOwnsFocus.current = true;
@@ -108,22 +117,26 @@ export function InsertMenu(props: {
   return (
     <Menu
       open={open}
-      onOpenChange={(next) => {
+      onOpenChange={(next, details) => {
         if (next) commandOwnsFocus.current = false;
+        returnToEditor.current = !next && ["escape-key", "trigger-press"].includes(details.reason);
         setOpen(next);
       }}
       onOpenChangeComplete={(next) => {
         if (next) return;
         const command = pendingCommand.current;
         pendingCommand.current = null;
+        if (command) restoreSelection(false);
         command?.();
       }}
     >
       <ScientTooltip content={WRITING_COMMAND_LABELS.insert}>
         <MenuTrigger
+          id={ownerId}
           disabled={props.disabled}
           render={
             <button
+              id={ownerId}
               type="button"
               aria-label={WRITING_COMMAND_LABELS.insert}
               className={dockButtonClass()}
@@ -143,10 +156,15 @@ export function InsertMenu(props: {
           // A command places focus itself (the editor, a dialog, a picker).
           if (commandOwnsFocus.current) return false;
           if (!props.onReturnFocus) return true;
+          // Switching menus or clicking a new document position keeps that
+          // target's focus; only explicit cancellation returns to the editor.
+          if (!returnToEditor.current) return false;
+          restoreSelection(true);
           props.onReturnFocus();
           return false;
         }}
         data-keybinding-capture=""
+        data-writing-menu-owner={ownerId}
         {...props.popupAttributes}
       >
         <InsertMenuContent

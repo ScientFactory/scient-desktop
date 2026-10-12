@@ -1,5 +1,6 @@
 import { ChevronDownIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { observeResize } from "../../lib/observeResize";
 import { SETTINGS_SOURCE_RISE, settingsSourceOutline } from "./settingsSourceOutline";
 
 /** Owns only the decorative connection between a disclosure strip and its panel. */
@@ -62,13 +63,14 @@ export function SettingsSourceGroup({
       );
     };
     measure();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
     // Earlier labels can change width without resizing the strip itself.
-    for (const element of [host, strip, panel, ...strip.querySelectorAll("button[aria-controls]")])
-      observer?.observe(element);
+    const stopObserving = observeResize(
+      [host, strip, panel, ...strip.querySelectorAll("button[aria-controls]")],
+      measure,
+    );
     strip.addEventListener("scroll", measure, { passive: true });
     return () => {
-      observer?.disconnect();
+      stopObserving();
       strip.removeEventListener("scroll", measure);
     };
   }, [activePanelId]);

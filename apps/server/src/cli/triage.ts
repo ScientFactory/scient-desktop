@@ -1,5 +1,5 @@
 /**
- * `t3 triage` - hand a misbehaving install to the user's own coding agent.
+ * `scient triage` - hand a misbehaving install to the user's own coding agent.
  *
  * The command is deliberately thin: it writes a `context.md` with machine facts
  * (version, paths, server liveness), then launches claude or codex
@@ -14,8 +14,9 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodeReadlinePromises from "node:readline/promises";
 
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -166,12 +167,17 @@ export const triageCommand = Command.make("triage", {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
-      // Triage is a user-facing feature: always the userdata state, never dev.
-      // --base-dir wins; T3CODE_HOME is its documented env equivalent (same
-      // precedence as `t3 pair`).
-      const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
-      const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
-      const baseDir = yield* resolveBaseDir(explicitBaseDir ?? Option.getOrUndefined(envHome));
+      // Triage must use the same Scient profile as the server, never an ambient T3 home.
+      const explicitBaseDir = Option.getOrUndefined(flags.baseDir)?.trim() || undefined;
+      const scientHome = yield* Config.String("SCIENT_NEXT_HOME").pipe(Config.option);
+      const legacyHome = SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled
+        ? Option.none<string>()
+        : yield* Config.String("T3CODE_HOME").pipe(Config.option);
+      const baseDir = yield* resolveBaseDir(
+        explicitBaseDir ??
+          (Option.getOrUndefined(scientHome)?.trim() || undefined) ??
+          (Option.getOrUndefined(legacyHome)?.trim() || undefined),
+      );
       const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {});
 
       const now = yield* DateTime.now;
@@ -193,9 +199,9 @@ export const triageCommand = Command.make("triage", {
           releaseTag: version.includes("-nightly.")
             ? `v${version} (nightly build; if this tag does not exist, clone main)`
             : `v${version}`,
-          os: `${yield* HostProcessPlatform} ${yield* HostProcessArchitecture} (${NodeOS.release()})`,
+          os: `${yield* HostProcess.Platform} ${yield* HostProcess.Architecture} (${NodeOS.release()})`,
           nodeVersion: process.version,
-          launchedAs: yield* resolveCliCommand("triage"),
+          launchedAs: yield* resolveCliCommand(["triage", "--base-dir", baseDir]),
           server: yield* describeServerProcess(paths.serverRuntimeStatePath),
           paths: {
             stateDir: paths.stateDir,

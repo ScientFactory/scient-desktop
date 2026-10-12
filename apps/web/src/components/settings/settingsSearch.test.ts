@@ -46,6 +46,16 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("settings sidebar order", () => {
+  it("finds the canonical Scient command and its former t3 name", () => {
+    expect(searchableSetting("cli-command").title).toBe("scient command");
+    const items = SETTINGS_SEARCH_ITEMS.filter((item) => item.id === "cli-command").map((item) => ({
+      ...item,
+      desktopOnly: false,
+    }));
+    expect(searchSettings("scient command", items).map((item) => item.id)).toEqual(["cli-command"]);
+    expect(searchSettings("t3", items).map((item) => item.id)).toEqual(["cli-command"]);
+  });
+
   it("keeps integrations prominent, Documents after Scientific Computing, then keybindings", () => {
     const paths = Object.keys(SETTINGS_SECTION_LABELS);
 
@@ -159,6 +169,16 @@ describe("searchSettings", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
     expect(searchSettings("hold to quit")).toEqual([]);
     expect(searchSettings("wsl")).toEqual([]);
+    expect(searchSettings("update track")).toEqual([]);
+  });
+
+  it("finds the About update rows", () => {
+    expect(searchSettings("check for updates").map((item) => item.id)).toContain("app-version");
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "update-track")).toMatchObject({
+      title: "Update track",
+      to: "/settings/general",
+      releaseChannelOnly: true,
+    });
   });
 
   it("hides macOS-only settings on other platforms", () => {

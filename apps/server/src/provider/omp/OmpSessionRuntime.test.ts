@@ -18,7 +18,8 @@ import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 
 import { makeOmpScriptedWire } from "./OmpCaptureReplay.testFixtures.ts";
 import { makeOmpSessionRuntime, type OmpSessionUpdate } from "./OmpSessionRuntime.ts";
-import { ompTarget } from "./OmpTarget.ts";
+import { ompTarget, type OmpTarget } from "./OmpTarget.ts";
+import { scientAgentTarget } from "../scient/ScientAgentTarget.ts";
 
 const response = (command: string, data: unknown = {}): OmpRpcResponse => ({
   id: "test-request",
@@ -68,12 +69,12 @@ const makeClient = (events: Queue.Queue<OmpRpcNotification, Cause.Done>) =>
     close: () => Effect.void,
   }) satisfies OmpRpcClient;
 
-const runtimeHarness = Effect.fn("ompRuntimeHarness")(function* () {
+const runtimeHarness = Effect.fn("ompRuntimeHarness")(function* (target: OmpTarget = ompTarget) {
   const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
   const updates = yield* Queue.unbounded<OmpSessionUpdate>();
   const scope = yield* Scope.make("sequential");
   const runtime = yield* makeOmpSessionRuntime({
-    target: ompTarget,
+    target,
     continuationIdPrefix: "test-continuation",
     client: makeClient(events),
     scope,
@@ -216,6 +217,217 @@ describe("Oh My Pi session runtime", () => {
       });
       expect(yield* Queue.poll(harness.updates)).toMatchObject({ _tag: "None" });
       yield* Scope.close(harness.scope, Exit.void);
+    }),
+  );
+
+  it.effect("keeps Scient assignments separate from stable labels and activity at settlement", () =>
+    Effect.gen(function* () {
+      const h = yield* runtimeHarness(scientAgentTarget);
+      const assignment = "# Goal\nReview every file.\n\n# Acceptance\nReport genuine observations.";
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: {
+          type: "subagent_progress",
+          payload: {
+            agent: "reviewer",
+            task: "Review files",
+            assignment,
+            progress: {
+              id: "scient-review",
+              status: "running",
+              description: "**Review**\n[files](https://example.test)",
+              lastIntent: "Reading files",
+              currentToolIntent: "Inspecting source",
+              currentTool: "read",
+              toolCount: 0,
+              durationMs: 0,
+              tokens: 150,
+              contextTokens: 9000,
+              resolvedModelIdentity: "vendor/model",
+              resolvedModel: "wrong/display:high",
+              resolvedThinkingLevel: "high",
+            },
+          },
+        },
+      });
+      expect(yield* takeUpdate(h.updates)).toMatchObject({
+        type: "subagent",
+        title: "Review files",
+        prompt: assignment,
+        progress: "Inspecting source",
+        model: "vendor/model",
+        presentation: {
+          role: "reviewer",
+          effort: "high",
+          lastToolName: "read",
+          usage: { totalTokens: 150, toolUses: 0, durationMs: 0 },
+        },
+      });
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: {
+          type: "subagent_progress",
+          payload: {
+            progress: {
+              id: "scient-review",
+              status: "running",
+              description: "Changing description",
+              lastIntent: "Writing report",
+            },
+          },
+        },
+      });
+      expect(yield* takeUpdate(h.updates)).toMatchObject({
+        title: "Review files",
+        prompt: assignment,
+        progress: "Writing report",
+      });
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: {
+          type: "subagent_lifecycle",
+          payload: { id: "scient-review", status: "completed", output: "Found two issues." },
+        },
+      });
+      expect(yield* takeUpdate(h.updates)).toMatchObject({
+        title: "Review files",
+        prompt: assignment,
+        status: "completed",
+        result: "Found two issues.",
+      });
+      yield* Queue.offer(h.events, { _tag: "Event", event: { type: "session_settled" } });
+      expect(yield* takeUpdate(h.updates)).toEqual({ type: "session-settled" });
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+
+  it.effect.each([
+    { wireStatus: "completed", status: "completed" },
+    { wireStatus: "failed", status: "failed" },
+    { wireStatus: "aborted", status: "stopped" },
+  ])("does not invent Scient results or billing totals for $wireStatus", ({ wireStatus, status }) =>
+    Effect.gen(function* () {
+      const h = yield* runtimeHarness(scientAgentTarget);
+      const task = `# Review\n${"full assignment ".repeat(30)}`;
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: {
+          type: "subagent_progress",
+          payload: {
+            task,
+            progress: {
+              id: "sparse",
+              status: "running",
+              contextTokens: 9999,
+              tokens: -1,
+              toolCount: 0,
+              recentOutput: ["Observed activity, not a final result"],
+            },
+          },
+        },
+      });
+      const update = yield* takeUpdate(h.updates);
+      if (update.type !== "subagent") return yield* Effect.die("Missing subagent");
+      expect(update.title.length).toBeLessThanOrEqual(120);
+      expect(update.title).not.toContain("#");
+      expect(update.prompt).toBe(task);
+      expect(update.presentation?.usage).toEqual({ toolUses: 0 });
+      expect(update.result).toBeUndefined();
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: {
+          type: "subagent_lifecycle",
+          payload: { id: "sparse", status: wireStatus },
+        },
+      });
+      const terminal = yield* takeUpdate(h.updates);
+      expect(terminal).toMatchObject({ title: update.title, prompt: task, status });
+      expect(terminal).not.toHaveProperty("result");
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+  it.effect.each([
+    {
+      wireStatus: "completed",
+      status: "completed",
+      artifact: { output: "Observed final report." },
+      result: "Observed final report.",
+    },
+    {
+      wireStatus: "failed",
+      status: "failed",
+      artifact: { error: "Observed terminal error." },
+      result: "Observed terminal error.",
+    },
+    {
+      wireStatus: "aborted",
+      status: "stopped",
+      artifact: { abortReason: "Observed abort reason." },
+      result: "Observed abort reason.",
+    },
+  ])("enriches terminal Scient progress with its $wireStatus lifecycle artifact", (testCase) =>
+    Effect.gen(function* () {
+      const h = yield* runtimeHarness(scientAgentTarget);
+      const assignment = "# Goal\nReview the complete assignment.";
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: {
+          type: "subagent_progress",
+          payload: {
+            agent: "reviewer",
+            assignment,
+            progress: {
+              id: "terminal-child",
+              description: "Review files",
+              status: testCase.wireStatus,
+              resolvedModelIdentity: "vendor/model",
+              tokens: 0,
+              toolCount: 0,
+              recentOutput: ["Activity is not a final report."],
+            },
+          },
+        },
+      });
+      const progress = yield* takeUpdate(h.updates);
+      expect(progress).toMatchObject({ type: "subagent", status: testCase.status });
+      expect(progress).not.toHaveProperty("result");
+      const lifecycle = {
+        type: "subagent_lifecycle" as const,
+        payload: {
+          id: "terminal-child",
+          status: testCase.wireStatus,
+          ...testCase.artifact,
+          result: { usage: { input: 0, output: 9 } },
+        },
+      };
+      yield* Queue.offer(h.events, { _tag: "Event", event: lifecycle });
+      yield* Queue.offer(h.events, { _tag: "Event", event: lifecycle });
+      yield* Queue.offer(h.events, {
+        _tag: "Event",
+        event: {
+          type: "subagent_progress",
+          payload: {
+            progress: { id: "terminal-child", status: "running", lastIntent: "Late activity" },
+          },
+        },
+      });
+      yield* Queue.offer(h.events, { _tag: "Event", event: { type: "session_settled" } });
+      expect(yield* takeUpdate(h.updates)).toMatchObject({
+        type: "subagent",
+        id: "terminal-child",
+        status: testCase.status,
+        title: "Review files",
+        prompt: assignment,
+        model: "vendor/model",
+        progress: "Activity is not a final report.",
+        result: testCase.result,
+        presentation: {
+          role: "reviewer",
+          usage: { totalTokens: 0, toolUses: 0, inputTokens: 0, outputTokens: 9 },
+        },
+      });
+      expect(yield* takeUpdate(h.updates)).toEqual({ type: "session-settled" });
+      yield* Scope.close(h.scope, Exit.void);
     }),
   );
 

@@ -1,5 +1,6 @@
 import type { MathfieldElement, Style } from "mathlive";
 import { latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
+import { mathColorInput, mathColorSource } from "./mathColorSyntax";
 
 export type MathTextFormat = "bold" | "italic" | "monospace";
 
@@ -16,6 +17,8 @@ export const MATH_FORMATTING_ARGUMENTS: Readonly<Record<string, "text" | "math">
   textsl: "text",
   textsc: "text",
   textnormal: "text",
+  texthebrew: "text",
+  textenglish: "text",
   mathbf: "math",
   mathit: "math",
   mathrm: "math",
@@ -58,6 +61,26 @@ const formattingStyles: Readonly<Record<string, Style>> = {
   bm: { variantStyle: "bold" },
 };
 const scopeMarker = "scient-format=";
+export const mathLanguageStyles = `
+  [data-scient-format^="text"] {
+    display: inline-block; unicode-bidi: isolate;
+    direction: var(--scient-latex-text-direction, ltr);
+  }
+  [data-scient-format^="text"] .ML__text:not(.ML__tt, .ML__sans) {
+    font-family: var(--scient-latex-math-text-font, KaTeX_Main), serif;
+  }
+  [data-scient-format="texthebrew"], [data-scient-format="textenglish"] {
+    display: inline-block; unicode-bidi: isolate;
+  }
+  [data-scient-format="texthebrew"] {
+    direction: rtl; --scient-latex-text-direction: rtl;
+    --scient-latex-math-text-font: var(--scient-latex-hebrew-font, Arial);
+  }
+  [data-scient-format="textenglish"] {
+    direction: ltr; --scient-latex-text-direction: ltr;
+    --scient-latex-math-text-font: var(--scient-latex-english-font, KaTeX_Main);
+  }
+`;
 
 function formattingScopeStyle(command: string, inherited: Style): Style {
   const style = { ...inherited, ...formattingStyles[command] };
@@ -81,6 +104,12 @@ export function mathFormattingScopeCommand(atom: {
 function formattingScopesInput(source: string, customCommands?: Readonly<Record<string, unknown>>) {
   if (customCommands?.htmlData) return source;
   const commands = latexSourceCommands(source);
+  const modes = commands.flatMap((command) => {
+    const mode = MATH_FORMATTING_ARGUMENTS[command.name];
+    const body =
+      mode && !customCommands?.[command.name] ? latexSourceArgument(source, command.to) : null;
+    return body ? [{ from: body.from, to: body.to, mode }] : [];
+  });
   const wrapped = new Set<number>();
   for (const command of commands) {
     if (command.name !== "htmlData") continue;
@@ -98,7 +127,14 @@ function formattingScopesInput(source: string, customCommands?: Readonly<Record<
       continue;
     const body = latexSourceArgument(source, command.to);
     if (!body) continue;
-    const content = source.slice(command.from, body.end);
+    const enclosingMode = modes.findLast(
+      (scope) => scope.from <= command.from && command.from < scope.to,
+    )?.mode;
+    const content = ["texthebrew", "textenglish"].includes(command.name)
+      ? enclosingMode === "text"
+        ? body.value
+        : `\\text{${body.value}}`
+      : source.slice(command.from, body.end);
     source =
       source.slice(0, command.from) +
       `\\htmlData{${scopeMarker}${command.name}}{${content}}` +
@@ -138,6 +174,9 @@ interface FormattingController {
 export function installMathFormattingScopes(math: MathfieldElement) {
   const controller = (math as unknown as { _mathfield?: FormattingController })._mathfield;
   if (!controller) return { dispose: () => {} };
+  const languageStyle = document.createElement("style");
+  languageStyle.textContent = mathLanguageStyles;
+  math.shadowRoot?.append(languageStyle);
   const model = controller.model;
   const getValue = model.getValue;
   const insertStyle = math.onInsertStyle;
@@ -162,8 +201,12 @@ export function installMathFormattingScopes(math: MathfieldElement) {
           atom.style = inherited;
         }
         // Text serialization repeats its font even within the same context.
-        if (MATH_FORMATTING_ARGUMENTS[command] === "text" && body.startsWith(`\\${command}{`)) {
-          const repeated = latexSourceArgument(body, command.length + 1);
+        const nativeCommand = ["texthebrew", "textenglish"].includes(command) ? "text" : command;
+        if (
+          MATH_FORMATTING_ARGUMENTS[command] === "text" &&
+          body.startsWith(`\\${nativeCommand}{`)
+        ) {
+          const repeated = latexSourceArgument(body, nativeCommand.length + 1);
           if (repeated?.end === body.length) body = repeated.value;
         }
         return `${options.skipStyles ? body : `\\${command}{${body}}`}${atom.supsubToLatex(options)}`;
@@ -200,6 +243,7 @@ export function installMathFormattingScopes(math: MathfieldElement) {
   math.addEventListener("input", refresh);
   return {
     dispose: () => {
+      languageStyle.remove();
       math.removeEventListener("input", refresh);
       model.getValue = getValue;
       math.onInsertStyle = insertStyle;
@@ -208,30 +252,49 @@ export function installMathFormattingScopes(math: MathfieldElement) {
 }
 
 /** Show an insertion caret inside the new argument rather than selecting its slot. */
-export function enterMathFormattingArgument(math: MathfieldElement, adjacent = false): boolean {
+export function enterMathArgument(math: MathfieldElement, adjacent = false): boolean {
   const model = (math as unknown as { _mathfield?: FormattingController })._mathfield?.model;
   if (!model || math.readOnly) return false;
   const range = math.selection.ranges[0];
   const atom = model.at(math.position);
+  const selectedAtom =
+    range && math.selection.ranges.length === 1 && Math.abs(range[1] - range[0]) === 1
+      ? model.at(Math.max(range[0], range[1]))
+      : undefined;
+  const brackets =
+    selectedAtom?.type === "leftright"
+      ? selectedAtom
+      : math.selectionIsCollapsed && atom?.type === "leftright"
+        ? atom
+        : undefined;
+  if (brackets?.body?.length) {
+    math.position = model.offsetOf(brackets.body.at(-1)!);
+    return true;
+  }
   const next = atom?.rightSibling;
-  const owner = mathFormattingScopeCommand(atom)
-    ? atom
-    : adjacent && next && mathFormattingScopeCommand(next)
-      ? next
-      : atom?.parent;
+  const owner =
+    selectedAtom?.type === "placeholder"
+      ? selectedAtom.parent
+      : mathFormattingScopeCommand(atom)
+        ? atom
+        : adjacent && next && mathFormattingScopeCommand(next)
+          ? next
+          : atom?.parent;
   const command = owner && mathFormattingScopeCommand(owner);
+  // The placeholder's own stop paints the caret at the empty guide's center.
+  // Its preceding sentinel paints at the edge and leaves the slot marked vacant.
+  if (selectedAtom?.type === "placeholder") {
+    math.position = model.offsetOf(selectedAtom);
+    if (command) math.executeCommand(["switchMode", MATH_FORMATTING_ARGUMENTS[command]!]);
+    return true;
+  }
   if (!command) return false;
   if (math.selectionIsCollapsed && owner === atom && atom.body?.length)
     math.position = model.offsetOf(atom.body.at(-1)!);
   else if (math.selectionIsCollapsed && owner === next && next?.body?.length)
-    math.position = model.offsetOf(next.body[0]!);
-  else if (
-    range &&
-    math.selection.ranges.length === 1 &&
-    range[1] - range[0] === 1 &&
-    atom.type === "placeholder"
-  )
-    math.position = range[0];
+    math.position = model.offsetOf(
+      next.body.length === 2 && next.body[1]?.type === "placeholder" ? next.body[1] : next.body[0]!,
+    );
   else return false;
   math.executeCommand(["switchMode", MATH_FORMATTING_ARGUMENTS[command]!]);
   return true;
@@ -299,9 +362,14 @@ export function toggleMathTextFormat(math: MathfieldElement, format: MathTextFor
   });
 }
 
-/** MathLive's combined font command needs a portable LaTeX spelling. */
-export function mathTextFormattingSource(source: string, customMathbfit = false): string {
-  if (customMathbfit || !source.includes("\\mathbfit")) return source;
+/** Native font commands and CSS color arguments need portable LaTeX spellings. */
+export function mathTextFormattingSource(
+  source: string,
+  customCommands?: Readonly<Record<string, unknown>>,
+  documentSource?: string,
+): string {
+  source = mathColorSource(source, customCommands, documentSource);
+  if (customCommands?.mathbfit || !source.includes("\\mathbfit")) return source;
   for (const command of latexSourceCommands(source).toReversed()) {
     if (command.name !== "mathbfit") continue;
     const body = latexSourceArgument(source, command.to);
@@ -319,6 +387,7 @@ export function mathTextFormattingInput(
   source: string,
   customCommands?: Readonly<Record<string, unknown>>,
 ): string {
+  source = mathColorInput(source, customCommands);
   source = emptyFormattingInput(source, customCommands);
   if (customCommands?.mathbfit || customCommands?.mathit)
     return formattingScopesInput(source, customCommands);

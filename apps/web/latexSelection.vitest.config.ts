@@ -6,7 +6,12 @@ import { defineConfig } from "vite-plus/test/config";
 // Qualify the real editing adapters without loading app routes or live profiles.
 export default defineConfig({
   plugins: [react()],
-  optimizeDeps: { entries: ["src/scient/latex/latexNestedSelection*.browser.test.tsx"] },
+  optimizeDeps: {
+    entries: ["src/scient/latex/latexNestedSelection*.browser.test.tsx"],
+    // Reading previews import the static renderer after mount; prebundle it
+    // before browser tests start so dependency discovery cannot reload a test.
+    include: ["mathlive/ssr"],
+  },
   resolve: { alias: { "~": NodeURL.fileURLToPath(new URL("./src", import.meta.url)) } },
   test: {
     include: ["src/scient/latex/latexNestedSelection*.browser.test.tsx"],

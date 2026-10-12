@@ -68,6 +68,7 @@ export function beginDocumentSave(session: DocumentSession): DocumentSaveIntent 
   )
     return null;
   return {
+    // @effect-diagnostics-next-line cryptoRandomUUID:off -- This synchronous, framework-free session boundary also runs in browser editors.
     mutationId: crypto.randomUUID(),
     source: session.draftSource,
     expectedRevision: session.baselineRevision,

@@ -1,9 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Native runtime receipts are verified at the server boundary.
 import * as NodeCrypto from "node:crypto";
 
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -64,8 +66,8 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
   const platformKey = syncTexRuntimePlatformKey(platform, architecture);
   const executable = executableName(platform);
 
@@ -80,6 +82,7 @@ export const make = Effect.gen(function* () {
     const bundledCandidates = [
       path.resolve(import.meta.dirname, "synctex-runtime", platformKey, executable),
       path.resolve(import.meta.dirname, "../synctex-runtime", platformKey, executable),
+      path.resolve(import.meta.dirname, "../../../native/synctex-runtime", platformKey, executable),
       path.resolve(
         import.meta.dirname,
         "../../../../../native/synctex-runtime",
@@ -132,7 +135,10 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const resolve = yield* Effect.cached(resolveUncached());
+  // A staged or repaired helper must become available on the next request.
+  const resolve = yield* Effect.cachedWithTTL(resolveUncached(), (exit) =>
+    Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
+  );
   return SyncTexRuntime.of({ resolve });
 });
 

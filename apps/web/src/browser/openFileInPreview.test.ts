@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
   isBrowserPreviewFile,
   isTrackableWorkspaceHtml,
   resolveWorkspaceFileLinkOpenTarget,
-  workspaceFilePreviewAssetResource,
 } from "./openFileInPreview";
 
 describe("workspace file link routing", () => {
@@ -32,25 +29,5 @@ describe("workspace file link routing", () => {
 
   it("keeps ordinary workspace files on the file surface", () => {
     expect(resolveWorkspaceFileLinkOpenTarget("notes.md")).toBe("file");
-  });
-
-  it("roots browser assets independently of the compatibility thread", () => {
-    expect(
-      workspaceFilePreviewAssetResource({
-        workspaceRoot: "/workspace",
-        relativePath: "reports/demo.html",
-        threadRef: scopeThreadRef(
-          EnvironmentId.make("environment-1"),
-          ThreadId.make("draft-thread"),
-        ),
-        filePath: "/workspace/reports/demo.html",
-      }),
-    ).toEqual({
-      _tag: "workspace-file",
-      cwd: "/workspace",
-      relativePath: "reports/demo.html",
-      threadId: "draft-thread",
-      path: "/workspace/reports/demo.html",
-    });
   });
 });

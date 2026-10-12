@@ -2,6 +2,7 @@ import { MathfieldElement, type MacroDictionary } from "mathlive";
 import type { DocumentMathMacro } from "./latexDocumentMacros";
 import { mathSymbolMacros } from "./mathSymbolPresentation";
 import staticMathStyles from "mathlive/static.css?inline";
+import { mathLanguageStyles } from "./mathTextFormatting";
 import type { MathPreviewContext, MathPreviewRequest } from "./mathReadingPreviewProtocol";
 
 let previewStyles: CSSStyleSheet | undefined;
@@ -12,6 +13,7 @@ function mathReadingStyles() {
   // including on browsers which need a separate style node per shadow root.
   return (previewStyleText ??= `${staticMathStyles.replace(/@font-face\s*\{[^}]*\}/gu, "")}
     ::selection { background: transparent; color: inherit; }
+    ${mathLanguageStyles}
   `);
 }
 /** Passive completion state stays inside the shadow root, outside the editor's DOM observer. */

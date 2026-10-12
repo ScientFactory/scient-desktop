@@ -56,6 +56,8 @@ export interface DiscoveredLatexToolchain {
 export interface LatexInvocation {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  /** Generated UTF-8 entry point, kept with the compiler's private outputs. */
+  readonly inputWrapper?: { readonly path: string; readonly contents: string };
   /** Where the engine leaves the PDF for this invocation. */
   readonly pdfPath: string;
   /** Revision navigation index emitted beside the PDF when the engine supports it. */
@@ -83,6 +85,10 @@ export function buildLatexInvocation(input: {
    */
   readonly rootFileName: string;
   readonly workDirectory: string;
+  /** Windows launchers may convert Unicode arguments to the system code page. */
+  readonly windows?: boolean;
+  /** Same directory relative to the root's cwd, avoiding Unicode profile paths. */
+  readonly relativeWorkDirectory?: string;
   /**
    * Run the engine even where the driver believes nothing has changed. Set for
    * the compile that follows a package install: `latexmk` remembers, in the
@@ -96,7 +102,16 @@ export function buildLatexInvocation(input: {
    */
   readonly forceReprocess?: boolean | undefined;
 }): LatexInvocation {
-  const jobName = pdfBaseName(input.rootFileName.replaceAll("\\", "/"));
+  const wrapRoot =
+    input.toolchain.kind === "latexmk" &&
+    input.windows === true &&
+    /[^ -~]/u.test(input.rootFileName);
+  const wrapperName = "scient-unicode-root.tex";
+  const outputDirectory = wrapRoot
+    ? (input.relativeWorkDirectory ?? input.workDirectory).replaceAll("\\", "/")
+    : input.workDirectory;
+  const rootFileName = wrapRoot ? `${outputDirectory}/${wrapperName}` : input.rootFileName;
+  const jobName = pdfBaseName(rootFileName.replaceAll("\\", "/"));
   const pdfPath = `${input.workDirectory}/${jobName}.pdf`;
   const syncTexPath = `${input.workDirectory}/${jobName}.synctex.gz`;
 
@@ -124,6 +139,17 @@ export function buildLatexInvocation(input: {
 
   return {
     command: input.toolchain.executable,
+    ...(wrapRoot
+      ? {
+          inputWrapper: {
+            path: `${input.workDirectory}/${wrapperName}`,
+            // TeX reads UTF-8 filenames itself; latexmk only sees the ASCII
+            // entry point. Running from the original root directory preserves
+            // relative inputs and real source locations in the recorder.
+            contents: `\\input{\\detokenize{${input.rootFileName}}}\n`,
+          },
+        }
+      : {}),
     args: [
       ({ pdflatex: "-pdf", xelatex: "-xelatex", lualatex: "-lualatex" } as const)[
         input.engine ?? "pdflatex"
@@ -134,8 +160,8 @@ export function buildLatexInvocation(input: {
       "-no-shell-escape",
       "-synctex=1",
       ...(input.forceReprocess === true ? ["-g"] : []),
-      `-outdir=${input.workDirectory}`,
-      input.rootFileName,
+      `-outdir=${outputDirectory}`,
+      rootFileName,
     ],
     pdfPath,
     syncTexPath,

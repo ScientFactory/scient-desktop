@@ -1,5 +1,5 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -28,7 +28,7 @@ let compiled: Promise<string | undefined> | undefined;
 /** Compile the shipped boundary, never silently reuse a developer's binary or a pathname fallback. */
 export function filePublicationTestHelper() {
   return (compiled ??= (async () => {
-    const platform = HostProcessPlatform.defaultValue();
+    const platform = HostProcess.Platform.defaultValue();
     if (platform !== "darwin" && platform !== "linux") return undefined;
     const directory = await NodeFSP.mkdtemp(
       NodePath.join(NodeOS.tmpdir(), "scient-publication-helper-"),

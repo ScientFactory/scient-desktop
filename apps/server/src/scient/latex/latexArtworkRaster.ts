@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Raster processes have private execution identities.
 import * as NodeCrypto from "node:crypto";
 import { ExecutionRunId } from "@scientfactory/execution";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -32,8 +32,8 @@ export function artworkRasterSize(text: string, ratio: number) {
 export const makeLatexArtworkRaster = Effect.gen(function* () {
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const fileSystem = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const hostEnvironment = yield* HostProcess.Environment;
   const resolveExecutable = yield* SpawnExecutableResolution;
   const run = Effect.fn("LatexArtworkRaster.process")(function* (
     executable: string,

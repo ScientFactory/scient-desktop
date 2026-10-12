@@ -10,7 +10,6 @@ import {
   cancelAntigravitySignIn,
   hasManagedAntigravityUpdate,
   startAntigravitySignIn,
-  startAntigravitySignInAndOpenAuthorizationPage,
   startReviewedAntigravityRuntimeAction,
   updateAntigravityRuntime,
 } from "./antigravityLifecycleActions";
@@ -58,70 +57,13 @@ describe("Antigravity lifecycle actions", () => {
     expect(lifecycle.startConnection).toHaveBeenCalledWith("antigravity_google");
   });
 
-  it("connects the advertised credential method without opening a browser", async () => {
+  it("starts the advertised credential method", async () => {
     const current = provider({
       connection: { methods: ["antigravity_credentials"], canDisconnect: false, operation: null },
     });
     const lifecycle = controller({ startConnection: vi.fn(async () => current) });
-    await startAntigravitySignInAndOpenAuthorizationPage(lifecycle, current);
+    await startAntigravitySignIn(lifecycle, current);
     expect(lifecycle.startConnection).toHaveBeenCalledWith("antigravity_credentials");
-    expect(lifecycle.openAuthorizationPage).not.toHaveBeenCalled();
-  });
-
-  it("opens the primary Google authorization page after starting sign-in", async () => {
-    const authorizationUrl = "https://accounts.google.com/o/oauth2/v2/auth?client_id=test";
-    const lifecycle = controller({
-      startConnection: vi.fn(async () =>
-        provider({
-          connection: {
-            methods: ["antigravity_google"],
-            canDisconnect: false,
-            operation: {
-              operationId: "op-primary",
-              method: "antigravity_google",
-              status: "waiting_for_browser",
-              startedAt: "2026-08-22T08:00:00.000Z",
-              finishedAt: null,
-              message: "Finish Google sign-in.",
-              authorizationUrl,
-              authorizationUrlKind: "primary",
-            },
-          },
-        }),
-      ),
-    });
-
-    await startAntigravitySignInAndOpenAuthorizationPage(lifecycle);
-
-    expect(lifecycle.openAuthorizationPage).toHaveBeenCalledWith(authorizationUrl);
-  });
-
-  it("does not open documentation fallback as though it were Google sign-in", async () => {
-    const lifecycle = controller({
-      startConnection: vi.fn(async () =>
-        provider({
-          connection: {
-            methods: ["antigravity_google"],
-            canDisconnect: false,
-            operation: {
-              operationId: "op-fallback",
-              method: "antigravity_google",
-              status: "waiting_for_browser",
-              startedAt: "2026-08-22T08:00:00.000Z",
-              finishedAt: null,
-              message: "Open sign-in help.",
-              authorizationUrl:
-                "https://antigravity.google/docs/cli/install/#authentication-workflows",
-              authorizationUrlKind: "manual_fallback",
-            },
-          },
-        }),
-      ),
-    });
-
-    await startAntigravitySignInAndOpenAuthorizationPage(lifecycle);
-
-    expect(lifecycle.openAuthorizationPage).not.toHaveBeenCalled();
   });
 
   it("cancels in-flight sign in", async () => {

@@ -17,6 +17,7 @@ export const LatexDraftContext = createContext<{
   reportDraft: (id: string, pending: boolean) => void;
   undo: (redo: boolean) => void;
   commit?: (change: () => void | boolean) => boolean;
+  saveError?: string | null;
 }>({
   reportDraft: (_id: string, _pending: boolean) => {},
   undo: (_redo: boolean) => {},

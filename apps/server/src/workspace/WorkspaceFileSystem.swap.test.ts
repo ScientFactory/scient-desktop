@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -16,7 +17,7 @@ import { WorkspaceFileSystemOperationError } from "./WorkspaceFileSystem.ts";
 const revision = (text: string) => bytesRevision(Buffer.from(text));
 const deferred = () => Promise.withResolvers<void>();
 describe("native workspace publication admission", () => {
-  it.live.skipIf(process.platform !== "darwin")(
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
     "saves changed bytes, preserves permissions, and replays the receipt without overwriting outside edits",
     () =>
       fileMutationFixture(async (h) => {
@@ -52,7 +53,7 @@ describe("native workspace publication admission", () => {
         expect(await NodeFSP.readFile(target, "utf8")).toBe("outside D");
       }),
   );
-  if (process.platform === "darwin") {
+  if (HostProcess.Platform.defaultValue() === "darwin") {
     it.live.each([false, true])(
       "retains post-check B during guarded removal, replacement=%s",
       (replace) => {

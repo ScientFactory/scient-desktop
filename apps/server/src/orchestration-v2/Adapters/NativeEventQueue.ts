@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as ProviderAdapter from "../ProviderAdapter.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { NativeEventQueueCharge } from "./NativeEventQueueBudget.ts";
 
 export interface NativeEventQueueStorage {

@@ -23,7 +23,7 @@ import * as VcsProcess from "./VcsProcess.ts";
 import { makeCheckpointStatusConsumer } from "./CheckpointStatusConsumer.ts";
 import * as Schema from "effect/Schema";
 import { ProcessReadError } from "../processRunner.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const isCheckpointUnavailable = Schema.is(VcsCheckpointUnavailableError);
 
@@ -81,7 +81,7 @@ export const makeCheckpointSizeCheck = (deps: {
     const consumer = makeCheckpointStatusConsumer({
       cwd,
       operation,
-      platform: yield* HostProcessPlatform,
+      platform: yield* HostProcess.Platform,
       onPath: Effect.fnUntraced(function* (name: Uint8Array) {
         // Join as bytes so a filename that is not valid UTF-8 is looked up as is.
         const filePath = Buffer.concat([rootPrefix, name]);
@@ -278,11 +278,9 @@ export const publishStagedCheckpoint = Effect.fnUntraced(function* (input: {
       }),
     );
 
-  // A fetch from the staging repository would re-send every unchanged file:
-  // the checkpoint commit has no parent, so upload-pack cannot exclude what the
-  // workspace repository already has. Pack only the staging repository's own
-  // objects (--local skips those borrowed through the alternate), as one pack
-  // whatever size limit the user's Git configuration sets.
+  // Pack only objects written to the staging repository; --local excludes
+  // unchanged workspace objects borrowed through its alternate, including
+  // the checkpoint's HEAD parent. Keep one pack regardless of the user's limit.
   yield* (yield* CheckpointPublicationWitness)({
     cwd: input.cwd,
     checkpointRef: input.checkpointRef,

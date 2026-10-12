@@ -45,11 +45,11 @@ import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import { cutOverLegacyQueue } from "./legacy/LegacyQueueCutover.ts";
 import { makeLegacyQueueCompatibility } from "./legacy/LegacyQueueCompatibility.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import {
   materializeReplayTranscriptWorkspace,
   readProviderReplayTranscript,
-} from "./testkit/ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayTranscript";
 import { THREAD_FORK_NATIVE_SOURCE_PROMPT } from "./testkit/fixtures/shared.ts";
 
 const dispatchRpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);

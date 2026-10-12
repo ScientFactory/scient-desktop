@@ -698,7 +698,15 @@ workspace. Every compile writes into
 Build-input evidence is the only other per-document state this lane keeps, one
 JSON file per document under `<latexDir>/evidence/` keyed by the same digest.
 The workspace directory the user edits never receives compiler output, and
-neither does the agent's own checkpoint history. The managed TinyTeX
+neither does the agent's own checkpoint history. On Windows, a Unicode root
+filename uses a private UTF-8 `scient-unicode-root.tex` entry point in this work
+directory. `latexmk` receives its ASCII filename, while TeX reads the original
+root from the original working directory. Source filenames, relative inputs
+and recorder evidence stay attached to the original files; only the private
+output basename changes. SyncTeX is still requested, but TeX distributions that
+encode its input paths through a Windows code page may lose Unicode characters
+there, so successful compilation does not establish Unicode source navigation.
+The managed TinyTeX
 distribution lives under a separate
 `<latexDir>/managed` root, entirely apart from build work directories. Published
 navigation indexes live under
@@ -734,6 +742,12 @@ back to an arbitrary `synctex` on `PATH`. Windows ships its native helper as a
 desktop resource and Linux x64 inside the WSL server sidecar. Remote server
 assets carry every released platform key.
 
+Development servers also resolve the staged helper under the checkout's
+`native/synctex-runtime/<platform-key>/`, whether running from source or a server
+bundle. Failed resolution is retried on the next navigation request, so staging
+or repairing the helper does not leave a running server stuck on an earlier
+missing or damaged result. Successful verification remains cached.
+
 Forward search starts on a plain double-click in the source editor only while
 Split is already open and asks `synctex view` for the current successful
 descriptor's exact artifact/revision and the source buffer's compiled revision.
@@ -744,8 +758,10 @@ It includes the reader's current page as a disambiguation hint. SyncTeX
 returns ordered candidates: Scient preserves that order, uses the first valid
 target point (`x`/`y`, not the potentially page-spanning `h`/`v` enclosing box
 reported for some RTL material), converts that top-left big-point coordinate
-into PDF.js's bottom-left coordinate system, scrolls, and briefly marks the
-destination. If an engine records only line-level locations for a source line,
+into PDF.js's bottom-left coordinate system, bounds it to the page and centers
+it in the PDF viewport at the current zoom, then briefly marks the destination.
+The jump cancels pending page-change auto-fit so it cannot restore an earlier
+view over the destination. If an engine records only line-level locations for a source line,
 different columns can legitimately return the same candidates; Scient keeps
 the official first candidate instead of inventing a more precise PDF position.
 

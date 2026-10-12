@@ -34,7 +34,7 @@ export const LATEX_PREVIEW_MODE_LABELS: Readonly<Record<ScientLatexPreviewMode, 
   pdf: "PDF",
 };
 
-export const LATEX_SPLIT_PREVIEWS = ["pdf", "visual"] as const;
+export const LATEX_SPLIT_PREVIEWS = ["visual", "pdf"] as const;
 export type ScientLatexSplitPreview = (typeof LATEX_SPLIT_PREVIEWS)[number];
 export function normalizeLatexSplitPreview(
   value: string | null | undefined,

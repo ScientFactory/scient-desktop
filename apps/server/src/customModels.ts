@@ -83,11 +83,10 @@ const validateCustomModelSave = Effect.fn("CustomModels.validateSave")(function*
       return yield* failure("This model already includes that agent.");
     const saved = existing?.models.find((entry) => entry.id === model.id)?.instanceIds ?? [];
     for (const id of model.instanceIds) {
-      // A built-in driver's default instance runs from the legacy providers map
-      // even without an entry (for example after "Reset default instance").
+      // Supported built-in drivers run their default instance even when its
+      // settings entry is absent (for example after "Reset default instance").
       const driver =
-        current.providerInstances[id]?.driver ??
-        (Object.hasOwn(current.providers, id) ? id : undefined);
+        current.providerInstances[id]?.driver ?? (supportsModelConnections(id) ? id : undefined);
       // A removed agent's id stays until the user detaches it; nothing loads it.
       if (driver === undefined && saved.includes(id)) continue;
       if (!supportsModelConnections(driver, input.connection.protocol))

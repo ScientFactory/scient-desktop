@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ExecutionProcessError, type ExecutionProcessRequest } from "@scientfactory/execution";
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -198,7 +198,7 @@ const harness = (input: {
             ).pipe(Layer.provide(NodeServices.layer)),
           ),
           Layer.provide(NodeServices.layer),
-          Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+          Layer.provide(Layer.succeed(HostProcess.Platform, "win32")),
         ),
       ),
       runs,
@@ -782,7 +782,7 @@ describe("LatexPackageInstaller", () => {
             ),
           ),
           Layer.provide(NodeServices.layer),
-          Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+          Layer.provide(Layer.succeed(HostProcess.Platform, "win32")),
         ),
       );
 

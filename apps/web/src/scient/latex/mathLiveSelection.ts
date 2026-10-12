@@ -459,20 +459,28 @@ export function mathCaretInAccentBody(math: MathfieldElement, offset = math.posi
   return false;
 }
 
-/** Empty-slot guides belong to the nearest structural owner, excluding formatting. */
-export function mathGuideScopeId(math: MathfieldElement): string | null {
+function mathEditingSlot(math: MathfieldElement) {
   const model = mathModel(math);
   if (!model) return null;
   for (let atom = model.at(math.position); atom?.parent; atom = atom.parent) {
     const owner = atom.parent;
-    if (owner.isRoot) return null;
-    if (
-      !isMathFormattingScope(owner) &&
-      !(owner.type === "group" && owner.skipBoundary && !owner.command)
-    )
-      return owner.id ?? null;
+    const branch = atom.parentBranch;
+    // Anonymous style groups do not create an editing argument. Scripts on
+    // those groups still have their own branch and must retain their guide.
+    if (branch === "body" && owner.type === "group" && owner.skipBoundary && !owner.command)
+      continue;
+    const contents = Array.isArray(branch)
+      ? owner.getCell?.(branch[0], branch[1])
+      : owner.branch?.(branch);
+    return { owner, contents };
   }
   return null;
+}
+
+/** Empty-slot guides belong to the innermost authored owner, including font arguments. */
+export function mathGuideScopeId(math: MathfieldElement): string | null {
+  const slot = mathEditingSlot(math);
+  return slot && !slot.owner.isRoot ? (slot.owner.id ?? null) : null;
 }
 function mathScriptOwner(atom: MathAtom): MathAtom | null {
   if (atom.type === "first") return null;
@@ -799,7 +807,8 @@ function mathEmptySlotAnchor(math: MathfieldElement, slot: HTMLElement) {
         (candidate) => candidate?.type === "array" && candidate.id === id,
       );
       if (!array) continue;
-      atom = array.getCell?.(cells.indexOf(slot), columns.indexOf(column))?.[0];
+      const contents = array.getCell?.(cells.indexOf(slot), columns.indexOf(column));
+      atom = contents?.find((child) => child.type === "placeholder") ?? contents?.[0];
       break;
     }
   } else {
@@ -807,6 +816,17 @@ function mathEmptySlotAnchor(math: MathfieldElement, slot: HTMLElement) {
     atom = id
       ? model.atoms.find((candidate) => candidate.id === id && candidate.type === "placeholder")
       : undefined;
+    // Captured accent bodies omit child IDs in MathLive's rendered markup.
+    // A single empty body still has one unambiguous model insertion stop.
+    if (!atom && id) {
+      const owner = model.atoms.find((candidate) => candidate.id === id);
+      const body = owner?.type === "accent" ? owner.branch?.("body") : undefined;
+      if (body?.length === 2 && body[1]?.type === "placeholder") {
+        const anchor = { baseline: mathCaretBaseline(slot), atom: body[1] };
+        emptySlotAnchors.set(slot, anchor);
+        return anchor;
+      }
+    }
   }
   if (!atom?.id) return null;
   const selector = `[data-atom-id="${CSS.escape(atom.id)}"]`;
@@ -845,16 +865,20 @@ export function mathEmptySlotOffset(math: MathfieldElement, slot: HTMLElement): 
   return offset !== undefined && offset >= 0 ? offset : null;
 }
 
-export function mathScopeRects(
-  math: MathfieldElement,
-  range: readonly [number, number],
-): DOMRect[] {
-  const rects = mathSelectionRects(math, [range]);
+/** Guide the actual argument containing the caret, independently of selection expansion. */
+export function mathEditingSlotRects(math: MathfieldElement): DOMRect[] {
+  const model = mathModel(math);
+  if (!model) return [];
+  const contents = mathEditingSlot(math)?.contents;
+  if (!contents?.length) return [];
+  // The first atom is the argument's caret sentinel. Font runs and scripts
+  // participate in selection expansion, but must not replace this slot's bounds.
+  const rects = mathSelectionRects(math, [
+    [model.offsetOf(contents[0]!), model.offsetOf(contents.at(-1)!)],
+  ]);
   if (rects.length) return rects;
-  const caret = math.shadowRoot
-    ?.querySelector(".ML__caret,.ML__text-caret")
-    ?.getBoundingClientRect();
-  return caret ? [caret] : [];
+  const caret = math.shadowRoot?.querySelector<HTMLElement>(".ML__caret,.ML__text-caret");
+  return caret ? [mathCaretRect(math, caret)] : [];
 }
 
 function isMathRowFlow(atom: MathAtom): boolean {

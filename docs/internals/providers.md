@@ -6,7 +6,7 @@ A provider is the agent runtime that does the actual work. Scient supports sever
 orchestration layer does not know which one is behind a thread.
 
 Provider protocols, account ownership, permissions, and capabilities belong at the
-[adapter boundary](../../apps/server/src/orchestration-v2/ProviderAdapter.ts). Normalize there
+[adapter boundary](../../packages/provider-core/src/server/ProviderAdapter.ts). Normalize there
 instead of spreading provider checks through orchestration and clients.
 
 A driver kind identifies an integration; an instance identifies one configuration and account
@@ -15,54 +15,65 @@ session or catalog state. For a new driver, start with [adding a provider](./add
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with eleven entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with twelve entries:
 
-| Driver kind   | Driver source                                                                                 |
-| ------------- | --------------------------------------------------------------------------------------------- |
-| `acpRegistry` | [`Drivers/AcpRegistryDriver.ts`](../../apps/server/src/provider/Drivers/AcpRegistryDriver.ts) |
-| `codex`       | [`Drivers/CodexDriver.ts`][codex]                                                             |
-| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]                                                           |
-| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]                                                           |
-| `grok`        | [`Drivers/GrokDriver.ts`][grok]                                                               |
-| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]                                                       |
-| `droid`       | [`Drivers/DroidDriver.ts`][droid]                                                             |
-| `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity]                                                 |
-| `pi`          | [`Drivers/PiDriver.ts`][pi]                                                                   |
-| `omp`         | [`Drivers/OmpDriver.ts`][omp]                                                                 |
-| `scient`      | [`Drivers/ScientAgentDriver.ts`][scient-agent]                                                |
+| Driver kind   | Driver source                                                                   |
+| ------------- | ------------------------------------------------------------------------------- |
+| `acpRegistry` | [`server/driver.ts`](../../packages/provider-acp-registry/src/server/driver.ts) |
+| `codex`       | [`Drivers/CodexDriver.ts`][codex]                                               |
+| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]                                             |
+| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]                                             |
+| `grok`        | [`Drivers/GrokDriver.ts`][grok]                                                 |
+| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]                                         |
+| `droid`       | [`Drivers/DroidDriver.ts`][droid]                                               |
+| `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity]                                   |
+| `pi`          | [`server/driver.ts`][pi]                                                        |
+| `omp`         | [`Drivers/OmpDriver.ts`][omp]                                                   |
+| `scient`      | [`Drivers/ScientAgentDriver.ts`][scient-agent]                                  |
+| `muse`        | [`server/driver.ts`](../../packages/provider-muse/src/server/driver.ts)         |
 
 Each driver declares its `driverKind`, configuration schema, and scoped instance factory.
 Live execution uses that instance's `orchestrationAdapter`, implementing
-[`ProviderAdapterV2`][adapter]. Native adapters live in `apps/server/src/orchestration-v2/Adapters/`;
-shared discovery, authentication, process and transport helpers stay under `provider/` and the
-protocol packages. Read the driver and its native adapter together. The V1 `provider/Layers/*Adapter`
-execution facade and its unused service/directory/metrics/queue owners are retired; historical
-readers and migration contracts remain separate compatibility boundaries.
+[`ProviderAdapterV2`][adapter]. Provider packages own their adapters where the provider has moved
+there; integrations still owned by the app keep their adapters beside the server driver. Read the
+driver and its adapter together. The V1 `provider/Layers/*Adapter` execution facade and its unused
+service/directory/metrics/queue owners are retired; historical readers and migration contracts
+remain separate compatibility boundaries.
+
+## Provider package boundaries
+
+A provider implementation belongs in its own `packages/provider-<name>` package where it has
+moved; [Pi](../../packages/provider-pi) is the reference. Drivers not yet moved remain in
+[`provider/Drivers`](../../apps/server/src/provider/Drivers). Package exports separate instance
+settings, browser-safe client metadata, server drivers/adapters, and replay-test internals. Provider
+packages reach server-owned services through `ProviderHost`, not imports from `apps/server`; tests
+use `@t3tools/provider-testing`. Register the provider driver in the server registry; its factory
+returns the orchestration adapter. Register its client definition in web and mobile.
 
 The `opencode` driver probes the installed version and runs the 1.x or 2.x runtime. OpenCode's MCP
-registrations are directory-scoped, while T3's MCP connection is thread-scoped, so threads in one
-directory must not share one T3 MCP entry.
+registrations are directory-scoped, while Scient's MCP connection is thread-scoped, so threads in one
+directory must not share one Scient MCP entry.
 
-- **1.x** uses one T3-managed chat server per thread, so threads cannot replace each other's
+- **1.x** uses one Scient-managed chat server per thread, so threads cannot replace each other's
   connection. Catalog and text-generation work can share the
-  [instance-owned helper](../../apps/server/src/provider/OpenCodeServerOwner.ts), which closes
-  after an idle period. See the [1.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
+  [instance-owned helper](../../packages/provider-opencode/src/server/OpenCodeServerOwner.ts), which closes
+  after an idle period. See the [1.x adapter](../../packages/provider-opencode/src/server/adapter.ts).
 - **2.x** serves every directory from one
-  [server per instance](../../apps/server/src/provider/opencode2/OpenCode2Server.ts). Each thread
+  [server per instance](../../packages/provider-opencode/src/server/v2/OpenCode2Server.ts). Each thread
   registers its own `t3-code-<thread>` MCP entry, and session permission rules deny every other
-  thread's entry. See the [2.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.ts).
+  thread's entry. See the [2.x adapter](../../packages/provider-opencode/src/server/v2/adapter.ts).
 
 External OpenCode servers remain externally owned and can require an external restart to pick up
 configuration changes. OpenCode stores "always" approval grants for the whole project. Automatic
 full-access replies use `once` so they cannot widen a supervised thread's permissions on a shared
-server. On 2.x, a session-wide approval also replies `once` and becomes T3's own rule on that session.
+server. On 2.x, a session-wide approval also replies `once` and becomes Scient's own rule on that session.
 
 Pi runs the user's own `pi` install in RPC mode and owns native extension, package, and project
 trust discovery. T3 injects only its namespaced MCP bridge, so a Pi session behaves as it does in
 the Pi TUI. Pi session files back native resume, rollback, and same-instance thread forks.
 Forks use Pi's CLI in the destination directory because RPC session switching retains the source
 session's cwd. Provider switches still use portable handoff summaries.
-See the [adapter](../../apps/server/src/orchestration-v2/Adapters/PiAdapterV2.ts).
+See the [adapter](../../packages/provider-pi/src/server/adapter.ts).
 
 Antigravity separates account profiles per instance while sharing installed executables across the
 environment. It forces file-based credential storage because the native macOS keychain entry would
@@ -89,7 +100,7 @@ order, native dispatch identifiers, or persisted selections.
 | Cursor / Grok         | Reported default                                                                                                      | Native reported effort                                                                          |
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.
-[Grok probes](../../apps/server/src/provider/GrokProvider.ts) avoid authentication and
+[Grok probes](../../packages/provider-grok/src/server/status.ts) avoid authentication and
 session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
 explicit setup or model refresh; background checks use initialization only.
 
@@ -178,6 +189,25 @@ expanding citations in new user prompts.
 `RuntimeRequestService` sends callback answers to the recorded session.
 `ProviderEventIngestor` persists adapter output with run/attempt/node attribution.
 The V1 `ProviderService.sendTurn` path is not the current execution boundary.
+
+Native Claude subagent Stop distinguishes an adapter stop receipt from an absent session.
+A live adapter remains authoritative for terminal task, node and tool-item updates. If the
+captured session has gone, the effect worker requests targeted local settlement under the
+same strong native task/thread, provider instance, owning run/turn and root-node bindings.
+That repair ends the exact linked runless child roots and proven nested native descendants,
+whether recorded under the task's node or in its child threads. Each descendant retains the
+native identity, parent/root/run/provider/turn and child-lineage fences. A run-bound descendant
+proves its own run, attempt, native session/thread/turn and root ownership within the captured
+run-ordinal horizon; a resumed coordinator's retained launch root is not substituted for that
+descendant's current root. Terminal intermediate tasks stay terminal while their active
+descendants are reached through compact native items, without loading the full message history.
+A workflow coordinator's
+runless member rows use the same exact coordinator/member/node ownership predicates as native
+event routing; those members do not carry independent native task identities. The repair does
+not interrupt the parent, settle siblings, admit weak native tasks or frozen nodes, stop
+child-owned user runs, or assign execution authority to imported history.
+A nonretryable adapter error is not a stop receipt: local repair still requires the
+captured session to be absent.
 
 Adding an ordinary driver requires a native `ProviderAdapterV2`, an instance factory, and registration
 in `BUILT_IN_DRIVERS`. Expose capabilities truthfully; new wire behavior may also require contract
@@ -504,17 +534,25 @@ The [provider lifecycle architecture](./provider-lifecycle.md) owns the shared m
 
 ### Pi driver
 
-[`PiDriver.ts`][pi] supplies `PiAdapterV2` on the same instance registry and lifecycle surface.
-The native adapter runs Pi's own RPC mode with user extensions, packages, skills, templates,
-configuration and project-trust discovery. It adds a namespaced MCP/permission bridge through
-`piT3McpExtensionSource.ts` and `piT3McpInjection.ts`; it does not use the old V1 `PiScientExtension`
-or `PiContextExtension` as the live turn engine.
+[`PiDriverComposition.ts`](../../apps/server/src/provider/PiDriverComposition.ts) supplies
+Scient's production `PiDriver` and direct-session `makeScientPiAdapterV2` factory. Both
+share the same orchestration instructions, capability-aware guidance and native receipt
+error mapping. Package defaults remain generic; application native and replay harnesses
+use this composition rather than constructing an unconfigured package adapter.
+The [package adapter](../../packages/provider-pi/src/server/adapter.ts) runs Pi's own
+RPC mode with user extensions, packages, skills, templates, configuration and project-trust
+discovery. Its namespaced MCP/permission bridge is in
+[`mcpExtensionSource.ts`](../../packages/provider-pi/src/server/mcpExtensionSource.ts) and
+[`mcpInjection.ts`](../../packages/provider-pi/src/server/mcpInjection.ts).
 
-`Adapters/PiRpc.ts` owns native RPC transport. `PiAdapterV2` maps text, reasoning, tools,
+[`rpc.ts`](../../packages/provider-pi/src/server/rpc.ts) owns native RPC transport. The adapter maps text, reasoning, tools,
 extension questions, compaction and settled lifecycle into V2 provider events. One low-level cycle
 ending is not enough to complete a root turn while queued prompts or compaction remain active.
 Extension dialogs use the existing runtime-request path; unsupported terminal UI is not emulated.
 Native commands retain their own dispatch semantics instead of becoming model prompts.
+Editor prefill is the question's `initialAnswer`, not part of its title. MCP model content
+keeps bounded text, images and resource descriptions separate from the full native script
+`CallToolResult` in `structuredContent`; `details.result` is not its transport contract.
 
 Session files support native resume, rollback snapshots and same-instance provider thread forks.
 Forking through Pi's CLI in the destination directory preserves the correct cwd; generic Scient
@@ -530,12 +568,26 @@ owning process scope closes successfully. Failed cleanup retains the lease. A ca
 releases unpublished or published ownership only after its owned process scope closes successfully;
 a later start can then acquire the file. Repeated opens of
 the same provider session share its runtime and spawn one process.
+Stop and administrative session close remain different operations. Stop interrupts the
+accepted owned run; administrative close fails unfinished accepted work. Both preserve
+native acceptance evidence, cancel the owned pending request and retain the file lease
+until physical close completes.
 
-Passive model/catalog discovery remains `provider/PiProvider.ts`;
-`provider/pi/PiCustomModels.ts` and `textGeneration/PiTextGeneration.ts` retain custom-model and
-headless-generation ownership. Managed installation is owned by the driver lifecycle actions and
-shared runtime package. Runtime catalogs and platform qualification remain separate from native
-orchestration compatibility.
+Passive model/catalog discovery and headless generation belong to
+[`status.ts`](../../packages/provider-pi/src/server/status.ts) and
+[`textGeneration.ts`](../../packages/provider-pi/src/server/textGeneration.ts).
+Scient's custom-model connection and managed-runtime policy enter through
+`PiDriverComposition.ts` and `provider/pi/PiCustomModels.ts`; installation stays owned by
+the driver lifecycle actions and shared runtime package. Runtime catalogs and platform
+qualification remain separate from native orchestration compatibility.
+
+Usage reads Pi's native JSONL sessions, preserving disjoint input/cache counters and the
+catalog pricing model separately from the displayed provider/model name. The durable scan
+cache writes `usage-scan-cache-v6.json`. It can import the prior v5 file and then the
+unversioned v4 file without rewriting either; retained records for deleted transcripts,
+incremental positions, tails and pricing-model attribution survive an older server's v5
+rewrite. A readable current cache takes precedence over older snapshots, and unsupported
+schema versions are not interpreted as compatible records.
 
 The earlier main-based Pi proposal was selectively adapted, not merged as a second host platform;
 see [the Pi source notice][pi-notice] for provenance. Native tests and replay exercise the V2
@@ -774,6 +826,21 @@ Scient Agent.
   A later Scient subscription is a third source and uses that same private channel: Scient signs
   the user in, and hands the agent an endpoint and a token. Keep account state in Scient, never in
   the agent's root, and keep the provider id `scient` free for it.
+- Native subagents. Scient-only ingestion separates a stable bounded label from the full
+  assignment and changing activity. The shared OMP RPC decoder retains optional aggregate
+  progress fields; Scient projects observed role, tool, model identity, effort and counters
+  into existing V2 records. `tokens` is the cumulative billing-volume counter, not
+  `contextTokens`; missing observations stay missing, including a missing terminal result.
+  Sparse updates retain known metadata without changing child identity or the original
+  background launch's ownership. Native read-only child conversations project the supplied
+  assignment and terminal result as stable message artifacts.
+  Terminal progress can precede the closing lifecycle frame. Matching terminal frames
+  enrich retained metadata and any supplied result or error without reopening the child;
+  identical repeats are ignored.
+  Subscription remains `progress`: this does not ingest a full native tool/thinking transcript. Scient chat groups
+  reuse the shared member presentation with bounded labels and child navigation inside the
+  disclosure, including historical oversized titles and temporarily missing roster entries.
+  Codex, Claude and external Oh My Pi keep their existing behavior.
 - Installation. The driver resolves custom, system, or Scient-managed execution once, and uses
   that executable for sessions, model probes, and text generation. Managed binaries live in
   `<baseDir>/provider-runtimes/scient-agent`; account and session roots remain independent. The
@@ -998,9 +1065,9 @@ bound client delivery separately from provider execution and stored history.
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
-[cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
-[grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
-[opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
+[cursor]: ../../packages/provider-cursor/src/server/driver.ts
+[grok]: ../../packages/provider-grok/src/server/driver.ts
+[opencode]: ../../packages/provider-opencode/src/server/driver.ts
 [antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
 [antigravity-adapter]: ../../apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts
 [antigravity-provider]: ../../apps/server/src/provider/AntigravityProvider.ts
@@ -1011,19 +1078,19 @@ bound client delivery separately from provider execution and stored history.
 [antigravity-text]: ../../apps/server/src/textGeneration/AntigravityTextGeneration.ts
 [provider-auth-service]: ../../apps/server/src/provider/ProviderAuthService.ts
 [provider-setup]: ../../packages/contracts/src/providerSetup.ts
-[opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
+[opencode-server-owner]: ../../packages/provider-opencode/src/server/OpenCodeServerOwner.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
-[pi]: ../../apps/server/src/provider/Drivers/PiDriver.ts
+[pi]: ../../packages/provider-pi/src/server/driver.ts
 [omp]: ../../apps/server/src/provider/Drivers/OmpDriver.ts
 [scient-agent]: ../../apps/server/src/provider/Drivers/ScientAgentDriver.ts
 [pi-notice]: ../../apps/server/src/provider/pi/NOTICE.md
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
-[adapter]: ../../apps/server/src/orchestration-v2/ProviderAdapter.ts
+[adapter]: ../../packages/provider-core/src/server/ProviderAdapter.ts
 [awareness]: ../../apps/server/src/provider/ScientAwareness.ts
 [instances]: ../../apps/server/src/provider/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/orchestration-v2/ProviderAdapterRegistry.ts
 [sessions]: ../../apps/server/src/orchestration-v2/ProviderSessionManager.ts
-[driver]: ../../apps/server/src/provider/ProviderDriver.ts
+[driver]: ../../packages/provider-core/src/server/driver.ts
 [provider-registry]: ../../apps/server/src/provider/ProviderRegistry.ts
 [connection-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderConnectionManager.ts
 [runtime-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderRuntimeManager.ts
@@ -1057,7 +1124,7 @@ manual-only because their version is pinned in mise's config. npm updates pin `-
 `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
 train, so the registry stays authoritative for them.
-See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
+See the [resolver](../../apps/server/src/provider/providerMaintenanceRunner.ts).
 
 Ownership is cached per instance and re-read immediately before an update runs. The
 [runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key

@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
-import { spawnAndCollect } from "../providerSnapshot.ts";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 
 import {
   isPiRpcResponse,

@@ -1,4 +1,5 @@
 import type { LatexTableCellLayout } from "./latexVisualDocument";
+import { latexTableRulePresentation } from "./latexTableAuthoring";
 
 export interface LongTableBand {
   rows: string[][];
@@ -35,20 +36,27 @@ export function LatexLongTableBand({
           {row.map((text, column) => {
             const layout = band.layout[rowIndex]?.[column];
             if (layout && (layout.row !== rowIndex || layout.column !== column)) return null;
+            const topRule = latexTableRulePresentation(layout?.topRule);
+            const bottomRule = latexTableRulePresentation(layout?.bottomRule);
             return (
               <td
                 key={column}
                 colSpan={layout?.colSpan}
                 rowSpan={layout?.rowSpan}
                 data-align={layout?.alignment ?? alignments[column] ?? "left"}
+                data-paragraph-column={layout?.justified || undefined}
                 style={{
-                  borderTop: layout?.top ? "0.4pt solid currentColor" : "none",
-                  borderBottom: layout?.bottom ? "0.4pt solid currentColor" : "none",
-                  borderLeft: layout?.left ? "0.4pt solid currentColor" : "none",
-                  borderRight: layout?.right ? "0.4pt solid currentColor" : "none",
+                  borderTop: layout?.top
+                    ? `${topRule.width} solid ${layout.topColor ?? "currentColor"}`
+                    : "none",
+                  borderBottom: layout?.bottom
+                    ? `${bottomRule.width} solid ${layout.bottomColor ?? "currentColor"}`
+                    : "none",
+                  borderInlineStart: layout?.left ? "0.4pt solid currentColor" : "none",
+                  borderInlineEnd: layout?.right ? "0.4pt solid currentColor" : "none",
                   backgroundColor: layout?.background ?? undefined,
-                  paddingTop: layout?.top ? "0.65ex" : 0,
-                  paddingBottom: layout?.bottom ? "0.4ex" : 0,
+                  paddingTop: layout?.top ? topRule.after : 0,
+                  paddingBottom: layout?.bottom ? bottomRule.before : 0,
                 }}
               >
                 {text.replaceAll("SCIENTTABLENUMBER", number ?? "??")}

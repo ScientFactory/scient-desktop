@@ -11,6 +11,7 @@ vi.mock("./LatexMathField", () => ({
   LatexMathField: ({ value, ref }: { value: string; ref: Ref<LatexMathFieldHandle> }) => {
     useImperativeHandle(ref, () => ({
       flush: () => true,
+      getSource: () => value,
       focus: () => {},
       isEmpty: () => value.length === 0,
       clearSelection: () => {},
@@ -701,6 +702,68 @@ Control & 1 \\\\
     expect(current).toContain("Second.");
   });
 
+  it.each(["english", "hebrew"])(
+    "removes an empty %s document title with Backspace and restores it with Undo",
+    async (language) => {
+      const body = language === "hebrew" ? "טקסט המסמך." : "Document body.";
+      const preamble =
+        "\\title{}\n\\author{Author}\n\\date{Date}\n" +
+        (language === "hebrew" ? "\\usepackage{polyglossia}\n\\setmainlanguage{hebrew}\n" : "");
+      await mount(`\\maketitle\n${body}\n\n\\custom{keep}`, preamble);
+      const title = container.querySelector<HTMLTextAreaElement>(
+        "textarea[aria-label='Document title']",
+      )!;
+      await act(() => title.focus());
+      const backspace = new KeyboardEvent("keydown", {
+        key: "Backspace",
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(() => title.dispatchEvent(backspace));
+      expect(backspace.defaultPrevented).toBe(true);
+      expect(current).not.toContain("\\maketitle");
+      expect(current).toContain(preamble);
+      expect(current).toContain(body);
+      expect(current).toContain("\\custom{keep}");
+      expect(container.querySelector(".scient-latex-title-preview")).toBeNull();
+      expect(editor().state.selection.$from.parent.type.name).toBe("paragraph");
+      expect(editor().isFocused).toBe(true);
+      await act(() => editor().commands.undo());
+      expect(current).toContain("\\maketitle");
+      expect(current).toContain(preamble);
+      expect(container.querySelector(".scient-latex-title-preview")).not.toBeNull();
+      await act(() => editor().commands.redo());
+      expect(current).not.toContain("\\maketitle");
+      expect(current).toContain(body);
+    },
+  );
+
+  it("settles a just-cleared title before deleting a title-only block", async () => {
+    await mount("\\maketitle", "\\title{Title}\n\\author{}\n\\date{}\n");
+    const title = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='Document title']",
+    )!;
+    await act(() => title.focus());
+    await reactAct(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(title, "");
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+      title.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }),
+      );
+    });
+    await act(() => {});
+    expect(current).not.toContain("\\maketitle");
+    expect(current).toContain("\\title{}");
+    expect(editor().state.selection.$from.parent.type.name).toBe("paragraph");
+    expect(editor().isFocused).toBe(true);
+    await act(() => editor().commands.undo());
+    expect(current).toContain("\\maketitle");
+    expect(current).toContain("\\title{}");
+    expect(
+      container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Document title']")!.value,
+    ).toBe("");
+  });
+
   it("starts a titled document with formatting ready on body text", async () => {
     await mount("\\maketitle\nHello world.", "\\title{Title}\n");
     expect(editor().state.selection.$from.parent.type.name).toBe("paragraph");
@@ -878,6 +941,51 @@ Control & 1 \\\\
         ),
       ).toBeNull(),
     );
+  });
+
+  it("changes the document language through settings with source preservation and undo/redo", async () => {
+    const body = "Existing \\textbf{bold} prose.\n\n\\textenglish{English passage.}";
+    await mount(body, "\\usepackage[T1]{fontenc}\n\\usepackage{lmodern}\n");
+    const original = current;
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
+    );
+    const settings = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Document settings",
+    )!;
+    await act(() => {
+      settings.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+      settings.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(settings.getAttribute("aria-expanded")).toBe("true"));
+    const popup = document.body.querySelector(
+      '[data-slot="menu-sub-content"][aria-label="Document settings"]',
+    )!;
+    await act(() =>
+      popup.querySelector<HTMLButtonElement>('[aria-label="Document language"]')!.click(),
+    );
+    const hebrew = await vi.waitFor(() => {
+      const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+        (item) => item.textContent?.trim() === "Hebrew",
+      );
+      expect(option).toBeDefined();
+      return option!;
+    });
+    await act(() => hebrew.click());
+    expect(current).toBe(original);
+    await act(() =>
+      [...popup.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.trim() === "Apply")!
+        .click(),
+    );
+    await vi.waitFor(() => expect(current).toContain("\\setdefaultlanguage{hebrew}"));
+    expect(current).toContain(body);
+    expect(current).not.toContain("\\usepackage[T1]{fontenc}");
+    const applied = current;
+    await act(() => editor().commands.undo());
+    await vi.waitFor(() => expect(current).toBe(original));
+    await act(() => editor().commands.redo());
+    await vi.waitFor(() => expect(current).toBe(applied));
   });
 
   it("moves lower-priority writing groups into More on narrow panes", async () => {

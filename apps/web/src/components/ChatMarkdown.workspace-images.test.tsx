@@ -74,13 +74,18 @@ const threadRef = {
   threadId: ThreadId.make("thread-windows"),
 };
 
-function render(markdown: string, parseRawHtml = true): string {
+function render(
+  markdown: string,
+  parseRawHtml = true,
+  contentDirection?: "auto" | "ltr" | "rtl",
+): string {
   return renderToStaticMarkup(
     <ChatMarkdown
       cwd={"C:\\Users\\shawn\\project"}
       threadRef={threadRef}
       text={markdown}
       parseRawHtml={parseRawHtml}
+      {...(contentDirection === undefined ? {} : { contentDirection })}
     />,
   );
 }
@@ -448,6 +453,26 @@ describe("ChatMarkdown workspace images", () => {
       expect(html).not.toContain("animate-pulse");
     },
   );
+
+  it("keeps standalone workspace images and BiDi in literal-HTML mode", () => {
+    testState.assetState = "loading";
+
+    const html = render(
+      [
+        "שלב ראשון → שלב שני",
+        "![loading](.t3/workspace-image.svg)",
+        "<script>globalThis.__scientXss = 1</script>",
+      ].join("\n\n"),
+      false,
+      "rtl",
+    );
+
+    expect(html).toContain("שלב ראשון ← שלב שני");
+    expect(html).toContain("Loading image…");
+    expect(html).toContain('data-scient-inline-workspace-image="true"');
+    expect(html).toContain("&lt;script&gt;globalThis.__scientXss = 1&lt;/script&gt;");
+    expect(html).not.toMatch(/<script(?:\s|>)/iu);
+  });
 
   it("uses a bounded inline placeholder without inserting figure chrome into a sentence", () => {
     testState.assetState = "loading";

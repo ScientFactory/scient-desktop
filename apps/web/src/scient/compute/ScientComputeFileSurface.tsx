@@ -68,6 +68,9 @@ const SEGMENT_BUTTON_CLASS =
   "flex h-5.5 cursor-pointer items-center justify-center rounded-[5px] text-[11px] leading-[18px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset";
 
 interface ScientComputeFileSurfaceProps {
+  readonly onCite?: import("../markdownEditor/markdownCitation").MarkdownCiteHandler | undefined;
+  readonly citationReveal?: import("@t3tools/contracts").FileCitation | undefined;
+  readonly citationBaseline?: string | undefined;
   readonly language: ComputeSourceLanguage;
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -413,6 +416,10 @@ function ComputeFileSurfaceContent(
             className={cn("flex min-h-0 min-w-0 flex-1 flex-col", view === "split" && "grow-0")}
           >
             <EditableFileSurface
+              threadRef={props.threadRef}
+              onCite={props.onCite}
+              citationReveal={props.citationReveal}
+              citationBaseline={props.citationBaseline}
               environmentId={props.environmentId}
               cwd={props.cwd}
               relativePath={props.relativePath}

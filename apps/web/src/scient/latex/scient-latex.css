@@ -431,17 +431,27 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 20px var(--scient-reader-page-inset, 20px) 72px;
+  /* Like PDF, the centered page's side margins yield to zoomed paper. */
+  padding: 20px 0 72px;
   background: color-mix(in srgb, var(--muted) 78%, var(--background));
   scrollbar-gutter: stable;
   scroll-padding-block: 40px 80px;
   overscroll-behavior: contain;
   overflow-anchor: none;
 }
+
+[data-latex-source-sync] {
+  outline: 2px solid color-mix(in srgb, var(--primary) 65%, transparent);
+  outline-offset: 3px;
+}
 .scient-latex-page-zoom-frame {
   position: relative;
   flex: none;
   margin: 0 auto;
+  /* A transform can shrink the ink without shrinking its layout overflow.
+     Bound that overflow to the scaled frame, leaving room for page shadows. */
+  overflow-x: clip;
+  overflow-clip-margin: var(--scient-reader-page-inset, 20px);
 }
 .scient-latex-page-stage {
   width: var(--scient-latex-paper-width, 816px);
@@ -1117,7 +1127,14 @@ tr[data-latex-longtable-band] {
   content-visibility: visible;
 }
 .scient-latex-visual-document :is(h4, h5) + p,
-.scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p {
+.scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p,
+.scient-latex-visual-document
+  p:has(.scient-latex-mathfield math-field:is(:focus-within, [data-scient-selection-held])),
+.scient-latex-visual-document
+  .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]) {
+  /* Active math guides extend past the line's ink box. Paint containment must
+     not clip their corners, including while a menu owns the selection. */
+  content-visibility: visible;
   contain: none;
 }
 @media print {
@@ -1231,13 +1248,15 @@ tr[data-latex-longtable-band] {
   max-width: none;
 }
 .scient-latex-visual-display-math > .scient-latex-mathfield {
+  /* The guide reaches up to 7 local pixels beyond the ink at every zoom. */
+  --scient-math-guide-gutter: max(8px, 0.2em);
   display: block;
-  max-width: calc(100% + 0.4em);
+  max-width: calc(100% + 2 * var(--scient-math-guide-gutter));
   direction: ltr;
   overflow: visible;
   /* This space is identical in reading/editing modes, including annotations. */
-  padding: 0.2em;
-  margin: -0.2em;
+  padding: var(--scient-math-guide-gutter);
+  margin: calc(-1 * var(--scient-math-guide-gutter));
 }
 .scient-latex-visual-display-math > .scient-latex-mathfield[data-math-wide] {
   /* TeX starts overfull display boxes at the text boundary. */
@@ -2372,7 +2391,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   min-width: 0;
   padding: 0 calc(6 * 96px / 72.27);
   border: 0;
-  text-align: left;
+  text-align: start;
   vertical-align: top;
   background: var(--scient-latex-table-cell-background, transparent);
 }
@@ -2405,7 +2424,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-rich-preview td[data-align="right"],
 .scient-latex-rich-preview th[data-align="right"] {
-  text-align: right;
+  text-align: end;
+}
+.scient-latex-rich-preview :is(td, th)[data-paragraph-column] {
+  text-align: justify;
 }
 .scient-latex-rich-preview figure[data-scient-active-slot] :is(td, th)[data-cell-selection] {
   background: var(--scient-latex-cell-selection-background);
@@ -2443,7 +2465,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   margin-inline: auto;
 }
 .scient-latex-rich-preview :is(td, th)[data-align="right"] .scient-latex-inline-field {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 .scient-latex-rich-preview[data-kind="table"] {
   user-select: none;
@@ -2500,17 +2522,17 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   margin-inline: auto;
 }
 .scient-latex-rich-preview :is(td, th)[data-align="right"] textarea {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 .scient-latex-rich-preview textarea[data-table-cell-width="stretch"] {
   width: 100%;
   max-width: none;
 }
 .scient-latex-rich-preview table[data-trim-left] tr > :first-child {
-  padding-left: 0;
+  padding-inline-start: 0;
 }
 .scient-latex-rich-preview table[data-trim-right] tr > :last-child {
-  padding-right: 0;
+  padding-inline-end: 0;
 }
 .scient-latex-rich-preview td textarea:focus,
 .scient-latex-rich-preview th textarea:focus {
@@ -3016,7 +3038,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   margin-inline: 2.5em;
 }
 .scient-latex-scientific-structure[data-run-in] > .scient-latex-scientific-heading {
-  float: left;
+  float: inline-start;
   margin-inline-end: var(--scient-latex-theorem-head-sep, 0.5em);
   padding: 0;
 }
@@ -3033,7 +3055,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   > [data-node-view-content-react]
   > p:last-child::after {
   content: "";
-  float: right;
+  float: inline-end;
   box-sizing: border-box;
   width: 0.6em;
   height: 0.675em;

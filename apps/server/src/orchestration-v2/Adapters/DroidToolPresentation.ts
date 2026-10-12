@@ -5,8 +5,11 @@ import {
   observeDroidSubagentToolCall,
   type DroidSubagentEvent,
 } from "../../provider/droid/DroidSubagents.ts";
-import type { ProviderAdapterV2TurnInput } from "../ProviderAdapter.ts";
-import type { AcpAdapterV2SubagentUpdate, AcpAdapterV2ToolPresentation } from "./AcpAdapterV2.ts";
+import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
+import type {
+  AcpAdapterV2SubagentUpdate,
+  AcpAdapterV2ToolPresentation,
+} from "@t3tools/provider-acp/server/adapter";
 
 /** Fold Droid's Task/TaskOutput protocol into this native turn's presentation. */
 export function makeDroidToolPresentation(

@@ -1,5 +1,6 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off -- Orphan fixtures exercise host PID ownership without signaling processes.
-import * as NodeOs from "node:os";
+import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -12,7 +13,7 @@ import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import { latexArtworkWorkspaceKey, makeLatexArtworkWorkspaces } from "./latexArtworkWorkspaces.ts";
 
-const pathDelimiter = process.platform === "win32" ? ";" : ":";
+const pathDelimiter = HostProcess.Platform.defaultValue() === "win32" ? ";" : ":";
 
 const fixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -640,7 +641,7 @@ it.effect(
           instance,
           pid: 2147483647,
           directory: dead,
-          host: NodeOs.hostname(),
+          host: NodeOS.hostname(),
           retirement: "settled",
         };
         yield* f.fs.writeFileString(

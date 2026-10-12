@@ -14,6 +14,7 @@ export interface LatexTableColumn extends LatexSourceRange {
   left: boolean;
   right: boolean;
   background: string;
+  justified: boolean;
 }
 
 /** Keep column modifiers and separators as source, independently of the grid. */
@@ -45,6 +46,9 @@ export function latexTableColumns(spec: string): LatexTableColumn[] | null {
       kind: ch,
       width: dimension?.value ?? "",
       background: color,
+      justified:
+        /[Xpmb]/u.test(ch) &&
+        !/\\(?:centering|raggedleft|raggedright|RaggedLeft|RaggedRight)\b/u.test(before),
       alignment:
         ch === "c" || /\\centering\b/u.test(before)
           ? "center"
@@ -61,6 +65,19 @@ export function latexTableColumns(spec: string): LatexTableColumn[] | null {
     column.right = spec.slice(column.to, columns[index + 1]?.from ?? spec.length).includes("|");
   });
   return columns.length ? columns : null;
+}
+
+export type LatexTableRule = "hline" | "cline" | "toprule" | "midrule" | "bottomrule";
+
+/** TeX's default rule widths; booktabs also leaves space on both sides of its rules. */
+export function latexTableRulePresentation(rule?: LatexTableRule) {
+  const booktabs = rule === "toprule" || rule === "midrule" || rule === "bottomrule";
+  const points = rule === "toprule" || rule === "bottomrule" ? 0.8 : rule === "midrule" ? 0.5 : 0.4;
+  return {
+    width: `calc(${points} * 96px / 72.27)`,
+    before: booktabs ? "0.4ex" : undefined,
+    after: booktabs ? "0.65ex" : undefined,
+  };
 }
 
 export function latexTableSourceShape(source: string) {

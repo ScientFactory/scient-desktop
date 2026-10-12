@@ -11,7 +11,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, EnvironmentHttpApi, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { assert, it } from "@effect/vitest";
@@ -65,7 +65,7 @@ const CliRuntimeLayer = Layer.mergeAll(
   ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
 );
 const DisconnectedLauncherChildLayer = Layer.mergeAll(
-  Layer.succeed(HostProcessEnvironment, {
+  Layer.succeed(HostProcess.Environment, {
     ...process.env,
     [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
       protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -144,7 +144,7 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
   const replay = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "project-cli" },
     ProviderAdapterRegistryV2.layerFromAdapters([]),
-    { layerDatabase: database, runEffectWorker: false },
+    { databaseLayer: database, runEffectWorker: false },
   );
   return Layer.mergeAll(
     ProjectServiceLayerLive,
@@ -460,6 +460,18 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
   });
 
 it.layer(NodeServices.layer)("bin cli parsing", (it) => {
+  it.effect("uses scient in root and nested help, version, and parser errors", () =>
+    Effect.gen(function* () {
+      for (const args of [["--help"], ["app", "--help"], ["browser", "--help"]]) {
+        const { output } = yield* captureStdout(runCli(args));
+        assert.include(output, "scient ");
+        assert.notMatch(output, /\bt3 (?:<subcommand>|app|browser)\b/);
+      }
+      const { output } = yield* captureStdout(runCli(["--version"]));
+      assert.include(output, "scient v0.0.0");
+    }),
+  );
+
   it.effect("accepts the built-in lowercase log-level flag values", () =>
     Effect.gen(function* () {
       const { output } = yield* captureStdout(runCli(["--log-level", "debug", "--version"]));
@@ -501,7 +513,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (error._tag !== "ShowHelp") {
         assert.fail(`Expected ShowHelp, got ${error._tag}`);
       }
-      assert.deepEqual(error.commandPath, ["t3", "connect"]);
+      assert.deepEqual(error.commandPath, ["scient", "connect"]);
       assert.include(error.errors[0]?.message ?? "", "missing T3 Connect public configuration");
 
       const output = (yield* TestConsole.errorLines).join("\n");
@@ -753,7 +765,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (error._tag !== "ShowHelp") {
         assert.fail(`Expected ShowHelp, got ${error._tag}`);
       }
-      assert.deepEqual(error.commandPath, ["t3", "auth", "pairing", "create"]);
+      assert.deepEqual(error.commandPath, ["scient", "auth", "pairing", "create"]);
       const ttlError = error.errors[0] as CliError.CliError | undefined;
       if (!ttlError || ttlError._tag !== "InvalidValue") {
         assert.fail(`Expected InvalidValue, got ${String(ttlError?._tag)}`);
@@ -921,7 +933,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       if (error._tag !== "ShowHelp") {
         assert.fail(`Expected ShowHelp, got ${error._tag}`);
       }
-      assert.deepEqual(error.commandPath, ["t3", "project", "add"]);
+      assert.deepEqual(error.commandPath, ["scient", "project", "add"]);
       const optionError = error.errors[0] as CliError.CliError | undefined;
       if (!optionError || optionError._tag !== "UnrecognizedOption") {
         assert.fail(`Expected UnrecognizedOption, got ${String(optionError?._tag)}`);

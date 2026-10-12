@@ -2,9 +2,13 @@ import { attachShortcutHost } from "../keyboard/host";
 import { getKeyboardPreferences, subscribeKeyboardPreferences } from "../keyboard/preferences";
 import { mathCommand } from "../math/input/catalog";
 import { MathfieldElement, type MacroDictionary } from "mathlive";
+import { readLocalApi } from "~/localApi";
+import { showContextMenuFallback } from "~/contextMenuFallback";
+import { toastManager } from "~/components/ui/toast";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import {
   MATH_FORMATTING_ARGUMENTS,
-  enterMathFormattingArgument,
+  enterMathArgument,
   installMathFormattingScopes,
   mathTextFormatActive,
   mathTextFormattingInput,
@@ -49,7 +53,12 @@ import { mathLiveFontDeclarations } from "./mathLiveFontDeclarations";
 import { installMathCommandCompletion } from "./mathLiveCommandCompletion";
 import { installLatexMathViewport } from "./latexMathViewport";
 import { installMathSelectionSession } from "./mathSelectionSession";
-import { latexSelectionCommand, runLatexSelectionCommand } from "./latexSelectionSession";
+import {
+  latexSelectionCommand,
+  runLatexSelectionCommand,
+  readLatexSelection,
+  retainLatexSelection,
+} from "./latexSelectionSession";
 import {
   createMathSelectionGeometry,
   applyMathSelection,
@@ -92,6 +101,7 @@ MathfieldElement.computeEngine = null;
 export interface LatexMathFieldHandle {
   readonly focus: () => void;
   readonly flush: () => boolean;
+  readonly getSource: () => string;
   readonly isEmpty: () => boolean;
   readonly clearSelection: () => void;
   readonly cancelPointerSelection: () => void;
@@ -188,6 +198,7 @@ export const LatexMathField = forwardRef<
   }, [documentMacros, value, display, disabled]);
   const flush = useRef<() => boolean>(() => true);
   const clearSelection = useRef<() => void>(() => {});
+  const withInsertionSelection = useRef<(insert: () => void) => void>((insert) => insert());
   const cancelPointerSelection = useRef<() => void>(() => {});
   const lastAcknowledged = useRef(value);
   const dirty = useRef(false);
@@ -254,6 +265,14 @@ export const LatexMathField = forwardRef<
         // must never initialize every formula just to ask whether it is dirty.
         return flush.current();
       },
+      getSource: () =>
+        field.current && (dirty.current || field.current.mode === "latex")
+          ? mathTextFormattingSource(
+              field.current.getValue("latex-without-placeholders"),
+              initialMacros.current,
+              completionContext.current.source,
+            )
+          : lastAcknowledged.current,
       isEmpty: () => {
         mountField.current();
         return Boolean(field.current && mathFieldIsEmpty(field.current));
@@ -303,25 +322,33 @@ export const LatexMathField = forwardRef<
             ? MATH_FORMATTING_ARGUMENTS[command]
             : undefined;
         const insertion = formatting ? `\\${command}{#0}` : latex;
-        const emptyArgument =
-          formatting && !math.getValue(math.selection, "latex-without-placeholders").trim();
+        const selectedSource = math.getValue(math.selection, "latex-without-placeholders").trim();
+        const emptyArgument = formatting && !selectedSource;
         const reason = insertion.includes("#0") ? mathSelectionWrapReason(math) : null;
         if (reason) {
           shortcutHint.current(reason);
           return;
         }
-        math.insert(
-          mathTextFormattingInput(mathLiveFontDeclarations(insertion), initialMacros.current),
-          {
-            focus: true,
-            format: "latex",
-            insertionMode: "replaceSelection",
-            selectionMode: "placeholder",
-            ...(formatting ? { mode: "math" as const } : {}),
-          },
-        );
-        if (formatting === "text" && emptyArgument) math.executeCommand(["switchMode", "text"]);
-        enterMathFormattingArgument(math);
+        // Empty automatic brackets use the same native empty body produced by
+        // deleting their contents. A placeholder would enlarge the delimiters.
+        const input =
+          !selectedSource && /^\\(?:left|mleft)\b/u.test(insertion.trim())
+            ? insertion.replaceAll("#0", "")
+            : insertion;
+        withInsertionSelection.current(() => {
+          math.insert(
+            mathTextFormattingInput(mathLiveFontDeclarations(input), initialMacros.current),
+            {
+              focus: true,
+              format: "latex",
+              insertionMode: "replaceSelection",
+              selectionMode: "placeholder",
+              ...(formatting ? { mode: "math" as const } : {}),
+            },
+          );
+          if (formatting === "text" && emptyArgument) math.executeCommand(["switchMode", "text"]);
+          enterMathArgument(math);
+        });
       },
     }),
     [],
@@ -515,7 +542,7 @@ export const LatexMathField = forwardRef<
                 focus: true,
               },
             );
-            enterMathFormattingArgument(math);
+            enterMathArgument(math);
             return true;
           }
           const command = mathCommand(id);
@@ -534,7 +561,7 @@ export const LatexMathField = forwardRef<
               focus: true,
             },
           );
-          enterMathFormattingArgument(math);
+          enterMathArgument(math);
           return true;
         },
       });
@@ -565,7 +592,8 @@ export const LatexMathField = forwardRef<
         // Keep the live field intact when the parent acknowledges this projection.
         const source = mathTextFormattingSource(
           math.getValue("latex-without-placeholders"),
-          Boolean(initialMacros.current.mathbfit),
+          initialMacros.current,
+          completionContext.current.source,
         );
         const previousAcknowledged = lastAcknowledged.current;
         const result = change.current(source);
@@ -601,9 +629,62 @@ export const LatexMathField = forwardRef<
         composing = false;
         if (dirty.current) publication.schedule(publish);
       };
-      const contextMenu = (event: Event) => {
+      const contextMenu = (event: MouseEvent) => {
         event.preventDefault();
         event.stopImmediatePropagation();
+        stopPointerSelection();
+        math.focus();
+        const root = math.closest<HTMLElement>(".scient-latex-visual-workspace") ?? math;
+        const reading = readLatexSelection(root);
+        if (reading?.element !== math) return;
+        const snapshot = reading.snapshot;
+        const selected = Boolean(rectangle) || !math.selectionIsCollapsed;
+        const items = [
+          { id: "cut", label: "Cut", disabled: math.readOnly || !selected },
+          { id: "copy", label: "Copy", disabled: !selected },
+          { id: "paste", label: "Paste", disabled: math.readOnly },
+          { id: "selectAll", label: "Select All", disabled: mathFieldIsEmpty(math) },
+        ] as const;
+        const releaseSelection = retainLatexSelection(root);
+        const position = { x: event.clientX, y: event.clientY };
+        const api = readLocalApi();
+        const menu =
+          window.desktopBridge && api
+            ? api.contextMenu.show(items, position)
+            : showContextMenuFallback(items, position, root.id);
+        void menu
+          .then(async (action) => {
+            releaseSelection?.();
+            if (!action || !snapshot.restore(true)) return;
+            if (action === "selectAll") runLatexSelectionCommand(math, "selectionExpand");
+            else if (action === "copy" || (action === "cut" && !math.readOnly)) {
+              const source = clipboardSource();
+              const selection = selectionKey();
+              const cells = rectangle;
+              const copied = await writeTextToClipboard(source, "math", {
+                "application/x-latex": source,
+              });
+              // Clipboard permissions may take time. Never cut a later selection.
+              if (
+                !copied ||
+                action !== "cut" ||
+                math.readOnly ||
+                snapshot.isCurrent?.() === false ||
+                selectionKey() !== selection ||
+                rectangle !== cells
+              )
+                return;
+              if (cells) {
+                applyingSelection = true;
+                if (clearMathRectangle(math, cells)) rectangle = null;
+                applyingSelection = false;
+              } else math.executeCommand("deleteBackward");
+            } else if (!math.readOnly) math.executeCommand("pasteFromClipboard");
+          })
+          .catch(() => {
+            releaseSelection?.();
+            toastManager.add({ type: "error", title: "Could not complete the editing action" });
+          });
       };
       let previousMode = math.mode;
       const modeChange = () => {
@@ -715,6 +796,21 @@ export const LatexMathField = forwardRef<
         applyingSelection = true;
         math.selection = { ranges: [[math.position, math.position]] };
         applyingSelection = false;
+      };
+      // MathLive briefly selects an empty argument during insertion. Keep that
+      // range native until the insertion adapter puts the caret inside it;
+      // gesture normalization would expand it to the containing expression.
+      withInsertionSelection.current = (insert) => {
+        rectangle = null;
+        selectionContinuation = null;
+        const previous = applyingSelection;
+        applyingSelection = true;
+        try {
+          insert();
+        } finally {
+          applyingSelection = previous;
+          selectionSession.refresh();
+        }
       };
       const selectEnvironment = (
         environment: MathCellSelection["environment"],
@@ -1161,16 +1257,19 @@ export const LatexMathField = forwardRef<
           else runLatexSelectionCommand(math, "selectionScopeExpand");
         }
       };
-      const copied = (event: ClipboardEvent) => {
-        if (!event.clipboardData) return;
+      const clipboardSource = () => {
         const tex =
           rectangle?.source ??
           (math.selectionIsCollapsed
             ? math.getValue("latex-without-placeholders")
             : math.getValue(math.selection, "latex-without-placeholders"));
-        const source = copyFormat.current(
-          mathTextFormattingSource(tex, Boolean(initialMacros.current.mathbfit)),
+        return copyFormat.current(
+          mathTextFormattingSource(tex, initialMacros.current, completionContext.current.source),
         );
+      };
+      const copied = (event: ClipboardEvent) => {
+        if (!event.clipboardData) return;
+        const source = clipboardSource();
         event.clipboardData.setData("text/plain", source);
         event.clipboardData.setData("application/x-latex", source);
         event.preventDefault();
@@ -1280,6 +1379,7 @@ export const LatexMathField = forwardRef<
         reportDraft(draftId, false);
         flush.current = () => true;
         clearSelection.current = () => {};
+        withInsertionSelection.current = (insert) => insert();
         refreshFormatting.current = () => {};
         detachShortcuts();
         unsubscribe();

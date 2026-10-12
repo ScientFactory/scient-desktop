@@ -25,7 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
-} from "../SubagentProjection.ts";
+} from "@t3tools/provider-core/server/subagentProjection";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -38,11 +38,11 @@ import * as Exit from "effect/Exit";
 import { makeNativeEventQueue, type NativeEventQueueStorage } from "./NativeEventQueue.ts";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ProviderAdapter from "../ProviderAdapter.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
-import type { IdAllocatorV2 } from "../IdAllocator.ts";
-import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import type { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 const encodeNativeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -83,6 +83,10 @@ export type NativeSessionUpdate =
       readonly title: string;
       readonly status: "running" | "completed" | "failed" | "cancelled";
       readonly detail?: string;
+      /** Scient carries assignment, activity and observed terminal output separately. */
+      readonly prompt?: string;
+      readonly progress?: string;
+      readonly result?: string;
       readonly model?: string;
       readonly presentation?: OrchestrationV2Subagent["presentation"];
       /** Only an authoritative new activation may reopen a settled native task. */
@@ -184,7 +188,7 @@ export interface NativeSessionAdapterV2Options {
 /** Maps real native session lifetimes and events directly to V2 entities, never through V1. */
 export function makeNativeSessionAdapterV2(
   options: NativeSessionAdapterV2Options,
-): ProviderAdapter.ProviderAdapterV2Shape {
+): ProviderAdapter.ProviderAdapterV2["Service"] {
   const { driver, idAllocator } = options;
   const queueBudget = makeNativeEventQueueBudget(options.eventQueueLimits);
   const ref = (nativeId: string) => ({ driver, nativeId, strength: "strong" as const });
@@ -917,6 +921,27 @@ export function makeNativeSessionAdapterV2(
                     !reopened
                   )
                     return;
+                  const scient = driver === "scient";
+                  const title =
+                    scient && previousSubagent?.title && previousSubagent.title !== "Subagent"
+                      ? previousSubagent.title
+                      : update.title;
+                  const prompt = scient
+                    ? (update.prompt ?? previousSubagent?.prompt ?? "")
+                    : update.title;
+                  const progress = scient
+                    ? (update.progress ?? (reopened ? undefined : previousSubagent?.progress))
+                    : update.status === "running" && update.detail !== undefined
+                      ? update.detail
+                      : reopened
+                        ? undefined
+                        : previousSubagent?.progress;
+                  const result =
+                    update.status === "running"
+                      ? null
+                      : scient
+                        ? (update.result ?? previousSubagent?.result ?? null)
+                        : (update.detail ?? previousSubagent?.result ?? null);
                   const subagentId = base.nodeId;
                   const childThreadId = idAllocator.derive.threadFromProviderThread({
                     driver,
@@ -934,14 +959,42 @@ export function makeNativeSessionAdapterV2(
                         activeProviderThreadId: null,
                         providerInstanceId: options.instanceId,
                         modelSelection: owner.modelSelection,
-                        title: update.title,
+                        title,
                         now,
                         createdBy: "agent",
                         creationSource: "provider",
                       }),
                     });
                   }
-                  if (update.detail && update.status !== "running") {
+                  if (scient && prompt && prompt !== previousSubagent?.prompt) {
+                    const artifacts = makeSubagentConversationArtifacts({
+                      messageId: idAllocator.derive.messageFromProviderItem({
+                        driver,
+                        nativeItemId: `${nativeId}:prompt`,
+                      }),
+                      turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                        driver,
+                        nativeItemId: `${nativeId}:prompt`,
+                      }),
+                      threadId: childThreadId,
+                      rootNodeId: subagentId,
+                      providerThreadId: null,
+                      providerTurnId: null,
+                      nativeItemRef: ref(update.id),
+                      role: "user",
+                      text: prompt,
+                      ordinal: 0,
+                      now,
+                    });
+                    yield* emit({ type: "message.updated", driver, message: artifacts.message });
+                    yield* emit({
+                      type: "turn_item.updated",
+                      driver,
+                      turnItem: artifacts.turnItem,
+                    });
+                  }
+                  const observedResult = scient ? update.result : update.detail;
+                  if (observedResult && update.status !== "running") {
                     const artifacts = makeSubagentConversationArtifacts({
                       messageId: idAllocator.derive.messageFromProviderItem({
                         driver,
@@ -957,7 +1010,7 @@ export function makeNativeSessionAdapterV2(
                       providerTurnId: null,
                       nativeItemRef: ref(update.id),
                       role: "assistant",
-                      text: update.detail,
+                      text: observedResult,
                       ordinal: 1,
                       now,
                     });
@@ -982,8 +1035,8 @@ export function makeNativeSessionAdapterV2(
                     providerThreadId: base.providerThreadId,
                     childThreadId,
                     nativeTaskRef: ref(update.id),
-                    prompt: update.title,
-                    title: update.title,
+                    prompt,
+                    title,
                     model: update.model ?? previousSubagent?.model ?? null,
                     presentation: mergeSubagentPresentation(
                       previousSubagent?.presentation,
@@ -992,17 +1045,8 @@ export function makeNativeSessionAdapterV2(
                       reopened,
                     ),
                     status: update.status,
-                    ...(update.status === "running" && update.detail !== undefined
-                      ? { progress: update.detail }
-                      : reopened
-                        ? {}
-                        : previousSubagent?.progress === undefined
-                          ? {}
-                          : { progress: previousSubagent.progress }),
-                    result:
-                      update.status === "running"
-                        ? null
-                        : (update.detail ?? previousSubagent?.result ?? null),
+                    ...(progress === undefined ? {} : { progress }),
+                    result,
                     startedAt: reopened ? now : (previousSubagent?.startedAt ?? base.startedAt),
                     completedAt,
                     updatedAt: now,
@@ -1014,14 +1058,15 @@ export function makeNativeSessionAdapterV2(
                     ...base,
                     type: "subagent",
                     subagentId,
-                    title: update.title,
+                    title,
                     status: update.status,
                     origin: "provider_native",
                     driver,
                     providerInstanceId: options.instanceId,
                     childThreadId,
-                    prompt: update.title,
-                    result: update.detail ?? null,
+                    prompt,
+                    ...(scient && progress !== undefined ? { progress } : {}),
+                    result: scient ? result : (update.detail ?? null),
                     completedAt,
                   };
                 } else {

@@ -613,7 +613,7 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
     Input,
     A,
     E,
-    EnvironmentSupervisor.EnvironmentSupervisor | R
+    EnvironmentSupervisor.EnvironmentSupervisor | AtomRegistry.AtomRegistry | R
   >,
 ) {
   const family = Atom.family((key: string) => {
@@ -715,12 +715,13 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
       stream: Stream.Stream<
         EnvironmentRpcStreamValue<TTag>,
         EnvironmentRpcStreamFailure<TTag>,
-        EnvironmentSupervisor.EnvironmentSupervisor | R
+        EnvironmentSupervisor.EnvironmentSupervisor | AtomRegistry.AtomRegistry | R
       >,
+      input: EnvironmentRpcInput<TTag>,
     ) => Stream.Stream<
       B,
       EnvironmentRpcStreamFailure<TTag>,
-      EnvironmentSupervisor.EnvironmentSupervisor | R
+      EnvironmentSupervisor.EnvironmentSupervisor | AtomRegistry.AtomRegistry | R
     >;
   },
 ) {
@@ -734,9 +735,9 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
         ? (stream as Stream.Stream<
             B,
             EnvironmentRpcStreamFailure<TTag>,
-            EnvironmentSupervisor.EnvironmentSupervisor | R
+            EnvironmentSupervisor.EnvironmentSupervisor | AtomRegistry.AtomRegistry | R
           >)
-        : options.transform(stream);
+        : options.transform(stream, input);
     },
   });
 }
@@ -769,6 +770,7 @@ export function createEnvironmentRpcCommand<
         readonly input: NoInfer<Input>;
       },
       registry: AtomRegistry.AtomRegistry,
+      result: EnvironmentRpcSuccess<TTag>,
     ) => Effect.Effect<void, never, R>;
     readonly onSettled?: (
       target: {
@@ -797,7 +799,7 @@ export function createEnvironmentRpcCommand<
           authorize: (id, method, payload) =>
             createCommandPermissions(runtime, method).authorize(registry, id, payload),
         }),
-        Effect.tap(() => options.onSuccess?.(target, registry) ?? Effect.void),
+        Effect.tap((result) => options.onSuccess?.(target, registry, result) ?? Effect.void),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );
     },

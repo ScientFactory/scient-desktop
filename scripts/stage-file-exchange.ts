@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Standalone host compiler invocation, no server runtime.
-import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -18,17 +18,17 @@ for (const name of argumentsByName.keys()) {
   if (!["--platform", "--arch", "--destination", "--probe"].includes(name))
     throw new Error(`Unknown staging argument: ${name}`);
 }
-const platform = argumentsByName.get("--platform") ?? HostProcessPlatform.defaultValue();
-const arch = argumentsByName.get("--arch") ?? HostProcessArchitecture.defaultValue();
+const platform = argumentsByName.get("--platform") ?? HostProcess.Platform.defaultValue();
+const arch = argumentsByName.get("--arch") ?? HostProcess.Architecture.defaultValue();
 if (!["darwin", "linux", "win32"].includes(platform))
   throw new Error(`Unsupported native platform: ${platform}`);
 if (!["x64", "arm64", "universal"].includes(arch))
   throw new Error(`Unsupported native architecture: ${arch}`);
-if (platform !== HostProcessPlatform.defaultValue())
+if (platform !== HostProcess.Platform.defaultValue())
   throw new Error(
     "Native helpers must be built on the target OS; no cross-platform artifact substitution.",
   );
-if (platform !== "darwin" && arch !== HostProcessArchitecture.defaultValue())
+if (platform !== "darwin" && arch !== HostProcess.Architecture.defaultValue())
   throw new Error("Use a target-architecture compiler host for Linux/Windows native staging.");
 const destination = NodePath.resolve(
   argumentsByName.get("--destination") ??

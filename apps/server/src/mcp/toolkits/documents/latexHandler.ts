@@ -6,7 +6,7 @@ import type {
   ScientLatexPdfBuildInput,
   ScientLatexPdfBuildResult,
 } from "@t3tools/contracts";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -497,7 +497,7 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
           ),
         );
         const publication = prepareProjectPdfOutputIntent(output, bytes, {
-          mutationId: randomUUID(),
+          mutationId: NodeCrypto.randomUUID(),
           expectedMutationEpoch: mutationEpoch,
         });
         const latest = yield* builds

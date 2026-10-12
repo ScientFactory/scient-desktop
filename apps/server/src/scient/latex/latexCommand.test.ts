@@ -42,6 +42,57 @@ describe("buildLatexInvocation", () => {
     expect(invocation.args).toContain("-interaction=nonstopmode");
   });
 
+  it("keeps Hebrew Windows roots out of latexmk arguments without renaming the source", () => {
+    const invocation = buildLatexInvocation({
+      toolchain: { kind: "latexmk", executable: "latexmk", version: "4.87" },
+      engine: "xelatex",
+      rootFileName: "מסמך בעברית.tex",
+      workDirectory: "C:/Users/משה/.scient-next/latex/builds/abc",
+      windows: true,
+      relativeWorkDirectory: "../../.scient-next/latex/builds/abc",
+      forceReprocess: true,
+    });
+
+    expect(invocation.args.every((argument) => !/[^ -~]/u.test(argument))).toBe(true);
+    expect(invocation.args).toContain("-xelatex");
+    expect(invocation.args).toContain("-norc");
+    expect(invocation.args).toContain("-no-shell-escape");
+    expect(invocation.args).toContain("-g");
+    expect(invocation.args.at(-1)).toBe(
+      "../../.scient-next/latex/builds/abc/scient-unicode-root.tex",
+    );
+    expect(invocation.inputWrapper).toEqual({
+      path: "C:/Users/משה/.scient-next/latex/builds/abc/scient-unicode-root.tex",
+      contents: "\\input{\\detokenize{מסמך בעברית.tex}}\n",
+    });
+    expect(invocation.pdfPath).toBe(
+      "C:/Users/משה/.scient-next/latex/builds/abc/scient-unicode-root.pdf",
+    );
+    expect(invocation.dependencyManifest).toEqual({
+      path: "C:/Users/משה/.scient-next/latex/builds/abc/scient-unicode-root.fls",
+      format: "fls",
+    });
+  });
+
+  it("preserves direct filenames for other platforms, ASCII roots and Tectonic", () => {
+    for (const [kind, windows, rootFileName] of [
+      ["latexmk", false, "עברית.tex"],
+      ["latexmk", true, "main.tex"],
+      ["tectonic", true, "עברית.tex"],
+    ] as const) {
+      const invocation = buildLatexInvocation({
+        toolchain: { kind, executable: kind, version: "unknown" },
+        rootFileName,
+        workDirectory: "/state/build",
+        windows,
+        relativeWorkDirectory: "../build",
+      });
+      expect(invocation.inputWrapper).toBeUndefined();
+      expect(invocation.args.at(-1)).toBe(rootFileName);
+      expect(invocation.pdfPath).toBe(`/state/build/${rootFileName.replace(/\.tex$/u, "")}.pdf`);
+    }
+  });
+
   it("keeps a subdirectory root addressable from its own directory", () => {
     const invocation = buildLatexInvocation({
       toolchain: { kind: "latexmk", executable: "latexmk", version: "4.86" },

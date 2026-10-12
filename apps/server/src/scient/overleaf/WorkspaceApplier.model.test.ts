@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -10,7 +11,7 @@ const revisions = (files: Readonly<Record<string, string>>) =>
 const sorted = (tree: ReadonlyMap<string, string>) =>
   [...tree].sort(([a], [b]) => a.localeCompare(b));
 for (const model of modelCases) {
-  (process.platform === "darwin" ? it.live : it.live.skip)(
+  (HostProcess.Platform.defaultValue() === "darwin" ? it.live : it.live.skip)(
     `matches independent checker base: ${model.action} crash=${model.crash}`,
     () => {
       let stop = model.crash,

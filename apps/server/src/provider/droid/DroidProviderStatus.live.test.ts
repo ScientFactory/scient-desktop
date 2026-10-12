@@ -12,13 +12,17 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { beforeAll } from "vite-plus/test";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { DroidDriver } from "../Drivers/DroidDriver.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ModelManifest from "../ModelManifest.ts";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
+import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;
 beforeAll(() => qualifyDroidTestBinary(binary), 10_000);
@@ -26,7 +30,7 @@ beforeAll(() => qualifyDroidTestBinary(binary), 10_000);
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
 const EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
-const layer = Layer.mergeAll(
+const providerDependenciesLayer = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-droid-status-live-" }),
   ServerSettingsService.layerTest({ providerHealthRefreshInterval: Duration.millis(300) }),
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -63,11 +67,20 @@ const layer = Layer.mergeAll(
       Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
     ),
   ),
-  Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
+  Layer.succeed(
+    ProviderEventLoggers.ProviderEventLoggers,
+    ProviderEventLoggers.NoOpProviderEventLoggers,
+  ),
 ).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),
+  Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
+);
+const layer = layerConfigConsistentTestProviderHost.pipe(
+  Layer.provideMerge(providerDependenciesLayer),
 );
 
 const sessionFiles = (home: string): ReadonlyArray<string> => {

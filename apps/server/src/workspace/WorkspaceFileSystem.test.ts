@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -94,7 +94,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Windows cannot hold a file name that ends in a space.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "reads the file a path names when a sibling differs only by a trailing space",
       () =>
         Effect.gen(function* () {
@@ -154,7 +154,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Needs mkfifo; Windows has no FIFOs to reject.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "rejects a FIFO without blocking on open",
       () =>
         Effect.gen(function* () {
@@ -433,7 +433,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     // Windows cannot hold a file name that ends in a space.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "watches the file a path names, not a sibling without its trailing space",
       () =>
         Effect.gen(function* () {
@@ -608,7 +608,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
-    it.effect.skipIf(HostProcessPlatform.defaultValue() !== "darwin")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
       "saves changed bytes through the real workspace service",
       () =>
         Effect.gen(function* () {
@@ -646,7 +646,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             mutationId: "create",
           })
           .pipe(Effect.result);
-        if ((yield* HostProcessPlatform) !== "darwin") {
+        if ((yield* HostProcess.Platform) !== "darwin") {
           expect(result._tag).toBe("Failure");
           if (result._tag === "Failure")
             expect(result.failure).toMatchObject({
@@ -701,7 +701,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       })),
     )("$caseTitle", ({ aliasKind }) =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -769,7 +769,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("rejects a rename onto the same canonical file through an alias", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1098,7 +1098,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
     it.effect("refuses a folder or a link", () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) === "win32") return;
+        if ((yield* HostProcess.Platform) === "win32") return;
         const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;

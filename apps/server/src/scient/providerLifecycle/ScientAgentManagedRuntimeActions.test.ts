@@ -23,7 +23,7 @@ import {
   OmpExecutableGate,
   type OmpExecutableGateShape,
 } from "../../provider/omp/OmpExecutableGate.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makeScientAgentManagedRuntimeResolution,
   makeQualifiedManagedScientAgentRuntime,
@@ -342,7 +342,7 @@ process.stdin.on("end", () => process.exit(0));
 `;
 
 describe("managed Scient Agent activation check", () => {
-  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "gives Scient Agent a model in its isolated home, so a machine without sign-ins qualifies",
     () =>
       Effect.gen(function* () {
@@ -432,7 +432,7 @@ for (const { name, info, expectedVersion } of [
     expectedVersion: "0.1.0",
   },
 ]) {
-  it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     `refuses ${name} during activation qualification`,
     () =>
       Effect.gen(function* () {

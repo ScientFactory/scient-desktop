@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { EnvironmentId, ProjectId, PullRequestCheck } from "@t3tools/contracts";
 import { Children, isValidElement, type ReactNode } from "react";
 import { describe, expect, it } from "vite-plus/test";
@@ -74,7 +75,7 @@ function entry(overrides: Partial<EnvironmentPullRequestEntry>): EnvironmentPull
   return {
     environmentId: "env-1" as EnvironmentId,
     projectId: "project-1" as ProjectId,
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     repository: "pingdotgg/t3code",
     number: 1,
     title: "Add the pull requests page",
@@ -103,6 +104,7 @@ function row(overrides: Partial<EnvironmentPullRequestEntry>): ReactNode {
     showProvider: false,
     onSelect: () => {},
     speedMode: false,
+    hostActions: new Set(),
     onActed: () => {},
   });
 }

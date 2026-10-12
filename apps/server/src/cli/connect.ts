@@ -5,7 +5,7 @@ import {
   type RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
@@ -519,7 +519,8 @@ const connectLinkCommand = Command.make("link", {
         yield* Console.log("T3 Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
-          const serveCommand = yield* resolveCliCommand("serve");
+          const config = yield* ServerConfig.ServerConfig;
+          const serveCommand = yield* resolveCliCommand(["serve", "--base-dir", config.baseDir]);
           yield* Console.log(
             flags.publishOnly
               ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start T3 to publish agent activity (no managed tunnel).`
@@ -686,7 +687,7 @@ export const connectCommand = Command.make("connect", {
         // show how to run the server manually.
         const background = yield* recoverServiceOnboardingOffer(offerServiceDuringOnboarding);
         if (background) {
-          const platform = yield* HostProcessPlatform;
+          const platform = yield* HostProcess.Platform;
           yield* Console.log(
             platform === "darwin"
               ? "\n✓ Background service ready\n\nScient is set to run while you are logged in to this Mac. The server establishes the remote connection on startup."
@@ -694,7 +695,8 @@ export const connectCommand = Command.make("connect", {
           );
           return;
         }
-        const serveCommand = yield* resolveCliCommand("serve");
+        const config = yield* ServerConfig.ServerConfig;
+        const serveCommand = yield* resolveCliCommand(["serve", "--base-dir", config.baseDir]);
         yield* Console.log(
           `\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
         );

@@ -22,6 +22,17 @@ export function latexSelectionCommand(id: string): LatexSelectionCommand | null 
 }
 
 export interface LatexSelectionSnapshot {
+  /** Model-owned content, independent of browser selection and editing guides. */
+  readonly content?: {
+    readonly text: string;
+    readonly from: number;
+    readonly to: number;
+    readonly kind: "prose" | "math" | "source" | "cells";
+    readonly selected?: boolean;
+  };
+  readonly isCurrent?: () => boolean;
+  /** Immutable capture geometry; painters may separately map their live bookmarks. */
+  readonly contentRects?: () => readonly DOMRect[];
   readonly path: readonly string[];
   readonly scopes: () => readonly DOMRect[];
   /** Vacant slots remain identifiable while their contents are selected. */
@@ -88,8 +99,8 @@ function present(participant: Participant | null, selected = false, selectionOve
 // The current margin grows with what it surrounds, so a letter's tail or a
 // word's capitals never touch the corners at any zoom.
 const VACANT_GUIDE_MARGIN = 1;
-function currentGuideMargin(rect: DOMRect): number {
-  return Math.min(7, Math.max(3.5, rect.height * 0.2625));
+function currentGuideMargin(rect: DOMRect, scale: number): number {
+  return Math.min(7 * scale, Math.max(3.5 * scale, rect.height * 0.2625));
 }
 
 let measureContext: CanvasRenderingContext2D | null = null;
@@ -184,7 +195,11 @@ function paint() {
   ) =>
     rects.flatMap((rect) => {
       const padding =
-        kind === "scient-latex-scope-outline" ? (scopePadding ?? currentGuideMargin(rect)) : 0;
+        kind === "scient-latex-scope-outline"
+          ? scopePadding === undefined
+            ? currentGuideMargin(rect, origin.height)
+            : scopePadding * origin.height
+          : 0;
       // Keep complete rectangles, including offscreen ones. The scrolling
       // ancestors clip them natively; truncating at today's viewport edges
       // would leave cut-off highlights when that content scrolls into view.
@@ -291,6 +306,28 @@ function hold() {
   }
   schedule();
 }
+
+/** Reading a selection never restores it or changes focus, marks, or its scope. */
+export function readLatexSelection(root: HTMLElement) {
+  if (!active || !root.contains(active.element)) return null;
+  const snapshot = held ?? active.capture();
+  if (!snapshot || snapshot.isCurrent?.() === false) return null;
+  return { element: active.element, snapshot };
+}
+
+/** Portal actions retain the same owner as formatting menus. */
+export function retainLatexSelection(root: HTMLElement): (() => void) | null {
+  if (!active || !root.contains(active.element)) return null;
+  hold();
+  const participant = active;
+  const snapshot = held;
+  return () => {
+    if (active !== participant || held !== snapshot) return;
+    release();
+    if (snapshot?.isCurrent?.() !== false) snapshot?.restore(false);
+    schedule();
+  };
+}
 function activate(event: Event) {
   if (active && isLatexEditingMenuEvent(event, active.element)) {
     hold();
@@ -306,6 +343,9 @@ function activate(event: Event) {
     )
     .at(0);
   if (next) {
+    // Programmatic focus from a menu must replay the held range before it is
+    // released. A pointer into the paper has already discarded that snapshot.
+    const retained = event.type === "focusin" && next === active ? held : null;
     if (workspace(active) !== workspace(next)) {
       workspace(active)?.dispatchEvent(
         new CustomEvent("scient-latex-selection-scope", { detail: [] }),
@@ -314,6 +354,7 @@ function activate(event: Event) {
     }
     release();
     active = next;
+    retained?.restore(false);
     schedule();
   } else {
     release();

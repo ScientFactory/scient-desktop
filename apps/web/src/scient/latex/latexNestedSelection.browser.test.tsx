@@ -1,16 +1,19 @@
 import { createRoot, type Root } from "react-dom/client";
+import { createRef } from "react";
 import { afterEach, expect, it } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 import { MenuSub, MenuSubTrigger, MenuSubPopup } from "~/components/ui/menu";
 import { DockMenu, DockCommandItem } from "../writing/dockChrome";
 import { runLatexSelectionCommand } from "./latexSelectionSession";
 import type { MathfieldElement } from "mathlive";
-import { LatexMathField } from "./LatexMathField";
-import { mathEditingScopes, mathSelectionPoint } from "./mathLiveSelection";
+import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
+import { mathBracketsTemplate } from "./mathBrackets";
+import { mathEditingScopes, mathSelectionPoint, mathCaretRect } from "./mathLiveSelection";
 import "./scient-latex.css";
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
+const field = createRef<LatexMathFieldHandle>();
 const frame = () =>
   new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -24,7 +27,9 @@ afterEach(async () => {
   await frame();
 });
 
-async function mount(value: string) {
+async function mount(value: string, display = false) {
+  const Container = display ? "div" : "p";
+  await page.viewport(1400, 900);
   host = document.createElement("div");
   host.className = "scient-latex-visual-workspace";
   host.style.cssText =
@@ -59,32 +64,38 @@ async function mount(value: string) {
         </DockMenu>
       </div>
       <div className="scient-latex-visual-scroll">
-        <div className="scient-latex-visual-document">
-          <LatexMathField
-            value={value}
-            disabled={false}
-            display={false}
-            onChange={(value) => ({ accepted: true, value })}
-            onFocus={() => {}}
-            onExit={() => {}}
-            onExtendOutside={() => false}
-            onUndo={() => false}
-            onRemoveEmpty={() => {}}
-            onShortcut={() => false}
-            onShortcutHint={() => {}}
-            formatCopiedMath={(value) => value}
-            parsePastedMath={(value) => value}
-          />
+        <div className="scient-latex-visual-document" data-latex-windowed="true">
+          <Container className={display ? "scient-latex-visual-display-math" : undefined}>
+            <LatexMathField
+              ref={field}
+              value={value}
+              disabled={false}
+              display={display}
+              onChange={(value) => ({ accepted: true, value })}
+              onFocus={() => {}}
+              onExit={() => {}}
+              onExtendOutside={() => false}
+              onUndo={() => false}
+              onRemoveEmpty={() => {}}
+              onShortcut={() => false}
+              onShortcutHint={() => {}}
+              formatCopiedMath={(value) => value}
+              parsePastedMath={(value) => value}
+            />
+          </Container>
         </div>
       </div>
     </>,
   );
-  await expect.poll(() => host?.querySelector("math-field")).toBeTruthy();
+  await expect.poll(() => host?.querySelector(".scient-latex-mathfield")).toBeTruthy();
+  field.current!.focus();
+  await expect.poll(() => host?.querySelector("math-field"), { timeout: 10000 }).toBeTruthy();
   const math = host.querySelector<MathfieldElement>("math-field")!;
   await expect.poll(() => math.getValue()).toBeTruthy();
   await frame();
   await userEvent.click(math);
   await expect.poll(() => math.matches(":focus-within")).toBe(true);
+  await document.fonts.ready;
   await frame();
   return math;
 }
@@ -150,8 +161,166 @@ const selectScope = async () => {
 const selected = (math: MathfieldElement) =>
   math.getValue(math.selection, "latex-without-placeholders");
 const selectionBoxes = () => [
-  ...document.querySelectorAll<HTMLElement>(".scient-latex-cell-selection"),
+  ...document.querySelectorAll<HTMLElement>(
+    ".scient-latex-range-selection,.scient-latex-cell-selection",
+  ),
 ];
+
+it.each([true, false])(
+  "keeps all math guide corners visible inside bold, subscript and equation slots (display=%s)",
+  async (display) => {
+    const math = await mount(String.raw`\mathbf{h}_{i}`, display);
+    for (const position of [
+      offset(math, "h") - 1,
+      offset(math, "h"),
+      offset(math, "i") - 1,
+      offset(math, "i"),
+      0,
+      math.lastOffset,
+    ]) {
+      math.position = position;
+      await frame();
+      await frame();
+      const guide = host!.querySelector<HTMLElement>(
+        ".scient-latex-scope-outline:not([data-guide])",
+      );
+      expect(guide, `guide at ${position}`).toBeTruthy();
+      const bounds = guide!.getBoundingClientRect();
+      const caret = math.shadowRoot!.querySelector<HTMLElement>(".ML__caret,.ML__text-caret")!;
+      const stroke = mathCaretRect(math, caret);
+      expect(stroke.left).toBeGreaterThanOrEqual(bounds.left);
+      expect(stroke.right).toBeLessThanOrEqual(bounds.right);
+      expect(stroke.top).toBeGreaterThanOrEqual(bounds.top);
+      expect(stroke.bottom).toBeLessThanOrEqual(bounds.bottom);
+      for (let ancestor = guide!.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        const box = ancestor.getBoundingClientRect();
+        if (
+          ["auto", "hidden", "clip", "scroll"].includes(style.overflowY) ||
+          /\b(paint|content|strict)\b/u.test(style.contain) ||
+          style.contentVisibility === "auto"
+        ) {
+          expect(bounds.top, `${ancestor.className}: top at ${position}`).toBeGreaterThanOrEqual(
+            box.top - 1,
+          );
+          expect(bounds.bottom, `${ancestor.className}: bottom at ${position}`).toBeLessThanOrEqual(
+            box.bottom + 1,
+          );
+        }
+      }
+    }
+  },
+);
+
+it.each([true, false])(
+  "places a collapsed caret in newly inserted nested argument slots (display=%s)",
+  async (display) => {
+    for (const command of [
+      String.raw`\mathbf{}`,
+      String.raw`\frac{#?}{#?}`,
+      String.raw`\sqrt{#?}`,
+      String.raw`\hat{#?}`,
+      String.raw`\begin{pmatrix}#? & #? \\ #? & #?\end{pmatrix}`,
+    ]) {
+      const math = await mount("x", display);
+      math.position = math.lastOffset;
+      field.current!.insert(command);
+      await document.fonts.ready;
+      await frame();
+      await frame();
+      expect(math.selectionIsCollapsed, command).toBe(true);
+      // Native layout, slot decoration and the shared overlay paint in order.
+      // Wait for their final geometry rather than reading a previous render.
+      await expect
+        .poll(() => {
+          const guide = host!.querySelector<HTMLElement>(
+            ".scient-latex-scope-outline:not([data-guide])",
+          );
+          const caret = math.shadowRoot!.querySelector<HTMLElement>(".ML__caret,.ML__text-caret");
+          if (!guide || !caret) return Infinity;
+          const stroke = mathCaretRect(math, caret),
+            bounds = guide.getBoundingClientRect();
+          return Math.abs(stroke.left + stroke.width / 2 - (bounds.left + bounds.width / 2));
+        })
+        .toBeLessThan(1);
+      const guide = host!.querySelector<HTMLElement>(
+        ".scient-latex-scope-outline:not([data-guide])",
+      )!;
+      expect(guide, command).toBeTruthy();
+      const caret = math.shadowRoot!.querySelector<HTMLElement>(".ML__caret,.ML__text-caret")!;
+      const stroke = mathCaretRect(math, caret),
+        bounds = guide.getBoundingClientRect();
+      expect(
+        Math.abs(stroke.left + stroke.width / 2 - (bounds.left + bounds.width / 2)),
+        command,
+      ).toBeLessThan(1);
+      root!.unmount();
+      host!.remove();
+      root = undefined;
+      host = undefined;
+      await frame();
+    }
+  },
+);
+
+it("enters a bold wrapper after wrapping existing selected content", async () => {
+  const math = await mount("h", true);
+  math.selection = { ranges: [[0, math.lastOffset]] };
+  field.current!.insert(String.raw`\mathbf{}`);
+  await frame();
+  expect(math.selectionIsCollapsed).toBe(true);
+  expect(math.getValue("latex-without-placeholders")).toBe(String.raw`\mathbf{h}`);
+  expect(mathEditingScopes(math)[0]!.label).toBe("Bold");
+  await userEvent.keyboard("i");
+  await frame();
+  expect(math.getValue("latex-without-placeholders")).toBe(String.raw`\mathbf{hi}`);
+});
+
+it.each([true, false])(
+  "new empty angle brackets match their type-and-delete layout (display=%s)",
+  async (display) => {
+    const math = await mount(String.raw`\mathbf{h}_{i}=`, display);
+    math.position = math.lastOffset;
+    field.current!.insert(mathBracketsTemplate("angle", "angle", "auto")!);
+    await document.fonts.ready;
+    await frame();
+    await frame();
+    expect(math.selectionIsCollapsed).toBe(true);
+    expect(math.getValue()).not.toContain("placeholder");
+    const source = math.getValue("latex-without-placeholders");
+    const measure = () => [
+      math.shadowRoot!.querySelector<HTMLElement>(".ML__open")!.getBoundingClientRect(),
+      math.shadowRoot!.querySelector<HTMLElement>(".ML__close")!.getBoundingClientRect(),
+      host!
+        .querySelector<HTMLElement>(".scient-latex-scope-outline:not([data-guide])")!
+        .getBoundingClientRect(),
+    ];
+    const initial = measure();
+    await userEvent.keyboard("x{Backspace}");
+    await frame();
+    await frame();
+    expect(math.getValue("latex-without-placeholders")).toBe(source);
+    for (const [index, rect] of measure().entries()) {
+      expect(rect.width).toBeCloseTo(initial[index]!.width, 0);
+      expect(rect.height).toBeCloseTo(initial[index]!.height, 0);
+      expect(rect.left).toBeCloseTo(initial[index]!.left, 0);
+      expect(rect.top).toBeCloseTo(initial[index]!.top, 0);
+    }
+  },
+);
+
+it("command completion enters the empty nested argument with an insertion caret", async () => {
+  const math = await mount("x", true);
+  math.position = math.lastOffset;
+  await userEvent.keyboard(String.raw`\frac`);
+  await userEvent.keyboard("{Enter}");
+  await frame();
+  expect(math.selectionIsCollapsed).toBe(true);
+  expect(math.getValue("latex-without-placeholders")).toBe(String.raw`x\frac{}{}`);
+  await userEvent.keyboard("h");
+  await frame();
+  expect(math.getValue("latex-without-placeholders")).toBe(String.raw`x\frac{h}{}`);
+});
 
 it("repeated Ctrl+A visits bold, label, underbrace, then equation", async () => {
   const math = await mount(String.raw`\underbrace{1+\cdots+1}_{n\ \textbf{times}}=`);
@@ -180,7 +349,7 @@ it("whole underbrace selection is connected and label/text selections stay local
     boxes.push(selectionBoxes()[0]!.getBoundingClientRect());
     expect(
       [...math.shadowRoot!.querySelectorAll(".ML__selection")].every(
-        (node) => getComputedStyle(node).opacity === "0",
+        (node) => getComputedStyle(node).display === "none",
       ),
     ).toBe(true);
   }

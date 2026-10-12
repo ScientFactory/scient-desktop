@@ -73,3 +73,34 @@
   textarea {
   text-align: start;
 }
+.scient-latex-framed-figure .scient-latex-basic-box {
+  margin-inline: auto;
+}
+.scient-latex-framed-figure .scient-latex-figure-numbered-caption {
+  justify-content: center;
+}
+.scient-latex-visual-raw-reason {
+  font: inherit;
+  margin: 0.4em 0;
+}
+.scient-latex-alignment-block .scient-latex-literal-code {
+  width: fit-content;
+  max-width: 100%;
+  direction: var(--scient-latex-paragraph-direction, ltr);
+}
+.scient-latex-alignment-block .scient-latex-literal-code :is(textarea, .scient-latex-listing-line) {
+  direction: ltr;
+  text-align: left;
+}
+.scient-latex-alignment-block[data-alignment="start"] .scient-latex-literal-code {
+  margin-inline-end: auto;
+}
+.scient-latex-alignment-block[data-alignment="end"] .scient-latex-literal-code {
+  margin-inline-start: auto;
+}
+.scient-latex-alignment-block[data-alignment="center"] .scient-latex-literal-code {
+  margin-inline: auto;
+}
+.scient-latex-alignment-block {
+  direction: var(--scient-latex-paragraph-direction, ltr);
+}

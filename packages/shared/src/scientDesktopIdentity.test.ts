@@ -5,6 +5,7 @@ import { SCIENT_DESKTOP_IDENTITY } from "./scientDesktopIdentity.ts";
 describe("Scient desktop identity", () => {
   it("uses the canonical production identity while keeping development and data isolated", () => {
     assert.equal(SCIENT_DESKTOP_IDENTITY.baseName, "Scient");
+    assert.equal(SCIENT_DESKTOP_IDENTITY.cliCommandName, "scient");
     assert.equal(SCIENT_DESKTOP_IDENTITY.developmentName, "Scient (Dev)");
     assert.equal(SCIENT_DESKTOP_IDENTITY.appId, "com.scientfactory.scient");
     assert.equal(SCIENT_DESKTOP_IDENTITY.developmentAppId, "com.scientfactory.scient.next.dev");
@@ -28,7 +29,7 @@ describe("Scient desktop identity", () => {
   it("keeps cloud and telemetry closed while enabling the owned updater", () => {
     assert.isFalse(SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled);
     assert.isTrue(SCIENT_DESKTOP_IDENTITY.autoUpdateEnabled);
-    assert.equal(SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy, "stable-only");
+    assert.equal(SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy, "user-selectable");
     assert.isTrue(SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled);
     assert.isFalse(SCIENT_DESKTOP_IDENTITY.cloudEnabled);
   });

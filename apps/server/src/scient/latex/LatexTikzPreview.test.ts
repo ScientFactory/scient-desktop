@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ExecutionProcessError } from "@scientfactory/execution";
 import type { ScientLatexArtworkRequest } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -158,8 +158,8 @@ const harness = Effect.fnUntraced(function* (
       ),
     ),
     Layer.provide(configLayer),
-    Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
-    Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
+    Layer.provide(Layer.succeed(HostProcess.Environment, {})),
+    Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
     Layer.provide(Layer.succeed(SpawnExecutableResolution, (command) => command)),
     Layer.provide(NodeServices.layer),
   );

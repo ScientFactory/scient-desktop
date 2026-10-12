@@ -4,7 +4,7 @@ import {
   latexParagraphDirectionSupported,
   prepareLatexParagraphDirectionSetup,
 } from "./latexParagraphDirectionSetup";
-import { latexDirectionMark } from "./latexLanguage";
+import { latexDirectionMark, latexDocumentLanguage } from "./latexLanguage";
 import {
   latexSourceArgument,
   latexSourceCommands,
@@ -26,7 +26,7 @@ import {
   type LatexSourceEdit,
 } from "./latexSourceEditPlan";
 import { setLatexEnvironmentOption } from "./latexObjectProperties";
-import { latexTableColumns } from "./latexTableAuthoring";
+import { latexTableColumns, type LatexTableRule } from "./latexTableAuthoring";
 import { isLatexTikz, latexTikzEnd } from "./latexTikz";
 import { parseLatexAlgorithm, algorithmLineSource } from "./latexAlgorithm";
 import {
@@ -44,6 +44,7 @@ import {
   expandColorBoxLoop,
 } from "./latexColorBoxes";
 import { latexBasicBoxOpening } from "./latexBasicBoxes";
+import { latexFramedFigureOpening } from "./latexFramedFigure";
 import {
   latexCounterLabel,
   latexDocumentCommand,
@@ -122,6 +123,7 @@ export interface LatexVisualDocument {
 }
 
 interface LatexVisualSetup {
+  readonly language: ReturnType<typeof latexDocumentLanguage>;
   readonly colors: Record<string, string>;
   readonly math: ReturnType<typeof latexDocumentMathSetup>;
   readonly declarations: ReturnType<typeof latexEnvironmentDeclarations>;
@@ -143,6 +145,7 @@ function visualSetup(source: string): LatexVisualSetup {
   // A fragment without a document boundary uses its complete declaration input.
   const input = key === undefined ? preamble : (JSON.parse(key) as string);
   const setup = {
+    language: latexDocumentLanguage(input),
     colors: latexDocumentColors(input),
     math: latexDocumentMathSetup(input),
     declarations: latexEnvironmentDeclarations(input),
@@ -2104,6 +2107,7 @@ export function latexVisualTablePresentation(source: string) {
     size,
     columnWidths,
     columnKinds,
+    columnJustified: latexTableColumns(spec)?.map((column) => column.justified) ?? [],
     captionAfter: caption !== null && body !== null && caption.from > body.to,
     hasCaption: caption !== null,
     hasFloat: /\\begin\{table\*?\}/u.test(source),
@@ -2298,6 +2302,9 @@ export interface LatexTableCellLayout {
   ruleColor?: string;
   topColor?: string;
   bottomColor?: string;
+  topRule?: LatexTableRule;
+  bottomRule?: LatexTableRule;
+  justified?: boolean;
 }
 
 export function latexTableSelectionBounds(
@@ -2365,6 +2372,9 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
     (row) => row.map(() => null),
   );
   const rules = Array.from({ length: count + 1 }, () => Array.from({ length: width }, () => false));
+  const ruleKinds = Array.from({ length: count + 1 }, () =>
+    Array.from({ length: width }, () => undefined as LatexTableRule | undefined),
+  );
   const colors: (string | null)[] = Array.from({ length: count }, () => null);
   let ruleColor = "currentColor";
   const ruleColors = Array.from({ length: count + 1 }, () => ruleColor);
@@ -2379,9 +2389,10 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
       if (!command) break;
       if (rowIndex > count) return null;
       prefix += command[0].length;
-      if (["hline", "toprule", "midrule", "bottomrule"].includes(command[1]!))
+      if (["hline", "toprule", "midrule", "bottomrule"].includes(command[1]!)) {
         rules[rowIndex]!.fill(true);
-      else {
+        ruleKinds[rowIndex]!.fill(command[1] as LatexTableRule);
+      } else {
         const argument = requiredArgument(slice.source, prefix);
         if (!argument) return null;
         prefix = argument.next;
@@ -2394,8 +2405,10 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
             Number(range[1]) > Number(range[2])
           )
             return null;
-          for (let column = Number(range[1]) - 1; column < Number(range[2]); column++)
+          for (let column = Number(range[1]) - 1; column < Number(range[2]); column++) {
             rules[rowIndex]![column] = true;
+            ruleKinds[rowIndex]![column] = "cline";
+          }
         } else if (command[1] === "arrayrulecolor") {
           const color = latexColorCss(argument.source);
           if (!color) return null;
@@ -2427,6 +2440,7 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
       let to = raw.length;
       let colSpan = 1;
       let rowSpan = 1;
+      let justified = columns[column]!.justified;
       let alignment =
         columns[column]!.alignment === "center"
           ? "c"
@@ -2449,6 +2463,7 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
         )
           return null;
         colSpan = Number(span.source);
+        justified = false;
         alignment = format.source.replace(/\|/gu, "");
         left = format.source.startsWith("|");
         right = format.source.endsWith("|");
@@ -2500,6 +2515,7 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
         right,
         background,
         ruleColor,
+        justified,
       };
       for (let r = rowIndex; r < rowIndex + rowSpan; r++) {
         for (let c = column; c < column + colSpan; c++) {
@@ -2540,6 +2556,10 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
       cell.bottom = bottom.every(Boolean);
       cell.topColor = ruleColors[rowIndex]!;
       cell.bottomColor = ruleColors[rowIndex + cell.rowSpan]!;
+      const topRule = ruleKinds[rowIndex]![column];
+      const bottomRule = ruleKinds[rowIndex + cell.rowSpan]![column];
+      if (topRule) cell.topRule = topRule;
+      if (bottomRule) cell.bottomRule = bottomRule;
     }
   }
   return {
@@ -3441,6 +3461,12 @@ const scientificMathCommands = new Set([
   "textbf",
   "textit",
   "textnormal",
+  "texthebrew",
+  "textenglish",
+  "color",
+  "textcolor",
+  "colorbox",
+  "fcolorbox",
   "operatorname",
   "limits",
   "nolimits",
@@ -3530,6 +3556,24 @@ function parsePageLayoutStructure(
   setup: LatexVisualSetup,
 ): JSONContent | null {
   if (depth >= 32) return null;
+  const figure = latexFramedFigureOpening(source);
+  if (figure) {
+    const body = projectLatexVisualDocument(source.slice(figure.from, figure.to), depth + 1, setup);
+    const caption = figure.caption ? metadataText(figure.caption.value) : "";
+    if (body.rawBlocks || caption === null) return null;
+    return {
+      type: "latexScientific",
+      attrs: {
+        environment: figure.environment,
+        raw: source,
+        title: "",
+        caption,
+        label: figure.label?.value ?? "",
+        layout: { kind: "framedFigure", captioned: !!figure.caption },
+      },
+      content: body.content.content ?? [{ type: "paragraph" }],
+    };
+  }
   const basicBox = latexBasicBoxOpening(source);
   if (basicBox) {
     if (
@@ -3667,7 +3711,7 @@ function parsePageLayoutStructure(
       content: content as JSONContent[],
     };
   }
-  const opening = latexPageLayoutOpening(source);
+  const opening = latexPageLayoutOpening(source, setup.language);
   if (!opening) return null;
   const end = matchingEnvironmentEnd(source, 0);
   if (end !== source.length) return null;
@@ -3909,6 +3953,39 @@ function patchPageLayoutStructure(
     );
     return changed ? raw.slice(0, box.from) + changed.source + raw.slice(box.to) : null;
   }
+  if (next.attrs?.layout?.kind === "framedFigure") {
+    const figure = latexFramedFigureOpening(raw);
+    if (
+      !figure ||
+      next.attrs.environment !== figure.environment ||
+      next.attrs.layout.captioned !== !!figure.caption
+    )
+      return null;
+    const body = raw.slice(figure.from, figure.to);
+    const changed = applyLatexVisualDocumentChange(
+      body,
+      projectLatexVisualDocument(body, 0, setup),
+      { type: "doc", content: next.content ?? [] },
+      { rootSource, allowRootUpdates: false },
+    );
+    const caption = String(next.attrs.caption ?? "");
+    const label = safeLatexLabel(next.attrs.label ?? "");
+    if (!changed || label === null || (!figure.caption && caption) || (!figure.label && label))
+      return null;
+    const patches = [{ from: figure.from, to: figure.to, value: changed.source }];
+    if (figure.caption && caption !== metadataText(figure.caption.value))
+      patches.push({
+        from: figure.caption.from,
+        to: figure.caption.to,
+        value: escapeText(caption),
+      });
+    if (figure.label && label !== figure.label.value)
+      patches.push({ from: figure.label.from, to: figure.label.to, value: label });
+    let result = raw;
+    for (const patch of patches.sort((a, b) => b.from - a.from))
+      result = result.slice(0, patch.from) + patch.value + result.slice(patch.to);
+    return result;
+  }
   const row = minipageRowRanges(raw);
   if (next.attrs?.layout?.kind === "row") {
     if (!row || row.length !== next.content?.length) return null;
@@ -3926,20 +4003,24 @@ function patchPageLayoutStructure(
     }
     return result;
   }
-  const opening = latexPageLayoutOpening(raw);
+  const opening = latexPageLayoutOpening(raw, setup.language);
   const replacement =
     opening?.layout.kind === "direction"
-      ? latexPageLayoutOpening(String(next.attrs?.raw ?? ""))
+      ? latexPageLayoutOpening(String(next.attrs?.raw ?? ""), setup.language)
       : null;
   const renameDirection =
     replacement?.layout.kind === "direction" &&
     next.attrs?.environment === replacement.environment &&
     JSON.stringify(next.attrs.layout) === JSON.stringify(replacement.layout);
+  const requestedLayout =
+    next.attrs?.layout?.kind === "direction" && opening && "paragraphDirection" in opening.layout
+      ? { ...next.attrs.layout, paragraphDirection: opening.layout.paragraphDirection }
+      : next.attrs?.layout;
   if (
     !opening ||
     (!renameDirection &&
       (next.attrs?.environment !== opening.environment ||
-        JSON.stringify(next.attrs.layout) !== JSON.stringify(opening.layout)))
+        JSON.stringify(requestedLayout) !== JSON.stringify(opening.layout)))
   )
     return null;
   const end = matchingEnvironmentEnd(raw, 0);
@@ -4124,7 +4205,21 @@ export function projectLatexVisualDocument(
         : null;
     const preview = candidate?.attrs?.editable === true ? candidate : null;
     const node = withSourceId(
-      classified ?? preview ?? { type: "latexRawBlock", attrs: { raw, label: "Raw LaTeX" } },
+      classified ??
+        preview ?? {
+          type: "latexRawBlock",
+          attrs: {
+            raw,
+            label: "Raw LaTeX",
+            reason: dynamicSyntax
+              ? "Visual cannot evaluate commands that change TeX syntax or definitions."
+              : environment && setup.declarations.unsupported.has(environment)
+                ? `The definition of ${environment} needs TeX evaluation.`
+                : environment
+                  ? `Visual does not yet support this ${environment} structure or its nested commands.`
+                  : "This block contains commands or options that Visual cannot safely render. Open Source or PDF to view it.",
+          },
+        },
       id,
     );
     blocks.push({
@@ -6162,6 +6257,32 @@ function inlineEditorUnits(nodes: readonly JSONContent[]): JSONContent[] {
   );
 }
 
+/** Exact supported paragraph offsets; callers fall back to the containing source block. */
+export function latexVisualInlineSourceRange(
+  block: LatexVisualSourceBlock,
+  from: number,
+  to: number,
+) {
+  if (block.node.type !== "paragraph" || from < 0 || to < from) return null;
+  const units = inlineSourceUnits(block.source);
+  const nodes = inlineEditorUnits(block.node.content ?? []);
+  if (
+    !units ||
+    units.length !== nodes.length ||
+    units.some((unit, index) => unit.key !== latexVisualNodeSignature(nodes[index]!))
+  )
+    return null;
+  let position = 0;
+  const selected = units.filter((unit) => {
+    const start = position;
+    position += unit.node.type === "text" ? (unit.node.text?.length ?? 0) : 1;
+    return from === to ? start <= from && position > from : position > from && start < to;
+  });
+  return selected.length
+    ? { from: block.from + selected[0]!.from, to: block.from + selected.at(-1)!.to }
+    : null;
+}
+
 /** A paragraph split keeps each surviving token's original TeX spelling. */
 function splitParagraphSource(
   block: LatexVisualSourceBlock,
@@ -7137,7 +7258,11 @@ export function applyLatexVisualDocumentChange(
   const requiredPackages = new Set([
     ...[...requiredObjectPackages(newChanged)].filter((name) => !previousPackages.has(name)),
     ...newMathSymbolPackages(activeLatexSource(previousSource), activeLatexSource(replacement)),
-    ...newLatexCommandPackages(activeLatexSource(previousSource), activeLatexSource(replacement)),
+    ...newLatexCommandPackages(
+      activeLatexSource(previousSource),
+      activeLatexSource(replacement),
+      root ?? undefined,
+    ),
   ]);
   const needsDirectionSetup =
     introducesLatexParagraphDirection(previousNodes, newChanged) &&

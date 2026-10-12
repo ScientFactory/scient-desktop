@@ -129,8 +129,12 @@ function SettingsContentLayout() {
   const location = useLocation();
   const navigateToMainApp = useNavigateToMainApp();
   useEscapeToGoBack(navigateToMainApp);
-  const { search } = useSettingsScope();
+  const { search, environment } = useSettingsScope();
   const [restoreSignal, setRestoreSignal] = useState(0);
+  const contentResetKey =
+    location.pathname === "/settings/diagnostics" || location.pathname === "/settings/providers"
+      ? `${environment?.environmentId}:${restoreSignal}`
+      : settingsContentResetKey(search, restoreSignal);
 
   return (
     <SidebarInset
@@ -151,10 +155,7 @@ function SettingsContentLayout() {
           </div>
         </WorkspacePageHeader>
 
-        <div
-          key={settingsContentResetKey(search, restoreSignal)}
-          className="min-h-0 flex flex-1 flex-col"
-        >
+        <div key={contentResetKey} className="min-h-0 flex flex-1 flex-col">
           <SettingsScopeBoundary pathname={location.pathname}>
             <Outlet />
           </SettingsScopeBoundary>

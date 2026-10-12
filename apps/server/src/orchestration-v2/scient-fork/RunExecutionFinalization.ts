@@ -14,7 +14,7 @@ import type * as KeyedLock from "@t3tools/shared/KeyedLock";
 import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import type { RunExecutionServiceV2StartRootRunInput } from "../RunExecutionService.ts";
 
 interface FinalRunWrite {

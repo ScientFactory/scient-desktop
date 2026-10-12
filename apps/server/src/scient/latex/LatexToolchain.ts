@@ -14,7 +14,7 @@ import {
   type ScientLatexToolchainKind,
   type ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -100,8 +100,8 @@ const absent = (probedAtEpochMs: number): ScientLatexToolchainStatus => ({
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const hostEnvironment = yield* HostProcessEnvironment;
-  const platform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
   const resolveExecutable = yield* SpawnExecutableResolution;
   const pathDelimiter = platform === "win32" ? ";" : ":";

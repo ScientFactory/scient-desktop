@@ -7,7 +7,7 @@ import {
   type MathCommandCompletion,
 } from "./mathCommandCompletion";
 import "./mathCommandCompletion.css";
-import { enterMathFormattingArgument, mathTextFormattingInput } from "./mathTextFormatting";
+import { enterMathArgument, mathTextFormattingInput } from "./mathTextFormatting";
 import { latexArgumentChoices, type LatexCompletionContext } from "./latexCommandCompletion";
 
 interface CommandAtom {
@@ -111,7 +111,7 @@ export function installMathCommandCompletion(
         },
       );
       if (completion.text) math.executeCommand(["switchMode", "text"]);
-      enterMathFormattingArgument(math);
+      enterMathArgument(math);
     }
     if (focus) math.focus();
     refresh();

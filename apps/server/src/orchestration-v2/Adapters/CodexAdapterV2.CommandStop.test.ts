@@ -7,8 +7,9 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
-import * as IdAllocator from "../IdAllocator.ts";
-import { type ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   makeCodexReplayTranscript,
   codexReplayPreamble,
@@ -281,7 +282,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.isAtLeast(commandUpdates.length, 2, "start + interrupt terminalization");
         assert.equal(commandUpdates[commandUpdates.length - 1]?.turnItem.status, "interrupted");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -538,7 +543,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           commandUpdatesBeforeLateEvents.length,
           "late starts and completions must not project after timeout",
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -641,7 +650,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "interrupted terminal");
         assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -894,7 +907,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.isDefined(item);
         }
         if (scenario.name === "retry") assert.equal(terminal.retry?.attempt, 1);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

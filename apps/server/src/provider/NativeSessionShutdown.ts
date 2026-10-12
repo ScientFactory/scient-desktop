@@ -11,8 +11,8 @@ import {
   ProviderAdapterOpenSessionError,
   ProviderAdapterProtocolError,
   type ProviderAdapterV2SessionRuntime,
-  type ProviderAdapterV2Shape,
-} from "../orchestration-v2/ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const guardRuntime = (
   runtime: ProviderAdapterV2SessionRuntime,
@@ -94,7 +94,7 @@ const guardRuntime = (
 
 /** Factory-local physical teardown; registry and manager retain logical ownership. */
 export const makeNativeSessionShutdown = Effect.fn("makeNativeSessionShutdown")(function* (
-  native: ProviderAdapterV2Shape,
+  native: ProviderAdapter.ProviderAdapterV2["Service"],
 ) {
   const factoryScope = yield* Scope.Scope;
   const admission = yield* Semaphore.make(1);
@@ -149,7 +149,7 @@ export const makeNativeSessionShutdown = Effect.fn("makeNativeSessionShutdown")(
     if (isRetired()) return yield* retired();
   });
 
-  const adapter: ProviderAdapterV2Shape = {
+  const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
     ...native,
     openSession: (input) =>
       Effect.uninterruptibleMask((restore) =>

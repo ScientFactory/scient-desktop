@@ -124,7 +124,7 @@ export function PreviewEmptyState({
               type="button"
               aria-expanded={showOtherServers}
               onClick={() => setShowOtherServers((current) => !current)}
-              className="flex w-fit items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex w-fit items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               <RadioTower className="size-4 shrink-0" />
               <span>Find another local server</span>

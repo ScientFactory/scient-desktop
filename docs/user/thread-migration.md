@@ -6,9 +6,16 @@ with full transcripts imported as needed. You do not need to run an import comma
 the selected Scient profile; it does not adopt a different application's or retired profile's data.
 
 V1 continues using its original database while V2 uses the copy. The database import can run while
-V1 is open. Opening V2 again resumes your V2 history. The copy happens only once: later conversations
-and changes in either version do not sync to the other. Settings, attachments, and workspace files
-remain shared.
+V1 is open. Opening V2 again resumes your V2 history and checks the original database for V1
+conversations or history newer than its first copy. This automatically restores conversations
+created in V1 after an earlier V2 launch. Settings, attachments, and workspace files remain shared.
+V2 changes are not written back into V1.
+
+If the same content changed in both versions, your V2 edit is preserved and the recovered V1
+content appears with a **Recovered V1 version** notice. Existing V2 deletions are respected. A
+rewind in V1 removes rows from an unfinished import; history already committed to V2 is retained.
+If restoration cannot finish, Scient keeps a restoration notice visible. Restarting retries it;
+keep both databases and request support if the notice persists.
 
 The V2 desktop app uses a separate browser profile, so browser cookies and caches do not carry
 over from V1. You may need to sign in again to websites opened inside the app. On its first launch,

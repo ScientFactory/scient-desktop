@@ -101,6 +101,17 @@ includes bold, italic/emphasis, typewriter text, small capitals and underlining;
 roman/sans families and scoped standard size/font declarations are also editable.
 `mathTextFormatting.ts` adapts Text-menu font actions to MathLive's math and text
 slots, retaining the math selection and exporting portable LaTeX font commands.
+`mathColorSyntax.ts` converts MathLive's three/six-digit CSS hex color arguments
+to xcolor's explicit `HTML` model (`\textcolor[HTML]{808080}{h}`), and converts
+that syntax back to native color arguments on input and in reading previews.
+When the preamble declares `color` without `xcolor`, single-color commands use
+the standard `rgb` model instead, retaining the picker color without requiring
+another package or a second-file edit. Input also accepts literal `rgb`, `RGB`
+and `gray` models.
+The conversion covers color declarations, text colors and color boxes, skips
+comments/literal source and document overrides, and leaves unsupported model
+expressions unchanged. Saving, clipboard export and Edit LaTeX use the portable
+syntax; raw-source math edits also normalize CSS hex arguments before admission.
 Math right-click menus are suppressed; Text, Math and the footer own the actions.
 Style-state notifications update the toolbar only when formatting changes.
 
@@ -499,10 +510,14 @@ hidden. Each uses `pdfFitWidthScale` with the same 40 CSS-pixel total page inset
 scrollbar gutter. Visual's physical page width is inches times 96; PDF's page view
 uses the same CSS-pixel baseline. Navigation sidebars use matching widths and
 breakpoints, so matching paper and pane geometry produce matching fit percentages.
+The inset belongs to the fit calculation, not fixed horizontal scroll padding.
+Both surfaces center the paper with margins that shrink as zoom increases;
+horizontal scrolling starts only when the paper exceeds the usable pane width.
 Visual's automatic fit and compiled-artwork widths use `observeLatexWidth`: the
 ResizeObserver content box plus resolved horizontal padding gives the unscaled
 client width, excluding borders and scrollbars. The mount effects install the
-observer without forcing layout; hidden panes retain their last usable dimensions.
+observer; Visual also measures its initial fit before the first paint. Hidden
+panes retain their last usable dimensions.
 Explicit Fit width still measures the current pane immediately. Without
 ResizeObserver, the compatibility measurement runs after an editor paint.
 Each surface supplies its own navigation/search adapter. Visual's sidebar contains Pages and
@@ -518,6 +533,10 @@ natural size and placement when inactive; an overfull equation starts at the tex
 boundary and can extend into the margin.
 The paper's content layer clips at its physical horizontal edges so overfull math
 cannot enlarge the canvas or change the document's outer scroll position.
+The scaled page frame also clips horizontal layout overflow, with room for page
+shadows, so Fit width does not gain an outer scrollbar when math leaves editing.
+Visual, including the Visual pane in Split, measures Fit width before its first
+paint. Fit and manual zoom use the same horizontal scroll boundary as PDF.
 `latexMathViewport.ts` enables horizontal panning only during Visual editing.
 The same padding and natural formula height
 are retained in both modes. Native scrollbars are hidden, so entering a formula
@@ -532,6 +551,9 @@ Resize observation and coalesced post-paint work handle edits, zoom and column-w
 changes without continuous polling. Vertical overflow is explicitly hidden only
 in the active viewport. Formula struts retain the height of braces, limits and
 matrices; no fixed height is imposed. Page thumbnails omit active viewport state.
+Display fields reserve at least eight local pixels around their ink, with matching
+negative margins preserving its paper position. This accommodates the guide's
+seven-pixel maximum inset while the active horizontal viewport clips overflow.
 PDF keeps `DocumentSearchBar`, which only finds. Visual shows the shared
 `writing/ScientFindBar.tsx` under the writing row, through
 `useLatexVisualSearch.ts`. It uses the shared document-text plugin for supported
@@ -551,6 +573,10 @@ unsupported title formatting remain source-owned. Standard article/report/book
 classes can be selected in Document settings; incompatible switches and custom
 classes stay protected.
 
+Heading styling and numbering derive from the live heading level, matching the
+LaTeX serializer. Converting text to a heading or changing its level renders
+immediately, without reopening the document or relying on parsed source metadata.
+
 Document has Title & authors, Document settings, References, Find and replace
 (when editable), Export (when hosted) and Keyboard shortcuts. Document settings opens one card showing
 the current values read by `latexVisualLayoutProfile`, with a draft of changes only, explicit Apply/Cancel, and a source snapshot checked again
@@ -562,6 +588,13 @@ Title help and source actions finish their dialog close before transferring focu
 
 Shared writing menus execute queued commands after the closed state commits;
 their exit animation must not delay edits in a suspended or background renderer.
+The shared Insert popup carries its trigger's writing-menu ownership, including
+portaled submenus. Switching from Insert to another menu leaves focus with that
+menu; Escape or toggling Insert closed restores the retained editing position.
+Menu controls and their owned popups retain the chosen caret or selection.
+Other focus changes release the menu snapshot. A pointer into the document
+releases that snapshot before focus returns, so restoration cannot overwrite
+the new point.
 
 ### Empty editing positions
 
@@ -593,6 +626,13 @@ existing VBox strut and local font size. Active and empty slots use the same
 overlay renderer, without extra outline padding or duplicate current-slot marks.
 Occupied guides exclude the starting caret anchor so an accent's body marker
 fits its contents instead of including the enclosing accent or neighboring atom.
+Active display math and paragraphs containing a focused or menu-retained inline
+math field release paint containment and automatic content visibility so every
+guide corner can extend beyond the line's ink box. Inline and display math share
+the guide renderer and argument insertion behavior.
+The inactive document retains its rendering containment. Nested command insertion
+collapses the selected native placeholder to its own caret stop, keeping the caret
+centered inside the empty argument's marker.
 No inline guide nodes are inserted. Minimum cell
 targets apply through the structural selector from the first render, independent
 of observer attributes, focus and emptiness, so decorating a replacement render
@@ -882,13 +922,29 @@ shortcut hints, including user overrides and disabled shortcuts.
 
 `latexLanguage.ts` reads literal root language/font declarations and maps supported
 English/Hebrew and LTR/RTL wrappers to blocks and inline marks.
-`LatexLanguageContext` shares root-derived labels with node views.
+Modern Babel's `\babelprovide[main]` takes precedence over its package language
+list. Literal `\babelfont` declarations supply the main and passage fonts,
+including language-specific overrides. `LatexLanguageContext` shares these
+language labels with node views.
+Literal Babel tags (and `otherlanguage*`) change passage language and text
+direction while preserving paragraph placement; full language/direction
+environments also switch paragraph direction. Alignment follows that paragraph
+direction, with literal code glyphs isolated LTR.
+Unresolved includes/conditionals and unsupported languages produce a visible
+notice; the paper uses automatic direction without claiming a resolved language.
 `latexDirection.css` isolates mixed-language passages and keeps math/source flow
 left-to-right. `latexVisualDocument.ts` preserves an entire bilingual phrase as
 one source wrapper across styled runs and math. Package insertion precedes
 `bidi`, `xepersian` and declarations enabling Hebrew, retaining dependency order.
 This source-derived support is independent of the removed configuration/direction
 menu additions; unsupported setups remain source-owned.
+Source-only blocks explain the unsupported structure or dynamic TeX definition
+that caused fallback. Their exact source remains available for editing and PDF
+compilation. Ordinary framed paragraph figures and alignment environments can
+contain supported rich text, math and literal code without flattening their
+source wrappers. Math's `\texthebrew` and `\textenglish` arguments use isolated
+language/font spans in passive and editable rendering; screen adapters serialize
+back to the authored language command.
 
 The Math menu separates placement, equation layout, and insertion. Its seven
 entries are Inline math, Display math, Aligned equations, Brackets, Matrix, Cases,
@@ -1060,6 +1116,12 @@ fixed paragraph columns retain their declared widths. Uniform generated X tables
 keep equal columns. Caption and float spacing use the natural standard-class
 dimensions, with booktabs rule spacing approximated in CSS. Custom caption styles
 and TeX float placement still need the compiled PDF.
+Cell alignment follows the table's inherited direction: source l/r columns and
+multicolumn alignment use logical start/end, including the position of their
+intrinsic-width editors. Default X/p/m/b paragraph columns justify their text;
+explicit ragged/centered modifiers and multicolumn formats keep their own alignment.
+Spanned tables retain the source rule kind so top/bottom booktabs rules stay
+heavier than midrules, with rule spacing preserved alongside spans and colors.
 
 The table adapter also projects bounded literal multicolumn/multirow cells,
 basic named xcolor row mixes, hline and cline rules in ordinary l/c/r tabulars.
@@ -1170,7 +1232,9 @@ is being resolved, avoiding a loading reset on each save.
 and command requirements. The source guard inspects each changed block's emitted
 LaTeX as well as structured tool metadata and the math symbol catalog. This covers
 native MathLive context-menu styles and custom insertions without depending on
-which button initiated an edit. Color/highlight requests `xcolor`; menu-only color
+which button initiated an edit. Color/highlight requests `xcolor`; an already
+loaded `color` package satisfies single-color commands using its predefined
+colors or literal `rgb`/`gray`/`cmyk` models. Menu-only color
 names receive non-overwriting `providecolor` definitions. Declarations retain user
 options and are added before relevant late-loading packages. This is a bounded
 source inventory, not execution of arbitrary preamble macros or external styles.
@@ -1202,7 +1266,9 @@ commands wait for completion. Blur, field navigation and document preparation
 flush pending edits; preparation flushes all rich table cells, including those
 that no longer have focus. Recovery journaling also runs after paint or on exit.
 Unexpected conversion/publication failures keep the input as a recoverable draft
-instead of rolling back what the user just typed. Failed document synchronization
+instead of rolling back what the user just typed. Edit LaTeX reads the live formula,
+including unacknowledged input, and marks refused publication as unsaved rather
+than showing the previous accepted equation. Failed document synchronization
 pauses further editing until the draft or conflict is resolved. Source recovery
 checkpoints remain coalesced; working-source admission is separate from disk save.
 Visual pauses further edits when a file session reports a save error or conflict.
@@ -1221,7 +1287,12 @@ Outside source refreshes map the selection through content changes, including
 insertions before the current paragraph and backwards ranges; removed selections
 fall back to a nearby caret. Source IDs alone do not move a selection.
 Package edits that would change more than one physical file are refused before
-publication; add the required declaration in Source first.
+publication; add the required declaration in Source first. The refusal supplies
+new package declarations, including `\usepackage{xcolor}` for native math color input, while
+the math field and Edit LaTeX retain the complete unsaved formula.
+Math-field save refusals display the document's admission error, including
+missing declarations, paused file/recovery state and unfinished prose edits,
+instead of hiding it behind the generic retained-input message.
 Pre-existing raw editor snapshots remain recoverable. A typing
 snapshot reopens after reload only over the exact source it was typed on. Over a
 newer file, or when the editor cannot load it, it is offered through the same
@@ -1440,6 +1511,9 @@ local replacement validation. The scientific math whitelist also validates
 supported document macro bodies, so rendering and source editing agree about
 `\R`, required-argument commands and declared operators. Macros remain calls
 in source; the adapter does not expand them into edited document text.
+Native math color commands (`\color`, `\textcolor`, `\colorbox`, and `\fcolorbox`)
+remain supported inside statement bodies; their source uses the same `xcolor`
+dependency admission as math in the main document.
 
 `latexEnvironmentDeclarations.ts` recognizes top-level literal `\newtheorem`
 declarations, including starred statements, shared counters and section/chapter
@@ -1454,7 +1528,9 @@ an extra line. Standard theorem/proof spacing uses the document's base font size
 quote wrappers use the standard 2.5em inset. Optional theorem notes remain upright
 and normal weight, and a proof's optional argument replaces its heading.
 The heading and the first paragraph share uncontained inline flow, including in
-windowed reading and measurement. Subsequent lines regain the full body width;
+windowed reading and measurement. Headings float at the local inline start, so
+Hebrew statements begin on the right and English statements begin on the left.
+Subsequent lines regain the full body width;
 the remaining paragraphs and formulas retain viewport containment. Normal-weight
 notes use a tight inline strut so differing bold/regular font metrics cannot make
 a one-line heading indent the second body line. Titles keep the same overlay
@@ -1464,7 +1540,8 @@ the standard half-em gap.
 Adjacent statements combine their natural environment skips using the larger
 value rather than summing both margins, while retaining the document paragraph
 gap. Quotes and other layout containers retain their separate spacing rules.
-Default amsthm proofs show an open square at the right end of the final paragraph,
+Default amsthm proofs show an open square at the inline end of the final paragraph
+(right for LTR, left for RTL),
 or on a following line after a final display/list. This CSS marker does not become
 an editor node, copied content or LaTeX source. Pagination includes its height.
 Custom proof definitions and preamble QED overrides disable this inferred marker.
@@ -1800,6 +1877,57 @@ failed writes retain live input and surface a document-level recovery notice.
 These are synchronous identity checks, not an atomic cross-window storage
 transaction. Workspace persistence sessions remain authoritative for disk saves.
 
+## Visual selection navigation and chat citations
+
+`latexSelectionSession` exposes model-owned read-only content and geometry from
+the existing prose, math, textarea and table participants. `latexVisualSelection`
+resolves that capture through the current projection; `LatexProjectVisualEditor`
+maps its source range to an original file and its current draft revision. Supported
+paragraphs reuse the inline token map. Nested math/cell selections quote the exact
+selected content but anchor navigation to their containing source block. Source
+IDs can move after live typing, so the adapter verifies structural position and
+content instead of searching for repeated text.
+
+Double-click in Visual Split uses `LatexVisualSourcePane` to reveal
+the owning file without replacing or blurring Visual. It shares the document's
+persistence lease. `LatexCitationActions` feeds the existing selection toolbar
+and composer callback; portal ownership retains the native editing selection.
+The comment bubble reads model geometry and reuses the selection painter rather
+than highlighting a whole math DOM node. Stale models and unpublished fields
+cannot authorize a citation. A selection crossing different source files currently
+requires separate quotes.
+
+The optional `FileCitation.latex` metadata identifies the root and a hash of the
+source anchor; existing Markdown citations omit it and keep their existing path.
+LaTeX quote coordinates describe the captured fragment, never MathLive source
+offsets. Reopening shows Split, verifies the current draft and source hash, and
+accepts a moved source anchor only when its context identifies one match. An
+unverified quote falls back to its recorded line with a notice and no range fill.
+Static checks cover the new code; browser interaction qualification is pending.
+
+Source selections use the shared file editor's `SourceCitationActions`, also used
+by ordinary code files and compute editors. They capture raw UTF-16 source
+offsets, exact selected code and the current draft hash. `FileCitation.sourceSelection`
+keeps this mapping separate from rendered Markdown positions. Source quotes reopen
+in Source; LaTeX quotes retain the document root when captured from an included
+file. Read-only code previews use verified rendered rows and the same chat action.
+Activating the action validates the captured quote against the current source
+version and owner, independently of editor focus or the live selection. A focus
+handoff to the action retains the quote; a source change requires a new selection.
+
+In Split with Visual, a source double-click reverses the project's include spans
+for the exact displayed draft. It reveals the first mapped Visual block at the
+current zoom and briefly outlines it without changing editing selection or focus.
+The reveal measures after pagination, scrolls only Visual's own pane, and refuses
+stale or unmapped source rather than navigating to unrelated content. Visual's
+double-click uses the same ownership mapping to reveal Source,
+including an included file while keeping the document editor mounted.
+The clicked node-view DOM identifies the source owner, including math shadow
+hosts and virtualized prose. Paragraph pointer coordinates resolve precise
+source lines where the inline map supports them; other objects reveal their
+containing block. Navigation waits for edit publication before resolving the
+current project mapping. Ctrl/Command-double-click remains available too.
+
 ## Adapter direction
 
 A single document-level count loop can project through a bounded virtual source
@@ -2049,12 +2177,24 @@ and scripts, and restores the adapter on atoms recreated by undo. No internal
 wrapper metadata enters source or clipboard content. Its insertion-style hook
 keeps the active argument's alphabet rather than MathLive's ordinary-math reset;
 outside those scopes the native style behavior is retained. Empty-slot insertion
-collapses the placeholder selection to a caret inside the argument. Scope
+collapses the placeholder selection to its own insertion stop inside the argument,
+where the caret and empty guide share a center. Guide ownership follows that model
+stop; native placeholder wrappers and decorated glyphs contribute one guide per
+stop, so the current slot is not also painted as vacant. Scope
 navigation recognizes these owners, including adjacent entry and empty removal.
 `mathTextFormattingInput` restores placeholders in empty formatting arguments
 on load; the existing `latex-without-placeholders` save/clipboard projection
 retains the formatting braces without exporting the editing slots. Document
 macros overriding these commands bypass this adaptation.
+
+Automatic bracket insertion without selected content uses a native empty body
+instead of a placeholder that enlarges the delimiters. The caret enters that
+body's first insertion stop; bracket and guide dimensions match the state after
+typing and deleting the contents. Insertion around selected content retains the
+native selection wrapper.
+Native insertion's temporary argument selection bypasses gesture normalization
+until the caret is placed, so an empty bracket body cannot expand into a
+selection of its enclosing expression.
 
 Scope corner marks and muted retained highlights are clipped, noninteractive DOM
 overlays outside the source model. Empty matrix cells share compact marker bounds
@@ -2063,7 +2203,16 @@ targets. The footer shows only the environment type, word count
 and contextual controls; nested scope paths are not rendered. These
 changes do not add source tokens or undo entries. Only the innermost slot is
 marked; content selections suppress occupied-slot marks, while selected empty math
-slots retain theirs. Text/prose, math and rectangular table/math cell selections
+slots retain theirs.
+The active math guide measures the caret's actual argument or cell branch,
+including authored font arguments, independently of the font runs and scripted
+expressions offered by selection expansion. Vacant guides are restricted to that
+innermost owner. Empty-branch fallback uses the painted caret stroke rather than
+its zero-size layout span.
+Occupied and vacant guides resolve the same authored slot, skipping anonymous
+style groups while retaining their script arguments. Guide margins scale with
+document zoom; font-driven field resizing schedules new bounds without polling.
+Text/prose, math and rectangular table/math cell selections
 share the primary-color mix at 22%; the cell-selection variable aliases the same
 fill. Selection painting follows the active participant attribute, so inactive
 parent document ranges cannot paint behind a nested editor's current selection.

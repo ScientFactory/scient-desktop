@@ -1,8 +1,19 @@
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
 import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
+import { mathColorSource } from "./mathColorSyntax";
 import { LatexStructuredSelection } from "./latexStructuredSelection";
 import { latexSelectionCommand, runLatexSelectionCommand } from "./latexSelectionSession";
 import { installLatexTextSelectionSession } from "./latexTextSelectionSession";
+import { LatexCitationActions } from "./LatexCitationActions";
+import { useLatexSourceNavigation } from "./useLatexSourceNavigation";
+import type { LatexVisualNavigation } from "./latexSourceNavigation";
+import {
+  captureLatexVisualSelection,
+  type ResolveLatexSourceOwner,
+  type LatexSourceOwner,
+} from "./latexVisualSelection";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { latexVisualNodeSignature } from "./latexVisualDocument";
 import { randomUUID } from "~/lib/utils";
 import { LatexMathMenuItems, LATEX_CASES_TEMPLATE } from "./LatexMathMenuItems";
@@ -101,6 +112,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import type { EditorView } from "@tiptap/pm/view";
 import { LatexInsertMenu, LatexInsertMenuContent, type LatexInsertAction } from "./LatexInsertMenu";
 import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./LatexDocumentSettings";
+import { updateLatexDocumentSettingsSource } from "./latexDocumentSettingsSource";
 import { LatexContextTools } from "./LatexContextTools";
 import { DocumentReaderControls, type ReaderSearch } from "../writing/DocumentReaderControls";
 import { LatexPageThumbnails } from "./LatexPageThumbnails";
@@ -271,7 +283,7 @@ import { LatexLayoutControls } from "./LatexLayoutControls";
 import { LatexCodeControls } from "./LatexCodeControls";
 import { LatexListControls } from "./LatexListControls";
 import { renameLatexLabel } from "./latexLabelAuthoring";
-import { editLatexTable } from "./latexTableAuthoring";
+import { editLatexTable, latexTableRulePresentation } from "./latexTableAuthoring";
 import {
   LatexAuthoringContext,
   LatexDocumentAuthoring,
@@ -338,7 +350,6 @@ import {
   parseLatexVisualMathSource,
   parseStructuredMathEnvironment,
   projectLatexVisualDocument,
-  updateLatexVisualLayoutSource,
   prepareLatexDocumentTitle,
   projectLatexSourceEdit,
   latexVisualBlockSourceEdit,
@@ -372,10 +383,14 @@ const LatexSourceAttributes = Extension.create({
           sourceId: { default: null, rendered: false },
           latexCommand: {
             default: null,
-            renderHTML: (attributes: Record<string, unknown>) =>
-              attributes.latexCommand
-                ? { "data-latex-command": String(attributes.latexCommand) }
-                : {},
+            renderHTML: (attributes: Record<string, unknown>) => {
+              // Live conversions have no parsed command, and changing a heading
+              // level can retain its old one. Render the level saved to LaTeX.
+              const command = LATEX_HEADING_STYLES.find(
+                (style) => style.level === attributes.level,
+              )?.command;
+              return command ? { "data-latex-command": command } : {};
+            },
           },
           unnumbered: {
             default: false,
@@ -456,6 +471,7 @@ const LatexMathEditingContext = createContext<{
   formatChanged: (id: string, state: string) => void;
   deactivate: (id: string) => void;
 } | null>(null);
+const mathSaveRefusal = "Not saved yet. Your input is kept here.";
 
 function mathFieldSource(tex: string, environment: string | null): string {
   const inner = environment?.startsWith("align")
@@ -641,6 +657,10 @@ function LatexMathView({
   const setShortcutHint = useLatexActionNotice();
   const [draft, setDraft] = useState(attributes.tex);
   const [sourceError, setSourceError] = useState<string | null>(null);
+  const documentSaveError = useContext(LatexDraftContext).saveError;
+  const displayedSourceError =
+    sourceError === mathSaveRefusal ? (documentSaveError ?? sourceError) : sourceError;
+  const sourceDraftEdited = useRef(false);
   const commandContext = useContext(LatexCommandContext);
   const completionContext = useRef(commandContext);
   useLayoutEffect(() => {
@@ -691,6 +711,7 @@ function LatexMathView({
     setSourceOpen(false);
     setDraft(attributes.tex);
     setSourceError(null);
+    sourceDraftEdited.current = false;
     setEditing(true);
     if (controls.current) activeMath.activate(controls.current);
     if (focus) requestAnimationFrame(() => mathField.current?.focus());
@@ -948,7 +969,12 @@ function LatexMathView({
 
   const publishSource = (value: string) => {
     if (!editor.isEditable) return;
-    const tex = display ? value.trim() : value;
+    sourceDraftEdited.current = true;
+    const tex = mathColorSource(
+      display ? value.trim() : value,
+      commandContext.macros,
+      commandContext.source,
+    );
     const parsed = parseLatexVisualMathSource(
       latexVisualMathSource({ ...attributes, tex }, display),
       display,
@@ -982,11 +1008,7 @@ function LatexMathView({
     updateAttributes({ tex });
     const position = getPos();
     const accepted = position === undefined ? null : editor.state.doc.nodeAt(position);
-    setSourceError(
-      accepted?.attrs.tex === tex
-        ? null
-        : "Not saved yet. Keep only the formula here; change its type using the selector.",
-    );
+    setSourceError(accepted?.attrs.tex === tex ? null : mathSaveRefusal);
   };
 
   const applyCompletion = (completion: MathSourceCompletion) => {
@@ -1279,7 +1301,17 @@ function LatexMathView({
                   setSourceOpen(false);
                   if (!sourceError) mathField.current?.focus();
                 } else {
-                  if (!sourceError) setDraft(attributes.tex);
+                  if (!sourceError || !sourceDraftEdited.current) {
+                    mathField.current?.flush();
+                    // The field can retain input refused by the document guard.
+                    // Show that live formula rather than the last accepted node.
+                    setDraft(
+                      mathEnvironmentBody(
+                        mathField.current?.getSource() ?? attributes.tex,
+                        attributes.environment,
+                      ),
+                    );
+                  }
                   setSourceOpen(true);
                   requestAnimationFrame(() => sourceEditor.current?.focus());
                 }
@@ -1427,7 +1459,7 @@ function LatexMathView({
                 />
                 {sourceError ? (
                   <div className="scient-latex-math-source-error" role="alert">
-                    {sourceError}
+                    {displayedSourceError}
                   </div>
                 ) : null}
               </div>
@@ -1435,7 +1467,7 @@ function LatexMathView({
 
             {sourceError && !sourceOpen ? (
               <div className="scient-latex-math-bar-error" role="status">
-                {sourceError}
+                {displayedSourceError}
               </div>
             ) : null}
           </div>,
@@ -1572,10 +1604,12 @@ function LatexMathView({
               node.attrs.tex ??
               "",
           );
-          setSourceError(null);
-          setDraft(accepted);
+          const saved = accepted.trim() === body.trim();
+          sourceDraftEdited.current = false;
+          setSourceError(saved ? null : mathSaveRefusal);
+          setDraft(saved ? accepted : body);
           return {
-            accepted: accepted.trim() === body.trim(),
+            accepted: saved,
             value: mathFieldSource(accepted, attributes.environment),
           };
         }}
@@ -2165,6 +2199,9 @@ function LatexRawBlockView({ node, editor, getPos }: NodeViewProps) {
           </Button>
         </span>
       </div>
+      <p className="scient-latex-visual-raw-reason">
+        {String(node.attrs.reason ?? "This block needs LaTeX source editing.")}
+      </p>
       {active ? (
         <textarea
           ref={sourceField}
@@ -4061,6 +4098,13 @@ function LatexRichPreviewView({
                           return null;
                         const format = tableFormatting[rowIndex]?.[cellIndex];
                         const columnKind = tableColumnKinds[cellIndex] ?? "natural";
+                        const topRule = latexTableRulePresentation(layout?.topRule);
+                        const bottomRule = latexTableRulePresentation(layout?.bottomRule);
+                        const justified =
+                          !node.attrs.tableCanonical &&
+                          (layout
+                            ? layout.justified
+                            : tablePresentation.columnJustified[cellIndex]);
                         const cellStyle: CSSProperties & {
                           "--scient-latex-table-cell-background"?: string;
                         } = {
@@ -4077,18 +4121,20 @@ function LatexRichPreviewView({
                           ...(layout
                             ? {
                                 borderTop: layout.top
-                                  ? `0.5px solid ${layout.topColor ?? "currentColor"}`
+                                  ? `${topRule.width} solid ${layout.topColor ?? "currentColor"}`
                                   : "0",
                                 borderBottom: layout.bottom
-                                  ? `0.5px solid ${layout.bottomColor ?? "currentColor"}`
+                                  ? `${bottomRule.width} solid ${layout.bottomColor ?? "currentColor"}`
                                   : "0",
-                                borderLeft: layout.left
+                                borderInlineStart: layout.left
                                   ? `0.5px solid ${layout.ruleColor ?? "currentColor"}`
                                   : "0",
-                                borderRight: layout.right
+                                borderInlineEnd: layout.right
                                   ? `0.5px solid ${layout.ruleColor ?? "currentColor"}`
                                   : "0",
                                 verticalAlign: layout.rowSpan > 1 ? "middle" : "top",
+                                paddingTop: layout.top ? (topRule.after ?? "0") : "0",
+                                paddingBottom: layout.bottom ? (bottomRule.before ?? "0") : "0",
                                 "--scient-latex-table-cell-background":
                                   layout.background ?? "transparent",
                               }
@@ -4146,6 +4192,7 @@ function LatexRichPreviewView({
                         );
                         return node.attrs.hasHeader === true && rowIndex === 0 ? (
                           <th
+                            data-paragraph-column={justified || undefined}
                             colSpan={layout?.colSpan}
                             rowSpan={layout?.rowSpan}
                             style={cellStyle}
@@ -4172,6 +4219,7 @@ function LatexRichPreviewView({
                           </th>
                         ) : (
                           <td
+                            data-paragraph-column={justified || undefined}
                             colSpan={layout?.colSpan}
                             rowSpan={layout?.rowSpan}
                             style={cellStyle}
@@ -4353,6 +4401,7 @@ const LatexRawBlock = Node.create({
     return {
       raw: { default: "" },
       label: { default: "Raw LaTeX" },
+      reason: { default: "This block needs LaTeX source editing.", rendered: false },
       sourceId: { default: null, rendered: false },
     };
   },
@@ -4472,7 +4521,17 @@ function fieldSourceId(
 function LatexScientificView(props: NodeViewProps) {
   const { node, editor, selected, getPos, updateAttributes, deleteNode } = props;
   const root = useRef<HTMLDivElement | null>(null);
-  const languageLabels = latexLanguageLabels(useContext(LatexLanguageContext));
+  const inheritedLanguage = useContext(LatexLanguageContext);
+  const languageLabels = latexLanguageLabels(inheritedLanguage);
+  const figurePresentation = useEditorState({
+    editor,
+    selector: ({ editor: current }) => {
+      const at = getPos();
+      return typeof at === "number"
+        ? latexEquationReferencesKey.getState(current.state)?.figures.get(at)
+        : undefined;
+    },
+  });
   const documentEditing = useContext(LatexMathEditingContext);
   const editable = useEditorEditable(editor);
   const environment = String(node.attrs.environment);
@@ -4533,15 +4592,19 @@ function LatexScientificView(props: NodeViewProps) {
     return (
       <NodeViewWrapper
         className="scient-latex-basic-box"
-        style={{
-          background: layout.background
-            ? (latexColorCss(layout.background) ?? undefined)
-            : undefined,
-          borderColor: latexColorCss(layout.color) ?? undefined,
-          borderWidth: layout.borderWidth,
-          padding: layout.padding,
-          width: layout.width ?? "fit-content",
-        }}
+        style={
+          {
+            background: layout.background
+              ? (latexColorCss(layout.background) ?? undefined)
+              : undefined,
+            borderColor: latexColorCss(layout.color) ?? undefined,
+            borderWidth: layout.borderWidth,
+            padding: layout.padding,
+            width: layout.width ?? "fit-content",
+            textAlign: layout.alignment,
+            "--scient-latex-text-align": layout.alignment,
+          } as CSSProperties
+        }
       >
         <NodeViewContent aria-label="Framed text" />
       </NodeViewWrapper>
@@ -4554,14 +4617,103 @@ function LatexScientificView(props: NodeViewProps) {
         className="scient-latex-direction-block"
         dir={node.attrs.layout.direction}
         lang={language === "hebrew" ? "he" : language === "english" ? "en" : undefined}
+        style={
+          {
+            "--scient-latex-text-direction": node.attrs.layout.direction,
+            "--scient-latex-math-text-font":
+              language === "hebrew"
+                ? "var(--scient-latex-hebrew-font)"
+                : language === "english"
+                  ? "var(--scient-latex-english-font)"
+                  : undefined,
+            ...(node.attrs.layout.paragraphDirection === "inherit"
+              ? {}
+              : { "--scient-latex-paragraph-direction": node.attrs.layout.direction }),
+          } as CSSProperties
+        }
       >
-        <NodeViewContent
-          className="scient-latex-direction-body"
-          aria-label={language ? `${language} text` : `${node.attrs.layout.direction} text`}
-        />
+        <LatexLanguageContext value={language || inheritedLanguage}>
+          <NodeViewContent
+            className="scient-latex-direction-body"
+            aria-label={language ? `${language} text` : `${node.attrs.layout.direction} text`}
+          />
+        </LatexLanguageContext>
       </NodeViewWrapper>
     );
   }
+  if (node.attrs.layout?.kind === "alignment")
+    return (
+      <NodeViewWrapper
+        className="scient-latex-alignment-block"
+        data-alignment={node.attrs.layout.alignment}
+        style={
+          {
+            textAlign: node.attrs.layout.alignment,
+            "--scient-latex-text-align": node.attrs.layout.alignment,
+          } as CSSProperties
+        }
+      >
+        <NodeViewContent aria-label="Aligned content" />
+      </NodeViewWrapper>
+    );
+  if (node.attrs.layout?.kind === "framedFigure")
+    return (
+      <NodeViewWrapper
+        className="scient-latex-rich-preview scient-latex-figure-preview scient-latex-figure-layout scient-latex-framed-figure"
+        ref={root}
+      >
+        <figure>
+          <NodeViewContent aria-label="Figure content" />
+          {node.attrs.layout.captioned && (
+            <figcaption className="scient-latex-figure-numbered-caption" contentEditable={false}>
+              {figurePresentation?.number && (
+                <span>
+                  {languageLabels.figure} {figurePresentation.number}:{" "}
+                </span>
+              )}
+              <LatexTextField
+                aria-label="Figure caption"
+                disabled={!editable}
+                rows={1}
+                value={String(node.attrs.caption ?? "")}
+                onValueChange={(caption) => updateAttributes({ caption })}
+              />
+            </figcaption>
+          )}
+        </figure>
+        {node.attrs.layout.captioned && (
+          <LatexObjectToolbar
+            editor={editor}
+            root={root}
+            selected={selected}
+            label="Figure tools"
+            position="Figure"
+            inline
+          >
+            <button
+              type="button"
+              className={dockButtonClass()}
+              disabled={!editable}
+              onClick={() =>
+                root.current
+                  ?.querySelector<HTMLTextAreaElement>('[aria-label="Figure caption"]')
+                  ?.focus()
+              }
+            >
+              Caption
+            </button>
+            {node.attrs.label && (
+              <LatexFooterLabel
+                label="Figure reference label"
+                value={node.attrs.label}
+                disabled={!editable}
+                onCommit={(label) => updateAttributes({ label })}
+              />
+            )}
+          </LatexObjectToolbar>
+        )}
+      </NodeViewWrapper>
+    );
   if (node.attrs.layout) {
     const layout = node.attrs.layout as {
       kind: string;
@@ -4858,6 +5010,8 @@ const LatexScientific = Node.create({
       environment: { default: "theorem" },
       title: { default: "" },
       titleSource: { default: null, rendered: false },
+      caption: { default: null, rendered: false },
+      label: { default: null, rendered: false },
       titleRemoved: { default: false, rendered: false },
       raw: { default: "", rendered: false },
       sourceId: { default: null, rendered: false },
@@ -5143,6 +5297,11 @@ export interface LatexVisualEditorProps {
   readonly onEditingChange: (editing: boolean) => void;
   readonly onOpenSource: () => void;
   readonly onOpenSourceAt?: (offset: number) => void;
+  readonly resolveSourceOwner?: ResolveLatexSourceOwner;
+  readonly onRevealSource?: ((owner: LatexSourceOwner) => void) | undefined;
+  readonly sourceNavigationTarget?: LatexVisualNavigation | null | undefined;
+  readonly citationSource?: (ScopedThreadRef & { cwd: string }) | undefined;
+  readonly onCite?: MarkdownCiteHandler | undefined;
   readonly onOpenFileSource?: (path: string, line?: number) => void;
   readonly referenceFiles?: ReferenceFileCallbacks | undefined;
   readonly sourceError?: string | null;
@@ -5550,6 +5709,40 @@ function LatexVisualEditorReady(
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [navigationTab, setNavigationTab] = useState<"pages" | "outline">("pages");
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const selectionActionOwnerId = useId();
+  const [selectionViewport, setSelectionViewport] = useState<HTMLElement | null>(null);
+  const selectionProps = useRef(props);
+  selectionProps.current = props;
+  const captureSelection = useCallback(
+    (target?: HTMLElement, point?: { left: number; top: number }) => {
+      const view = editorRef.current?.view;
+      const root = workspaceRef.current;
+      const resolveOwner = selectionProps.current.resolveSourceOwner;
+      if (!root || !view || !resolveOwner || pendingFields.current.size > 0) return null;
+      return captureLatexVisualSelection(
+        root,
+        view,
+        projection.current,
+        currentSource.current,
+        resolveOwner,
+        target,
+        point,
+      );
+    },
+    [],
+  );
+  const sourceNavigationFrame = useRef<number | null>(null);
+  const sourceNavigationRequest = useRef(0);
+  useEffect(
+    () => () => {
+      if (sourceNavigationFrame.current !== null)
+        cancelAnimationFrame(sourceNavigationFrame.current);
+    },
+    [],
+  );
+  useLayoutEffect(() => {
+    setSelectionViewport(workspaceRef.current);
+  }, []);
   const readerAction = useRef<(command: string) => boolean>(() => false);
   useEffect(() => {
     const workspace = workspaceRef.current;
@@ -6092,6 +6285,11 @@ function LatexVisualEditorReady(
                 if (!transaction.docChanged || applying.current) return true;
                 if (editBlocked.current) {
                   refusedChanges.current++;
+                  setNotice(
+                    (previous) =>
+                      previous ??
+                      "Editing is paused. Resolve the document's save or recovery status, then retry.",
+                  );
                   return false;
                 }
                 const sourceSteps = transaction.steps.filter(
@@ -6115,6 +6313,11 @@ function LatexVisualEditorReady(
                 // Settle pending typing before validating a structural command.
                 if (!flushTypingRef.current() || !flushSourceEditRef.current()) {
                   refusedChanges.current++;
+                  setNotice(
+                    (previous) =>
+                      previous ??
+                      "Finish the pending text edit before saving this formula. Your input is kept here.",
+                  );
                   return false;
                 }
                 const expected = currentSource.current;
@@ -6639,6 +6842,7 @@ function LatexVisualEditorReady(
   const fieldContext = useMemo(
     () => ({
       reportDraft,
+      saveError: props.sourceError ?? notice,
       commit: (change: () => void | boolean) => {
         if (editBlocked.current) return false;
         const before = refusedChanges.current;
@@ -6649,7 +6853,7 @@ function LatexVisualEditorReady(
         else editor?.commands.undo();
       },
     }),
-    [editor, reportDraft],
+    [editor, reportDraft, props.sourceError, notice],
   );
   const renameLabelRef = useRef<(before: string, after: string, fieldId?: string) => boolean>(
     () => false,
@@ -6839,6 +7043,14 @@ function LatexVisualEditorReady(
     localDraftState.version,
   ]);
 
+  useLatexSourceNavigation({
+    editor,
+    target: props.sourceNavigationTarget,
+    projection,
+    source: currentSource,
+    viewport: visualScroll,
+    onUnavailable: setNotice,
+  });
   // Runs after the effect above, so the editor has adopted the source that the
   // stored work is judged against.
   useEffect(() => {
@@ -7899,11 +8111,14 @@ function LatexVisualEditorReady(
         const settingsSource = ownRoot ? expected : root;
         if (!settingsSource || settingsSource !== original || (!ownRoot && !props.canEditRoot))
           return false;
-        const next = updateLatexVisualLayoutSource(settingsSource, draft);
+        const next = updateLatexDocumentSettingsSource(settingsSource, draft);
         if (next === null) return false;
-        return commitDocumentSource(
-          ownRoot ? next.edit : { source: expected, patches: [], root: next.edit },
-        );
+        const beforeEnd = latexPreambleEnd(settingsSource);
+        const afterEnd = latexPreambleEnd(next);
+        if (settingsSource.slice(beforeEnd) !== next.slice(afterEnd)) return false;
+        const patch = latexOwnedSourcePatch(settingsSource, 0, beforeEnd, next.slice(0, afterEnd));
+        const edit = { source: settingsSource, patches: patch ? [patch] : [] };
+        return commitDocumentSource(ownRoot ? edit : { source: expected, patches: [], root: edit });
       }}
     />
   );
@@ -8036,9 +8251,17 @@ function LatexVisualEditorReady(
       '"David", "Noto Serif Hebrew", serif',
     ),
     "--scient-latex-english-font": latexLanguageFont(
-      documentLanguage.mainFont,
+      documentLanguage.englishFont,
       '"KaTeX_Main", "Cambria", serif',
     ),
+    "--scient-latex-text-direction": documentLanguage.resolved ? documentLanguage.direction : "ltr",
+    "--scient-latex-paragraph-direction": documentLanguage.resolved
+      ? documentLanguage.direction
+      : "ltr",
+    "--scient-latex-math-text-font":
+      documentLanguage.main === "hebrew"
+        ? "var(--scient-latex-hebrew-font)"
+        : "var(--scient-latex-english-font)",
     "--scient-latex-text-align": layout.textAlign,
     "--scient-latex-column-gap": texPixels(layout.columnGapPt),
     "--scient-latex-column-rule": texPixels(layout.columnRulePt),
@@ -8080,11 +8303,14 @@ function LatexVisualEditorReady(
   useLayoutEffect(() => {
     const scroll = visualScroll.current;
     if (!scroll) return;
+    // Fit before the first paint rather than waiting for ResizeObserver delivery.
+    const scale = measureFitZoom();
+    if (scale !== null) setFitZoom(scale);
     return observeLatexWidth(scroll, (width) => {
       const scale = pdfFitWidthScale(width, paperWidth);
       if (scale !== null && Math.round(scale * 100) > 0) setFitZoom(scale);
     });
-  }, [paperWidth]);
+  }, [measureFitZoom, paperWidth]);
 
   const zoom = zoomMode === "fit" ? fitZoom : zoomMode;
   const changeZoom = useLatexPinchZoom(visualScroll, zoom, setZoomMode);
@@ -8880,7 +9106,72 @@ function LatexVisualEditorReady(
                       <LatexOpeningPresentation
                         opening={opening}
                         ref={workspaceRef}
+                        id={selectionActionOwnerId}
+                        data-latex-selection-actions-owner=""
                         className="scient-latex-visual-workspace"
+                        onDoubleClickCapture={(event) => {
+                          if (!props.onRevealSource) return;
+                          const target = event.nativeEvent
+                            .composedPath()
+                            .find(
+                              (candidate): candidate is HTMLElement =>
+                                candidate instanceof HTMLElement &&
+                                editorRef.current?.view.dom.contains(candidate) === true,
+                            );
+                          if (
+                            !(target instanceof HTMLElement) ||
+                            target.closest(
+                              "button,[role=button],.scient-latex-writing-toolbar,.scient-latex-reader-footer",
+                            )
+                          )
+                            return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (sourceNavigationFrame.current !== null)
+                            cancelAnimationFrame(sourceNavigationFrame.current);
+                          const request = ++sourceNavigationRequest.current;
+                          const point = { left: event.clientX, top: event.clientY };
+                          const math = activeMath.get();
+                          if (
+                            !flushTypingRef.current() ||
+                            (math && !math.flush()) ||
+                            !flushSourceEditRef.current()
+                          )
+                            return;
+                          // Source publication updates project ownership in React.
+                          // Read it after that commit, retaining the clicked block.
+                          sourceNavigationFrame.current = requestAnimationFrame(() => {
+                            sourceNavigationFrame.current = null;
+                            if (sourceNavigationRequest.current !== request) return;
+                            const currentEditor = editorRef.current;
+                            if (!currentEditor || currentEditor.isDestroyed) return;
+                            const view = currentEditor.view;
+                            const position = target.isConnected
+                              ? null
+                              : view?.posAtCoords(point)?.pos;
+                            const resolved =
+                              position != null && view ? view.state.doc.resolve(position) : null;
+                            const replacement =
+                              resolved && view
+                                ? view.nodeDOM(
+                                    resolved.depth > 0 ? resolved.before(1) : resolved.pos,
+                                  )
+                                : null;
+                            const clicked = target.isConnected
+                              ? target
+                              : replacement instanceof HTMLElement
+                                ? replacement
+                                : null;
+                            const snapshot = clicked ? captureSelection(clicked, point) : null;
+                            const reveal = selectionProps.current.onRevealSource;
+                            if (!reveal) return;
+                            if (snapshot) reveal(snapshot.sourceOwner);
+                            else
+                              setNotice(
+                                "This content could not be mapped to the current source. Try again after finishing the edit.",
+                              );
+                          });
+                        }}
                         onKeyDown={(event) => {
                           if (
                             find.open &&
@@ -8898,6 +9189,15 @@ function LatexVisualEditorReady(
                             props.onEditingChange(false);
                         }}
                       >
+                        {props.citationSource && props.onCite ? (
+                          <LatexCitationActions
+                            viewport={selectionViewport}
+                            ownerId={selectionActionOwnerId}
+                            source={props.citationSource}
+                            capture={captureSelection}
+                            onCite={props.onCite}
+                          />
+                        ) : null}
                         <WritingShortcutsDialog
                           open={shortcutsOpen}
                           onOpenChange={setShortcutsOpen}
@@ -9248,6 +9548,17 @@ function LatexVisualEditorReady(
                             ) : null}
                           </div>
                         )}
+                        {documentLanguage.issues.length > 0 && (
+                          <div className="scient-latex-visual-notice" role="status">
+                            <span>
+                              {documentLanguage.issues.join(" ")} Compare with PDF for the resolved
+                              language and direction.
+                            </span>
+                            <Button size="xs" variant="ghost" onClick={props.onOpenSource}>
+                              Open Source
+                            </Button>
+                          </div>
+                        )}
                         <div
                           className="scient-latex-visual-body"
                           data-navigation={navigationOpen || undefined}
@@ -9354,13 +9665,17 @@ function LatexVisualEditorReady(
                               >
                                 <div
                                   className="scient-latex-visual-paper"
-                                  dir={documentLanguage.direction}
+                                  dir={
+                                    documentLanguage.resolved ? documentLanguage.direction : "auto"
+                                  }
                                   lang={
-                                    documentLanguage.main === "hebrew"
-                                      ? "he"
-                                      : documentLanguage.main === "english"
-                                        ? "en"
-                                        : undefined
+                                    !documentLanguage.resolved
+                                      ? undefined
+                                      : documentLanguage.main === "hebrew"
+                                        ? "he"
+                                        : documentLanguage.main === "english"
+                                          ? "en"
+                                          : undefined
                                   }
                                   data-indent-after-heading={layout.indentAfterHeading}
                                   data-document-class={layout.documentClass}

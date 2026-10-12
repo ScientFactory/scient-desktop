@@ -5,7 +5,7 @@ import * as Predicate from "effect/Predicate";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ProviderReplayTranscript } from "@t3tools/contracts";
-import { decodeProviderReplayNdjson } from "../testkit/ReplayTranscriptNdjson.ts";
+import { decodeProviderReplayNdjson } from "@t3tools/provider-testing/replayTranscript";
 import { assert, describe, it } from "@effect/vitest";
 import type { ProviderReplayEntry } from "@t3tools/contracts";
 import {
@@ -17,6 +17,8 @@ import {
   registerPiReplayFixtureEvidence,
   piReplayExpectedSessionFile,
   assertPiReplayConfirmedLaunches,
+  piReplayFixtureProvenance,
+  restorePiOriginalSkillDiscoveryRecording,
 } from "./PiReplaySessionBinding.testkit.ts";
 
 const root = "/owned/pi/sessions";
@@ -165,13 +167,48 @@ describe("Pi recorded session identity binding", () => {
   });
 });
 
-const originalSimpleBytes = NodeFS.readFileSync(
+const simpleFixtureBytes = NodeFS.readFileSync(
   new URL("../testkit/fixtures/simple/pi_transcript.ndjson", import.meta.url),
   "utf8",
 );
-const originalSimple = () => decodeProviderReplayNdjson(originalSimpleBytes);
+const simpleFixture = () => decodeProviderReplayNdjson(simpleFixtureBytes);
 const decodeRecordedArgs = Schema.decodeUnknownSync(Schema.Array(Schema.String));
 const decodeTranscript = Schema.decodeUnknownSync(ProviderReplayTranscript);
+
+describe("Pi replay recording provenance", () => {
+  it.each(Object.entries(piReplayFixtureProvenance))(
+    "restores only upstream's lazy skill-discovery edit for %s",
+    (scenario, provenance) => {
+      const liveBytes = NodeFS.readFileSync(
+        new URL(`../testkit/fixtures/${scenario}/pi_transcript.ndjson`, import.meta.url),
+        "utf8",
+      );
+      assert.equal(
+        NodeCrypto.createHash("sha256").update(liveBytes).digest("hex"),
+        provenance.liveDigest,
+      );
+      const originalBytes = restorePiOriginalSkillDiscoveryRecording({ scenario, liveBytes });
+      assert.equal(
+        NodeCrypto.createHash("sha256").update(originalBytes).digest("hex"),
+        provenance.originalDigest,
+      );
+    },
+  );
+
+  it("rejects unrelated fixture edits instead of folding them into the discovery delta", () => {
+    const liveBytes = NodeFS.readFileSync(
+      new URL("../testkit/fixtures/simple/pi_transcript.ndjson", import.meta.url),
+      "utf8",
+    );
+    const changedBytes = liveBytes.replace('"scenario":"simple"', '"scenario":"other"');
+    assert.notEqual(changedBytes, liveBytes);
+    assert.throws(
+      () =>
+        restorePiOriginalSkillDiscoveryRecording({ scenario: "simple", liveBytes: changedBytes }),
+      /live fixture bytes differ from the reviewed recording/,
+    );
+  });
+});
 
 describe("Pi simple recorded settle-tail reconciliation", () => {
   it.effect(
@@ -179,22 +216,30 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
     () =>
       Effect.gen(function* () {
         assert.equal(
-          NodeCrypto.createHash("sha256").update(originalSimpleBytes).digest("hex"),
-          "e22ab72047abe327745e481bf6290fe381f6bd990f51e47228869fb50bb0b8c0",
+          NodeCrypto.createHash("sha256").update(simpleFixtureBytes).digest("hex"),
+          piReplayFixtureProvenance.simple.liveDigest,
         );
-        const recorded = yield* originalSimple();
+        const originalBytes = restorePiOriginalSkillDiscoveryRecording({
+          scenario: "simple",
+          liveBytes: simpleFixtureBytes,
+        });
+        assert.equal(
+          NodeCrypto.createHash("sha256").update(originalBytes).digest("hex"),
+          piReplayFixtureProvenance.simple.originalDigest,
+        );
+        const recorded = yield* simpleFixture();
         const before = structuredClone(recorded);
         const result = reconcilePiSimpleSettleTail(recorded);
-        assert.equal(recorded.entries.length, 49);
-        assert.equal(result.length, 51);
-        assert.deepEqual(result.slice(0, 45), recorded.entries.slice(0, 45));
-        assert.deepEqual(result.slice(45, 49), [
-          recorded.entries[47],
-          recorded.entries[48],
+        assert.equal(recorded.entries.length, 47);
+        assert.equal(result.length, 49);
+        assert.deepEqual(result.slice(0, 43), recorded.entries.slice(0, 43));
+        assert.deepEqual(result.slice(43, 47), [
           recorded.entries[45],
           recorded.entries[46],
+          recorded.entries[43],
+          recorded.entries[44],
         ]);
-        const state = recorded.entries[44]!;
+        const state = recorded.entries[42]!;
         assert.equal(state.type, "emit_inbound");
         if (
           state.type !== "emit_inbound" ||
@@ -202,12 +247,12 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
           !Predicate.isObject(state.frame.data)
         )
           throw new Error("Expected recorded state");
-        assert.deepEqual(result[49], {
+        assert.deepEqual(result[47], {
           type: "expect_outbound",
           label: "synthetic:settle-confirmation:get_state",
           frame: { type: "get_state", id: "t3-900003" },
         });
-        assert.deepEqual(result[50], {
+        assert.deepEqual(result[48], {
           ...state,
           label: "synthetic:settle-confirmation:response:get_state",
           frame: { ...state.frame, id: "t3-900003" },
@@ -227,7 +272,7 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
           cwd: "/workspace",
           args: [...recordedArgs.slice(0, -1), "/owned/extension.ts", "--session", actualFile],
         });
-        const confirmation = bound.entries[50]!;
+        const confirmation = bound.entries[48]!;
         if (
           confirmation.type !== "emit_inbound" ||
           !Predicate.isObject(confirmation.frame) ||
@@ -264,11 +309,11 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
     "activity",
   ])("rejects changed %s truth rather than inventing confirmation", (condition) =>
     Effect.gen(function* () {
-      const parsed = yield* originalSimple();
+      const parsed = yield* simpleFixture();
       const entries = parsed.entries.map((entry) => ({ ...entry }));
-      const state = entries[44]!;
-      const stats = entries[48]!;
-      const tree = entries[46]!;
+      const state = entries[42]!;
+      const stats = entries[46]!;
+      const tree = entries[44]!;
       if (
         state.type !== "emit_inbound" ||
         !Predicate.isObject(state.frame) ||
@@ -305,19 +350,19 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
           changedState.sessionFile = "/foreign/session.jsonl";
           break;
         case "stats-session":
-          entries[48] = {
+          entries[46] = {
             ...stats,
             frame: { ...stats.frame, data: { ...stats.frame.data, sessionId: "foreign" } },
           };
           break;
         case "tree-leaf":
-          entries[46] = {
+          entries[44] = {
             ...tree,
             frame: { ...tree.frame, data: { ...tree.frame.data, leafId: "foreign" } },
           };
           break;
         case "process":
-          entries[44] = { ...state, label: "response:get_state@p2" };
+          entries[42] = { ...state, label: "response:get_state@p2" };
           break;
         case "collision":
           entries[1] = {
@@ -327,7 +372,7 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
           };
           break;
         case "activity":
-          entries.splice(45, 0, {
+          entries.splice(43, 0, {
             type: "emit_inbound",
             label: "agent_start",
             frame: { type: "agent_start" },
@@ -339,7 +384,7 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
           condition,
         )
       )
-        entries[44] = { ...state, frame: { ...state.frame, data: changedState } };
+        entries[42] = { ...state, frame: { ...state.frame, data: changedState } };
       assert.throws(() => reconcilePiSimpleSettleTail({ ...parsed, entries }), /pinned recording/);
     }),
   );
@@ -347,10 +392,10 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
     "rejects truncation, reapplication and any unpinned change but leaves other scenarios untouched",
     () =>
       Effect.gen(function* () {
-        const original = yield* originalSimple();
+        const original = yield* simpleFixture();
         assert.throws(
           () =>
-            reconcilePiSimpleSettleTail({ ...original, entries: original.entries.slice(0, 48) }),
+            reconcilePiSimpleSettleTail({ ...original, entries: original.entries.slice(0, 46) }),
           /pinned recording/,
         );
         const prepared = reconcilePiSimpleSettleTail(original);
@@ -361,7 +406,7 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
         const changed = decodeTranscript({
           ...original,
           entries: original.entries.map((entry, index) =>
-            index === 20 && entry.type === "emit_inbound" && Predicate.isObject(entry.frame)
+            index === 18 && entry.type === "emit_inbound" && Predicate.isObject(entry.frame)
               ? { ...entry, frame: { ...entry.frame, data: { disposition: "rejected" } } }
               : entry,
           ),
@@ -375,18 +420,9 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
   );
 });
 
-const originalSchedulePins = {
-  multi_turn: "71b8237c9be726330faa7a9d8e7ae1888966bbe8f16ffd0096593459b3afb1a7",
-  pi_compaction: "26226612d6558dbb6a3bcc5ae696859a5106e1e2b3ab1b52a2138f2dae043a67",
-  provider_thread_resume: "9b54ec08420f59e0fa94786f91baebd7e0ae045343e7f568324163fb12fdcf38",
-  message_steering: "57eed804122a202e5804019400e576fdf337221f23c9b7231b0e8b19b2cf20ab",
-  thread_rollback: "bd1ddccb72e23676b8c22fda18e9b456457ff18df82354b829b113c4b87edac5",
-  thread_rollback_after_stop: "e66dc46f638aa02af9d14817ece8cf4c8cd245613695ef596237b75a938f8f25",
-} as const;
-
 describe("Pi pinned native read schedules", () => {
   it.effect.each(
-    Object.entries(originalSchedulePins).flatMap(([scenario, digest]) => {
+    Object.entries(piReplayFixtureProvenance).flatMap(([scenario, provenance]) => {
       const bytes = () =>
         NodeFS.readFileSync(
           new URL(`../testkit/fixtures/${scenario}/pi_transcript.ndjson`, import.meta.url),
@@ -398,7 +434,18 @@ describe("Pi pinned native read schedules", () => {
           run: () =>
             Effect.gen(function* () {
               const raw = bytes();
-              assert.equal(NodeCrypto.createHash("sha256").update(raw).digest("hex"), digest);
+              assert.equal(
+                NodeCrypto.createHash("sha256").update(raw).digest("hex"),
+                provenance.liveDigest,
+              );
+              const originalBytes = restorePiOriginalSkillDiscoveryRecording({
+                scenario,
+                liveBytes: raw,
+              });
+              assert.equal(
+                NodeCrypto.createHash("sha256").update(originalBytes).digest("hex"),
+                provenance.originalDigest,
+              );
               const recorded = yield* decodeProviderReplayNdjson(raw);
               const before = structuredClone(recorded);
               const prepared = reconcilePiRecordedSchedules(recorded);
@@ -434,11 +481,13 @@ describe("Pi pinned native read schedules", () => {
                 new Map(
                   Object.entries({
                     multi_turn: 2,
+                    simple: 1,
                     pi_compaction: 8,
                     provider_thread_resume: 2,
                     message_steering: 1,
                     thread_rollback: 3,
                     thread_rollback_after_stop: 3,
+                    turn_interrupt_mid_tool: 0,
                   }),
                 ).get(scenario),
               );
@@ -541,7 +590,7 @@ describe("Pi pinned native read schedules", () => {
               assert.equal(streaming.length, scenario === "message_steering" ? 1 : 0);
               if (scenario === "message_steering") {
                 const entry = streaming[0]!;
-                const selected = recorded.entries[15]!;
+                const selected = recorded.entries[13]!;
                 if (
                   entry.type !== "emit_inbound" ||
                   !Predicate.isObject(entry.frame) ||
@@ -557,7 +606,7 @@ describe("Pi pinned native read schedules", () => {
                 assert.equal(data.sessionId, selected.frame.data.sessionId);
                 assert.deepEqual(data.model, selected.frame.data.model);
                 assert.equal(data.thinkingLevel, selected.frame.data.thinkingLevel);
-                assert.strictEqual(prepared[prepared.indexOf(entry) + 1], recorded.entries[27]);
+                assert.strictEqual(prepared[prepared.indexOf(entry) + 1], recorded.entries[25]);
               }
               assert.deepEqual(recorded, before);
               assert.equal(bytes(), raw);
@@ -584,7 +633,7 @@ describe("Pi pinned native read schedules", () => {
               state.frame.data.sessionId = "foreign";
               const reordered = [...recorded.entries];
               [reordered[1], reordered[2]] = [reordered[2]!, reordered[1]!];
-              for (const entries of [
+              const unpinnedSchedules: Array<ReadonlyArray<ProviderReplayEntry>> = [
                 changedIdentity,
                 reordered,
                 recorded.entries.slice(0, -1),
@@ -596,8 +645,10 @@ describe("Pi pinned native read schedules", () => {
                     frame: { type: "agent_start" },
                   } satisfies ProviderReplayEntry,
                 ],
-                reconcilePiRecordedSchedules(recorded),
-              ])
+              ];
+              if (scenario !== "turn_interrupt_mid_tool")
+                unpinnedSchedules.push(reconcilePiRecordedSchedules(recorded));
+              for (const entries of unpinnedSchedules)
                 assert.throws(
                   () => reconcilePiRecordedSchedules({ ...recorded, entries }),
                   /pinned recording/,

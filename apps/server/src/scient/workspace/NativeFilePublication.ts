@@ -1,10 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Host-owned namespace adapter. Policy, records and recovery stay in the mutation service. */
-import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeSEA from "node:sea";
+import * as NodeSea from "node:sea";
 import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 
@@ -103,14 +103,14 @@ export class NativeFilePublicationError extends Error {
 export async function resolveNativeFilePublicationHelperPath(
   configuredPath?: string,
 ): Promise<string | undefined> {
-  const platform = HostProcessPlatform.defaultValue();
+  const platform = HostProcess.Platform.defaultValue();
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
   if (configuredPath !== undefined && !NodePath.isAbsolute(configuredPath))
     throw new NativeFilePublicationError("Configured native helper path must be absolute.", null);
   const candidates: string[] = [];
   if (configuredPath !== undefined) candidates.push(configuredPath);
   else {
-    const moduleDirectory = NodeSEA.isSea()
+    const moduleDirectory = NodeSea.isSea()
       ? NodePath.dirname(process.execPath)
       : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
     candidates.push(
@@ -119,7 +119,7 @@ export async function resolveNativeFilePublicationHelperPath(
       NodePath.resolve(
         moduleDirectory,
         "../../../../../native/file-exchange",
-        `${platform}-${HostProcessArchitecture.defaultValue()}`,
+        `${platform}-${HostProcess.Architecture.defaultValue()}`,
         binary,
       ),
     );
@@ -227,7 +227,7 @@ function validatePaths(
   if (!NodePath.isAbsolute(paths.rootPath) || !NodePath.isAbsolute(paths.recordPath))
     throw new NativeFilePublicationError("Native roots must be canonical absolute paths.", null);
   const components = paths.parentRelativePath.split(
-    HostProcessPlatform.defaultValue() === "win32" ? /[\\/]/u : "/",
+    HostProcess.Platform.defaultValue() === "win32" ? /[\\/]/u : "/",
   );
   if (NodePath.isAbsolute(paths.parentRelativePath) || components.some((part) => part === ".."))
     throw new NativeFilePublicationError(
@@ -327,7 +327,7 @@ export interface NativeFileDirectoryRequest {
 
 function directoryArguments({ binding, operation, name }: NativeFileDirectoryRequest) {
   validatePaths({ ...binding, recordPath: binding.rootPath });
-  const separators = HostProcessPlatform.defaultValue() === "win32" ? /[\\/:\0]/u : /[/\0]/u;
+  const separators = HostProcess.Platform.defaultValue() === "win32" ? /[\\/:\0]/u : /[/\0]/u;
   if (!name || name === "." || name === ".." || separators.test(name))
     throw new NativeFilePublicationError("Native directory names must be single components.", null);
   return [
@@ -409,7 +409,7 @@ export function nativeFilePublicationArguments(
   const { binding, operation, sourceName, destinationName } = request;
   validatePaths(binding);
   for (const name of [sourceName, destinationName]) {
-    const separators = HostProcessPlatform.defaultValue() === "win32" ? /[\\/:\0]/u : /[/\0]/u;
+    const separators = HostProcess.Platform.defaultValue() === "win32" ? /[\\/:\0]/u : /[/\0]/u;
     if (!name || name === "." || name === ".." || separators.test(name))
       throw new NativeFilePublicationError("Native entry names must be single components.", null);
   }
