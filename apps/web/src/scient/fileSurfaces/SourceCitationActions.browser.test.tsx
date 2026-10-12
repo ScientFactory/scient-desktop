@@ -47,7 +47,9 @@ it("activates a read-only shadow-DOM quote after focus moves and the native rang
         onPostRender={() => {}}
       />,
     );
-    await expect.poll(() => sourceRow(host, 1)?.textContent).toContain("alpha");
+    // The initial plain-text row is replaced when highlighting finishes.
+    // Start the selection gesture on its rendered token, as a user would.
+    await userEvent.click(page.getByText("alpha", { exact: true }));
     const row = sourceRow(host, 1)!;
     const range = document.createRange();
     const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
