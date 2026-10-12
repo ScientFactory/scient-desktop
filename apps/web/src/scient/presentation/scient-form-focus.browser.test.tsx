@@ -72,7 +72,8 @@ it.each(["light", "dark"])("keeps one form focus border in %s mode", async (mode
     let validBorder = "";
     for (const invalid of [false, true]) {
       field.blur();
-      field.setAttribute("aria-invalid", String(invalid));
+      if (invalid) field.setAttribute("aria-invalid", "true");
+      else field.removeAttribute("aria-invalid");
       const restingBorder = getComputedStyle(surface).borderColor;
       field.focus();
       expect(field.matches(":focus-visible")).toBe(true);
