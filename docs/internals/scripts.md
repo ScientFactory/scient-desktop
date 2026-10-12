@@ -92,8 +92,8 @@ SCIENT_PI_TEST_BINARY=/absolute/path/to/pi pnpm alignment:checks --all --native 
 `--base` includes committed, staged, working changes and non-ignored untracked paths
 relative to that commit. Renames include both paths. `--path` is repeatable and describes
 repository-relative consumer impact; it need not be an existing file. Choose exactly one
-selection mode. Unknown paths and shared contracts, client runtime, dependencies or test
-setup select all six boundaries. Maintainer prose under `docs/internals/` and
+selection mode. Unknown paths and shared contracts, client runtime, execution/provider
+cores, mobile surfaces, dependencies or test setup select all six boundaries. Maintainer prose under `docs/internals/` and
 `docs/operations/`, and read-only `.repos/` references, are explicit exclusions; runtime
 instructions such as `AGENTS.md` are not. Review all exclusions for the actual range.
 
@@ -111,6 +111,8 @@ refuse execution (exit 2) instead of silently producing an empty pass. Printed p
 still be reviewed before conflicts are resolved. Commands run serially with the existing
 package configurations and stop at the first failure. Execution is synchronous and does
 not cache, resume, install dependencies, coordinate other lanes or launch an app.
+Shared model curation and project/settings reducers run before server integration checks.
+Affected compilation and static checks remain separate required composition checks.
 For older target revisions, review the actual assertion bodies too: an existing suite
 may predate a deciding assertion in this map. Run a reviewed external witness for that gap.
 

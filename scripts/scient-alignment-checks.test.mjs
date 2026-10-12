@@ -17,11 +17,7 @@ afterEach(() => {
 });
 
 test("provider composition checks untouched guidance, native lifetime and instance consumers", () => {
-  NodeAssert.deepEqual(ids(["apps/server/src/provider/PiDriverComposition.ts"]), [
-    "provider",
-    "stop",
-    "settings",
-  ]);
+  NodeAssert.deepEqual(ids(["apps/server/src/provider/PiDriverComposition.ts"]), all);
   const provider = selectBoundaries(["packages/provider-pi/src/server/adapter.ts"]).boundaries.find(
     (row) => row.id === "provider",
   );
@@ -39,6 +35,16 @@ test("shared contracts and unknown consumers conservatively select all boundarie
   NodeAssert.deepEqual(ids(["packages/contracts/src/orchestrationV2.ts"]), all);
   NodeAssert.deepEqual(ids(["apps/server/src/a-new-consumer.ts"]), all);
   NodeAssert.deepEqual(selectBoundaries(["unmapped.ts"]).unknown, ["unmapped.ts"]);
+  const settings = selectBoundaries(["packages/shared/src/scientModel.ts"]).boundaries.find(
+    (row) => row.id === "settings",
+  );
+  NodeAssert.ok(settings.checks.shared.includes("src/modelVisibility.test.ts"));
+  NodeAssert.ok(settings.checks.shared.includes("src/projectSettings.test.ts"));
+  NodeAssert.deepEqual(
+    ids(["apps/mobile/src/features/settings/SettingsModelsRouteScreen.tsx"]),
+    all,
+  );
+  NodeAssert.deepEqual(ids(["apps/server/src/orchestration-v2/EventSink.ts"]), all);
 });
 
 test("chat changes select production Chromium interaction, not just policy units", () => {
@@ -67,16 +73,13 @@ test("adapter, session and ChatView changes include their untouched authority co
     NodeAssert.ok(selected.includes("settings"));
   }
   NodeAssert.deepEqual(ids(["apps/web/src/components/ChatView.tsx"]), ["stop", "queue", "reader"]);
+  NodeAssert.ok(ids(["apps/web/src/components/chat/ModelPickerContent.tsx"]).includes("settings"));
 });
 
 test("maintainer prose and reference repositories are explicit exclusions, runtime guidance is not", () => {
   NodeAssert.deepEqual(ids(["docs/internals/overview.md", ".repos/example/a.ts"]), []);
   NodeAssert.deepEqual(ids(["AGENTS.md"]), all);
-  NodeAssert.deepEqual(ids(["apps/server/src/provider/instructions.md"]), [
-    "provider",
-    "stop",
-    "settings",
-  ]);
+  NodeAssert.deepEqual(ids(["apps/server/src/provider/instructions.md"]), all);
 });
 
 function fixture() {

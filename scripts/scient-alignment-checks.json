@@ -14,7 +14,11 @@
     "apps/server/src/testUtils/",
     "packages/shared/src/testing/",
     "AGENTS.md",
-    "scripts/scient-alignment-checks"
+    "scripts/scient-alignment-checks",
+    "apps/server/src/orchestration-v2/",
+    "apps/mobile/src/",
+    "apps/server/src/provider/",
+    "packages/provider-"
   ],
   "excludedPrefixes": [".repos/", "docs/internals/", "docs/operations/"],
   "groups": {
@@ -22,6 +26,10 @@
       "cwd": "apps/server",
       "args": ["exec", "vp", "test", "run"],
       "requiredEnv": "SCIENT_PI_TEST_BINARY"
+    },
+    "shared": {
+      "cwd": "packages/shared",
+      "args": ["exec", "vp", "test", "run", "--config", "../../vite.config.ts", "--dir", "."]
     },
     "server": {
       "cwd": "apps/server",
@@ -162,16 +170,20 @@
         "apps/web/src/scient/providerConnection/",
         "apps/server/src/orchestration-v2/ProviderSessionManager",
         "apps/server/src/orchestration-v2/Orchestrator",
-        "apps/server/src/orchestration-v2/ProviderTurnStartService"
+        "apps/server/src/orchestration-v2/ProviderTurnStartService",
+        "apps/web/src/components/chat/ModelPicker",
+        "apps/web/src/components/chat/ComposerProvider"
       ],
       "consumers": [
         "ServerSettings schema/persistence -> ProviderInstanceRegistry reconciliation -> modelSelection.instanceId -> ProviderSessionManager exact session/MCP reuse",
-        "Selected environment useSettings merge/write -> ProviderSettingsPanel scoped mutation; project settings upgrade"
+        "Selected environment useSettings merge/write -> ProviderSettingsPanel scoped mutation; project settings upgrade",
+        "Shared resolveProviderModelPreferences, resolveProjectSettings and applyServerSettingsPatch -> native model curation and project/environment precedence across clients"
       ],
       "decidingAssertions": [
         "Server settings retain malformed/legacy configuration handling; registry projects assigned models by instance and reconciles exact scope.",
         "useSettings asserts server precedence over legacy client settlement values and selected-environment provider instances; real sync hook checks primary/remote exact writes, cold/revoked grants and partial saves.",
-        "ProviderSettingsPanel.environment asserts selected environment/exact instance and atomic upsert. ManagerLifetime rejects reuse in another workspace/instance while preserving original owner/credential."
+        "ProviderSettingsPanel.environment asserts selected environment/exact instance and atomic upsert. ManagerLifetime rejects reuse in another workspace/instance while preserving original owner/credential.",
+        "Shared modelVisibility preserves supplied saved visibility/order, including authoritative empty visibility, account-group ordering and curated defaults without inventing catalog entries. Project/settings reducers distinguish inherited/overridden keys, pre-fold aggregate authority, explicit null values and enabled provider-instance eligibility."
       ],
       "checks": {
         "server": [
@@ -187,6 +199,11 @@
           "src/providerInstances.test.ts",
           "src/modelSelection.test.ts",
           "src/components/settings/ProviderSettingsPanel.environment.test.tsx"
+        ],
+        "shared": [
+          "src/modelVisibility.test.ts",
+          "src/projectSettings.test.ts",
+          "src/serverSettings.test.ts"
         ]
       },
       "limits": [
