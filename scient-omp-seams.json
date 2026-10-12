@@ -38,7 +38,8 @@
     "packages/scient-provider-runtime/src/ompManifest.ts",
     "packages/shared/src/scientModel.ts",
     "apps/server/src/scient/providerLifecycle/CustomModelRpcHandlers.ts",
-    "apps/web/src/components/ScientProviderIcons.tsx"
+    "apps/web/src/components/ScientProviderIcons.tsx",
+    "scripts/scient-alignment-checks.json"
   ],
   "scientMounts": [
     {
