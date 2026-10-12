@@ -234,7 +234,7 @@ it("admits compatible idle-prepared content without a preparation flash", async 
     (opened.editor.view.nodeDOM(position) as HTMLElement).hasAttribute(
       "data-latex-viewport-closed",
     ),
-  ).toBe(true);
+  ).toBe(false);
   const target = jump(opened.editor, 30);
   expect(container!.querySelector("[data-state='preparing']")).toBeNull();
   for (let frame = 0; frame < 5; frame++) {
@@ -287,9 +287,7 @@ it("retains completed idle preparation beyond 512 formulas and paints an earlier
       [...target().querySelectorAll(".scient-latex-math-preview")].every(mathReadingPreviewReady),
     )
     .toBe(true);
-  expect(audit.completions.slice(before).some((entry) => entry.source.includes("x_{30}"))).toBe(
-    true,
-  );
+  expect(audit.completions).toHaveLength(before);
   expect(audit.completions.slice(before).every((entry) => entry.cached)).toBe(true);
   expect(getComputedStyle(target(), "::after").display).toBe("none");
   await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();

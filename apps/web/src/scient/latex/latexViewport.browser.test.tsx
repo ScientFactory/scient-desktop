@@ -214,9 +214,8 @@ it("preserves untouched offscreen text and the native caret when one paragraph i
   const doc = editor.state.doc;
   const lastPosition = doc.content.size - doc.lastChild!.nodeSize;
   const last = editor.view.nodeDOM(lastPosition) as HTMLElement;
-  expect(last.hasAttribute("data-latex-viewport-closed")).toBe(true);
-  const accessible = last.querySelector(".scient-latex-viewport-accessible")!;
-  const text = accessible.firstChild;
+  await expect.poll(() => last.hasAttribute("data-latex-viewport-closed")).toBe(false);
+  const text = last.firstChild;
   editor.commands.setTextSelection(5);
   editor.view.focus();
   const selection = document.getSelection()!;
@@ -231,7 +230,7 @@ it("preserves untouched offscreen text and the native caret when one paragraph i
   finishLatexViewportMeasurements(editor.view);
   await new Promise((resolve) => setTimeout(resolve, 300));
   expect(editor.view.nodeDOM(lastPosition)).toBe(last);
-  expect(accessible.firstChild).toBe(text);
+  expect(last.firstChild).toBe(text);
   expect(selection.anchorNode).toBe(anchorNode);
   expect(selection.anchorOffset).toBe(anchorOffset);
   expect(editor.state.doc).toBe(doc);
@@ -281,7 +280,7 @@ it("retains prepared geometry while Visual is hidden and resumes with current ty
   expect(current).toBe(source);
 }, 45000);
 
-it("retains the full model, exact source and native caret while mounting only nearby paragraphs", async () => {
+it("retains the full model, exact source and native caret while retaining completed passive paragraphs", async () => {
   const editor = await open(),
     original = editor.state.doc;
   expect(original.childCount).toBe(48);
@@ -291,9 +290,7 @@ it("retains the full model, exact source and native caret while mounting only ne
   });
   expect(formulas).toBe(48);
   await prepared(editor);
-  await expect
-    .poll(() => container.querySelectorAll(".scient-latex-math-preview").length)
-    .toBeLessThan(48);
+  await expect.poll(() => container.querySelectorAll(".scient-latex-math-preview").length).toBe(48);
   expect(
     container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!.clientHeight,
   ).toBeLessThan(800);
@@ -333,9 +330,9 @@ it("retains the full model, exact source and native caret while mounting only ne
   editor.commands.undo();
   await expect.poll(() => current).toBe(source);
   expect(editor.state.doc.eq(original)).toBe(true);
-  expect(editor.view.dom.querySelectorAll("[data-latex-viewport-closed]").length).toBeGreaterThan(
-    20,
-  );
+  await expect
+    .poll(() => editor.view.dom.querySelectorAll("[data-latex-viewport-closed]").length)
+    .toBe(0);
 
   editor.view.dispatch(editor.state.tr.setSelection(new AllSelection(editor.state.doc)));
   const transfer = new DataTransfer();
@@ -402,8 +399,11 @@ ${Array.from({ length: 240 }, (_, index) => `Paragraph ${index + 1}.\n\n` + Stri
   await new Promise((resolve) => setTimeout(resolve, 300));
   expect(container.querySelector("math-field")).toBe(field);
   expect(field.hasFocus()).toBe(true);
+  expect(document.activeElement).toBe(field);
   field.position = field.lastOffset;
+
   await userEvent.keyboard("+z");
+  expect(field.getValue()).toContain("z");
   await expect
     .poll(() => current)
     .toBe(
@@ -422,7 +422,7 @@ it("mounts an offscreen search destination and preserves the page map through ea
   const lastPosition = doc.content.size - doc.lastChild!.nodeSize;
   expect(
     (editor.view.nodeDOM(lastPosition) as HTMLElement).hasAttribute("data-latex-viewport-closed"),
-  ).toBe(true);
+  ).toBe(false);
   editor.view.dispatch(
     configureScientMarkdownSearch(editor.state.tr, {
       query: "UniqueLastDestination",
@@ -450,7 +450,7 @@ it("mounts an offscreen search destination and preserves the page map through ea
   window.dispatchEvent(new Event("afterprint"));
   await expect
     .poll(() => editor.view.dom.querySelectorAll("[data-latex-viewport-closed]").length)
-    .toBeGreaterThan(20);
+    .toBe(0);
   expect(editor.state.doc).toBe(doc);
 }, 45000);
 
@@ -545,7 +545,7 @@ it("renders a distant thumbnail page without changing the reading position or re
     .poll(() =>
       (editor.view.nodeDOM(lastPosition) as HTMLElement).hasAttribute("data-latex-viewport-closed"),
     )
-    .toBe(true);
+    .toBe(false);
 }, 45000);
 
 it("keeps nested statement spacing and page placements identical when equation views close", async () => {
@@ -634,6 +634,36 @@ it("keeps visited prose and formulas warm through a reading pause without moving
   expect(editor.state.doc).toBe(model);
   expect(current).toBe(source);
   expect(container.querySelector<HTMLElement>(".scient-latex-viewport-status")?.hidden).toBe(true);
+}, 45000);
+
+it("retains idle completed reading DOM before its first visit and reuses it on a return", async () => {
+  const editor = await open();
+  await prepared(editor);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const mounted = [
+    ...editor.view.dom.querySelectorAll<HTMLElement>('[data-latex-viewport="mounted"]'),
+  ];
+  await expect
+    .poll(() => editor.view.dom.querySelectorAll("[data-latex-viewport-closed]").length)
+    .toBe(0);
+  expect(mounted.length).toBe(48);
+  const formulas = [...editor.view.dom.querySelectorAll(".scient-latex-math-preview")];
+  const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+  const height = scroll.scrollHeight;
+  const pages = latexPaginationKey.getState(editor.state)!.pages;
+  let measurements = 0;
+  editor.view.dom.addEventListener("scient-latex-viewport-measure", () => measurements++);
+  scroll.scrollTop = height - scroll.clientHeight;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  scroll.scrollTop = 0;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(mounted.every((element) => element.isConnected)).toBe(true);
+  expect(formulas.every((element) => element.isConnected)).toBe(true);
+  expect(Math.abs(scroll.scrollHeight - height)).toBeLessThan(1);
+  expect(latexPaginationKey.getState(editor.state)!.pages).toBe(pages);
+  expect(measurements).toBe(0);
+  expect(current).toBe(source);
+  expect(container.querySelector("math-field")).toBeNull();
 }, 45000);
 
 it("keeps a distant prepared remount stable and does not launch another whole-document snapshot", async () => {

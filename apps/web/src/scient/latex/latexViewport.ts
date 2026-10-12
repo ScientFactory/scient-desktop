@@ -20,6 +20,7 @@ import { mathReadingPreviewReady, hasMathReadingPreview } from "./mathReadingPre
 import { mathReadingPreparationKeys } from "./mathReadingNodeView";
 import { latexReferencePresentation } from "./latexEquationReferences";
 import { createLatexViewportRetention } from "./latexViewportRetention";
+import { latexReadingViewWeight } from "./latexReadingViewWeight";
 import { latexTypographyKey } from "./latexTypography";
 import {
   latexReadingFontKey,
@@ -587,6 +588,12 @@ export function updateLatexOpeningPageReadiness(view: EditorView, ready: boolean
   owners.get(view)?.pageReady(ready);
 }
 
+/** Diagnostic admission accounting; excludes live working/selected views and
+ * is an estimate, not browser heap or physical memory. */
+export function latexViewportReadingRetention(view: EditorView) {
+  return owners.get(view)?.readingRetention();
+}
+
 export function fallbackLatexViewportPage(
   view: EditorView,
   nodes: ReadonlySet<DocumentNode>,
@@ -922,8 +929,10 @@ function createOwner(
   const readiness = new WeakMap<HTMLElement, boolean>();
   const readingWeights = new WeakMap<
     HTMLElement,
-    { node: DocumentNode; context: string; ready: boolean; weight: number }
+    { node: DocumentNode; context: string; weight: number }
   >();
+  const sourceWeights = new WeakMap<DocumentNode, number>();
+  const mountedWeights = new WeakMap<DocumentNode, number>();
   const visited = new WeakSet<DocumentNode>();
   let layoutReady = false;
   let loadingFonts = false;
@@ -1210,26 +1219,34 @@ function createOwner(
       }
     }
     for (const node of viewport.pageDemand) required.add(node);
-    const warm = retention.update(visible, currentNodes, (node) => {
-      const element = byNode.get(node)?.dom;
-      const base = node.nodeSize * 2 + 1024;
-      if (!element) return base;
-      const previews = [...element.querySelectorAll(".scient-latex-math-preview")];
-      const ready = previews.every(mathReadingPreviewReady);
-      const cached = readingWeights.get(element);
-      if (cached?.node === node && cached.context === contextValue && cached.ready === ready)
-        return cached.weight;
-      const weight =
-        base +
-        128 *
-          (element.querySelectorAll("*").length +
-            previews.reduce(
-              (count, preview) => count + (preview.shadowRoot?.querySelectorAll("*").length ?? 0),
-              0,
-            ));
-      readingWeights.set(element, { node, context: contextValue, ready, weight });
-      return weight;
-    });
+    const completed = new Set(
+      liveMembers
+        .filter((member) => {
+          const position = member.position();
+          return position !== undefined && latexViewportPrepared(view, member.node(), position);
+        })
+        .map((member) => member.node()),
+    );
+    const warm = retention.update(
+      reading,
+      currentNodes,
+      (node) => {
+        const element = byNode.get(node)?.dom;
+        const cached = element && readingWeights.get(element);
+        if (cached?.node === node && cached.context === contextValue) return cached.weight;
+        let base = sourceWeights.get(node);
+        if (base === undefined) {
+          base = node.nodeSize * 2 + JSON.stringify(node.attrs).length * 2;
+          sourceWeights.set(node, base);
+        }
+        if (!element) return mountedWeights.get(node) ?? base + 1024;
+        const weight = latexReadingViewWeight(element, base);
+        readingWeights.set(element, { node, context: contextValue, weight });
+        mountedWeights.set(node, weight);
+        return weight;
+      },
+      completed,
+    );
     requiredNodes = required;
     if (viewport.opening && !openingLocation && openingTop > 0) {
       const target = [...(members.get(view) ?? [])].find((member) => reading.has(member.node()));
@@ -1397,6 +1414,37 @@ function createOwner(
         }),
       );
     }
+    if (
+      !urgent.length &&
+      (!pending.length || !idleWarmCapacity) &&
+      performance.now() - lastScroll > 180
+    ) {
+      const cachedClosed: Unit[] = [];
+      let reserved = 0;
+      for (const unit of all) {
+        if (
+          byNode.has(unit.node) ||
+          warm.has(unit.node) ||
+          !latexViewportPrepared(view, unit.node, unit.position)
+        )
+          continue;
+        const known = mountedWeights.get(unit.node);
+        const cost =
+          known ?? unit.node.nodeSize * 2 + JSON.stringify(unit.node.attrs).length * 2 + 1024;
+        if (!retention.canAdmit(cost, reserved)) continue;
+        cachedClosed.push(unit);
+        reserved += cost;
+        // Unknown DOM weight gets one exploratory mount, then an accurate
+        // charge. Known compatible views share a cumulatively reserved batch.
+        if (known === undefined || cachedClosed.length >= 8) break;
+      }
+      if (cachedClosed.length) {
+        // Mount through the existing admission lane. On the next paint its
+        // complete DOM weight is charged before it can remain retained.
+        publish({ preparing: new Set(cachedClosed.map((unit) => unit.node)) });
+        schedule();
+      }
+    }
     const label = opening
       ? openingTop > 0 || openingLocation
         ? "Preparing reading view…"
@@ -1426,6 +1474,10 @@ function createOwner(
     schedule();
   };
   const changed = (event?: Event) => {
+    if (event?.target instanceof Element) {
+      const element = event.target.closest<HTMLElement>("[data-latex-viewport]");
+      if (element) readingWeights.delete(element);
+    }
     if (
       key.getState(view.state)?.opening &&
       event?.target instanceof Element &&
@@ -1549,6 +1601,8 @@ function createOwner(
   view.dom.addEventListener("compositionstart", typing, true);
   view.dom.addEventListener("compositionend", typing, true);
   view.dom.addEventListener("scient-latex-math-preview", changed);
+  view.dom.addEventListener("scient-latex-math-ready", changed);
+  view.dom.addEventListener("scient-latex-math-mounted", changed);
   view.dom.addEventListener("load", changed, true);
   view.dom.ownerDocument.addEventListener("pointerdown", revealAtPointer, true);
   view.dom.ownerDocument.addEventListener("pointermove", revealAtPointer, true);
@@ -1561,6 +1615,7 @@ function createOwner(
   schedule();
   return {
     context,
+    readingRetention: () => retention.statistics(),
     navigate(position?: number) {
       if (key.getState(view.state)?.opening) {
         resetOpeningFrames();
@@ -1690,6 +1745,8 @@ function createOwner(
       view.dom.removeEventListener("compositionstart", typing, true);
       view.dom.removeEventListener("compositionend", typing, true);
       view.dom.removeEventListener("scient-latex-math-preview", changed);
+      view.dom.removeEventListener("scient-latex-math-ready", changed);
+      view.dom.removeEventListener("scient-latex-math-mounted", changed);
       view.dom.removeEventListener("load", changed, true);
       view.dom.ownerDocument.removeEventListener("pointerdown", revealAtPointer, true);
       view.dom.ownerDocument.removeEventListener("pointermove", revealAtPointer, true);

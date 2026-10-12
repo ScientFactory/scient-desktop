@@ -13,7 +13,7 @@ import { LatexVisualEditor } from "./LatexVisualEditor";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import { latexPaginationKey } from "./latexVisualPaginationExtension";
-import { presentLatexViewportPages } from "./latexViewport";
+import { presentLatexViewportPages, latexViewportReadingRetention } from "./latexViewport";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
 import "./scient-latex.css";
 const draftKey = "large-scrolling-regression";
@@ -153,7 +153,7 @@ ${Array.from(
   const model = editor.state.doc;
   const height = scroll.scrollHeight;
   const pages = latexPaginationKey.getState(editor.state)!.pages;
-  let maximumMounted = 0;
+  let maximumRetainedBytes = 0;
   let maximumDrift = 0;
   for (let round = 0; round < 4; round++) {
     for (const fraction of [0.15, 0.8, 0.35, 0]) {
@@ -161,9 +161,9 @@ ${Array.from(
       for (let frame = 0; frame < 8; frame++) {
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         maximumDrift = Math.max(maximumDrift, Math.abs(scroll.scrollHeight - height));
-        maximumMounted = Math.max(
-          maximumMounted,
-          dom.querySelectorAll('[data-latex-viewport="mounted"]').length,
+        maximumRetainedBytes = Math.max(
+          maximumRetainedBytes,
+          latexViewportReadingRetention(editor.view)!.bytes,
         );
       }
     }
@@ -175,8 +175,8 @@ ${Array.from(
     )
     .toBe(true);
   expect(maximumDrift).toBeLessThan(1);
-  expect(maximumMounted).toBeLessThan(200);
-  expect(dom.querySelectorAll('[data-latex-viewport="closed"]').length).toBeGreaterThan(400);
+  expect(maximumRetainedBytes).toBeLessThanOrEqual(64 * 1024 * 1024);
+  expect(dom.querySelectorAll('[data-latex-viewport="mounted"]').length).toBeGreaterThan(200);
   expect(document.querySelector("[data-latex-measurement-snapshot]")).toBeNull();
   expect(latexPaginationKey.getState(editor.state)!.pages).toBe(pages);
   expect(editor.state.doc).toBe(model);
