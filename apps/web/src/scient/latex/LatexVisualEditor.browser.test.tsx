@@ -379,6 +379,58 @@ Body.
     expect(onEdit).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "\\newcommand% name follows\n\\hiddenBegin{\\begin{comment}}",
+    "\\newcommand% star follows\r\n*{\\hiddenBegin}{\\begin{comment}}",
+    "\\DeclareDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
+  ])("types and undoes below unused declaration %s", async (definition) => {
+    const original = `\\documentclass{article}\n${definition}\n\\begin{document}\nActual body.\n\\end{document}`;
+    let current = original;
+    function Harness() {
+      const [source, setSource] = useState(current);
+      const owner = useLatexVisualTestOwner(source);
+      return (
+        <LatexVisualEditor
+          draftKey="browser-statement-test"
+          fileRevision="r1"
+          source={source}
+          sourceSnapshot={owner.snapshot}
+          disabled={false}
+          onEditingChange={() => {}}
+          onOpenSource={() => {}}
+          onEdit={(request) => {
+            const outcome = owner.edit(request, request.edit.source === current);
+            if (!outcome.accepted) return outcome;
+            current = outcome.snapshot.source;
+            setSource(current);
+            return outcome;
+          }}
+        />
+      );
+    }
+    root.render(<Harness />);
+    const editor = () =>
+      (
+        container.querySelector(".scient-latex-visual-document") as
+          | (HTMLElement & { editor?: Editor })
+          | null
+      )?.editor;
+    await expect.poll(editor).toBeTruthy();
+    await readingViewReady();
+    const live = editor()!;
+    expect(live.isEditable).toBe(true);
+    expect(live.state.doc.textContent).toBe("Actual body.");
+    live.commands.setTextSelection(1);
+    live.view.focus();
+    await userEvent.keyboard("New ");
+    const changed = original.replace("Actual body.", "New Actual body.");
+    await expect.poll(() => current).toBe(changed);
+    await undoKeyboard();
+    await expect.poll(() => current).toBe(original);
+    live.commands.redo();
+    await expect.poll(() => current).toBe(changed);
+  });
+
   it("saves and undoes a compound prose edit without rewriting protected commands", async () => {
     const original =
       "\\documentclass{article}\n\\begin{document}\n" +

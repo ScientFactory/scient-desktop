@@ -279,6 +279,27 @@ describe("writing editor source transactions", () => {
     });
   }
 
+  it.each([
+    "\\newcommand% name follows\n\\hiddenBegin{\\begin{comment}}",
+    "\\newcommand% star follows\r\n*{\\hiddenBegin}{\\begin{comment}}",
+    "\\DeclareDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
+  ])(
+    "edits the body and preserves unused declaration %s through undo and redo",
+    async (definition) => {
+      await mount("Actual body.", `${definition}\n`);
+      const original = current;
+      expect(editor().isEditable).toBe(true);
+      expect(editor().state.doc.textContent).toBe("Actual body.");
+      await act(() => editor().chain().setTextSelection(1).insertContent("New ").run());
+      const changed = original.replace("Actual body.", "New Actual body.");
+      expect(current).toBe(changed);
+      await act(() => editor().commands.undo());
+      expect(current).toBe(original);
+      await act(() => editor().commands.redo());
+      expect(current).toBe(changed);
+    },
+  );
+
   it("edits a visible heading label in the footer and adds/removes it through source and undo", async () => {
     await mount("\\section{Introduction}\n\nSee Section~\\ref{sec:intro}.");
     await act(() => editor().commands.setTextSelection(3));

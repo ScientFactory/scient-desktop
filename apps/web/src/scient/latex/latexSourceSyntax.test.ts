@@ -19,6 +19,11 @@ describe("lossless native lexical boundaries", () => {
     "\\def\\hiddenBegin#1{\\begin{comment}#1}",
     "\\newenvironment{hidden}{\\begin{comment}}{\\end{comment}}",
     "\\NewDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
+    "\\newcommand% name follows\n\\hiddenBegin{\\begin{comment}}",
+    "\\newcommand% name follows\r\n\\hiddenBegin{\\begin{comment}}",
+    "\\newcommand% star follows\n*{\\hiddenBegin}{\\begin{comment}}",
+    "\\newcommand% star follows\r\n*{\\hiddenBegin}{\\begin{comment}}",
+    "\\DeclareDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
   ])("does not execute an environment opening inside %s", (definition) => {
     const source = `\\documentclass{article}\n${definition}\n\\begin{document}\nActual body.\n\\end{document}`;
     expect(latexDocumentBoundary(source)?.from).toBe(source.indexOf("\\begin{document}"));

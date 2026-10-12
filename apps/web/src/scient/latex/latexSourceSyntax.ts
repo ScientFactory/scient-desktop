@@ -15,20 +15,25 @@ export interface LatexSourceArgument extends LatexSourceRange {
   value: string;
 }
 
+function skipSourceTrivia(source: string, at: number): number {
+  while (at < source.length) {
+    if (/\s/u.test(source[at]!)) at++;
+    else if (source[at] === "%") {
+      const end = source.indexOf("\n", at);
+      if (end < 0) return source.length;
+      at = end + 1;
+    } else break;
+  }
+  return at;
+}
+
 export function latexSourceArgument(
   source: string,
   at: number,
   open = "{",
   close = "}",
 ): LatexSourceArgument | null {
-  while (at < source.length) {
-    if (/\s/u.test(source[at]!)) at++;
-    else if (source[at] === "%") {
-      const end = source.indexOf("\n", at);
-      if (end < 0) return null;
-      at = end + 1;
-    } else break;
-  }
+  at = skipSourceTrivia(source, at);
   if (source[at] !== open) return null;
   const start = at;
   let depth = 1,
@@ -64,12 +69,13 @@ interface LatexLexicalFacts {
 /** Definition arguments contain source to execute later, not active environments. */
 function definitionEnd(source: string, at: number, command: string): number {
   if (
-    !/^(?:(?:new|renew|provide)command|DeclareRobustCommand|DeclareMathOperator|(?:new|renew)environment|(?:New|Renew|Provide)DocumentCommand|[gex]?def)$/u.test(
+    !/^(?:(?:new|renew|provide)command|DeclareRobustCommand|DeclareMathOperator|(?:new|renew)environment|(?:New|Renew|Provide|Declare)DocumentCommand|[gex]?def)$/u.test(
       command,
     )
   )
     return at;
-  at += /^\s*\*/u.exec(source.slice(at))?.[0].length ?? 0;
+  at = skipSourceTrivia(source, at);
+  if (source[at] === "*") at = skipSourceTrivia(source, at + 1);
   if (/^[gex]?def$/u.test(command)) {
     const parameters = /^\s*\\(?:[A-Za-z@]+|[^\r\n])[^{}]*?(?=\{)/u.exec(source.slice(at));
     return parameters ? (latexSourceArgument(source, at + parameters[0].length)?.end ?? at) : at;
