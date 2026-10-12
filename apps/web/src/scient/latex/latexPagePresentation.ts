@@ -1,7 +1,7 @@
 import { observeResize } from "~/lib/observeResize";
 import { Extension } from "@tiptap/core";
 import type { Node as DocumentNode } from "@tiptap/pm/model";
-import { Plugin } from "@tiptap/pm/state";
+import { Plugin, NodeSelection, type EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { afterEditorPaint } from "./afterEditorPaint";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
@@ -11,11 +11,13 @@ import {
   fallbackLatexViewportPage,
   latexViewportContext,
   latexViewportMeasurement,
+  latexViewportMemberPages,
   latexViewportPageNodes,
+  latexViewportPrepared,
   latexViewportUnit,
   updateLatexOpeningPageReadiness,
 } from "./latexViewport";
-import { latexPaginationKey } from "./latexVisualPaginationExtension";
+import { latexPaginationKey, latexVisualPageAt } from "./latexVisualPaginationExtension";
 import "./latexPagePresentation.css";
 
 type PendingPage = {
@@ -49,6 +51,37 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
   let reconciling = false;
   const previousClip = view.dom.style.clipPath;
   const revealed = new Map<number, string>();
+  let metrics:
+    | {
+        width: number;
+        pitch: number;
+        origin: number;
+        scale: number;
+        inset: number;
+        marginTop: number;
+        contentHeight: number;
+      }
+    | undefined;
+  let wantedPages = new Set<number>();
+  let paintablePages = new Set<number>();
+  let focusedPages = new Set<number>();
+  let membership = new WeakMap<Element, Set<number>>();
+  const memberPages = (target: EventTarget | null) => {
+    let element = target instanceof Element ? target : null;
+    while (element && element !== view.dom) {
+      const pages = membership.get(element);
+      if (pages) return pages;
+      const known = latexViewportMemberPages(
+        view,
+        element,
+        latexPaginationKey.getState(view.state)?.pages ?? [],
+      );
+      if (known !== null)
+        return new Set([...known].map((page) => page - 1).filter((page) => wantedPages.has(page)));
+      element = element.parentElement;
+    }
+    return wantedPages;
+  };
   let cancel: (() => void) | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const queue = () => {
@@ -68,16 +101,127 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
     }
   };
   const schedule = () => {
-    // Cover invalidated content in this task, including ProseMirror updates.
-    // Admission and measurement run in the next pre-paint frame, never here.
-    reconcile(false);
     queue();
+  };
+  const clip = () => {
+    if (!metrics) return;
+    const { width, pitch, origin } = metrics;
+    const pagination = latexPaginationKey.getState(view.state)!;
+    const path = [...paintablePages]
+      .map((page) => {
+        const top = page * pitch - origin;
+        return `M0 ${top}H${width}V${top + pagination.dimensions.pageHeight}H0Z`;
+      })
+      .join(" ");
+    const value = path ? `path("${path}")` : "inset(100%)";
+    if (view.dom.style.clipPath !== value) view.dom.style.clipPath = value;
+  };
+  const preparing = (element: HTMLElement) => {
+    element.dataset.state = "preparing";
+    element.setAttribute("aria-busy", "true");
+    if (element.querySelector("[data-latex-preparation-spinner]")) return;
+    const spinner = globalThis.document.createElement("span");
+    spinner.dataset.latexPreparationSpinner = "true";
+    spinner.setAttribute("aria-hidden", "true");
+    const label = globalThis.document.createElement("span");
+    label.textContent = "Preparing page…";
+    element.replaceChildren(spinner, label);
+  };
+  const cover = (page: number, contentPending = false, mounting = false) => {
+    let record = pending.get(page);
+    if (!record) {
+      const element = globalThis.document.createElement("div");
+      element.className = "scient-latex-page-preparation";
+      element.dataset.latexPreparingPage = String(page + 1);
+      element.setAttribute("role", "status");
+      element.setAttribute("aria-live", "polite");
+      record = {
+        started: performance.now(),
+        released: false,
+        stable: 0,
+        geometry: "",
+        waitingForContent: contentPending,
+        awaitingLayout: null,
+        element,
+      };
+      pending.set(page, record);
+      layer.append(element);
+    }
+    record.waitingForContent ||= contentPending;
+    if (metrics) {
+      record.element.style.top = `${page * metrics.pitch + metrics.marginTop}px`;
+      record.element.style.height = `${metrics.contentHeight}px`;
+    }
+    if (!record.released) {
+      if (mounting) {
+        record.element.dataset.state = "mounting";
+        record.element.replaceChildren();
+      } else preparing(record.element);
+    }
+    return record;
+  };
+  // A synchronous fence uses the previous frame's page geometry. It never
+  // searches the document or dispatches editor transactions.
+  const fence = (pages: Iterable<number>, contentPending = false) => {
+    const active = view.dom.ownerDocument.activeElement;
+    const object = active instanceof Element && active !== view.dom && view.dom.contains(active);
+    const activePages = new Set(object ? memberPages(active) : []);
+
+    const selection = view.state.selection;
+    const enteringMath =
+      selection instanceof NodeSelection &&
+      (selection.node.type.name === "latexInlineMath" ||
+        selection.node.type.name === "latexDisplayMath");
+    if (view.hasFocus() || view.composing || enteringMath) {
+      for (const position of [view.state.selection.anchor, view.state.selection.head]) {
+        const page = latexVisualPageAt(view.state, position);
+        if (page !== null) activePages.add(page - 1);
+      }
+      for (const page of focusedPages) activePages.add(page);
+    }
+    for (const page of activePages) {
+      pending.get(page)?.element.remove();
+      pending.delete(page);
+      paintablePages.add(page);
+    }
+    for (const page of pages) {
+      if (activePages.has(page)) continue;
+      const pagination = latexPaginationKey.getState(view.state)!;
+      const cached =
+        !contentPending &&
+        latexViewportPageNodes(view, new Set([page + 1]), pagination.pages).every((unit) =>
+          latexViewportPrepared(view, unit.node, unit.position),
+        );
+      cover(page, contentPending, cached);
+      paintablePages.delete(page);
+    }
+    clip();
+  };
+  const dependencyTarget = (target: EventTarget | null) => {
+    if (metrics && target instanceof Element) {
+      const preview = target.matches(".scient-latex-math-preview")
+        ? target
+        : target.querySelector(".scient-latex-math-preview");
+      const pending =
+        (preview !== null && !mathReadingPreviewReady(preview)) ||
+        target.getAttribute("data-latex-preview-state") === "pending";
+      if (pending) fence(memberPages(target), true);
+    }
+    schedule();
+  };
+  const dependencyChanged = (event: Event) => {
+    if (event instanceof CustomEvent && event.detail?.cached) schedule();
+    else dependencyTarget(event.target);
+  };
+  const focusChanged = () => {
+    fence([]);
+    schedule();
   };
   const remove = (page: number) => {
     pending.get(page)?.element.remove();
     pending.delete(page);
   };
-  const reconcile = (advance = true) => {
+  const reconcile = () => {
     if (disposed || reconciling || view.isDestroyed || !scroll.clientHeight) return;
     reconciling = true;
     try {
@@ -97,6 +241,15 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
       const scale = paperBox.width / width;
       if (!(scale > 0) || !Number.isFinite(scale)) return;
       const box = scroll.getBoundingClientRect();
+      metrics = {
+        width,
+        pitch,
+        origin: (view.dom.getBoundingClientRect().top - paperBox.top) / scale,
+        scale,
+        inset: paperBox.top - box.top + scroll.scrollTop,
+        marginTop: dimensions.marginTop,
+        contentHeight: dimensions.pageHeight - dimensions.marginTop - dimensions.marginBottom,
+      };
       const first = Math.max(0, Math.floor((box.top - paperBox.top) / scale / pitch));
       const last = Math.min(
         pagination.pageCount - 1,
@@ -105,15 +258,29 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
       const wanted = new Set<number>();
       for (let page = first; page <= Math.min(pagination.pageCount - 1, last + 1); page++)
         wanted.add(page + 1);
+      wantedPages = new Set([...wanted].map((page) => page - 1));
       const units = latexViewportPageNodes(view, wanted, pagination.pages);
       const nextDemand = new Set(units.map((unit) => unit.node));
       const demandChanged =
         nextDemand.size !== demand.size || [...nextDemand].some((node) => !demand.has(node));
       for (const page of pending.keys()) if (!wanted.has(page + 1)) remove(page);
+      const compatible = new Set<number>();
+      for (const number of wanted) {
+        const ready = latexViewportPageNodes(view, new Set([number]), pagination.pages).every(
+          (unit) => latexViewportPrepared(view, unit.node, unit.position),
+        );
+        if (ready) compatible.add(number - 1);
+        if (!ready || !paintablePages.has(number - 1)) cover(number - 1, false, ready);
+      }
+      if (demandChanged) {
+        demand = nextDemand;
+        demandLatexViewportPages(view, demand);
+      }
       const paintable = new Set<number>();
       let nextDeadline = Infinity;
       let openingReady = true;
       const focused = new Set<number>();
+      const nextMembership = new WeakMap<Element, Set<number>>();
       const active = view.dom.ownerDocument.activeElement;
       const activeObject =
         active instanceof HTMLElement && view.dom.contains(active) && active !== view.dom;
@@ -154,6 +321,11 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
           const rect = element.getBoundingClientRect();
           return rect.bottom > pageTop && rect.top < pageBottom;
         });
+        for (const element of blocks) {
+          const pages = nextMembership.get(element) ?? new Set<number>();
+          pages.add(page);
+          nextMembership.set(element, pages);
+        }
         const previews = blocks.flatMap((element) =>
           element.matches(".scient-latex-math-preview")
             ? [element]
@@ -183,13 +355,13 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
             (element) => element.getAttribute("data-latex-preview-state") === "unavailable",
           );
         let record = pending.get(page);
-        if (advance && record?.waitingForContent && contentReady) {
+        if (record?.waitingForContent && contentReady) {
           record.awaitingLayout = layoutSettlement;
           view.dom.dispatchEvent(
             new CustomEvent("scient-latex-viewport-measure", { bubbles: true, detail: blocks }),
           );
         }
-        if (advance && record) record.waitingForContent = !contentReady;
+        if (record) record.waitingForContent = !contentReady;
         const ready =
           geometryReady &&
           contentReady &&
@@ -212,34 +384,19 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
           ready &&
           !unavailable &&
           (record == null || (!record.waitingForContent && record.awaitingLayout == null)) &&
-          revealed.get(page) === geometry
+          (compatible.has(page) || revealed.get(page) === geometry)
         ) {
           remove(page);
           paintable.add(page);
           continue;
         }
         if (!record) {
-          const element = globalThis.document.createElement("div");
-          element.className = "scient-latex-page-preparation";
-          element.dataset.latexPreparingPage = String(number);
-          element.setAttribute("role", "status");
-          element.setAttribute("aria-live", "polite");
-          record = {
-            started: performance.now(),
-            released: false,
-            stable: 0,
-            geometry: "",
-            waitingForContent: !contentReady,
-            awaitingLayout: null,
-            element,
-          };
-          pending.set(page, record);
-          layer.append(element);
+          record = cover(page, !contentReady);
         }
-        record.element.style.top = `${page * pitch}px`;
-        record.element.style.height = `${dimensions.pageHeight}px`;
+        record.element.style.top = `${page * pitch + dimensions.marginTop}px`;
+        record.element.style.height = `${metrics.contentHeight}px`;
         const expired = performance.now() - record.started >= maximumWaitMs;
-        if (advance && expired && !record.released && (!ready || record.stable < 2)) {
+        if (expired && !record.released && (!ready || record.stable < 2)) {
           record.released = true;
           settleMathReadingPreviews(previews);
           for (const element of assets)
@@ -248,10 +405,8 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
           queue();
         }
         if (ready) {
-          if (advance) {
-            record.stable = geometry === record.geometry ? record.stable + 1 : 1;
-            record.geometry = geometry;
-          }
+          record.stable = geometry === record.geometry ? record.stable + 1 : 1;
+          record.geometry = geometry;
           if (record.stable >= 2 && !unavailable) {
             revealed.set(page, geometry);
             paintable.add(page);
@@ -261,7 +416,7 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
           if (record.stable < 2) queue();
         } else if (!ready) record.stable = 0;
         const released = record.released || (ready && unavailable);
-        openingReady &&= released || (ready && record.stable >= 2);
+        if (number <= last + 1) openingReady &&= released || (ready && record.stable >= 2);
         record.element.dataset.state = released ? "unavailable" : "preparing";
         record.element.setAttribute("aria-busy", String(!released));
         if (released) {
@@ -290,14 +445,7 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
             record.element.append(label, retry);
           }
         } else {
-          if (!record.element.querySelector("[data-latex-preparation-spinner]")) {
-            const spinner = globalThis.document.createElement("span");
-            spinner.dataset.latexPreparationSpinner = "true";
-            spinner.setAttribute("aria-hidden", "true");
-            const label = globalThis.document.createElement("span");
-            label.textContent = "Preparing page…";
-            record.element.replaceChildren(spinner, label);
-          }
+          preparing(record.element);
           nextDeadline = Math.min(nextDeadline, record.started + maximumWaitMs);
         }
       }
@@ -305,21 +453,10 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
       // rectangles stay intact, while newly scrolled sheets and gaps cannot
       // expose ink before their page has passed the readiness fence.
       for (const page of focused) paintable.add(page);
-      const origin = (view.dom.getBoundingClientRect().top - paperBox.top) / scale;
-      const path = [...paintable]
-        .map((page) => {
-          const top = page * pitch - origin;
-          const bottom = top + dimensions.pageHeight;
-          return `M0 ${top}H${width}V${bottom}H0Z`;
-        })
-        .join(" ");
-      const clip = path ? `path("${path}")` : "inset(100%)";
-      if (view.dom.style.clipPath !== clip) view.dom.style.clipPath = clip;
-      if (advance && demandChanged) {
-        demand = nextDemand;
-        demandLatexViewportPages(view, demand);
-        queue();
-      }
+      paintablePages = paintable;
+      focusedPages = focused;
+      membership = nextMembership;
+      clip();
       clearTimeout(deadline);
       updateLatexOpeningPageReadiness(view, openingReady);
       if (Number.isFinite(nextDeadline)) {
@@ -331,27 +468,61 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
       reconciling = false;
     }
   };
-  const stopObserving = observeResize([scroll, paper], schedule);
+  const stopObserving = observeResize([scroll, paper], () => {
+    fence(wantedPages);
+    schedule();
+  });
   const layoutReady = () => {
     layoutSettlement++;
     schedule();
   };
-  const scrolled = () => reconcile();
-  const dependencies = new MutationObserver(schedule);
+  const scrolled = () => {
+    if (metrics) {
+      const pagination = latexPaginationKey.getState(view.state)!;
+      const first = Math.max(
+        0,
+        Math.floor((scroll.scrollTop - metrics.inset) / metrics.scale / metrics.pitch),
+      );
+      const last = Math.min(
+        pagination.pageCount - 1,
+        Math.floor(
+          (scroll.scrollTop - metrics.inset + scroll.clientHeight) / metrics.scale / metrics.pitch,
+        ) + 1,
+      );
+      const incoming = [];
+      for (let page = first; page <= last; page++)
+        if (!paintablePages.has(page)) incoming.push(page);
+      fence(incoming);
+    }
+    schedule();
+  };
+  const dependencies = new MutationObserver((records) => {
+    for (const target of new Set(records.map((record) => record.target))) dependencyTarget(target);
+  });
   dependencies.observe(view.dom, {
     subtree: true,
     attributes: true,
     attributeFilter: ["data-latex-preview-state"],
   });
   scroll.addEventListener("scroll", scrolled, { passive: true });
-  view.dom.addEventListener("scient-latex-math-preview", schedule);
-  view.dom.addEventListener("load", schedule, true);
-  view.dom.addEventListener("error", schedule, true);
-  view.dom.addEventListener("focus", schedule, true);
+  view.dom.addEventListener("scient-latex-math-preview", dependencyChanged);
+  view.dom.addEventListener("load", dependencyChanged, true);
+  view.dom.addEventListener("error", dependencyChanged, true);
+  view.dom.addEventListener("focus", focusChanged, true);
   view.dom.addEventListener("scient-latex-page-layout-ready", layoutReady);
   schedule();
   return {
-    update: schedule,
+    update(previous: EditorState) {
+      const before = latexPaginationKey.getState(previous);
+      const after = latexPaginationKey.getState(view.state);
+      if (
+        previous.doc !== view.state.doc ||
+        before?.pages !== after?.pages ||
+        before?.dimensions !== after?.dimensions
+      )
+        fence(wantedPages);
+      schedule();
+    },
     destroy() {
       disposed = true;
       cancel?.();
@@ -359,10 +530,10 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
       stopObserving();
       dependencies.disconnect();
       scroll.removeEventListener("scroll", scrolled);
-      view.dom.removeEventListener("scient-latex-math-preview", schedule);
-      view.dom.removeEventListener("load", schedule, true);
-      view.dom.removeEventListener("error", schedule, true);
-      view.dom.removeEventListener("focus", schedule, true);
+      view.dom.removeEventListener("scient-latex-math-preview", dependencyChanged);
+      view.dom.removeEventListener("load", dependencyChanged, true);
+      view.dom.removeEventListener("error", dependencyChanged, true);
+      view.dom.removeEventListener("focus", focusChanged, true);
       view.dom.removeEventListener("scient-latex-page-layout-ready", layoutReady);
       layer.remove();
       view.dom.style.clipPath = previousClip;
@@ -391,8 +562,8 @@ export const LatexPagePresentation = Extension.create<{ maximumWaitMs: number }>
           };
           cancel = afterEditorPaint(attach);
           return {
-            update() {
-              owner?.update();
+            update(_view, previous) {
+              owner?.update(previous);
             },
             destroy() {
               disposed = true;

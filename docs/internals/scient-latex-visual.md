@@ -1823,7 +1823,12 @@ Recent viewport blocks remain mounted under a 128-block, 4 MiB estimated
 source/DOM admission budget, without a time expiry. Visible, selected and active
 blocks retain their separate admission rules. Geometry and passive formula markup
 share a 24 MiB estimated byte budget, including keys and entry overhead, with
-background results evicted before recently read results. Exact layout-context
+idle admission declining new results when full instead of evicting completed
+preparation. Reading demand can replace entries, evicting background results first.
+Capacity-paused owners do no idle polling and resume when retained bytes are released,
+source/layout changes, or navigation demands a page. Oversized/invalid entries do not
+report capacity pressure. Terminal math fallback also retains a weak model/context
+marker so an oversized formula key cannot create a remount loop. Exact layout-context
 identities avoid repeating the full document reference/font setup in each key.
 There is no independent 512-formula ceiling; many small results can remain
 available within the byte budget. DOM eviction preserves compatible geometry and markup.
@@ -1837,9 +1842,14 @@ Scrolling uses one preparation mask per sheet, outside the editable DOM. Complet
 visible pages and one page ahead are admitted independently of thumbnail demand.
 The mask is installed before DOM admission and readiness updates run before paint.
 A paint-only clip admits settled physical sheets, keeping unfinished ink and page
-gaps hidden without changing source or measurement geometry. Newly mounted cached
-pages pass the same stability fence; unchanged previously revealed geometry can be
-reused. The mask preserves page geometry, hides intermediate block labels and
+gaps hidden without changing source or measurement geometry. Compatible idle-prepared pages mount behind a silent paint fence and are admitted
+as soon as their live geometry/resources are ready; they do not repeat the cold-page
+preparation label or an unconditional two-frame wait. Live complete previews remain
+ready even if their reusable markup is evicted. Closed units require compatible
+geometry and retained formula results or terminal fallbacks. Completion events only
+queue one coalesced readiness pass; actual pending transitions use cached source-page
+membership for the synchronous paint fence. The cover occupies the content area,
+leaving running headers, footers and page numbers visible. The mask preserves page geometry, hides intermediate block labels and
 reveals a settled page together. Active caret/selection pages retain interaction priority.
 Document and page preparation share a spinner, removed when preparation settles
 and static when the reader requests reduced motion.
@@ -2421,3 +2431,31 @@ translate the caret. Cell lookup excludes carets and measurement anchors, includ
 bare empty equation rows. Page-preview snapshots omit the measurement anchors.
 Page-preview snapshots strip guide state. These visual changes
 have not been qualified with live interaction tests.
+
+### Measurement allocation and retention qualification
+
+Natural-flow snapshots can reuse the outer height and relative line positions of
+unchanged top-level viewport paragraphs under the last committed font generation,
+typography and width. These copies omit text and mathematical shadow contents and
+use closed-paragraph geometry. Nested lists/statements, changed paragraphs,
+columns, custom editors and protected embedded elements retain the full snapshot
+or live measurement fallback. One empty detached paragraph workspace per document
+is reused; nested calls receive a separate workspace, and cleanup runs after errors.
+
+The 24 MiB reusable cache and 128-block/4 MiB live reading admission limits remain
+conservative estimates rather than claims about total JavaScript heap. Source/model,
+node-local geometry, decoded images, active editors and transient rendering remain
+outside that reusable-cache estimate. Background-first LRU uses an ordered set,
+without constructing a full entry array for each eviction. Focused Chromium tests
+exercise cold entry, reverse after a pause, saved locations, font invalidation,
+source/caret/undo, snapshot parity/cancellation, fallback/Retry and a 64 KiB pressure
+budget with pause/live-readiness/free-space-resume assertions. This does not qualify
+native byte-changing persistence or production compilation.
+
+A reading anchor keeps one source-block identity throughout pending preparation;
+a newly exposed predecessor does not replace it. Incoming cold members participate
+before mounting. User scrolls, source/selection changes and explicit navigation
+choose a new anchor. Same-top navigation cancels delayed settlement, which also
+checks anchor identity, document, selection and expected scroll position. This
+closes the previously reproduced 443 px cold-preparation displacement without
+relaxing the stress test's one-pixel limit.

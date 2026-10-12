@@ -160,6 +160,9 @@ layout. The spinner stays still with reduced motion enabled. If a preview takes 
 page shows the available content with a fallback and **Retry page**. Source remains
 available. Prepared results stay cached within a memory budget; a long reading pause
 alone does not expire them, but source, font or layout changes can require preparation.
+Page numbers remain visible while a page prepares. Idle preparation preserves results
+already in memory and pauses when its budget fills; it resumes when space becomes
+available. Scrolling to a new page takes priority over background work.
 
 PDF, Visual and Split use one header row. From the left it holds build status,
 search and the view switch; sidebar, page and zoom controls follow, with the

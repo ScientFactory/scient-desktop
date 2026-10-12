@@ -2,13 +2,15 @@ import { useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Editor } from "@tiptap/core";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
+import { latexPaginationKey } from "./latexVisualPaginationExtension";
 
 vi.mock("~/scient/presentation/ScientTooltip", () => ({
   ScientTooltip: ({ children }: { children: ReactNode }) => children,
 }));
 const audit = vi.hoisted(() => ({
   hold: false,
+  holdContext: false,
   assetMode: "failure" as "failure" | "pending" | "ready",
   assetListeners: new Set<() => void>(),
   completions: [] as Array<{ source: string; cached: boolean }>,
@@ -45,7 +47,7 @@ vi.mock("./mathReadingPreview", async (importOriginal) => {
   return {
     ...actual,
     mathReadingPreview: (...args: Parameters<typeof actual.mathReadingPreview>) => {
-      if (audit.hold && args[0].includes("x_{30}")) return () => {};
+      if (audit.holdContext || (audit.hold && args[0].includes("x_{30}"))) return () => {};
       const complete = args[4];
       args[4] = (markup, cached) => {
         audit.completions.push({ source: args[0], cached: cached === true });
@@ -58,6 +60,7 @@ vi.mock("./mathReadingPreview", async (importOriginal) => {
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
+import { refreshMathReadingContext, type MathReadingNodeOptions } from "./mathReadingNodeView";
 import { clearVisualDraft } from "./visualDrafts";
 import "./scient-latex.css";
 
@@ -66,6 +69,7 @@ let container: HTMLElement | undefined;
 let key = "";
 afterEach(() => {
   audit.hold = false;
+  audit.holdContext = false;
   audit.assetMode = "failure";
   audit.completions.length = 0;
   root?.unmount();
@@ -161,6 +165,11 @@ it("covers a newly pending dependency before the next paint", async () => {
   expect(spinner.getAttribute("aria-hidden")).toBe("true");
   expect(getComputedStyle(spinner).animationTimingFunction).toBe("steps(12)");
   expect(CSS.supports("clip-path", opened.editor.view.dom.style.clipPath)).toBe(true);
+  const sheet = container!.querySelector<HTMLElement>(".scient-latex-page-sheet")!;
+  const footer = sheet.querySelector<HTMLElement>(".scient-latex-running-footer")!;
+  const footerBox = footer.getBoundingClientRect();
+  const maskBox = mask.getBoundingClientRect();
+  expect(maskBox.bottom).toBeLessThanOrEqual(footerBox.top);
   content.dataset.mathPreviewReady = "true";
   preview.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
   expect(container!.querySelector("[data-state='preparing']")).toBeTruthy();
@@ -168,7 +177,49 @@ it("covers a newly pending dependency before the next paint", async () => {
   expect(opened.source()).toBe(source);
 }, 30000);
 
-it("covers a cached remount before admitting its DOM and waits for stable page geometry", async () => {
+it("coalesces preview event bursts without synchronous whole-editor searches", async () => {
+  const opened = await mount(fixture(8, 7301), "page-event-burst");
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
+  const dom = opened.editor.view.dom;
+  const preview = dom.querySelector<HTMLElement>(".scient-latex-math-preview")!;
+  const queries = vi.spyOn(dom, "querySelectorAll");
+  const boxes = vi.spyOn(preview, "getBoundingClientRect");
+  for (let index = 0; index < 40; index++)
+    preview.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
+  expect(queries.mock.calls).toHaveLength(0);
+  expect(boxes.mock.calls).toHaveLength(0);
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  expect(queries.mock.calls.length).toBeLessThan(12);
+  queries.mockRestore();
+  boxes.mockRestore();
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
+}, 30000);
+
+it("keeps a newly focused math editor visible through synchronous layout fencing", async () => {
+  const source = fixture(8, 7302);
+  const opened = await mount(source, "page-active-object-fence");
+  const dom = opened.editor.view.dom;
+  await userEvent.click(dom.querySelector<HTMLElement>(".scient-latex-math-preview")!);
+  await expect.poll(() => dom.querySelector("math-field")).toBeTruthy();
+  const field = dom.querySelector<HTMLElement>("math-field")!;
+  field.focus();
+  const pagination = latexPaginationKey.getState(opened.editor.state)!;
+  opened.editor.view.dispatch(
+    opened.editor.state.tr
+      .setMeta(latexPaginationKey, {
+        pages: [...pagination.pages],
+        decorations: pagination.decorations,
+      })
+      .setMeta("addToHistory", false),
+  );
+  expect(
+    container!.querySelector('[data-latex-preparing-page="1"][data-state="preparing"]'),
+  ).toBeNull();
+  expect(dom.style.clipPath).not.toBe("inset(100%)");
+  expect(opened.source()).toBe(source);
+}, 30000);
+
+it("admits compatible idle-prepared content without a preparation flash", async () => {
   const source = fixture(80, 7202);
   const opened = await mount(source, "page-cached-admission");
   await expect
@@ -185,11 +236,37 @@ it("covers a cached remount before admitting its DOM and waits for stable page g
     ),
   ).toBe(true);
   const target = jump(opened.editor, 30);
-  expect(container!.querySelector("[data-state='preparing']")).toBeTruthy();
+  expect(container!.querySelector("[data-state='preparing']")).toBeNull();
+  for (let frame = 0; frame < 5; frame++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(container!.querySelector("[data-state='preparing']")).toBeNull();
+  }
   await expect.poll(() => target().hasAttribute("data-latex-viewport-closed")).toBe(false);
   await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
   expect(opened.source()).toBe(source);
 }, 80000);
+
+it("leaves the ready viewport visible when a distant background preview completes", async () => {
+  const opened = await mount(fixture(80, 7303), "page-background-membership");
+  const dom = opened.editor.view.dom;
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
+  const scroll = dom.closest<HTMLElement>(".scient-latex-visual-scroll")!;
+  await expect
+    .poll(() =>
+      [...dom.querySelectorAll<HTMLElement>(".scient-latex-math-preview")].find(
+        (element) =>
+          element.getBoundingClientRect().top > scroll.getBoundingClientRect().bottom + 100,
+      ),
+    )
+    .toBeTruthy();
+  const distant = [...dom.querySelectorAll<HTMLElement>(".scient-latex-math-preview")].find(
+    (element) => element.getBoundingClientRect().top > scroll.getBoundingClientRect().bottom + 100,
+  )!;
+  distant.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
+  expect(container!.querySelector("[data-state='preparing']")).toBeNull();
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  expect(container!.querySelector("[data-state='preparing']")).toBeNull();
+}, 30000);
 
 it("retains completed idle preparation beyond 512 formulas and paints an earlier page from cache", async () => {
   const source = fixture(304, 7101);
@@ -311,3 +388,32 @@ Visible prose after the image.
     .toBeNull();
   expect(opened.source()).toBe(source);
 }, 25000);
+
+it("fences a context-only formula refresh before its first pending paint", async () => {
+  const source = fixture(8, 7401);
+  const opened = await mount(source, "page-context-pending");
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
+  const doc = opened.editor.state.doc;
+  const extension = opened.editor.extensionManager.extensions.find(
+    (item) => item.name === "latexInlineMath",
+  )!;
+  const context = (extension.options as MathReadingNodeOptions).readingContext!();
+  const colors = context.colors;
+  audit.holdContext = true;
+  try {
+    Reflect.set(context, "colors", { ...colors, refreshProbe: "#123456" });
+    refreshMathReadingContext(opened.editor);
+    expect(container!.querySelector("[data-state='preparing']")).toBeTruthy();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(container!.querySelector("[data-state='preparing']")).toBeTruthy();
+    expect(opened.editor.state.doc).toBe(doc);
+  } finally {
+    audit.holdContext = false;
+    Reflect.set(context, "colors", colors);
+    refreshMathReadingContext(opened.editor);
+  }
+  await expect
+    .poll(() => container!.querySelector("[data-state='preparing']"), { timeout: 10000 })
+    .toBeNull();
+  expect(opened.source()).toBe(source);
+}, 30000);
