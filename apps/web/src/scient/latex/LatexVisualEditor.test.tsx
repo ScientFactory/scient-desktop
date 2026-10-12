@@ -37,7 +37,11 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { createLatexVisualTestOwner, useLatexVisualTestOwner } from "./latexVisualTestOwner";
+import {
+  createLatexVisualTestOwner,
+  stubLatexReadingFonts,
+  useLatexVisualTestOwner,
+} from "./latexVisualTestOwner";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
 import { mathSourceCompletions } from "./latexMathCompletion";
 import { clearVisualDraft, readPersistedVisualDraft } from "./visualDrafts";
@@ -68,7 +72,7 @@ describe("writing editor source transactions", () => {
   let current: string;
   let confirmed: string | null;
   const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, "getAnimations");
-  const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+  let restoreFonts = () => {};
   const writes = vi.fn();
   const flushReferences = vi.fn<() => Promise<boolean>>();
   const tex = (body: string) =>
@@ -79,10 +83,7 @@ describe("writing editor source transactions", () => {
       configurable: true,
       value: () => [],
     });
-    Object.defineProperty(document, "fonts", {
-      configurable: true,
-      value: Object.assign(new EventTarget(), { ready: Promise.resolve(), status: "loaded" }),
-    });
+    restoreFonts = stubLatexReadingFonts();
     writes.mockReset();
     confirmed = null;
     flushReferences.mockReset().mockResolvedValue(false);
@@ -107,8 +108,7 @@ describe("writing editor source transactions", () => {
     if (originalGetAnimations)
       Object.defineProperty(Element.prototype, "getAnimations", originalGetAnimations);
     else Reflect.deleteProperty(Element.prototype, "getAnimations");
-    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
-    else Reflect.deleteProperty(document, "fonts");
+    restoreFonts();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1089,6 +1089,37 @@ Control & 1 \\\\
     await act(() => editor().commands.redo());
     expect(current).toBe(split);
   });
+
+  it.each([0, 1])(
+    "splits repeated live list item %i with exact undo and redo",
+    async (itemIndex) => {
+      await mount("\\begin{itemize}\r\n\\item Same words\r\n  \\item Same words\r\n\\end{itemize}");
+      const original = current;
+      const positions: number[] = [];
+      editor().state.doc.descendants((node, position) => {
+        if (node.isText && node.text === "Same words") positions.push(position + 4);
+      });
+      expect(positions).toHaveLength(2);
+      await act(() => {
+        editor().commands.setTextSelection(positions[itemIndex]!);
+        editor().commands.splitListItem("listItem");
+      });
+      const split = current;
+      expect(split).not.toBe(original);
+      const list = projectLatexVisualDocument(split).content.content![0]!;
+      expect(
+        list.content!.map((item) =>
+          item.content![0]!.content!.map((node) => node.text ?? "").join(""),
+        ),
+      ).toEqual(
+        itemIndex === 0 ? ["Same", "words", "Same words"] : ["Same words", "Same", "words"],
+      );
+      await act(() => editor().commands.undo());
+      expect(current).toBe(original);
+      await act(() => editor().commands.redo());
+      expect(current).toBe(split);
+    },
+  );
 
   it("keeps distinct native undo events when two nonadjacent typing edits coalesce", async () => {
     await mount("First words.\n\nSecond words.");

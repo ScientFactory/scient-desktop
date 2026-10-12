@@ -61,6 +61,37 @@ interface LatexLexicalFacts {
   literals: LatexSourceRange[];
 }
 
+/** Definition arguments contain source to execute later, not active environments. */
+function definitionEnd(source: string, at: number, command: string): number {
+  if (
+    !/^(?:(?:new|renew|provide)command|DeclareRobustCommand|DeclareMathOperator|(?:new|renew)environment|(?:New|Renew|Provide)DocumentCommand|[gex]?def)$/u.test(
+      command,
+    )
+  )
+    return at;
+  at += /^\s*\*/u.exec(source.slice(at))?.[0].length ?? 0;
+  if (/^[gex]?def$/u.test(command)) {
+    const parameters = /^\s*\\(?:[A-Za-z@]+|[^\r\n])[^{}]*?(?=\{)/u.exec(source.slice(at));
+    return parameters ? (latexSourceArgument(source, at + parameters[0].length)?.end ?? at) : at;
+  }
+  const name = latexSourceArgument(source, at);
+  const unbraced = name ? null : /^\s*\\(?:[A-Za-z@]+|[^\r\n])/u.exec(source.slice(at));
+  if (!name && !unbraced) return at;
+  at = name?.end ?? at + unbraced![0].length;
+  for (let index = 0; index < 2; index++) {
+    const option = latexSourceArgument(source, at, "[", "]");
+    if (!option) break;
+    at = option.end;
+  }
+  const argumentsCount = /environment|DocumentCommand/u.test(command) ? 2 : 1;
+  for (let index = 0; index < argumentsCount; index++) {
+    const argument = latexSourceArgument(source, at);
+    if (!argument) return at;
+    at = argument.end;
+  }
+  return at;
+}
+
 /** Bounded lexical facts only: alltt retains active TeX unless a display consumer opts out. */
 function lexicalFacts(
   source: string,
@@ -71,6 +102,7 @@ function lexicalFacts(
   const comments: LatexSourceRange[] = [],
     literals: LatexSourceRange[] = [];
   let depth = 0;
+  let definitionTo = 0;
   for (let at = 0; at < source.length; at++) {
     const ch = source[at];
     if (ch === "%") {
@@ -86,7 +118,11 @@ function lexicalFacts(
       const name = token[1]!,
         end = at + token[0].length;
       commands.push({ name, from: at, to: end, depth });
-      if (name === "verb" || name === "lstinline") {
+      if (at >= definitionTo) {
+        const to = definitionEnd(source, end, name);
+        if (to > end) definitionTo = to;
+      }
+      if (at >= definitionTo && (name === "verb" || name === "lstinline")) {
         let start = end + Number(source[end] === "*");
         const option = name === "lstinline" ? latexSourceArgument(source, start, "[", "]") : null;
         if (option) start = option.end;
@@ -104,7 +140,7 @@ function lexicalFacts(
         at = to - 1;
         continue;
       }
-      if (name === "begin") {
+      if (name === "begin" && at >= definitionTo) {
         const env = latexSourceArgument(source, end);
         if (
           env &&

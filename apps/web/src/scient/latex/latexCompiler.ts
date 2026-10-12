@@ -1,10 +1,12 @@
 import type { ScientLatexCompiler, ScientLatexToolchainReport } from "@t3tools/contracts";
 
 export type LatexCompiler = ScientLatexCompiler;
-export type LatexCompilerChoice = "automatic" | LatexCompiler;
+export type LatexDocumentCompiler = LatexCompiler | "tectonic";
+export type LatexCompilerChoice = "automatic" | LatexDocumentCompiler;
 
 export const LATEX_COMPILER_CHOICES: readonly { id: LatexCompilerChoice; name: string }[] = [
   { id: "automatic", name: "Automatic" },
+  { id: "tectonic", name: "Tectonic" },
   { id: "pdflatex", name: "pdfLaTeX" },
   { id: "xelatex", name: "XeLaTeX — recommended for Hebrew" },
   { id: "lualatex", name: "LuaLaTeX" },
@@ -26,13 +28,14 @@ export function latexCompilerDeclaration(source: string): string | null {
   return COMPILER_DIRECTIVE.exec(source)?.[1]?.trim() ?? null;
 }
 
-export function declaredLatexCompiler(source: string): LatexCompiler | null {
+export function declaredLatexCompiler(source: string): LatexDocumentCompiler | null {
   const token = /^[A-Za-z]+(?=\s|$)/u
     .exec(latexCompilerDeclaration(source) ?? "")?.[0]
     ?.toLowerCase();
   if (token === "pdflatex" || token === "pdftex") return "pdflatex";
   if (token === "xelatex" || token === "xetex") return "xelatex";
   if (token === "lualatex" || token === "luatex") return "lualatex";
+  if (token === "tectonic") return "tectonic";
   return null;
 }
 
@@ -47,11 +50,18 @@ export function updateLatexCompilerSource(source: string, compiler: LatexCompile
 
 export function latexCompilerAvailabilityLabel(
   report: ScientLatexToolchainReport | null,
-  compiler: LatexCompiler,
+  compiler: LatexDocumentCompiler,
   offline = false,
 ): string | null {
   if (offline) return "Offline";
   if (report === null) return "Not checked";
+  // A latexmk report describes the default, not whether another driver exists.
+  if (compiler === "tectonic")
+    return report.kind === "tectonic"
+      ? null
+      : report.kind === null
+        ? "Not installed"
+        : "Not checked";
   const availability = report.compilers.find((item) => item.compiler === compiler);
   if (availability === undefined) return "Not checked";
   if (availability.available) return null;
@@ -65,8 +75,9 @@ export function latexCompilerAvailabilityLabel(
 /** Tectonic satisfies XeTeX declarations without claiming a standalone XeLaTeX install. */
 export function isLatexCompilerUnavailable(
   report: ScientLatexToolchainReport | null,
-  compiler: LatexCompiler,
+  compiler: LatexDocumentCompiler,
 ): boolean {
+  if (compiler === "tectonic") return report?.kind === null;
   const availability = report?.compilers.find((item) => item.compiler === compiler);
   if (availability?.available) return false;
   if (report?.kind === "tectonic") return compiler !== "xelatex";

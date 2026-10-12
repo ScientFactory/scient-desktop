@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { renderEnvironmentLatexArtwork } from "@t3tools/client-runtime/state/scient-latex";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Button } from "~/components/ui/button";
 import { runtime } from "~/lib/runtime";
 import { readPreparedConnection } from "~/state/session";
 import { observeLatexWidth } from "./observeLatexWidth";
@@ -20,7 +21,19 @@ export function LatexTikzArtwork(props: {
   const requested = useRef(false);
   const [widthInches, setWidthInches] = useState<number | null>(null);
   const rasterPixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
+  const sourceIdentity = JSON.stringify([
+    props.environmentId,
+    props.cwd,
+    props.relativePath,
+    props.preamble,
+    props.source,
+    props.algorithmNumber,
+  ]);
+  const [admittedSource, setAdmittedSource] = useState<string | null>(null);
+  const [actionNumber, setActionNumber] = useState(0);
+  const admitted = admittedSource === sourceIdentity;
   const requestKey = JSON.stringify([
+    actionNumber,
     props.environmentId,
     props.cwd,
     props.relativePath,
@@ -33,7 +46,11 @@ export function LatexTikzArtwork(props: {
   const [resultState, setResultState] = useState<{ key: string; message: string | null } | null>(
     null,
   );
-  const status = resultState?.key === requestKey ? resultState.message : "Rendering drawing…";
+  const status = !admitted
+    ? "Drawing preview is off. You can continue editing in Source."
+    : resultState?.key === requestKey
+      ? resultState.message
+      : "Rendering drawing…";
   useLayoutEffect(() => {
     const panel = root.current?.closest<HTMLElement>(
       ".scient-latex-figure-panel, .scient-latex-compiled-algorithm",
@@ -44,7 +61,11 @@ export function LatexTikzArtwork(props: {
     });
   }, []);
   useEffect(() => {
-    if (widthInches === null) return;
+    setAdmittedSource(null);
+    requested.current = false;
+  }, [sourceIdentity]);
+  useEffect(() => {
+    if (!admitted || widthInches === null) return;
     const delay = requested.current ? 150 : 0;
     const controller = new AbortController();
     let loading: ReturnType<typeof import("../pdf/pdfRuntime").startPdfDocumentLoad> | undefined;
@@ -61,6 +82,7 @@ export function LatexTikzArtwork(props: {
             return;
           }
           const request = {
+            authorization: "execute-host-tex" as const,
             workspaceRoot: props.cwd,
             relativePath: props.relativePath,
             preamble: props.preamble,
@@ -178,6 +200,7 @@ export function LatexTikzArtwork(props: {
       }
     };
   }, [
+    admitted,
     props.environmentId,
     props.cwd,
     props.relativePath,
@@ -190,6 +213,35 @@ export function LatexTikzArtwork(props: {
   ]);
   return (
     <div ref={root} className="scient-latex-tikz" contentEditable={false}>
+      {!admitted && (
+        <div className="scient-latex-tikz-admission">
+          <p>
+            Preview runs this drawing and its document preamble with host TeX/Lua. It has the
+            environment’s filesystem authority; this is not a sandbox. Only run source you trust.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setAdmittedSource(sourceIdentity);
+              setActionNumber((action) => action + 1);
+            }}
+          >
+            Run this drawing preview
+          </Button>
+        </div>
+      )}
+      {admitted && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setActionNumber((action) => action + 1)}
+        >
+          Run drawing preview again
+        </Button>
+      )}
       <canvas
         ref={canvas}
         role="img"

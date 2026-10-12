@@ -7,10 +7,10 @@
  * the component stays a rendering of one value.
  */
 import type {
-  ScientLatexCompiler,
   ScientLatexManagedInstallFailureReason,
   ScientLatexManagedInstallState,
 } from "@t3tools/contracts";
+import type { LatexDocumentCompiler } from "./latexCompiler";
 
 export type LatexSetupCardKind = "offer" | "installing" | "failed" | "instructions";
 
@@ -43,7 +43,7 @@ export interface LatexSetupCardInput {
   readonly toolchainMissing: boolean;
   readonly downloadBytes?: number | null;
   /** A declared compiler that the current toolchain cannot run. */
-  readonly requiredCompiler?: ScientLatexCompiler | null;
+  readonly requiredCompiler?: LatexDocumentCompiler | null;
 }
 
 const ACTIVE_INSTALL_PHASES: ReadonlySet<ScientLatexManagedInstallState["state"]> = new Set([
@@ -122,6 +122,16 @@ export function latexSetupCardModel(input: LatexSetupCardInput): LatexSetupCardM
 
 function latexSetupCardPhase(input: LatexSetupCardInput): Omit<LatexSetupCardModel, "warning"> {
   const requiredCompiler = input.requiredCompiler ?? null;
+  if (requiredCompiler === "tectonic") {
+    return {
+      kind: "instructions",
+      title: "This document needs Tectonic",
+      body: "Install Tectonic in this environment, then rebuild. TinyTeX does not provide Tectonic.",
+      actionLabel: null,
+      busy: false,
+      progressPercent: null,
+    };
+  }
   const compilerName =
     requiredCompiler === null
       ? null

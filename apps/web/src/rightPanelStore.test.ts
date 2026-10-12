@@ -30,6 +30,7 @@ import {
   scientSourcesSurface,
 } from "./scient/rightPanel/surfaces";
 import type { ComputeContextId } from "./scient/compute/computeContextStore";
+import { withoutTransientFileRequests } from "./scient/rightPanel/scientRightPanelStore";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
@@ -1105,6 +1106,29 @@ describe("rightPanelStore", () => {
         },
       }).byThreadKey["env-1:thread-A"]?.surfaces,
     ).toMatchObject([{ latexRootRelativePath: "paper/main.tex" }]);
+  });
+
+  it("does not replay compiled-source line coordinates after restoring a file tab", () => {
+    useRightPanelStore.getState().openFile(refA, "chapters/results.tex", 18, {
+      latexRootRelativePath: "paper/main.tex",
+      latexSourceRevision: `sha256:${"a".repeat(64)}`,
+    });
+    const current = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    const serialized = {
+      byThreadKey: {
+        "env-1:thread-A": {
+          ...current,
+          surfaces: current.surfaces.map(withoutTransientFileRequests),
+        },
+      },
+    };
+    const restored = migratePersistedRightPanelState(serialized).byThreadKey["env-1:thread-A"];
+    expect(restored?.surfaces[0]).toMatchObject({
+      kind: "file",
+      relativePath: "chapters/results.tex",
+      revealLine: null,
+    });
+    expect(restored?.surfaces[0]).not.toHaveProperty("latexSourceReveal");
   });
 
   it("drops invalid persisted LaTeX roots during migration", () => {

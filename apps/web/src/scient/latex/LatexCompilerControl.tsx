@@ -1,15 +1,14 @@
 import type { ScientLatexToolchainReport } from "@t3tools/contracts";
-import { ChevronDown } from "lucide-react";
+import { Cog } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
-  DropdownMenuTrigger,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
 } from "~/components/ui/menu";
 import { DockCommandItem, DockCommandRadioItem } from "../writing/dockChrome";
-import { ScientTooltip } from "../presentation/ScientTooltip";
 import {
   LATEX_COMPILER_CHOICES,
   declaredLatexCompiler,
@@ -37,13 +36,12 @@ export function LatexCompilerMenuItems(props: LatexCompilerControlProps) {
   const selected =
     props.source === null
       ? "unread"
-      : (compiler ?? (declaration === null ? "automatic" : "unsupported"));
+      : (compiler ?? (declaration === null ? "automatic" : "source-declaration"));
   return (
     <DropdownMenuGroup>
-      <DropdownMenuLabel>Compiler{props.rootPath ? ` · ${props.rootPath}` : ""}</DropdownMenuLabel>
       {props.blockedReason ? <DropdownMenuLabel>{props.blockedReason}</DropdownMenuLabel> : null}
-      {selected === "unsupported" ? (
-        <DropdownMenuLabel>Unsupported declaration: {declaration}</DropdownMenuLabel>
+      {selected === "source-declaration" ? (
+        <DropdownMenuLabel>Source declaration: {declaration}</DropdownMenuLabel>
       ) : null}
       {props.capabilityError && !props.offline ? (
         <DropdownMenuLabel>Availability not checked: {props.capabilityError}</DropdownMenuLabel>
@@ -54,7 +52,7 @@ export function LatexCompilerMenuItems(props: LatexCompilerControlProps) {
             choice.id === "automatic"
               ? props.offline
                 ? "Offline"
-                : "Uses document requirements"
+                : null
               : latexCompilerAvailabilityLabel(props.report, choice.id, props.offline);
           const unavailable =
             choice.id !== "automatic" && isLatexCompilerUnavailable(props.report, choice.id);
@@ -82,56 +80,16 @@ export function LatexCompilerMenuItems(props: LatexCompilerControlProps) {
   );
 }
 
-export function LatexCompilerControl(props: LatexCompilerControlProps) {
-  const compiler = props.source === null ? null : declaredLatexCompiler(props.source);
-  const declaration = props.source === null ? null : latexCompilerDeclaration(props.source);
-  const label =
-    props.source === null
-      ? "Not checked"
-      : compiler === "pdflatex"
-        ? "pdfLaTeX"
-        : compiler === "xelatex"
-          ? "XeLaTeX"
-          : compiler === "lualatex"
-            ? "LuaLaTeX"
-            : declaration === null
-              ? "Automatic"
-              : `Unsupported: ${declaration}`;
-  const availability =
-    compiler === null
-      ? props.offline
-        ? "Offline"
-        : null
-      : latexCompilerAvailabilityLabel(props.report, compiler, props.offline);
-  const description =
-    props.blockedReason ??
-    availability ??
-    "Save this document and rebuild using the selected compiler.";
+export function LatexCompilerMenu(props: LatexCompilerControlProps & { plain?: boolean }) {
   return (
-    <span className="scient-latex-compiler-control">
-      <DropdownMenu>
-        <ScientTooltip content={description}>
-          <DropdownMenuTrigger
-            render={
-              <button
-                type="button"
-                className="scient-latex-action"
-                aria-label={`Compiler: ${label}${availability ? ` · ${availability}` : ""}`}
-                aria-description={description}
-              />
-            }
-          >
-            <span>
-              Compiler: {props.busy ? "Saving…" : label}
-              {availability ? ` · ${availability}` : ""}
-            </span>
-            <ChevronDown className="size-3" aria-hidden="true" />
-          </DropdownMenuTrigger>
-        </ScientTooltip>
-        <DropdownMenuContent align="end">
-          <LatexCompilerMenuItems {...props} />
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </span>
+    <MenuSub>
+      <MenuSubTrigger>
+        {props.plain ? null : <Cog />}
+        <span>Compiler</span>
+      </MenuSubTrigger>
+      <MenuSubPopup className="w-max min-w-48 max-w-80">
+        <LatexCompilerMenuItems {...props} />
+      </MenuSubPopup>
+    </MenuSub>
   );
 }

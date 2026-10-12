@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { useLatexAutoBuild } from "./useLatexAutoBuild";
+import { LATEX_AUTO_COMPILE_DELAY_MS } from "./latexCompilation";
 
 describe("PDF-visible automatic builds", () => {
   let container: HTMLDivElement;
@@ -108,5 +109,80 @@ describe("PDF-visible automatic builds", () => {
     await render();
     await tick(10_000);
     expect(requestBuild).toHaveBeenCalledTimes(1);
+  });
+  it("waits for a pause, coalesces rapid edits, and compiles while Source is visible", async () => {
+    input = { ...input, mode: "auto", visible: false, needsBuild: false };
+    await render();
+    input = { ...input, needsBuild: true, sourceKey: "edit-1" };
+    await render();
+    await tick(1_500);
+    input = { ...input, sourceKey: "edit-2" };
+    await render();
+    await tick(LATEX_AUTO_COMPILE_DELAY_MS - 1);
+    expect(requestBuild).not.toHaveBeenCalled();
+    await tick(1);
+    expect(requestBuild).toHaveBeenCalledTimes(1);
+  });
+  it("waits for saves and a running build, then builds only the newest source", async () => {
+    input = { ...input, mode: "auto", busy: true };
+    await render();
+    input = { ...input, sourceKey: "included-edit-1" };
+    await render();
+    input = { ...input, sourceKey: "included-edit-2", busy: false, blocked: true };
+    await render();
+    await tick(10_000);
+    expect(requestBuild).not.toHaveBeenCalled();
+    input = { ...input, blocked: false };
+    await render();
+    await tick(LATEX_AUTO_COMPILE_DELAY_MS);
+    expect(requestBuild).toHaveBeenCalledTimes(1);
+  });
+  it("does not loop on a failed source; retries after an included source changes", async () => {
+    input = { ...input, mode: "auto" };
+    await render();
+    await tick(LATEX_AUTO_COMPILE_DELAY_MS);
+    input = { ...input, busy: true };
+    await render();
+    input = { ...input, busy: false };
+    await render();
+    await tick(60_000);
+    expect(requestBuild).toHaveBeenCalledTimes(1);
+    input = { ...input, sourceKey: "included-file-new-revision" };
+    await render();
+    await tick(LATEX_AUTO_COMPILE_DELAY_MS);
+    expect(requestBuild).toHaveBeenCalledTimes(2);
+  });
+  it("builds again when an outside change makes a previously current PDF stale", async () => {
+    input = { ...input, mode: "auto" };
+    await render();
+    await tick(LATEX_AUTO_COMPILE_DELAY_MS);
+    input = { ...input, needsBuild: false };
+    await render();
+    input = { ...input, needsBuild: true };
+    await render();
+    await tick(LATEX_AUTO_COMPILE_DELAY_MS);
+    expect(requestBuild).toHaveBeenCalledTimes(2);
+  });
+  it("cancels a pending automatic build when switched to Manual", async () => {
+    input = { ...input, mode: "auto" };
+    await render();
+    await tick(1_000);
+    input = { ...input, mode: "manual" };
+    await render();
+    await tick(60_000);
+    input = { ...input, visible: false };
+    await render();
+    input = { ...input, visible: true };
+    await render();
+    await tick(60_000);
+    expect(requestBuild).not.toHaveBeenCalled();
+  });
+  it("retires timers when the document closes", async () => {
+    input = { ...input, mode: "auto" };
+    await render();
+    await act(() => root.unmount());
+    root = createRoot(container);
+    await tick(60_000);
+    expect(requestBuild).not.toHaveBeenCalled();
   });
 });

@@ -208,6 +208,21 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["compiler", "pdflatex", "xelatex", "lualatex", "hebrew compiler", "automatic"],
   },
   {
+    id: "latex-compilation",
+    title: "PDF compilation",
+    to: "/settings/documents",
+    targetId: "latex-compilation",
+    searchTerms: [
+      "latex",
+      "auto-compile",
+      "autocompile",
+      "rebuild",
+      "on save",
+      "manual",
+      "pdf compilation",
+    ],
+  },
+  {
     id: "new-document-template",
     title: "Templates and language for new documents",
     to: "/settings/documents",

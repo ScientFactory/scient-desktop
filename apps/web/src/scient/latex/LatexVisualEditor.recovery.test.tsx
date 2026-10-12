@@ -19,9 +19,10 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
 import { FileSaveCoordinator } from "~/components/files/fileSaveCoordinator";
+import { createTestCheckpointStore } from "~/scient/markdownEditor/persistence/markdownDraftCheckpointTestkit";
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
+import { stubLatexReadingFonts, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import {
   checkpointVisualDraft,
   clearVisualDraft,
@@ -73,9 +74,11 @@ describe("recovering unsaved work", () => {
   let singleFileDocument: boolean;
   let coordinator: FileSaveCoordinator<FileView, Error>;
   const writes = vi.fn();
+  let restoreFonts = () => {};
 
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    restoreFonts = stubLatexReadingFonts();
     writes.mockReset();
     singleFileDocument = true;
     save = "completes";
@@ -94,6 +97,7 @@ describe("recovering unsaved work", () => {
     container.remove();
     clearVisualDraft(KEY);
     clearTypingDraft(KEY);
+    restoreFonts();
     vi.unstubAllGlobals();
   });
 
@@ -115,6 +119,8 @@ describe("recovering unsaved work", () => {
     coordinator = new FileSaveCoordinator<FileView, Error>({
       debounceMs: SAVE_DELAY,
       initialRevision: `r${revision}`,
+      initialSource: source,
+      journal: { key: KEY, store: createTestCheckpointStore() },
       persist: async (contents, expectedRevision) => {
         if (publicationGate) await publicationGate;
         if (save === "waits") return new Promise(() => {});
@@ -173,7 +179,7 @@ describe("recovering unsaved work", () => {
   const changeOutside = (source: string) =>
     act(async () => {
       disk = { source, revision: disk.revision + 1 };
-      coordinator.syncConfirmedFileRevision(`r${disk.revision}`);
+      coordinator.syncConfirmedFileRevision(`r${disk.revision}`, disk.source);
       show(disk);
     });
   /** The user edits in the Source view: the buffer changes, with no checkpoint. */
@@ -650,7 +656,7 @@ describe("recovering unsaved work", () => {
       disk = { source: newer, revision: 2 };
       shown = disk;
       pm().commands.insertContent(" typed");
-      coordinator.syncConfirmedFileRevision("r2");
+      coordinator.syncConfirmedFileRevision("r2", disk.source);
       show(disk);
     });
     await settle(300);
@@ -704,7 +710,7 @@ describe("recovering unsaved work", () => {
       pm().commands.setTextSelection(3);
       pm().commands.setNode("heading", { level: 1 });
       disk = { source: newer, revision: 2 };
-      coordinator.syncConfirmedFileRevision("r2");
+      coordinator.syncConfirmedFileRevision("r2", disk.source);
       show(disk);
     });
     await settle(300);
@@ -904,7 +910,7 @@ describe("recovering unsaved work", () => {
 
     it("is not replaced when the read-only editor closes with an older unwritten checkpoint", async () => {
       storeSourceDraft(MONDAY, "r1");
-      checkpointVisualDraft(KEY, "", "", tex("Older, never written"), "r0");
+      checkpointVisualDraft(KEY, tex("Older, never written"), "r0");
       noRoomToPark();
       await mount(AGENT, 2);
       expect(editable()).toBe(false);
@@ -982,7 +988,7 @@ describe("recovering unsaved work", () => {
         pm().commands.setTextSelection(3);
         pm().commands.setNode("heading", { level: 1 });
         disk = { source: tex("Old base\n\nAgent paragraph."), revision: 2 };
-        coordinator.syncConfirmedFileRevision("r2");
+        coordinator.syncConfirmedFileRevision("r2", disk.source);
         show(disk);
       });
       await settle(300);

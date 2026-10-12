@@ -94,6 +94,13 @@ is refused until the declaration is added in Source; root resolution alone
 does not authorize a multi-file write. See [saving and recovery](scient-latex-visual.md)
 for preparation and recovery behavior.
 
+Source observation includes the workspace mutation epoch. Completed publication
+receipts record historical success or a definitive unchanged refusal; they grant
+no permission to reapply a write. Older successful creates and mount device-ID
+changes therefore do not require recovery before another document can resolve
+or compile. Unfinished, ambiguous, or unattributed journals retain their recovery
+checks. Each fresh save still verifies the current binding and source revision.
+
 **Logical document key.** Every build, status, and cancel call resolves to
 `latex:<sha256-of-normalized-workspace-root>:<root-relative-path>`, capped at 1,024
 characters (`document-key-too-long` otherwise). This is the same key space
@@ -121,11 +128,10 @@ can announce Scient's own publishes and failures, but an agent, another editor,
 or a changed included file has no binding event to emit; the slower evidence
 poll is the correctness backstop for those external changes.
 
-**Three-permit admission.** A single `Semaphore` bounds compilation itself to
-`MAX_CONCURRENT_COMPILES = 3` — a compile is CPU- and disk-bound, and three at
-once keeps a laptop usable. The permit is taken around the compile, not the
-whole build-loop pass, so a build waiting its turn stays honestly in `queued`
-instead of claiming to run.
+**Three-permit admission.** A `Semaphore` bounds document compilation passes to
+`MAX_CONCURRENT_COMPILES = 3`. A pass waiting for a permit stays in `queued`.
+Each admitted attempt creates a fresh private output directory. Aux files from
+older attempts are never adopted, including after cancellation or restart.
 
 **Supersession via store generations.** `GeneratedDocumentStore` assigns each
 production attempt a monotonic `BindingGeneration` on `beginProduction`.
@@ -151,6 +157,16 @@ reader who cancels a rebuild keeps a still-valid PDF marked `current` instead
 of watching it go stale for no content reason. `abandonProduction` is
 idempotent — a handle that no longer owns the binding settles as a no-op — so
 every path that might need it can run it unconditionally.
+
+Cancellation uses the existing local process adapter, which stops the owned
+process group and observes exit. Every attempt has a distinct output directory,
+so an older process or pending finalizer cannot supply or delete a successor's
+PDF. The service rechecks its generation and source evidence before publication.
+Successful and ordinary failed attempts remove their private outputs after the
+immutable PDF and SyncTeX index have been retained. A failed cancellation keeps
+that attempt's directory for diagnosis; it does not block a fresh build or
+require manual cleanup. Ordinary builds do not require an additional process
+containment capability.
 
 Two of those paths are races a first reading of the code misses. A cancel can
 land between `beginProduction` claiming the binding and the handle reaching the
@@ -421,6 +437,18 @@ minutes later and rebuilt the distribution's file index underneath a build that
 had already been told nothing was placed. Short read-only probes (`kpsewhich`)
 stay on `ProcessRunner`, which is what it is for.
 
+The invocation timeout starts only after the distribution-script permit is
+acquired. Its process scope cancels and observes exit before releasing that
+permit, including finalizer retirement; queue wait does not spend the execution
+budget. Artwork previews never invoke this installer: a missing package asks
+the user to build the document explicitly. Cancelling or resizing an artwork
+request therefore cannot interrupt shared distribution installation.
+Unknown installer-process retirement similarly quarantines further mutation of
+that distribution, with `.scient-unretired-install` in its managed bin directory
+preserving the refusal across restart. Such a failure is infrastructure failure,
+not an ordinary missing-package verdict. No automatic marker removal or retry
+claims the still-unknown distribution safe.
+
 On Windows the invocation is the `perl` script, not the shim.
 `texliveScriptInvocation` encodes what `tlmgr.bat` does — derive the
 installation root from the `bin` directory, put `tlpkg/tlperl/bin` and the
@@ -481,6 +509,7 @@ transcript. Builds run with `-file-line-error`, so most errors arrive as
 `./path.tex:12: message`; tectonic prefixes every line it forwards with
 `error:`/`warning:` labels, which the parser strips before matching so the
 label is read as severity, not swallowed into the file capture. Diagnostics
+with an empty message use a fallback matching that severity. Diagnostics
 are deduplicated across engine passes by severity, normalized path, line, and
 the complete whitespace-normalized message, before the display message is
 truncated. Only recognizable continuation lines are joined; another diagnostic
@@ -503,7 +532,9 @@ reported path: TeX resolves `\input` against its own working directory (the
 root document's folder, not the workspace root), so the engine's paths are
 rebased onto workspace-relative paths, and a diagnostic whose path would land
 outside the workspace keeps its message but loses its file reference, since no
-client could open it anyway. Every invocation also sets `max_print_line=1000`,
+client could open it anyway. A relative package filename absent from the project
+also loses its navigation link while retaining its location in the message.
+Every invocation also sets `max_print_line=1000`,
 `error_line=254`, and `half_error_line=238` in the child environment — the
 documented `texmf.cnf` knobs — because TeX wraps its own messages at 79
 columns by default, which otherwise cuts file paths and error text in half
@@ -680,12 +711,12 @@ Every invocation asks the engine for a SyncTeX index (`-synctex=1` for
 `latexmk`, `--synctex` for tectonic), and it is written next to the PDF in the
 build work directory like any other aux file. A successful publish copies that
 index into an exact-revision navigation directory after the immutable PDF is
-published and before the build reports success. Navigation metadata records
-only the workspace/root identity, compile directory, and synthetic output
-name. It never persists an executable path or the producing compiler's install
-kind. Schema-version-1 and -2 metadata remain readable, but their persisted
-command, bin directory, and managed flag are discarded as untrusted migration
-input.
+published and before the build reports success. Schema-version-4 navigation
+metadata records the workspace/root identity, compile directory, synthetic output
+name, and basename of the revision-bound build-evidence receipt. It never persists
+an executable path or the producing compiler's install kind. Older navigation
+metadata cannot prove compiled source identity and fails closed; rebuilding
+produces a qualified index without preventing the old PDF from being read.
 Failure to retain this auxiliary index never invalidates an otherwise valid
 PDF.
 
@@ -705,10 +736,11 @@ assets carry every released platform key.
 
 Forward search starts on a plain double-click in the source editor only while
 Split is already open and asks `synctex view` for the current successful
-descriptor's exact artifact/revision. The inherited editor does not expose its
-internal cursor on the current upstream seam, so Scient sends SyncTeX's explicit
-unknown-column value instead of guessing a visual DOM offset for wrapped or
-bidirectional text. It includes the reader's current page as a disambiguation hint. SyncTeX
+descriptor's exact artifact/revision and the source buffer's compiled revision.
+The inherited editor does not expose its internal cursor on the current upstream
+seam, so Scient sends SyncTeX's explicit unknown-column value instead of guessing
+a visual DOM offset for wrapped or bidirectional text.
+It includes the reader's current page as a disambiguation hint. SyncTeX
 returns ordered candidates: Scient preserves that order, uses the first valid
 target point (`x`/`y`, not the potentially page-spanning `h`/`v` enclosing box
 reported for some RTL material), converts that top-left big-point coordinate
@@ -717,17 +749,27 @@ destination. If an engine records only line-level locations for a source line,
 different columns can legitimately return the same candidates; Scient keeps
 the official first candidate instead of inventing a more precise PDF position.
 
-Inverse search starts with a modified PDF double-click while Split is open;
+Navigation requires the compiled source revisions and workspace mutation epoch in
+the retained evidence receipt, not just a cached current build descriptor. Native
+workspace reads and dependency evidence are checked before the helper runs and
+again before returning its result. A saved source that differs from the compiled
+source, unresolved publication state, or missing proof returns `source-stale`.
+Client requests also invalidate on source/session transitions and same-PDF freshness
+changes, so a delayed answer cannot reveal coordinates from an older source.
+
+Inverse search starts with a plain PDF double-click while Split is open;
 ordinary clicks retain PDF selection behavior. The reader preserves native selection, converts the pointer's
 page position back to top-left big points, asks `synctex edit`, and selects the
 first returned candidate whose input is contained in the workspace. Source-only
-and PDF-only modes never switch layout implicitly. The source pane opens that
-file at the reported line; a negative or absent helper column remains
-truthfully line-level instead of being guessed. Diagnostics with a valid
-workspace-relative file are buttons through the same line-aware open seam. Any
-revision change invalidates the in-flight navigation request and target, and a
-missing/evicted revision or index returns a typed `unavailable` result rather
-than navigating against a newer PDF.
+and PDF-only modes never switch layout implicitly. The result carries the compiled
+target source revision. The source pane waits for authoritative target loading and
+session admission before revealing its reported line, and refuses changed, pending,
+missing, conflicting, or locally edited target text. A negative or absent helper
+column remains truthfully line-level instead of being guessed. Invalidating a reveal
+also cancels its queued frame and active scroll guard, even when its request ID is
+unchanged. Diagnostics with a valid workspace-relative file use the same line-aware
+open seam without imposing a compiled-source revision. A missing/evicted PDF revision
+or index returns typed `unavailable` rather than navigating against a newer PDF.
 
 ## Word export
 

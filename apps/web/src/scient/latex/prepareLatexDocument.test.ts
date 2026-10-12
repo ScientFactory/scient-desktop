@@ -5,6 +5,7 @@ import {
   keepBothVersions,
 } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import type { MarkdownPersistenceTarget } from "../markdownEditor/persistence/markdownPersistenceRegistry";
+import { createTestCheckpointStore } from "../markdownEditor/persistence/markdownDraftCheckpointTestkit";
 import { LatexDocumentInputs } from "./latexDocumentInputs";
 import { prepareLatexDocument } from "./prepareLatexDocument";
 import { changeLatexDocumentCompiler } from "./changeLatexDocumentCompiler";
@@ -44,6 +45,7 @@ function setup(initial: Record<string, string>) {
     return { source, revision: revision(source) };
   };
   const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: createTestCheckpointStore(),
     debounceMs: 60_000,
     reconcile: () => keepBothVersions,
     createTransport: (file) => ({

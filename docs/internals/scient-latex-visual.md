@@ -629,8 +629,9 @@ locally, sounds and the optional compute engine are disabled. No web service
 or TeX process participates in a writing transaction.
 
 `latexSourceEditPlan.ts` carries explicit original-coordinate patch scripts and a
-captured `LatexEditorSourceSnapshot`. `rootSource` is the physical root's exact
-native text; `setupSource` is the assembled declaration context, never a write
+captured `LatexEditorSourceSnapshot`, which also supplies the editor's root and
+setup context rather than duplicate props. `rootSource` is the physical root's
+exact native text; `setupSource` is the assembled declaration context, never a write
 destination. Producers do not infer a whole-file change by diffing serialized
 documents. Source IDs, ranges and list trivia are disposable parser facts.
 Persistence owners authorize scripts through stable document identity and working
@@ -741,9 +742,13 @@ compares the receipt with the build revisions before saving a copy.
 `LatexBuildService.status` verifies dependency evidence but never starts a
 compiler. A stale status keeps the old artifact readable, marks its descriptor
 stale and removes visual source authorization from that response. The client
-rebuilds when a stale PDF is opened and on Ctrl/Cmd+S while PDF is visible.
-Typing does not schedule a build; the shared scheduler and setting are pending. Open-PDF requests wait for file saves and build availability, and do not
-retry after an attempt until the PDF is reopened. Explicit Rebuild remains available. Existing
+uses the device-local PDF compilation preference. On save, the default, rebuilds
+on Ctrl/Cmd+S from any view and when a stale PDF is opened. Auto-compile schedules
+settled source changes after two seconds, including the included-file revision keys
+reported by the Visual project. Manual requests no automatic builds. The existing
+build coordinator continues to own execution and coalesced reruns. Requests wait
+for source saves, field drafts, toolchain availability and existing builds; an
+unchanged failed source is not retried in a loop. Explicit Rebuild remains available. Existing
 root resolution, cancellation, bounded compile stabilization, immutable
 artifacts and PDF navigation remain owned by the existing build/reader path.
 
@@ -1232,8 +1237,9 @@ record has a stored recovery copy; failed transfers keep the original and pause
 editing until the user resolves it. Round-trip signatures are cached for immutable
 nodes. Recovery storage writes happen after painting or on explicit exit.
 
-Recovery JSON omits native source maps. Rebinding proves surviving list-item
-correspondence from authored content rather than trusting cached numeric offsets;
+Live list transactions retain their known item correspondence, including repeated
+items with identical text. Recovery JSON omits native source maps. Rebinding
+proves surviving list-item correspondence from authored content rather than trusting cached numeric offsets;
 ambiguous origins remain readable recovery instead of being published. New
 ownerless table seeds can rebuild parser metadata from their retained raw source.
 Once a raw-block edit is accepted, Cancel/Escape must finish its recovery
@@ -1862,13 +1868,26 @@ environments, including Enter and inline/display math insertion. Empty MathLive
 slots use the shared faint gray guides while editing, including fraction and
 root slots; guides do not appear in copied source or printed output.
 
-Complete `tikzpicture` blocks, including pgfplots axes, render as read-only
+Complete `tikzpicture` blocks, including pgfplots axes, can render as read-only
 artwork in figures or on their own. Recognition scans environment boundaries,
 without interpreting drawing commands. Caption edits cannot patch the drawing.
-The authenticated artwork endpoint calls `LatexTikzPreview`, which compiles the
-picture with the root document's preamble and current panel linewidth. The
-`preview` package crops the PDF; the existing PDF.js runtime paints it at paper
-size. A requesting client can ask for native raster paint at its pixel density.
+Mounting artwork or editing its source never admits execution. **Run this drawing
+preview** explicitly admits only that mounted preview's current environment,
+document identity, client preamble, drawing source and algorithm counter. Changing
+any of those requires a new action; layout-width changes may rerender the admitted
+text. Source and captions remain editable without running a preview.
+
+The warning discloses that host TeX/Lua has the environment's filesystem authority;
+`-no-shell-escape` is not a sandbox or a trust decision. The authenticated artwork
+endpoint requires an explicit host-execution declaration from its caller, and
+`LatexTikzPreview` also refuses omitted or wrong declarations before file reads,
+toolchain probing or process launch. This is a client declaration, not proof that
+the server verified a human click or trusted the workspace. The service compiles
+the submitted picture and preamble at the current panel linewidth. Client text is
+non-authoritative: artwork does not publish generated documents or establish the
+saved document's PDF currentness. The `preview` package crops the PDF; the existing
+PDF.js runtime paints it at paper size. A requesting client can ask for native
+raster paint at its pixel density.
 When `pdfinfo` and `pdftoppm` resolve in that environment, the backend checks page
 geometry before allocation, paints the cropped first page in an owned subprocess,
 and includes bounded PNG pixels alongside the PDF. Visual decodes those pixels
@@ -1879,22 +1898,47 @@ have separate timeouts; interruption cancels their owned process trees. Both pat
 keep captions editable and drawing source unchanged. Production responsiveness
 and native LyX parity require separate qualification.
 
-The service retains at most eight private build directories, each bounded
-to 16 MB, to reuse the compiler driver's incremental state. Every request still
+The service retains at most eight safely retired private build directories, each
+bounded to 16 MB, to preserve the compiler driver's aux state. Every request still
 invokes the driver; it never serves a PDF solely from a source-string cache.
-Before reuse it hashes recorded input contents, including package/font files,
-the root source and compiler executable, and checks the project's file names for
-changed search resolution. Changed or unverifiable inputs force recompilation.
-Source text is only rewritten when it changes. Failed, interrupted, oversized
-or unverifiable runs discard their directory; service shutdown closes retained
-directories. Tectonic, which has no `.fls` recorder, continues compiling each
-request. Runs use the shared toolchain and
-managed package installer, no shell escape, a concurrency limit, cancellation
-of its process tree, and bounded output and time. Project inputs are resolved
-through the validated document directory. Preview compilation leaves project
-files and ordinary document build status unchanged. Compiler failures display
-a diagnostic while keeping source intact. Document-body macro definitions,
-cross-picture references and externalization are not provided by this isolated
+Qualified incremental reuse hashes recorded input contents and resolved paths,
+including package/font files, the picture source, document source and compiler
+executable. Search evidence covers the actual explicit search roots, recorded
+input-name suffixes that could acquire local shadows, and literal file-lookup
+directories. Nonrecursive search does not walk unrelated `.git`, `node_modules`
+or build descendants. Explicit recursive search remains bounded; more than 2,048
+relevant inputs/search entries, unknown default search paths, dynamic lookups or
+unverifiable recorder evidence force reprocessing rather than weaken the proof.
+A successful, bounded run may retain aux state even when that proof is unknown,
+but the next request still forces another compiler pass. Source text is rewritten
+only when it changes.
+
+One directory permit covers preflight hashing, the run's resource scope, process
+and output-fiber retirement, postflight hashing and failure cleanup. A queued
+successor cannot enter while its predecessor's finalizers are still running.
+Ordinary failed, interrupted or oversized runs discard their directory; service
+shutdown joins active requests before removing safely retired directories.
+Failed process retirement instead quarantines the directory, refuses same-key
+successors and preserves its unresolved ownership marker through shutdown.
+
+Service startup reclaims only marked, contained directories from a demonstrably
+dead owner PID on the same host whose lease confirms settled process retirement.
+Live or uncertain PIDs, active/unresolved leases, malformed or absent markers,
+foreign-host leases and symlink escapes are left untouched. Thus crashed retained
+state is reclaimed without deleting another live instance's work; directories
+with unknown writers are deliberately not claimed as safely reclaimable.
+Tectonic, which has no `.fls` recorder, continues compiling each
+request. Runs use the shared toolchain, no shell escape, a concurrency limit,
+scoped cancellation and process retirement, and bounded output and execution time.
+Execution timeout begins only after global and per-workspace permit admission.
+Preview never invokes the managed package installer, and Tectonic previews use
+`--only-cached` rather than downloading bundle files. Missing-package diagnostics
+ask for the document's explicit **Build** action. Project inputs are resolved
+through the validated document directory. Preview compilation leaves ordinary
+document build status unchanged and writes only its private build files; this does
+not restrict the submitted TeX/Lua's own filesystem authority. Compiler failures
+display a diagnostic while keeping source intact. Document-body macro definitions,
+cross-picture references and externalization are not provided by this private
 preview. There are no drawing-editing controls in Visual.
 
 Standard report/book structure uses the existing rich-preview nodes for literal

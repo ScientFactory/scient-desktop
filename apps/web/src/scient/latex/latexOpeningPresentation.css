@@ -1,0 +1,32 @@
+.scient-latex-document-preparation {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+
+.scient-latex-document-preparation[data-overlay] {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.scient-latex-opening-shell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.scient-latex-opening-shell[data-opening="true"] > [data-opening-content] {
+  opacity: 0;
+  pointer-events: none;
+}

@@ -18,7 +18,13 @@ import {
 const { disk, optimistic, visual, saveProject, projectState } = vi.hoisted(() => ({
   // Text another editor holds for a file and has not saved yet.
   optimistic: new Map<string, string>(),
-  projectState: { current: { pending: false, error: null as string | null } },
+  projectState: {
+    current: { pending: false, error: null } as {
+      pending: boolean;
+      error: string | null;
+      sourceKey?: string;
+    },
+  },
   saveProject: { current: null as null | (() => Promise<boolean>) },
   // What is on disk for each file of the synthetic workspace.
   disk: new Map<string, { source: string; revision: string; readOnly?: boolean }>(),
@@ -309,6 +315,7 @@ describe("retiring the project's recovery copy", () => {
     for (const container of containers) container.remove();
     for (const lease of leases) lease.release();
     clearVisualDraft(KEY);
+    for (const file of disk.keys()) clearVisualDraft(`${environmentId}\0${cwd}\0${file}`);
     vi.unstubAllGlobals();
   });
 
@@ -336,9 +343,16 @@ describe("retiring the project's recovery copy", () => {
       expect(move).not.toBeNull();
       if (!move) throw new Error("Owned rename refused");
       expect(await move.preflight()).toBe("empty");
+      const intent = await move.admitRename();
       disk.set("renamed.tex", disk.get(path)!);
       disk.delete(path);
-      expect(move.commit()).toBe(true);
+      expect(
+        await move.acknowledgeRename({
+          destinationRelativePath: "renamed.tex",
+          revision: intent.expectedRevision,
+        }),
+      ).toBe(true);
+      expect(await move.commit()).toBe(true);
       move.finish();
     });
     await render(<Surface lease={selected} />);
@@ -393,9 +407,17 @@ describe("retiring the project's recovery copy", () => {
       const move = selected.beginMove({ environmentId, cwd, relativePath: "other/main.tex" });
       expect(move).not.toBeNull();
       if (!move) throw new Error("Owned move refused");
+      expect(await move.preflight()).toBe("empty");
+      const intent = await move.admitRename();
       disk.set("other/main.tex", disk.get(path)!);
       disk.delete(path);
-      expect(move.commit()).toBe(true);
+      expect(
+        await move.acknowledgeRename({
+          destinationRelativePath: "other/main.tex",
+          revision: intent.expectedRevision,
+        }),
+      ).toBe(true);
+      expect(await move.commit()).toBe(true);
       move.finish();
     });
     await render(<Surface lease={selected} />);
@@ -469,9 +491,16 @@ describe("retiring the project's recovery copy", () => {
       expect(move).not.toBeNull();
       if (!move) throw new Error("Owned history rename refused");
       expect(await move.preflight()).toBe("empty");
+      const intent = await move.admitRename();
       disk.set("history-renamed.tex", disk.get(path)!);
       disk.delete(path);
-      expect(move.commit()).toBe(true);
+      expect(
+        await move.acknowledgeRename({
+          destinationRelativePath: "history-renamed.tex",
+          revision: intent.expectedRevision,
+        }),
+      ).toBe(true);
+      expect(await move.commit()).toBe(true);
       move.finish();
     });
     await render(<Surface lease={selected} />);
@@ -800,6 +829,7 @@ describe("retiring the project's recovery copy", () => {
       // The Visual editor stores its copy when an edit is accepted; the project
       // must not retire it in the same update, before the session reports pending.
       let accepted = false;
+      const previousSourceKey = projectState.current.sourceKey;
       await act(async () => {
         const next = edited("Chapter text.", "Chapter text, edited.");
         accepted = replaceVisualText(
@@ -810,6 +840,7 @@ describe("retiring the project's recovery copy", () => {
         localStorage.setItem(SLOT, JSON.stringify({ source: next, baseRevision: "r1" }));
       });
       expect(accepted).toBe(true);
+      expect(projectState.current.sourceKey).not.toBe(previousSourceKey);
       expect(localStorage.getItem(SLOT)).not.toBeNull();
       await settle(600);
       expect(writes).toBe(1);
@@ -1024,6 +1055,7 @@ describe("retiring the project's recovery copy", () => {
         resolving
       />,
     );
-    expect(container.querySelector<HTMLButtonElement>("button")!.disabled).toBe(true);
+    expect(container.textContent).toContain("Preparing document…");
+    expect(container.querySelector("button")).toBeNull();
   });
 });

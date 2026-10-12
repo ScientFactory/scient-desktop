@@ -3938,20 +3938,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   flex-basis: 4px;
 }
 
-.scient-latex-compiler-control {
-  display: inline-flex;
-  flex: none;
-  max-width: 220px;
-}
-.scient-latex-compiler-control .scient-latex-action {
-  min-width: 0;
-}
-.scient-latex-compiler-control .scient-latex-action > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* The search field's room, kept empty in Source. */
 .scient-latex-search-room {
   visibility: hidden;
@@ -4012,7 +3998,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   + .scient-pdf-toolbar-separator,
 .scient-latex-toolbar[data-fit~="status"] .scient-latex-chip-text,
 .scient-latex-toolbar[data-fit~="status"] .scient-latex-build-action > span,
-.scient-latex-toolbar[data-fit~="compiler"] .scient-latex-compiler-control,
 .scient-latex-toolbar[data-fit~="split"] .scient-latex-split-modes,
 .scient-latex-toolbar[data-fit~="separators"] .scient-pdf-toolbar-separator,
 .scient-latex-toolbar[data-fit~="percent"] .scient-pdf-zoom-label,
@@ -4169,6 +4154,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   .scient-latex-visual-scroll:has(.scient-latex-visual-document[data-latex-opening="true"])
     > .scient-latex-page-zoom-frame {
     visibility: hidden;
+    opacity: 0;
     pointer-events: none;
   }
 }

@@ -5,6 +5,7 @@ import {
   MarkdownPersistenceRegistry,
   keepBothVersions,
 } from "../markdownEditor/persistence/markdownPersistenceRegistry";
+import { createTestCheckpointStore } from "../markdownEditor/persistence/markdownDraftCheckpointTestkit";
 import { changeLatexDocumentCompiler } from "./changeLatexDocumentCompiler";
 import { LatexDocumentInputs } from "./latexDocumentInputs";
 import { prepareLatexDocument } from "./prepareLatexDocument";
@@ -44,6 +45,7 @@ async function setup(initial = source) {
     failure: null as null | "terminal" | "recovery_required",
   };
   const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: createTestCheckpointStore(),
     debounceMs: 60_000,
     reconcile: () => keepBothVersions,
     createTransport: () => ({
@@ -177,7 +179,14 @@ describe("compiler transaction boundaries", () => {
             const move = h.lease.beginMove(destination);
             expect(move).not.toBeNull();
             expect(await move!.preflight()).toBe("empty");
-            expect(move!.commit()).toBe(true);
+            const intent = await move!.admitRename();
+            expect(
+              await move!.acknowledgeRename({
+                destinationRelativePath: destination.relativePath,
+                revision: intent.expectedRevision,
+              }),
+            ).toBe(true);
+            expect(await move!.commit()).toBe(true);
             move!.finish();
             return prepared;
           },

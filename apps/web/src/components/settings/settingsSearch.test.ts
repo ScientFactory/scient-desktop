@@ -403,6 +403,16 @@ describe("searchSettings", () => {
     });
   });
 
+  it("routes compilation modes to the Documents picker", () => {
+    for (const query of ["autocompile", "auto-compile", "pdf compilation"]) {
+      expect(searchSettings(query)[0], query).toMatchObject({
+        id: "latex-compilation",
+        to: "/settings/documents",
+        targetId: "latex-compilation",
+      });
+    }
+  });
+
   it("routes conditional window capture settings to the stable toggle row", () => {
     const targets = [
       "capture accessibility data",

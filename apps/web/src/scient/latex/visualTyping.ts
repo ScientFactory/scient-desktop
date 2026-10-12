@@ -99,11 +99,12 @@ function matchesItemFragments(original: JSONContent, fragments: readonly JSONCon
   return previous.slice(at).every((node) => node.type === "text" && /^\s*$/u.test(node.text ?? ""));
 }
 
-/**
- * Cached offsets group split intent only. Ownership comes from a unique match
- * against the before-document's surviving semantics, then its native index.
- */
-function listItemOrigins(content: JSONContent, before: JSONContent): number[] | null {
+/** Live edits keep their item origin; recovered splits must prove their correspondence. */
+function listItemOrigins(
+  content: JSONContent,
+  before: JSONContent,
+  live: boolean,
+): number[] | null {
   const proposed = content.content ?? [];
   const original = before.content ?? [];
   const groups = new Map<number, { items: JSONContent[]; indexes: number[] }>();
@@ -120,13 +121,16 @@ function listItemOrigins(content: JSONContent, before: JSONContent): number[] | 
   }
   const result: number[] = [];
   const used = new Set<number>();
-  for (const group of groups.values()) {
-    let owner = -1;
-    for (const [index, item] of original.entries()) {
-      if (!matchesItemFragments(item, group.items)) continue;
-      if (owner !== -1) return null;
-      owner = index;
-    }
+  for (const [hint, group] of groups) {
+    // A live transaction already identifies its item, even when text repeats.
+    // Only recovered input needs to rediscover ownership from its semantics.
+    let owner = live ? original.findIndex((item) => visualNodeOrigin(item) === hint) : -1;
+    if (!live)
+      for (const [index, item] of original.entries()) {
+        if (!matchesItemFragments(item, group.items)) continue;
+        if (owner !== -1) return null;
+        owner = index;
+      }
     if (owner === -1 || used.has(owner)) return null;
     used.add(owner);
     for (const index of group.indexes) result[index] = owner;
@@ -179,12 +183,10 @@ export function rebindVisualTypingContent(
     return content;
   const list = content.type === "bulletList" || content.type === "orderedList";
   const baselineList = baseline.type === "bulletList" || baseline.type === "orderedList";
-  if (!before && list && baselineList && content.content?.length !== baseline.content?.length)
-    before = baseline;
   const originalItems = before ?? baseline;
   const splitOrigins =
     list && baselineList && content.content?.length !== originalItems.content?.length
-      ? listItemOrigins(content, originalItems)
+      ? listItemOrigins(content, originalItems, before !== undefined)
       : undefined;
   if (
     splitOrigins === null ||

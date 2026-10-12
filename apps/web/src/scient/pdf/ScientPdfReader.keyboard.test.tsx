@@ -46,6 +46,7 @@ vi.mock("./useScientPdfReader", () => ({
     container: HTMLDivElement | null;
   }) => ({
     ...reader,
+    presentationCurrent: true,
     presentation: {
       documentKey: input.documentKey,
       revisionId: input.revisionId,

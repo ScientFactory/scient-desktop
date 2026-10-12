@@ -78,7 +78,16 @@ ${Array.from(
   await expect.poll(() => status()?.textContent).toBe("Preparing first page…");
   const frame = container!.querySelector<HTMLElement>(".scient-latex-page-zoom-frame")!;
   expect(getComputedStyle(frame).visibility).toBe("hidden");
+  expect(getComputedStyle(frame).opacity).toBe("0");
+  const openingContent = container!.querySelector<HTMLElement>("[data-opening-content]")!;
+  expect(openingContent.inert).toBe(true);
+  expect(getComputedStyle(openingContent).opacity).toBe("0");
+  expect(status()?.hidden).toBe(true);
+  expect(container!.querySelector(".scient-latex-document-preparation")?.textContent).toBe(
+    "Preparing document…",
+  );
   await expect.poll(() => dom.dataset.latexOpening, { timeout: 15000 }).toBe("false");
+  await expect.poll(() => openingContent.inert).toBe(false);
   expect(getComputedStyle(frame).visibility).toBe("visible");
   expect(scroll.scrollTop).toBe(0);
   // The first page is useful before background preparation finishes.

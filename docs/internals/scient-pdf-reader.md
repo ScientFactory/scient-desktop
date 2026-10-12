@@ -46,6 +46,15 @@ rendering engine. Search uses PDF.js's indexed text path with a short debounce,
 progressive counts, stale-query rejection, and idle prewarming; Scient does not
 maintain a second text index.
 
+Replacement loading is separate from the painted document's lifetime. Authorization,
+download, or decode failures retain the previous PDF, page, zoom, scroll position,
+and search query, with an update notice and **Try again**. Retry renews authorization
+and starts a new candidate attempt even when its URL and revision are unchanged;
+it never remounts the displayed reader. No candidate fetch begins while authorization
+is pending. Only the newest ready candidate can replace the presentation.
+Save Copy uses the painted document's source and authorized URL; SyncTeX remains
+disabled until the requested PDF is the current painted presentation.
+
 External outline URLs are accepted only for `http` and `https` and are opened
 through Scient's desktop shell. Internal destinations remain inside the reader.
 

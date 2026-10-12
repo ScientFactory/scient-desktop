@@ -25,6 +25,8 @@ export interface OpenFileOptions {
   readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
   /** Root retained when SyncTeX navigates from a multi-file PDF to a source. */
   readonly latexRootRelativePath?: string;
+  /** A SyncTeX line may reveal only this compiled target revision. */
+  readonly latexSourceRevision?: string;
 }
 
 /**
@@ -54,6 +56,9 @@ export function scientFileSurfaceRequests(revealRequestId: number, options?: Ope
     ...(typeof options?.latexRootRelativePath === "string"
       ? { latexRootRelativePath: options.latexRootRelativePath }
       : {}),
+    ...(options?.latexSourceRevision === undefined
+      ? {}
+      : { latexSourceReveal: { id: revealRequestId, revision: options.latexSourceRevision } }),
   };
 }
 
@@ -76,9 +81,12 @@ export function withoutTransientFileRequests(surface: RightPanelSurface): RightP
     htmlPresentationRequest: _transientHtmlPresentationRequest,
     latexPresentationRequest: _transientLatexPresentationRequest,
     fileCitation: _transientFileCitation,
+    latexSourceReveal: _transientLatexSourceReveal,
     ...persistentSurface
   } = surface;
-  return persistentSurface;
+  return _transientLatexSourceReveal === undefined
+    ? persistentSurface
+    : { ...persistentSurface, revealLine: null };
 }
 
 type ThreadUpdater = (current: ThreadRightPanelState) => ThreadRightPanelState;

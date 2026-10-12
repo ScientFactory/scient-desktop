@@ -703,7 +703,12 @@ export function latexViewportNodeView(fallback?: NodeViewRenderer): NodeViewRend
   };
 }
 
-function createOwner(view: EditorView, sourceContext: () => string, readingKey: () => string) {
+function createOwner(
+  view: EditorView,
+  sourceContext: () => string,
+  readingKey: () => string,
+  onOpeningChange: (opening: boolean) => void,
+) {
   let disposed = false;
   let observer: IntersectionObserver | undefined;
   let observedRoot: HTMLElement | null = null;
@@ -732,6 +737,26 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
   const visited = new WeakSet<DocumentNode>();
   let layoutReady = false;
   let loadingFonts = false;
+  let stableOpeningFrames = 0;
+  let previousOpeningGeometry: string | null = null;
+  const resetOpeningFrames = () => {
+    stableOpeningFrames = 0;
+    previousOpeningGeometry = null;
+  };
+  const keepOpening = (ready: boolean, geometry: string) => {
+    if (!key.getState(view.state)?.opening) return false;
+    if (!ready) {
+      resetOpeningFrames();
+      return true;
+    }
+    stableOpeningFrames = previousOpeningGeometry === geometry ? stableOpeningFrames + 1 : 1;
+    previousOpeningGeometry = geometry;
+    if (stableOpeningFrames < 2) {
+      schedule();
+      return true;
+    }
+    return false;
+  };
   let openingLocation = readingPositions.get(readingKey());
   if (
     openingLocation &&
@@ -798,6 +823,8 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
       return;
     const anchor = previous.opening ? null : captureLatexViewportAnchor(view);
     view.dispatch(view.state.tr.setMeta(key, update).setMeta("addToHistory", false));
+    if (update.opening !== undefined && update.opening !== previous.opening)
+      onOpeningChange(update.opening);
     anchor?.restore();
   };
   const configure = () => {
@@ -840,6 +867,7 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
     ]);
     if (nextContext !== contextValue) {
       contextValue = nextContext;
+      resetOpeningFrames();
       retention.clear();
       layoutReady = false;
       measurementRequested = false;
@@ -851,7 +879,8 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
           ? "Preparing reading view…"
           : "Preparing first page…"
         : "Preparing page layout…";
-      status.hidden = false;
+      status.hidden = key.getState(view.state)?.opening ?? true;
+      resetOpeningFrames();
       if (!loadingFonts) {
         loadingFonts = true;
         void prepareLatexReadingFonts(view.dom).then(() => {
@@ -862,7 +891,17 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
       return false;
     }
     restoreOpening();
-    const margin = Math.max(750, height * 1.5);
+    const scale = view.dom.getBoundingClientRect().width / Number.parseFloat(style.width);
+    const paperHeight =
+      Number.parseFloat(style.getPropertyValue("--scient-latex-paper-height")) * scale;
+    const openingMargin = key.getState(view.state)?.opening
+      ? Math.max(height, paperHeight) -
+        height +
+        paperHeight +
+        Number.parseFloat(style.getPropertyValue("--scient-latex-page-gap")) * scale +
+        200
+      : 0;
+    const margin = Math.max(750, height * 1.5, openingMargin || 0);
     const ahead =
       performance.now() - lastScroll < 180
         ? Math.min(3, Math.floor((Math.abs(velocity) * 320) / height) / 2) * height
@@ -912,13 +951,26 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
       const ready =
         layoutReady &&
         [...view.dom.querySelectorAll(".scient-latex-math-preview")].every(mathReadingPreviewReady);
-      if (viewport.opening && ready) publish({ opening: false });
+      const scroll = root()!;
+      const rect = view.dom.getBoundingClientRect();
+      const opening = keepOpening(
+        ready,
+        JSON.stringify([
+          contextValue,
+          scroll.scrollTop,
+          scroll.clientWidth,
+          scroll.clientHeight,
+          rect.width,
+          rect.height,
+        ]),
+      );
+      if (viewport.opening && !opening) publish({ opening: false });
       statusLabel.textContent = ready
         ? ""
         : viewport.opening
           ? "Preparing first page…"
           : "Preparing page layout…";
-      status.hidden = ready;
+      status.hidden = opening || ready;
       return;
     }
     const all = documentUnits(view.state.doc);
@@ -938,6 +990,9 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
           box.height,
           Number.parseFloat(style.getPropertyValue("--scient-latex-paper-height")) * scale,
         ) +
+        (Number.parseFloat(style.getPropertyValue("--scient-latex-paper-height")) +
+          Number.parseFloat(style.getPropertyValue("--scient-latex-page-gap"))) *
+          scale +
         200
       : box.bottom + 200;
     const reading = new Set<DocumentNode>();
@@ -1082,7 +1137,25 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
     const rendering = liveMembers.some(
       (member) => required.has(member.node()) && !readiness.get(member.dom),
     );
-    const opening = viewport.opening && !(layoutReady && !visiblePending && !rendering);
+    const opening = keepOpening(
+      layoutReady && !visiblePending && !rendering,
+      viewport.opening
+        ? JSON.stringify([
+            contextValue,
+            scroll.scrollTop,
+            scroll.clientWidth,
+            scroll.clientHeight,
+            ...all
+              .filter((unit) => required.has(unit.node))
+              .map((unit) => {
+                const element = view.nodeDOM(unit.position);
+                const rect =
+                  element instanceof HTMLElement ? element.getBoundingClientRect() : null;
+                return [unit.position, rect ? rect.top - box.top : null, rect?.height];
+              }),
+          ])
+        : "",
+    );
     publish({
       opening,
       visible: new Set(visible),
@@ -1127,7 +1200,7 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
           ? "Rendering content…"
           : "";
     if (statusLabel.textContent !== label) statusLabel.textContent = label;
-    status.hidden = !label;
+    status.hidden = opening || !label;
     saveReadingPosition();
   };
   const typing = () => {
@@ -1280,6 +1353,7 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
     context,
     navigate(position?: number) {
       if (key.getState(view.state)?.opening) {
+        resetOpeningFrames();
         openingLocation = undefined;
         openingTop = root()?.scrollTop ?? 0;
         const unit =
@@ -1335,6 +1409,7 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
         this.navigate(view.state.selection.head);
       if (previousDocument !== view.state.doc) {
         previousDocument = view.state.doc;
+        resetOpeningFrames();
         const viewport = key.getState(view.state);
         visible = new Set(viewport?.visible);
         preparing = new Set(viewport?.preparing);
@@ -1380,14 +1455,16 @@ function createOwner(view: EditorView, sourceContext: () => string, readingKey: 
 export const LatexViewport = Extension.create<{
   sourceContext: () => string;
   readingKey: () => string;
+  onOpeningChange: (opening: boolean) => void;
 }>({
   name: "latexViewport",
   addOptions() {
-    return { sourceContext: () => "", readingKey: () => "" };
+    return { sourceContext: () => "", readingKey: () => "", onOpeningChange: () => {} };
   },
   addProseMirrorPlugins() {
     const sourceContext = this.options.sourceContext;
     const readingKey = this.options.readingKey;
+    const onOpeningChange = this.options.onOpeningChange;
     return [
       new Plugin<ViewportState>({
         key,
@@ -1477,7 +1554,7 @@ export const LatexViewport = Extension.create<{
           },
         },
         view(view) {
-          const owner = createOwner(view, sourceContext, readingKey);
+          const owner = createOwner(view, sourceContext, readingKey, onOpeningChange);
           owners.set(view, owner);
           return {
             update(_view, previous) {

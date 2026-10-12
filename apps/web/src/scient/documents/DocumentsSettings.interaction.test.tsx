@@ -54,6 +54,7 @@ vi.mock("../wordExport/usePandocTool", () => ({
   },
 }));
 import { DocumentsSettings } from "./DocumentsSettings";
+import { LATEX_COMPILATION_STORAGE_KEY } from "../latex/latexCompilation";
 
 const report = (
   overrides: Partial<ScientLatexToolchainReport> = {},
@@ -143,6 +144,32 @@ describe("Settings ▸ Documents", () => {
     });
     expect(mocks.pandocRefresh).toHaveBeenCalledTimes(1);
     expect(mocks.readToolchain).toHaveBeenLastCalledWith("remote", { refresh: true });
+  });
+  it("keeps PDF compilation in one row with descriptions only inside the picker", async () => {
+    await render();
+    const row = container.querySelector("#latex-compilation")!;
+    expect(row.textContent).toBe("PDF compilationOn save");
+    await act(() => select("PDF compilation").click());
+    const options = [...document.querySelectorAll<HTMLElement>('[data-slot="select-item"]')];
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Auto-compileUpdate the PDF after you pause editing.",
+      "On saveUpdate the PDF when you save.",
+      "ManualUpdate the PDF when you click Rebuild.",
+    ]);
+    await act(() => options[0]!.click());
+    expect(stored(LATEX_COMPILATION_STORAGE_KEY)).toBe("auto");
+    expect(select("PDF compilation").textContent).toBe("Auto-compile");
+    await act(() => root.unmount());
+    root = createRoot(container);
+    await render();
+    expect(select("PDF compilation").textContent).toBe("Auto-compile");
+  });
+  it("finds the compilation row from settings search and tolerates old unknown values", async () => {
+    mocks.target = "latex-compilation";
+    localStorage.setItem(LATEX_COMPILATION_STORAGE_KEY, JSON.stringify("unknown"));
+    await render();
+    expect(select("PDF compilation").textContent).toBe("On save");
+    expect(container.querySelector("#documents-latex")?.hasAttribute("hidden")).toBe(false);
   });
 
   const manage = async () => {

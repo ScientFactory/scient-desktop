@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { ChevronDown } from "lucide-react";
 import {
@@ -15,8 +16,12 @@ import { setProjectFileQueryData } from "~/components/files/projectFilesQuerySta
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import type {
+  MarkdownPersistenceLease,
+  MarkdownPersistenceMoveTransaction,
+} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import { renameOpenDocument } from "~/scient/markdownEditor/persistence/renameOpenDocument";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -57,7 +62,7 @@ import {
 import { newDocuments, pathHasLeftoverDrafts, templateEdits } from "./newDocuments";
 import { builtInPreviewReference } from "./templatePreviews";
 import { TemplateRow } from "./TemplateRow";
-import { isPathTaken, useNewDocumentFiles } from "./useNewDocumentFiles";
+import { useNewDocumentFiles } from "./useNewDocumentFiles";
 import { useTemplateChoices } from "./useTemplateChoices";
 import { useTemplateSaving } from "./useTemplateSaving";
 import { userTemplates } from "./userTemplates";
@@ -137,9 +142,6 @@ function useCaretInTitle(enabled: boolean): boolean {
  * its template and language; once its title is saved and the person has moved
  * on from it, one rename from `untitled` to the title's name.
  */
-/** How long a document may stay not-ready-to-move before it is renamed the ordinary way. */
-const MOVE_BUSY_LIMIT_MS = 3_000;
-
 export function useNewDocument(input: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -149,11 +151,11 @@ export function useNewDocument(input: {
   readonly renameDisabled: boolean;
   /** A document Scient renamed or moved, by its old path (which may no longer be on screen). */
   readonly onRenamed: (relativePath: string, destinationRelativePath: string) => void;
-  /**
-   * Renames the open document in place, keeping its editor, when this document
-   * can move (`canMoveInPlace`). Otherwise the ordinary rename runs.
-   */
-  readonly moveInPlace?: (destinationRelativePath: string) => Promise<RenameOpenDocumentResult>;
+  /** Every owned title rename uses durable admission, even when its views remount. */
+  readonly moveInPlace?: (
+    destinationRelativePath: string,
+    transaction?: MarkdownPersistenceMoveTransaction,
+  ) => Promise<RenameOpenDocumentResult>;
   readonly canMoveInPlace?: boolean;
 }): { readonly startBar: ReactNode; readonly templateActions: ReactNode } {
   const { environmentId, cwd, relativePath, lease, snapshot } = input;
@@ -186,25 +188,10 @@ export function useNewDocument(input: {
   useLayoutEffect(() => {
     boundLease.current = input.lease;
   });
-  // When the document now shown first refused as not ready; another document
-  // starts its own wait.
-  const busySince = useRef<{ readonly lease: unknown; readonly at: number } | null>(null);
   const busyRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [, setRetryTick] = useState(0);
   useEffect(() => () => clearTimeout(busyRetry.current), []);
-  useEffect(() => {
-    // Another document: its retry and deadline are its own.
-    clearTimeout(busyRetry.current);
-    busySince.current = null;
-  }, [input.lease]);
-  // An in-place move was refused for this document: rename the ordinary way.
-  const [moveRefused, setMoveRefused] = useState<string | null>(null);
-  // The route is chosen before the rename starts, so the ordinary rename's
-  // waits still apply when the document cannot move in place.
-  const moves =
-    input.moveInPlace !== undefined &&
-    input.canMoveInPlace === true &&
-    moveRefused !== relativePath;
+  useEffect(() => clearTimeout(busyRetry.current), [input.lease]);
 
   const draft = snapshot?.draftSource ?? null;
   const untouched =
@@ -238,7 +225,7 @@ export function useNewDocument(input: {
   // ordinary rename remounts the editor, so wait for its first words or for the
   // caret to leave. A move in place keeps the editor and need not wait.
   const markdownWaits =
-    !moves &&
+    input.canMoveInPlace !== true &&
     entry?.format === "markdown" &&
     snapshot !== null &&
     !/^#[^\n]*\n[\s\S]*\S/u.test(snapshot.baselineSource) &&
@@ -257,36 +244,77 @@ export function useNewDocument(input: {
     !markdownWaits &&
     !(folderDocument && entry.settled);
 
-  /** Moves a project file only as last read: its revision after, "taken", or null. */
-  const move = async (
-    from: string,
-    to: string,
-    revision: string,
-  ): Promise<string | "taken" | null> => {
+  /** A move preserves uncertainty explicitly so callers never compensate blindly. */
+  const move = async (from: string, to: string, revision: string) => {
     if (!key) return null;
-    const result = await renameFile({
-      environmentId: key.environmentId,
-      input: {
-        cwd: key.cwd,
-        relativePath: from,
-        destinationRelativePath: to,
-        expectedRevision: revision,
+    let companion: MarkdownPersistenceLease;
+    try {
+      companion = await markdownPersistenceRegistry.open({ ...key, relativePath: from }, {});
+    } catch {
+      // No namespace operation was admitted. Binary/truncated/unreadable
+      // companions are never coerced into invented UTF-8 source.
+      return null;
+    }
+    try {
+      if (companion.getSnapshot().baselineRevision !== revision) return null;
+      const outcome = await renameOpenDocument({
+        lease: companion,
+        destination: { ...key, relativePath: to },
         removeEmptyFolders: true,
-      },
-    });
-    if (result._tag === "Success") return result.value.revision;
-    return isPathTaken(result) ? "taken" : null;
+        rename: async (expectedRevision, mutationId, intent) => {
+          const result = await renameFile({
+            environmentId: intent.from.environmentId,
+            input: {
+              cwd: intent.from.cwd,
+              relativePath: intent.from.relativePath,
+              destinationRelativePath: intent.destination.relativePath,
+              expectedRevision,
+              mutationId,
+              ...(intent.removeEmptyFolders ? { removeEmptyFolders: true } : {}),
+            },
+          });
+          return result._tag === "Success"
+            ? {
+                ok: true,
+                destinationRelativePath: result.value.destinationRelativePath,
+                revision: result.value.revision,
+              }
+            : {
+                ok: false,
+                cause: result._tag === "Failure" ? squashAtomCommandFailure(result) : null,
+              };
+        },
+        // No view owns this companion lease; namespace/session authority still
+        // moves together and remains journaled through every compensation.
+        follow: () => {},
+        followed: async () => true,
+      });
+      if (outcome.kind === "moved" || outcome.kind === "repair") return outcome.revision;
+      if (outcome.kind === "attention")
+        return { attention: outcome.attention, cause: outcome.cause };
+      if (
+        outcome.kind === "failed" &&
+        typeof outcome.cause === "object" &&
+        outcome.cause !== null &&
+        "failure" in outcome.cause &&
+        outcome.cause.failure === "path_exists"
+      )
+        return "taken";
+      return null;
+    } finally {
+      companion.release();
+    }
   };
 
   /**
    * A new document that is a folder takes its title's name. The open document
    * is held first, so nothing on its page can change meanwhile; then the files
-   * Scient made move, each only as made, and the open document last. If an
-   * edit lands or a move fails, what moved moves back and the folder keeps its
-   * name. A folder holding anything else keeps its name too.
+   * Scient made move, each only as made, and the open document last. A
+   * definitive refusal may compensate confirmed moves. Any terminal or
+   * unconfirmed outcome stops compensation and keeps the source draft.
    */
   const moveFolderToTitle = useEffectEvent(async (stem: string) => {
-    if (!key || !entry || !lease || !snapshot) return;
+    if (!key || !entry || !lease || !snapshot || !input.moveInPlace) return;
     const commands = documentFiles.commandsFor(key);
     const base = newDocumentBase(key.relativePath, entry.template);
     const oldFolder = folderOf(key.relativePath);
@@ -299,15 +327,27 @@ export function useNewDocument(input: {
     if (name === null) return keepName();
     const newFolder = `${base}${name}/`;
     const caretBefore = caretOffsetInEditor();
-    const release = lease.holdForRename();
-    if (!release) return keepName();
+    const destination = `${newFolder}${FOLDER_DOCUMENT_MAIN}`;
+    const mainMove = lease.beginMove({ ...key, relativePath: destination });
+    if (!mainMove) return keepName();
+    const release = mainMove.finish;
     const written = () =>
       newDocuments.get(key)?.settled !== false || companionsHaveUnsavedEdits(key, entry.companions);
     const moved: { from: string; to: string; revision: string }[] = [];
+    const stopUncertain = () => {
+      release();
+      keepName();
+      toastManager.add({
+        type: "error",
+        title: "The thesis rename needs review.",
+        description: `Files may now be under ${oldFolder} or ${newFolder}. Automatic renaming and compensation stopped. Review the actual paths and retained versions before starting another operation.`,
+      });
+    };
     const giveUp = async () => {
       let whole = true;
       for (const file of moved.toReversed()) {
         const back = await move(file.to, file.from, file.revision);
+        if (back !== null && typeof back === "object") return stopUncertain();
         if (back === null || back === "taken") whole = false;
       }
       release();
@@ -319,24 +359,30 @@ export function useNewDocument(input: {
           description: `Its files are now split between ${oldFolder} and ${newFolder}.`,
         });
     };
-    for (const file of entry.companions) {
-      if (written()) return giveUp();
-      const to = newFolder + file.relativePath.slice(oldFolder.length);
-      const revision = await move(file.relativePath, to, file.revision);
-      if (revision === null || revision === "taken") return giveUp();
-      moved.push({ from: file.relativePath, to, revision });
+    try {
+      if ((await mainMove.preflight()) !== "empty") return keepName();
+      for (const file of entry.companions) {
+        if (written()) return await giveUp();
+        const to = newFolder + file.relativePath.slice(oldFolder.length);
+        const revision = await move(file.relativePath, to, file.revision);
+        if (revision !== null && typeof revision === "object") return stopUncertain();
+        if (revision === null || revision === "taken") return await giveUp();
+        moved.push({ from: file.relativePath, to, revision });
+      }
+      if (written()) return await giveUp();
+      const outcome = await input.moveInPlace(destination, mainMove);
+      if (outcome.kind === "attention") return stopUncertain();
+      if (outcome.kind !== "moved" && outcome.kind !== "repair") return await giveUp();
+      newDocuments.forget(key);
+      templateEdits.move(key, { ...key, relativePath: destination });
+      // Still the document showing (the panel follows it to its new name): the caret comes back.
+      const stillShown = shown.current === key.relativePath;
+      if (caretBefore !== null && stillShown) focusNewDocumentWhenOpen({ offset: caretBefore });
+    } catch {
+      stopUncertain();
+    } finally {
+      release();
     }
-    if (written()) return giveUp();
-    const destination = `${newFolder}${FOLDER_DOCUMENT_MAIN}`;
-    const revision = await move(key.relativePath, destination, snapshot.baselineRevision);
-    if (revision === null || revision === "taken") return giveUp();
-    newDocuments.forget(key);
-    templateEdits.move(key, { ...key, relativePath: destination });
-    release();
-    // Still the document showing (the panel follows it to its new name): the caret comes back.
-    const stillShown = shown.current === key.relativePath;
-    onRenamed(key.relativePath, destination);
-    if (caretBefore !== null && stillShown) focusNewDocumentWhenOpen({ offset: caretBefore });
   });
 
   useEffect(() => {
@@ -356,9 +402,8 @@ export function useNewDocument(input: {
     }
     // Read before the hold: holding the document for its rename can drop the selection.
     const caretBefore = caretOffsetInEditor();
-    if (moves && input.moveInPlace) {
+    if (input.moveInPlace) {
       renaming.current = true;
-      const from = key.relativePath;
       // This render's document: a later render may show another one.
       const move = input.moveInPlace;
       const initiatingLease = lease;
@@ -370,23 +415,20 @@ export function useNewDocument(input: {
             if (outcome.kind === "legacy-required") {
               // Another view holds this name: the next name may be free.
               if (outcome.reason === "destination") continue;
-              // Not ready yet (an editor composing, drafts settling): try again on a
-              // later render, falling back to the ordinary rename after a while.
+              // No timeout may bypass durable admission. A busy editor retries
+              // the same owned path after it settles.
               if (outcome.reason === "busy") {
-                if (busySince.current?.lease !== initiatingLease)
-                  busySince.current = { lease: initiatingLease, at: Date.now() };
-                if (Date.now() - busySince.current.at < MOVE_BUSY_LIMIT_MS) {
-                  // Nothing else may render this view meanwhile: ask again shortly.
-                  clearTimeout(busyRetry.current);
-                  busyRetry.current = setTimeout(() => setRetryTick((tick) => tick + 1), 300);
-                  return;
-                }
+                clearTimeout(busyRetry.current);
+                busyRetry.current = setTimeout(() => setRetryTick((tick) => tick + 1), 300);
               }
-              busySince.current = null;
-              setMoveRefused(from);
               return;
             }
-            busySince.current = null;
+            if (outcome.kind === "attention") {
+              // The draft stays under the source name. Never infer a destination
+              // or try another rename after a partial or unconfirmed operation.
+              newDocuments.forget(key);
+              return;
+            }
             if (outcome.kind === "failed") {
               const cause = outcome.cause;
               const taken =
@@ -412,45 +454,6 @@ export function useNewDocument(input: {
       })();
       return;
     }
-    const release = lease.holdForRename();
-    if (!release) return;
-    renaming.current = true;
-    void (async () => {
-      try {
-        for (let attempt = 1; attempt <= 20; attempt++) {
-          const destinationRelativePath = newDocumentCandidate(stem, entry.format, attempt, folder);
-          const result = await renameFile({
-            environmentId: key.environmentId,
-            input: {
-              cwd: key.cwd,
-              relativePath: key.relativePath,
-              destinationRelativePath,
-              expectedRevision: snapshot.baselineRevision,
-            },
-          });
-          if (result._tag === "Success") {
-            // The editor remounts under the new name; the caret comes back where it was.
-            // The old session is forgotten while still held, so no read starts at the old path.
-            const caret = caretBefore;
-            newDocuments.forget(key);
-            templateEdits.move(key, {
-              ...key,
-              relativePath: result.value.destinationRelativePath,
-            });
-            onRenamed(key.relativePath, result.value.destinationRelativePath);
-            release();
-            if (caret !== null) focusNewDocumentWhenOpen({ offset: caret });
-            return;
-          }
-          if (!isPathTaken(result)) break;
-        }
-        // Not renamed: the file keeps its name and stays renamable from the header.
-        newDocuments.forget(key);
-        release();
-      } finally {
-        renaming.current = false;
-      }
-    })();
   });
 
   /**

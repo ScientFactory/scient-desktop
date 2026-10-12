@@ -43,6 +43,7 @@ vi.mock("./useScientPdfReader", () => ({
       updating: false,
     },
     presentation: mocks.presentation,
+    presentationCurrent: true,
     runtimeRef: { current: null },
     closeSearch: vi.fn(),
     findAgain: vi.fn(),

@@ -20,6 +20,7 @@ import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { LatexVisualEditor, type LatexVisualEditorProps } from "./LatexVisualEditor";
+import { LatexDocumentPreparation } from "./latexOpeningPresentation";
 import {
   assembleVisualProject,
   planVisualProjectEdit,
@@ -61,7 +62,11 @@ interface Props extends LatexVisualEditorProps {
   onOpenFileSource: (path: string, line?: number) => void;
   /** A save of one of the document's included files reached the disk. */
   onSaved: () => void;
-  onProjectStateChange: (state: { pending: boolean; error: string | null }) => void;
+  onProjectStateChange: (state: {
+    pending: boolean;
+    error: string | null;
+    sourceKey?: string;
+  }) => void;
 }
 
 const notLive = () => null;
@@ -409,10 +414,16 @@ export function LatexProjectVisualEditor(props: Props) {
   const saveError = saveErrors.values().next().value ?? null;
   const error = saveError ?? readError ?? document?.errors[0] ?? null;
   const isPending = pendingPaths.size > 0 || props.selectedPending;
+  const sourceKey = JSON.stringify(
+    paths.map((path) => {
+      const file = states.get(path)?.data;
+      return [path, file?.revision, file?.owner?.documentId, file?.owner?.editVersion];
+    }),
+  );
   const stateChanged = props.onProjectStateChange;
   useEffect(() => {
-    stateChanged({ pending: isPending, error: saveError });
-  }, [stateChanged, isPending, saveError]);
+    stateChanged({ pending: isPending, error: saveError, sourceKey });
+  }, [stateChanged, isPending, saveError, sourceKey]);
   const draftKey = `${props.environmentId}\0${props.cwd}\0project-visual:${root ?? props.relativePath}`;
   const saversReady = paths.every((path) => reportedPaths.has(path));
   useEffect(() => {
@@ -566,8 +577,6 @@ export function LatexProjectVisualEditor(props: Props) {
           checkpointVisualDraft(
             `${props.environmentId}\0${props.cwd}\0${path}`,
             live.contents,
-            file.contents,
-            live.contents,
             file.revision,
           );
       }
@@ -608,6 +617,11 @@ export function LatexProjectVisualEditor(props: Props) {
     // waits for its session to report; after an in-place rename that would
     // unmount the editor for a render.
     paths.every((path) => path === props.relativePath || states.get(path)?.data);
+  const preparationError =
+    (root === null && !props.rootResolutionPending ? props.rootResolutionMessage : null) ??
+    readError ??
+    document?.errors[0] ??
+    null;
   return (
     <>
       {[...new Set([...paths, ...pendingPaths, ...saveErrors.keys()])].map((path) => (
@@ -629,8 +643,6 @@ export function LatexProjectVisualEditor(props: Props) {
           key={props.editorInstanceKey ?? files.get(root!)?.owner?.documentId ?? root}
           source={document.source}
           sourceSnapshot={editorSnapshot}
-          rootSource={root ? (files.get(root)?.contents ?? null) : null}
-          setupSource={document.source}
           canEditRoot={!error && !!files.get(root!)?.owner}
           singleFileDocument={paths.length === 1}
           relativePath={root!}
@@ -687,14 +699,9 @@ export function LatexProjectVisualEditor(props: Props) {
           }}
           disabled={props.disabled || !!error}
         />
-      ) : (
+      ) : preparationError ? (
         <div className="scient-latex-placeholder" role="status">
-          <span>
-            {(root === null ? props.rootResolutionMessage : null) ??
-              readError ??
-              document?.errors[0] ??
-              "Loading the document and its included files…"}
-          </span>
+          <span>{preparationError}</span>
           {root === null && props.onRetryRootResolution ? (
             <button
               type="button"
@@ -706,6 +713,8 @@ export function LatexProjectVisualEditor(props: Props) {
             </button>
           ) : null}
         </div>
+      ) : (
+        <LatexDocumentPreparation />
       )}
     </>
   );

@@ -1,7 +1,7 @@
 import type { PdfSourceResolver } from "@scientfactory/document-artifacts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FileText, LoaderCircle } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AssetUrlState } from "../../assets/assetUrls";
 import { Button } from "../../components/ui/button";
@@ -28,7 +28,14 @@ export function SourcePdfPreview(props: {
 }) {
   const requestKey = `${props.environmentId}\0${props.root}\0${props.sourceId}\0${props.attachmentId}`;
   const [request, setRequest] = useState(0);
-  const refresh = useCallback(() => setRequest((current) => current + 1), []);
+  const authorizationAttempt = useRef(0);
+  const refresh = useCallback(() => {
+    authorizationAttempt.current += 1;
+    setAsset((previous) =>
+      previous._tag === "Loading" ? previous : { ...previous, waiting: true },
+    );
+    setRequest((current) => current + 1);
+  }, []);
   const [asset, setAsset] = useState<SourcePreviewAssetState>({
     _tag: "Loading",
     requestKey,
@@ -37,14 +44,19 @@ export function SourcePdfPreview(props: {
 
   useEffect(() => {
     let current = true;
-    setAsset({ _tag: "Loading", requestKey, refresh });
+    const attempt = authorizationAttempt.current;
+    setAsset((previous) =>
+      previous.requestKey === requestKey && previous._tag !== "Loading"
+        ? { ...previous, waiting: true }
+        : { _tag: "Loading", requestKey, refresh },
+    );
     void readScientSourceAttachmentPreview(props.environmentId, {
       root: props.root,
       sourceId: props.sourceId,
       attachmentId: props.attachmentId,
     }).then(
       (result) => {
-        if (current) {
+        if (current && attempt === authorizationAttempt.current) {
           setAsset({
             _tag: "Success",
             url: result.url,
@@ -56,7 +68,9 @@ export function SourcePdfPreview(props: {
         }
       },
       () => {
-        if (current) setAsset({ _tag: "Failure", requestKey, refresh });
+        if (current && attempt === authorizationAttempt.current) {
+          setAsset({ _tag: "Failure", requestKey, refresh });
+        }
       },
     );
     return () => {
@@ -75,9 +89,11 @@ export function SourcePdfPreview(props: {
   const currentAsset: SourcePreviewAssetState =
     asset.requestKey === requestKey ? asset : { _tag: "Loading", requestKey, refresh };
   const sourceRelativePath =
-    currentAsset._tag === "Success" ? (currentAsset.sourcePath ?? null) : null;
+    currentAsset._tag === "Success" && currentAsset.waiting !== true
+      ? (currentAsset.sourcePath ?? null)
+      : null;
 
-  const source = useMemo(
+  const requestedSource = useMemo(
     () =>
       currentAsset._tag === "Success" && sourceRelativePath
         ? workspacePdfSource({
@@ -89,6 +105,18 @@ export function SourcePdfPreview(props: {
         : null,
     [currentAsset._tag, props.environmentId, props.fileName, props.root, sourceRelativePath],
   );
+  const [retainedSource, setRetainedSource] = useState<{
+    requestKey: string;
+    source: NonNullable<typeof requestedSource>;
+  } | null>(null);
+  if (
+    requestedSource !== null &&
+    (retainedSource?.requestKey !== requestKey || retainedSource.source !== requestedSource)
+  ) {
+    setRetainedSource({ requestKey, source: requestedSource });
+  }
+  const source =
+    requestedSource ?? (retainedSource?.requestKey === requestKey ? retainedSource.source : null);
   const resolver = useMemo<PdfSourceResolver>(
     () => ({ useResolve: () => currentAsset }),
     [currentAsset],
@@ -105,7 +133,13 @@ export function SourcePdfPreview(props: {
               <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
               <h2>Couldn't open this PDF</h2>
               <p>Scient could not create an authorized preview for this file.</p>
-              <Button size="xs" variant="outline" onClick={refresh}>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={currentAsset.waiting === true}
+                aria-busy={currentAsset.waiting === true}
+                onClick={refresh}
+              >
                 Try again
               </Button>
             </>

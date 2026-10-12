@@ -16,6 +16,7 @@ import { LatexVisualEditor } from "./LatexVisualEditor";
 import { createLatexVisualTestOwner, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import { pdfFitWidthScale } from "../pdf/pdfReaderModel";
+import { isMacKeyboard } from "../keyboard/keys";
 import "./scient-latex.css";
 
 const source = `\\documentclass[10pt,letterpaper]{article}
@@ -82,6 +83,19 @@ The boundaries between areas are flexible.
 describe("visual LaTeX page layout", () => {
   let container: HTMLDivElement;
   let root: Root;
+
+  const readingViewReady = () =>
+    expect
+      .poll(
+        () =>
+          container
+            .querySelector(".scient-latex-visual-document")
+            ?.getAttribute("data-latex-opening"),
+        { timeout: 5_000 },
+      )
+      .toBe("false");
+  const undoKeyboard = () =>
+    userEvent.keyboard(isMacKeyboard() ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}");
 
   it("offers an accepted checkpoint before an outside update when recovery storage is occupied", async () => {
     const key = "browser-statement-test";
@@ -189,6 +203,7 @@ Body.
     await expect
       .poll(() => container.querySelector(".scient-latex-statement-title-text"))
       .toBeTruthy();
+    await readingViewReady();
     const editor = (
       container.querySelector(".scient-latex-visual-document") as HTMLElement & { editor: Editor }
     ).editor;
@@ -323,6 +338,7 @@ Body.
           | null
       )?.editor;
     await expect.poll(editor).toBeTruthy();
+    await readingViewReady();
     expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
     const live = editor()!;
     let italicFrom = -1,
@@ -340,8 +356,8 @@ Body.
     );
     const changed = original.replace("{italic}", "{changed}").replace(" after.", " ending.");
     await expect.poll(() => current).toBe(changed);
-    live.commands.focus();
-    await userEvent.keyboard("{Control>}z{/Control}");
+    live.view.focus();
+    await undoKeyboard();
     await expect.poll(() => current).toBe(original);
     expect(editor()).toBe(live);
     expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
@@ -389,9 +405,10 @@ Body.
     try {
       root.render(<Harness />);
       await expect.poll(editor).toBeTruthy();
+      await readingViewReady();
       const live = editor()!;
       live.commands.setTextSelection(1);
-      live.commands.focus();
+      live.view.focus();
       for (let index = 0; index < 12; index++) {
         await userEvent.keyboard("m");
         await new Promise((resolve) => setTimeout(resolve, 220));
@@ -399,8 +416,8 @@ Body.
       await expect.poll(() => current).toBe(original.replace("Before", "m".repeat(12) + "Before"));
       await new Promise((resolve) => setTimeout(resolve, 500));
       for (let count = 0; count < 12 && current !== original; count++) {
-        live.commands.focus();
-        await userEvent.keyboard("{Control>}z{/Control}");
+        live.view.focus();
+        await undoKeyboard();
         await new Promise((resolve) => setTimeout(resolve, 400));
       }
       await expect.poll(() => current).toBe(original);
@@ -495,6 +512,7 @@ Proof body.
           | null
       )?.editor;
     await expect.poll(editor).toBeTruthy();
+    await readingViewReady();
     await expect
       .poll(() => container.querySelectorAll(".scient-latex-scientific-body").length)
       .toBe(2);

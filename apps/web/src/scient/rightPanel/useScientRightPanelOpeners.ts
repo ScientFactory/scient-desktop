@@ -111,8 +111,8 @@ export function useScientRightPanelOpeners(input: {
       void (async () => {
         // A default the person chose from their own templates needs those read.
         await userTemplates.ready();
-        const { template, language } = readNewDocumentDefaults();
-        const contents = createNewDocumentSource({ format, template, language });
+        const { template, language, compiler } = readNewDocumentDefaults();
+        const contents = createNewDocumentSource({ format, template, language, compiler });
         const placed = await placeNewDocument({
           format,
           base: "",

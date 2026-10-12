@@ -114,13 +114,12 @@ export function ScientPdfReader(props: {
   const legacyDocumentKey = pdfReaderSessionDocumentKey(props.source);
   const documentKey = pdfReaderSessionDocumentKey(props.source, props.readerScope);
   const displayed = useRetainedPdfSource(documentKey, props.source, asset);
-  // Remounts the loaded reader so a failed document download is fetched again
-  // even when the renewed authorization yields the same URL.
+  // Only the candidate request changes on retry; the painted reader stays mounted.
   const [loadAttempt, setLoadAttempt] = useState(0);
   const refreshAsset = asset.refresh;
   const retryLoad = useCallback(() => {
-    setLoadAttempt((attempt) => attempt + 1);
     refreshAsset();
+    setLoadAttempt((attempt) => attempt + 1);
   }, [refreshAsset]);
   const previousRefreshKey = useRef(props.refreshKey);
   useEffect(() => {
@@ -128,6 +127,8 @@ export function ScientPdfReader(props: {
     previousRefreshKey.current = props.refreshKey;
     asset.refresh();
   }, [asset.refresh, props.refreshKey]);
+  const authorizationPending = asset._tag === "Loading" || asset.waiting === true;
+  const candidateReady = asset._tag === "Success" && !authorizationPending;
   if (asset._tag === "Failure" && displayed === null) {
     return (
       <div className="scient-pdf-reader">
@@ -141,7 +142,7 @@ export function ScientPdfReader(props: {
             variant="outline"
             disabled={asset.waiting === true}
             aria-busy={asset.waiting === true}
-            onClick={asset.refresh}
+            onClick={retryLoad}
           >
             <RefreshIcon size="xs" refreshing={asset.waiting === true} />
             Try again
@@ -162,17 +163,20 @@ export function ScientPdfReader(props: {
   }
   return (
     <LoadedScientPdfReader
-      key={`${documentKey}\0${loadAttempt}`}
+      key={documentKey}
       documentKey={documentKey}
       legacyDocumentKey={legacyDocumentKey}
       source={displayed.source}
       sourceAsset={displayed.asset}
-      interactionReady={asset._tag === "Success"}
+      loadAttempt={loadAttempt}
+      interactionReady={candidateReady}
+      authorizationPending={authorizationPending}
+      authorizationFailed={asset._tag === "Failure"}
       sourceNotice={
-        asset._tag === "Failure"
-          ? "Unable to load the updated PDF. Showing the previous revision."
-          : asset._tag === "Loading"
-            ? "Loading the updated PDF…"
+        authorizationPending
+          ? "Loading the updated PDF…"
+          : asset._tag === "Failure"
+            ? "Unable to load the updated PDF. Showing the previous revision."
             : props.showStaleNotice !== false &&
                 props.source._tag === "generated-pdf" &&
                 props.source.bindingStatus === "stale"
@@ -190,6 +194,9 @@ export function ScientPdfReader(props: {
 function LoadedScientPdfReader(props: {
   readonly sourceNotice: string | null;
   readonly interactionReady: boolean;
+  readonly loadAttempt: number;
+  readonly authorizationPending: boolean;
+  readonly authorizationFailed: boolean;
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
   readonly legacyDocumentKey: string;
@@ -262,6 +269,8 @@ function LoadedScientPdfReader(props: {
     onSourceInvalidated: props.refreshSource,
     revisionId: requestedRevisionId,
     sourceUrl: props.sourceAsset.url,
+    candidateReady: props.interactionReady,
+    loadAttempt: props.loadAttempt,
     container,
     viewerElement,
   });
@@ -275,6 +284,7 @@ function LoadedScientPdfReader(props: {
   const currentPresentation =
     props.interactionReady &&
     state.phase === "ready" &&
+    reader.presentationCurrent &&
     reader.presentation?.revisionId === requestedRevisionId &&
     reader.presentation.sourceUrl === props.sourceAsset.url;
   const thumbnailPages = useMemo(
@@ -583,7 +593,20 @@ function LoadedScientPdfReader(props: {
           </div>
           {props.sourceNotice || state.updateError ? (
             <div className="scient-pdf-update-notice" role="status">
-              {state.updateError ?? props.sourceNotice}
+              <span>{state.updateError ?? props.sourceNotice}</span>
+              {props.authorizationFailed || state.updateError ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={props.authorizationPending}
+                  aria-busy={props.authorizationPending}
+                  onClick={props.onRetryLoad}
+                >
+                  <RefreshIcon size="xs" refreshing={props.authorizationPending} />
+                  Try again
+                </Button>
+              ) : null}
             </div>
           ) : null}
           {sourceSyncHintVisible ? (
@@ -623,8 +646,15 @@ function LoadedScientPdfReader(props: {
                 <FileText className="size-6 text-muted-foreground/70" aria-hidden="true" />
                 <h2>Couldn't open this PDF</h2>
                 <p>{state.error}</p>
-                <Button type="button" size="xs" variant="outline" onClick={props.onRetryLoad}>
-                  <RefreshIcon size="xs" />
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={props.authorizationPending}
+                  aria-busy={props.authorizationPending}
+                  onClick={props.onRetryLoad}
+                >
+                  <RefreshIcon size="xs" refreshing={props.authorizationPending} />
                   Try again
                 </Button>
               </div>

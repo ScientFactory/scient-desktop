@@ -4,6 +4,7 @@ import type { ScientLatexToolchainReport } from "@t3tools/contracts";
 import {
   declaredLatexCompiler,
   latexCompilerDeclaration,
+  latexCompilerAvailabilityLabel,
   isLatexCompilerUnavailable,
   updateLatexCompilerSource,
 } from "./latexCompiler";
@@ -39,11 +40,13 @@ describe("document compiler directives", () => {
     ["% !TEX program = PDFTeX", "pdflatex"],
     ["%% !tex TS-program = XeTeX", "xelatex"],
     ["\t% !TEX program = LuaTeX --shell-escape", "lualatex"],
+    ["% !TEX program = tectonic", "tectonic"],
+    ["%% !tex TS-program = TECTONIC --untrusted", "tectonic"],
   ] as const)("recognizes the complete supported engine token in %s", (source, compiler) => {
     expect(declaredLatexCompiler(source)).toBe(compiler);
   });
 
-  it.each(["xelatex-custom", "xelatex2", "pdflatex.exe", "luatex-next"])(
+  it.each(["xelatex-custom", "xelatex2", "pdflatex.exe", "luatex-next", "tectonic-custom"])(
     "does not mistake unsupported engine %s for a supported prefix",
     (engine) => {
       const source = `% !TEX program = ${engine}\n${body}`;
@@ -111,6 +114,12 @@ it("keeps Tectonic's XeTeX path usable without claiming standalone compilers are
     })),
   };
   expect(isLatexCompilerUnavailable(report, "xelatex")).toBe(false);
+  expect(isLatexCompilerUnavailable(report, "tectonic")).toBe(false);
+  expect(latexCompilerAvailabilityLabel(report, "tectonic")).toBeNull();
+  expect(latexCompilerAvailabilityLabel({ ...report, kind: "latexmk" }, "tectonic")).toBe(
+    "Not checked",
+  );
+  expect(isLatexCompilerUnavailable({ ...report, kind: "latexmk" }, "tectonic")).toBe(false);
   expect(isLatexCompilerUnavailable(report, "pdflatex")).toBe(true);
   expect(isLatexCompilerUnavailable(report, "lualatex")).toBe(true);
   expect(isLatexCompilerUnavailable({ ...report, kind: "latexmk" }, "xelatex")).toBe(true);

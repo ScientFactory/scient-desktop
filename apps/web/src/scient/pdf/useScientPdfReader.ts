@@ -118,6 +118,9 @@ export function useScientPdfReader(input: {
   readonly onSourceInvalidated: () => void;
   readonly revisionId: string | null;
   readonly sourceUrl: string;
+  /** Authorization must settle before admitting a candidate, including retries. */
+  readonly candidateReady: boolean;
+  readonly loadAttempt: number;
   readonly container: HTMLDivElement | null;
   readonly viewerElement: HTMLDivElement | null;
 }) {
@@ -125,7 +128,8 @@ export function useScientPdfReader(input: {
   const runtimeRef = useRef<ScientPdfRuntime | null>(null);
   const [presentation, setPresentation] = useState<PresentedPdfSource | null>(null);
   const presentationRef = useRef<
-    (PresentedPdfSource & { readonly runtime: ScientPdfRuntime }) | null
+    | (PresentedPdfSource & { readonly runtime: ScientPdfRuntime; readonly loadAttempt: number })
+    | null
   >(null);
   const disposePresentedRef = useRef<(() => void) | null>(null);
   const invalidateRef = useRef(input.onSourceInvalidated);
@@ -134,14 +138,24 @@ export function useScientPdfReader(input: {
     documentKey: input.documentKey,
     revisionId: input.revisionId,
     url: input.sourceUrl,
+    candidateReady: input.candidateReady,
+    loadAttempt: input.loadAttempt,
   });
   useLayoutEffect(() => {
     requestedSourceRef.current = {
       documentKey: input.documentKey,
       revisionId: input.revisionId,
       url: input.sourceUrl,
+      candidateReady: input.candidateReady,
+      loadAttempt: input.loadAttempt,
     };
-  }, [input.documentKey, input.revisionId, input.sourceUrl]);
+  }, [
+    input.documentKey,
+    input.revisionId,
+    input.sourceUrl,
+    input.candidateReady,
+    input.loadAttempt,
+  ]);
   const responsiveZoomRef = useRef<PdfResponsiveZoomController | null>(null);
   const passwordRef = useRef<PdfPasswordChallenge["submit"] | null>(null);
   const activeSearchQueryRef = useRef("");
@@ -187,6 +201,14 @@ export function useScientPdfReader(input: {
 
   useEffect(() => {
     if (!input.container || !input.viewerElement) return;
+    if (!input.candidateReady) {
+      setState((previous) =>
+        previous.updating || previous.updateError
+          ? { ...previous, updating: false, updateError: null }
+          : previous,
+      );
+      return;
+    }
     const settleOnPresentedRevision = () => {
       if (presentationRef.current === null) return;
       setState((previous) =>
@@ -198,7 +220,8 @@ export function useScientPdfReader(input: {
     if (
       presentationRef.current?.documentKey === input.documentKey &&
       presentationRef.current.revisionId === input.revisionId &&
-      presentationRef.current.sourceUrl === input.sourceUrl
+      presentationRef.current.sourceUrl === input.sourceUrl &&
+      presentationRef.current.loadAttempt === input.loadAttempt
     ) {
       settleOnPresentedRevision();
       return;
@@ -209,6 +232,9 @@ export function useScientPdfReader(input: {
     let requested = true;
     const isRequested = () =>
       requested &&
+      current &&
+      requestedSourceRef.current.candidateReady &&
+      requestedSourceRef.current.loadAttempt === input.loadAttempt &&
       requestedSourceRef.current.documentKey === input.documentKey &&
       requestedSourceRef.current.revisionId === input.revisionId &&
       requestedSourceRef.current.url === input.sourceUrl;
@@ -261,6 +287,7 @@ export function useScientPdfReader(input: {
         let preparedScanned: boolean | null = null;
 
         const onPagesInit = () => {
+          if (!isRequested()) return;
           const restoredPage = viewportSession.restore(runtime.viewer, runtime.document.numPages);
           responsiveZoom.capturePreference(runtime.viewer);
           const publish = () => {
@@ -280,7 +307,11 @@ export function useScientPdfReader(input: {
               revisionId: input.revisionId,
               runtime,
               sourceUrl: input.sourceUrl,
-            } satisfies PresentedPdfSource & { readonly runtime: ScientPdfRuntime };
+              loadAttempt: input.loadAttempt,
+            } satisfies PresentedPdfSource & {
+              readonly runtime: ScientPdfRuntime;
+              readonly loadAttempt: number;
+            };
             runtimeRef.current = runtime;
             responsiveZoomRef.current = responsiveZoom;
             presentationRef.current = nextPresentation;
@@ -524,7 +555,15 @@ export function useScientPdfReader(input: {
       // until a successor is painted or the document itself is unmounted.
       if (candidate === null || runtimeRef.current !== candidate) dispose();
     };
-  }, [input.container, input.documentKey, input.revisionId, input.sourceUrl, input.viewerElement]);
+  }, [
+    input.container,
+    input.documentKey,
+    input.revisionId,
+    input.sourceUrl,
+    input.viewerElement,
+    input.candidateReady,
+    input.loadAttempt,
+  ]);
 
   const submitPassword = useCallback((password: string) => {
     const submit = passwordRef.current;
@@ -703,6 +742,12 @@ export function useScientPdfReader(input: {
 
   return {
     presentation,
+    presentationCurrent:
+      input.candidateReady &&
+      presentationRef.current?.documentKey === input.documentKey &&
+      presentationRef.current.revisionId === input.revisionId &&
+      presentationRef.current.sourceUrl === input.sourceUrl &&
+      presentationRef.current.loadAttempt === input.loadAttempt,
     state,
     runtimeRef,
     submitPassword,

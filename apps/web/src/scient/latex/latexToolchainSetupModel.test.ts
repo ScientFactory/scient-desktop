@@ -33,6 +33,12 @@ function card(overrides: Partial<LatexSetupCardInput> = {}): LatexSetupCardInput
 }
 
 describe("latexSetupCardModel", () => {
+  it("does not offer TinyTeX as an installation for explicitly requested Tectonic", () => {
+    const model = latexSetupCardModel(card({ requiredCompiler: "tectonic" }));
+    expect(model.kind).toBe("instructions");
+    expect(model.actionLabel).toBeNull();
+    expect(model.body).toContain("Install Tectonic");
+  });
   it("offers the managed install when the environment can place one", () => {
     const model = latexSetupCardModel(card());
 

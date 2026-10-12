@@ -8,6 +8,23 @@ import {
   type LatexEditorSourceSnapshot,
 } from "./latexSourceEditPlan";
 
+/** HappyDOM has no browser font pool; editor fixtures use a settled empty one. */
+export function stubLatexReadingFonts() {
+  const previous = Object.getOwnPropertyDescriptor(document, "fonts");
+  Object.defineProperty(document, "fonts", {
+    configurable: true,
+    value: Object.assign(new EventTarget(), {
+      ready: Promise.resolve(),
+      status: "loaded",
+      [Symbol.iterator]: function* () {},
+    }),
+  });
+  return () => {
+    if (previous) Object.defineProperty(document, "fonts", previous);
+    else Reflect.deleteProperty(document, "fonts");
+  };
+}
+
 export interface LatexVisualTestOwner {
   readonly snapshot: LatexEditorSourceSnapshot;
   observe(source: string): LatexEditorSourceSnapshot;

@@ -21,7 +21,11 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { createLatexVisualTestOwner, type LatexVisualTestOwner } from "./latexVisualTestOwner";
+import {
+  createLatexVisualTestOwner,
+  stubLatexReadingFonts,
+  type LatexVisualTestOwner,
+} from "./latexVisualTestOwner";
 import { clearVisualDraft } from "./visualDrafts";
 import { clearTypingDraft, readTypingDraft } from "./visualTyping";
 import { readStoredRecovery } from "./visualRecovery";
@@ -41,8 +45,10 @@ describe("pending fields across outside document changes", () => {
   let revision: string;
   const writes = vi.fn();
   const pending = vi.fn();
+  let restoreFonts = () => {};
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    restoreFonts = stubLatexReadingFonts();
     vi.useFakeTimers();
     writes.mockReset();
     pending.mockReset();
@@ -61,6 +67,7 @@ describe("pending fields across outside document changes", () => {
     container.remove();
     clearVisualDraft(KEY);
     clearTypingDraft(KEY);
+    restoreFonts();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });

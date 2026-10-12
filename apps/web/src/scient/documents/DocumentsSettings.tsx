@@ -11,6 +11,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import { Button } from "~/components/ui/button";
+import { DiffFilePathCopyButton } from "~/components/DiffFilePathCopyButton";
 import {
   Select,
   SelectItem,
@@ -53,6 +54,12 @@ import {
   normalizeLatexCompilerChoice,
 } from "../latex/latexCompiler";
 import { formatLatexDownloadSize } from "../latex/latexToolchainSetupModel";
+import {
+  DEFAULT_LATEX_COMPILATION,
+  LATEX_COMPILATION_OPTIONS,
+  LATEX_COMPILATION_STORAGE_KEY,
+  normalizeLatexCompilation,
+} from "../latex/latexCompilation";
 import { PandocSettingsRow } from "../wordExport/PandocSettingsRow";
 import { pandocToolSummary } from "../wordExport/pandocToolModel";
 import { usePandocTool, type PandocToolController } from "../wordExport/usePandocTool";
@@ -81,6 +88,7 @@ const SEARCH_TARGET_FORMATS: Readonly<Record<string, DocumentFormat>> = {
   "new-document-compiler": "latex",
   "latex-compilers": "latex",
   "latex-open-in": "latex",
+  "latex-compilation": "latex",
   "markdown-open-in": "markdown",
   "word-export": "word",
 };
@@ -93,7 +101,9 @@ const MARKDOWN_VIEWS = [
 function OptionSelect<T extends string>(props: {
   readonly label: string;
   readonly value: T;
-  readonly groups: ReadonlyArray<ReadonlyArray<{ readonly id: T; readonly name: string }>>;
+  readonly groups: ReadonlyArray<
+    ReadonlyArray<{ readonly id: T; readonly name: string; readonly description?: string }>
+  >;
   readonly onChange: (value: T) => void;
 }) {
   const options = props.groups.flat();
@@ -114,7 +124,14 @@ function OptionSelect<T extends string>(props: {
             {index > 0 ? <SelectSeparator /> : null}
             {group.map((option) => (
               <SelectItem key={option.id} hideIndicator value={option.id}>
-                {option.name}
+                {option.description ? (
+                  <span className="flex flex-col gap-0.5">
+                    <span>{option.name}</span>
+                    <span className="text-xs text-muted-foreground">{option.description}</span>
+                  </span>
+                ) : (
+                  option.name
+                )}
               </SelectItem>
             ))}
           </Fragment>
@@ -186,6 +203,15 @@ function LatexInstallationRow({
   );
 }
 
+function ExecutablePath({ path }: { readonly path: string }) {
+  return (
+    <span className="flex min-w-0 items-start gap-1.5" dir="ltr">
+      <span className="min-w-0 break-all font-mono text-2xs leading-relaxed">{path}</span>
+      <DiffFilePathCopyButton filePath={path} />
+    </span>
+  );
+}
+
 function LatexTechnicalDetails({
   installation,
 }: {
@@ -218,7 +244,7 @@ function LatexTechnicalDetails({
                   ? ` · ${report.source === "scient-managed" ? "Scient-managed TinyTeX" : "System installation"}`
                   : ""}
               </span>
-              {report.executable ? <span className="break-all">{report.executable}</span> : null}
+              {report.executable ? <ExecutablePath path={report.executable} /> : null}
             </span>
           )
         }
@@ -241,7 +267,7 @@ function LatexTechnicalDetails({
                   {availability?.version ? ` · ${availability.version}` : ""}
                 </span>
                 {availability?.executable ? (
-                  <span className="break-all">{availability.executable}</span>
+                  <ExecutablePath path={availability.executable} />
                 ) : null}
               </span>
             }
@@ -264,6 +290,11 @@ function LatexPanel(props: {
   const [compiler, setCompiler] = useLocalStorage(
     NEW_DOCUMENT_COMPILER_STORAGE_KEY,
     DEFAULT_NEW_DOCUMENT_COMPILER,
+    Schema.String,
+  );
+  const [compilation, setCompilation] = useLocalStorage(
+    LATEX_COMPILATION_STORAGE_KEY,
+    DEFAULT_LATEX_COMPILATION,
     Schema.String,
   );
   // The view the editor remembers: choosing here or in the editor is the same choice.
@@ -308,7 +339,6 @@ function LatexPanel(props: {
         <SettingsRow
           id="new-document-compiler"
           title="Default compiler for new documents"
-          description="Automatic chooses by document requirements and does not download software. Template engine declarations take precedence. Hebrew uses XeLaTeX unless LuaLaTeX is selected. Existing documents are unchanged."
           control={
             <OptionSelect
               label="Default compiler for new documents"
@@ -332,6 +362,18 @@ function LatexPanel(props: {
                 })),
               ]}
               onChange={setView}
+            />
+          }
+        />
+        <SettingsRow
+          id="latex-compilation"
+          title="PDF compilation"
+          control={
+            <OptionSelect
+              label="PDF compilation"
+              value={normalizeLatexCompilation(compilation)}
+              groups={[LATEX_COMPILATION_OPTIONS]}
+              onChange={setCompilation}
             />
           }
         />

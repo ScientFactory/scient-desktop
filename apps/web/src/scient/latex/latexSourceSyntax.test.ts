@@ -9,8 +9,30 @@ import {
   maskLatexSource,
 } from "./latexSourceSyntax";
 import { latexPackageInventory } from "./latexPackages";
+import { projectLatexVisualDocument } from "./latexVisualDocument";
 
 describe("lossless native lexical boundaries", () => {
+  it.each([
+    "\\newcommand{\\hiddenBegin}{\\begin{comment}}",
+    "\\renewcommand *{\\hiddenBegin}[1][default]{\\begin{comment}#1}",
+    "\\providecommand\\hiddenBegin{\\begin{verbatim}}",
+    "\\def\\hiddenBegin#1{\\begin{comment}#1}",
+    "\\newenvironment{hidden}{\\begin{comment}}{\\end{comment}}",
+    "\\NewDocumentCommand{\\hiddenBegin}{m}{\\begin{comment}#1}",
+  ])("does not execute an environment opening inside %s", (definition) => {
+    const source = `\\documentclass{article}\n${definition}\n\\begin{document}\nActual body.\n\\end{document}`;
+    expect(latexDocumentBoundary(source)?.from).toBe(source.indexOf("\\begin{document}"));
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.blocks).toHaveLength(1);
+    expect(projection.blocks[0]).toMatchObject({ editable: true, source: "Actual body." });
+  });
+
+  it("still masks active opaque environments inside an ordinary group", () => {
+    const source =
+      "{\\begin{comment}\n}\\begin{document}\n\\end{comment}}\n\\begin{document}\nActual body.\n\\end{document}";
+    expect(latexDocumentBoundary(source)?.from).toBe(source.lastIndexOf("\\begin{document}"));
+  });
+
   it("retains UTF-16 offsets and CRLF while masking comments, literals and opaque environments", () => {
     const source =
       "😀\\title{Real} % 😀 hidden\\title{Fake}\r\n\\verb|%\\input{literal}|\r\n\\begin{comment}\r\n\\input{opaque}\r\n\\end{comment}\r\n\\input{active}";

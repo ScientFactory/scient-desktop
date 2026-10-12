@@ -71,7 +71,7 @@ when its setup needs updating.
 Document fonts and standard abstract, contents and caption labels follow the
 root's language setup. Custom or unsupported setups remain accessible in Source;
 the compiled PDF is authoritative. Language and font configuration is edited in
-Source; use **Compiler** beside **Rebuild** for the document's compiler.
+Source; use **Compiler** in the document menu beside **Export** for the document's compiler.
 
 ## Write visually, verify with TeX
 
@@ -459,8 +459,8 @@ build or export becomes available. A failed root save remains visible for resolu
 
 Math and object fields retain the exact text and caret locally. Source updates
 are coalesced during typing and flushed when leaving the field; page measurement
-waits briefly for typing to pause. These changes request a PDF build only when
-PDF is opened, or on Ctrl/Cmd+S while it is visible.
+waits briefly for typing to pause. **Settings → Documents → LaTeX → PDF compilation**
+controls when source changes rebuild the PDF.
 **Document > Keyboard shortcuts** opens **All writing shortcuts**, a searchable list covering
 Write, Math and Tables. Filter by area when needed; shortcut editing, custom math
 actions and the printable reference remain in the same dialog.
@@ -800,12 +800,25 @@ clicking or focusing a panel also chooses it. **Replace** chooses a project imag
 **Label** fields validate reference keys. Widths, rotation angles, framing and macro definitions
 remain in Source. Unsupported artwork stays available as exact source.
 
-TikZ pictures and pgfplots render as read-only drawings in Visual using the
+TikZ pictures and pgfplots can render as read-only drawings in Visual using the
 document's LaTeX preamble, including packages, libraries and style definitions.
-Figure captions remain editable on paper. Drawing labels, coordinates and plot
-settings have no Visual editing controls; change them in Source. Rendering needs
-a working LaTeX toolchain. A drawing that fails to compile shows a diagnostic
-instead of silently disappearing, and its original source is preserved.
+Preview is off by default: opening Visual or changing source does not execute it.
+Choose **Run this drawing preview** only for source you trust. The drawing and
+preamble run with host TeX/Lua's filesystem authority in the document's environment;
+this is not a sandbox. Admission applies only to this preview's current source,
+preamble and document/environment identity. Changing them requires another action;
+resizing can rerender the same admitted text. **Run drawing preview again** retries
+that admitted text.
+
+Figure captions remain editable on paper, and Source stays editable without
+running a preview. Drawing labels, coordinates and plot settings have no Visual
+editing controls; change them in Source. Rendering needs a working LaTeX toolchain.
+Preview never installs packages, and Tectonic previews use only already-cached
+bundle files. If packages are missing, use the document's explicit **Build** action
+to resolve them before retrying. A drawing that fails to
+compile shows a diagnostic instead of silently disappearing, and its original
+source is preserved. Artwork previews are not published document PDFs and do not
+establish whether the saved document's PDF is current.
 
 For standard figure counters, captions show their number and subcaptions show
 their panel letter. `\ref` navigates to labelled figures or panels; `\subref`
@@ -964,15 +977,20 @@ PDF selected, double-click a source line to locate it in the compiled PDF.
 ## Build and review
 
 Choose **Rebuild PDF** to build after the current source has been saved.
-Opening a stale PDF requests a build. While PDF is visible, Scient also rebuilds
-on Ctrl/Cmd+S. Typing alone does not request a build. Before building, Scient asks
+**Settings → Documents → LaTeX → PDF compilation** offers **Auto-compile**, **On save**,
+and **Manual**. Auto-compile waits two seconds after source changes settle, including
+edits in included files, and waits for a running build to finish before requesting
+the latest source. On save is the default: Ctrl/Cmd+S saves and rebuilds from any
+view, and opening a stale PDF requests a build. Manual saves without compiling
+until you choose Rebuild. These preferences are remembered on this device.
+Before building, Scient asks
 open document fields to finish and waits for the root and included files to save,
 even if you have only used Source. Unresolved field input, save errors or conflicts
 must be resolved first. Preparation refuses while linked bibliography changes
 are unsaved; save them in References or their Source tab before continuing.
 Preparation does not save those bibliography files. The last successful PDF stays
 readable while building.
-A failed revision requires an explicit rebuild instead of repeated automatic attempts.
+A failed unchanged revision is not retried automatically; change the source or choose Rebuild.
 **Document → Export → PDF** in Visual, or **More → Export → PDF** in the
 other views, uses the same save preparation and saves a copy only when the
 latest PDF matches the saved source and freshly checked build dependencies.
@@ -1018,48 +1036,56 @@ during conversion; review the saved Word document before sharing it.
 
 ## Move between source and PDF
 
-Choose **Find selection in PDF** in Source, or press Ctrl/Cmd+Shift+J, to reveal the
-current source position in the successful PDF. This opens Split when needed.
-Double-clicking source keeps normal word selection. Double-clicking a word in the
-PDF in Split keeps normal word selection and reveals the corresponding source line.
-Scient briefly marks the destination so it is easy
-to see. This needs a successful current build with a navigation index. If no
+While Split is showing the PDF, double-click a word in Source to reveal its
+compiled PDF position. Double-click a word in the PDF to reveal the corresponding
+source line. Both gestures keep normal word selection; Source-only and PDF-only
+views do not switch layout automatically. Scient briefly marks the destination.
+This needs a successful current build with a navigation index and the exact source
+revision compiled into that PDF. Saving changed source does not make the old PDF's
+coordinates current: rebuild before navigating. An included file that has changed
+or is waiting for save or recovery is not revealed at an obsolete line. If no
 mapping is available, the PDF remains usable and the status explains why the
 jump could not be completed.
 The exactness comes from the compiler's navigation index: some complex or RTL
 lines contain only a line-level location, so those lines can land near the
 typeset line instead of on the exact word.
 
-The PDF keeps your place across rebuilds: your page, zoom, and scroll position
-stay put while a new version comes in, instead of snapping back to the top. If
-the PDF you're looking at is older than the source it was built from, a stale
-badge tells you so.
+The PDF keeps your place across rebuilds: your page, zoom, scroll position, and
+search query stay put while a new version comes in. The LaTeX header shows
+**Rebuild required** when the source is newer than the compiled PDF, and
+**Previous PDF** while a rebuild is running. If the replacement cannot be
+authorized or loaded, the previous PDF stays readable and **Try again** retries
+the update without discarding your place.
 
 ## Choose a LaTeX engine
 
-The **Compiler** menu beside **Rebuild** offers **Automatic**, **pdfLaTeX**,
-**XeLaTeX** (recommended for Hebrew), and **LuaLaTeX**. On narrow panes it moves
-into **More**. Choosing an engine first saves pending document edits, updates
+The document menu's **Compiler** submenu, beside **Export**, offers **Automatic**,
+**Tectonic**, **pdfLaTeX**, **XeLaTeX** (recommended for Hebrew), and **LuaLaTeX**.
+Choosing an engine first saves pending document edits, updates
 the root's portable compiler directive, saves it, and rebuilds:
 
 ```latex
 % !TEX program = lualatex
 ```
 
-Use `xelatex` or `pdflatex` to select those engines instead. TeXShop's
+Use `tectonic` to require the Tectonic driver, or `xelatex` or `pdflatex` to select
+those engines instead. Tectonic declarations use its embedded XeTeX engine;
+they never fall back to latexmk when Tectonic is missing. Selecting Tectonic
+does not install it or change the default driver for other documents. TeXShop's
 `TS-program` spelling is also recognized. A root directive takes precedence
 over directives in included preambles. The selected engine must be supported
 by the TeX toolchain used by Scient.
 Only complete supported engine names select a compiler; other declarations remain
-visible as unsupported. Compiler changes preserve the source's line endings.
+visible as source declarations. Compiler changes preserve the source's line endings.
 
 **Automatic** removes root compiler directives rather than storing a device-only
 override. Included files display the root's choice and offer **Open root**;
 they never receive their own compiler directive through this control. Resolve
 recovery or save conflicts, and finish an active rename, before changing the compiler.
 
-**Compiler: Not checked** in the toolbar means the root document's compiler
-choice has not been read yet; it does not mean a compiler is missing.
+**Not checked** beside a compiler option means its availability is not known;
+it does not mean a compiler is missing. A latexmk availability report alone does
+not establish whether Tectonic is also installed; a Tectonic build checks it separately.
 
 **Settings > Documents > Default compiler for new documents** only affects
 new documents. A template's compiler declaration takes precedence over the
