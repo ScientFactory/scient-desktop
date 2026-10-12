@@ -335,7 +335,8 @@ The isolated review candidate remains open for user acceptance; the layer
 requires separate merge approval and does not alter its parent PR's policy.
 
 The current local alignment through `f23d0084b6e023ffb1af9e332d8666affc99d542`
-is recorded in [the 2026-10-12 receipt](docs/internals/t3-upstream-sync-20261012-f23d0084b6.md).
+is recorded in [the 2026-10-12 receipt](docs/internals/t3-upstream-sync-20261012-f23d0084b6.md)
+([Scient PR #530](https://github.com/ScientFactory/scient-desktop/pull/530)).
 It retains all 72 ordinary official commits through literal merge
 `de8482724fa062fbea7daa4549cd70dc9e665b85`, whose exact second parent is the
 frozen official target. Separate owned-main catch-up retains `f8babe1313`.
