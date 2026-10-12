@@ -2,21 +2,16 @@
  * ManagedProjectFolders - the project folders Scient makes for the user under
  * its data dir, rather than ones the user picks:
  *
- * - `<baseDir>/scratch`: the Scratch project ("No project"), with a folder of
+ * - the configured Scratch root: the Scratch project ("No project"), with a folder of
  *   its own for each thread;
  * - `<baseDir>/projects/<slug>`: projects started from just a name, each a new
  *   Git repository with a README, an icon, and a first commit.
  *
  * @module ManagedProjectFolders
  */
-import {
-  CommandId,
-  type GitManagerServiceError,
-  ProjectId,
-  type ThreadId,
-  VcsProcessSpawnError,
-} from "@t3tools/contracts";
+import { CommandId, ProjectId, type ThreadId } from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -35,6 +30,10 @@ import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
+import {
+  isGitMissing,
+  isConfiguredScratchRootOutsideGit,
+} from "../scient/projectScope/scratchWorkspace.ts";
 
 export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
   "ScratchUnavailableError",
@@ -95,7 +94,19 @@ export class NamedProjectCreateError extends Schema.TaggedError<NamedProjectCrea
   }
 }
 
-export type NamedProjectError = NamedProjectFolderError | NamedProjectCreateError;
+export class NamedProjectUnavailableError extends Schema.TaggedError<NamedProjectUnavailableError>()(
+  "NamedProjectUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "Starting a project from just a name is not available on this environment.";
+  }
+}
+
+export type NamedProjectError =
+  | NamedProjectFolderError
+  | NamedProjectCreateError
+  | NamedProjectUnavailableError;
 
 export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
@@ -226,16 +237,7 @@ function describeCommitFailure(stderr: string): string {
   return lines.at(-1) ?? "Git could not make the first commit.";
 }
 
-const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
-
-// Spawning a `git` that is not on PATH fails with NotFound, on Windows too.
-const isGitMissing = (error: GitManagerServiceError) =>
-  error._tag === "GitManagerError" &&
-  isVcsProcessSpawnError(error.cause) &&
-  PlatformError.isPlatformError(error.cause.cause) &&
-  error.cause.cause.reason._tag === "NotFound";
-
-const make = Effect.gen(function* () {
+const make = Effect.fnUntraced(function* (options: { readonly namedProjectsEnabled: boolean }) {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -271,30 +273,55 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // Inside a checkout (a dev worktree's .t3, a dotfiles home) the folder would
-  // inherit the repo's git status and checkpoints, so Scratch is offered only
-  // when the data dir is outside any work tree. With no Git installed nothing
-  // can see a checkout, so Scratch is offered. Probed once; other detection
-  // failures hide Scratch rather than failing callers. An interrupted probe
-  // invalidates the cache so the next caller probes again.
+  // The same configured root owns advertisement, RPC, MCP and launch allocation.
+  // Missing Git uses canonical filesystem evidence; other probe failures stay closed.
+  const configuredScratchRoot = ServerConfig.scratchWorkspaceRoot(config, path);
+  const scratchParent = path.dirname(configuredScratchRoot);
+  const verifyScratchRoot = isConfiguredScratchRootOutsideGit(config).pipe(
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Path.Path, path),
+  );
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    gitWorkflow.isRepository(config.baseDir).pipe(
+    gitWorkflow.isRepository(scratchParent).pipe(
       Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
-      Effect.map((isRepository) =>
-        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
+      Effect.flatMap((isRepository) =>
+        isRepository || !SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled
+          ? Effect.succeed(Option.none<string>())
+          : verifyScratchRoot.pipe(
+              Effect.map((plain) =>
+                plain ? Option.some(configuredScratchRoot) : Option.none<string>(),
+              ),
+            ),
       ),
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
       ),
     ),
-    Duration.infinity,
+    (exit) =>
+      Exit.isSuccess(exit) && Option.isSome(exit.value) ? Duration.infinity : Duration.zero,
   );
-  const scratchRoot = probe.pipe(Effect.onInterrupt(() => invalidate));
+  const scratchRoot = probe.pipe(
+    Effect.flatMap((root) =>
+      Option.isNone(root)
+        ? Effect.succeed(root)
+        : verifyScratchRoot.pipe(Effect.map((plain) => (plain ? root : Option.none<string>()))),
+    ),
+    Effect.catchCause((cause) =>
+      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
+    ),
+    Effect.onInterrupt(() => invalidate),
+  );
 
   const makeScratchFolder = (folder: string) =>
-    fileSystem
-      .makeDirectory(folder, { recursive: true })
-      .pipe(Effect.mapError((cause) => new ScratchFolderError({ folder, cause })));
+    Effect.gen(function* () {
+      if (!(yield* verifyScratchRoot)) {
+        return yield* new ScratchFolderError({
+          folder,
+          cause: "Scratch must be a canonical plain folder.",
+        });
+      }
+      yield* fileSystem.makeDirectory(folder, { recursive: true });
+    }).pipe(Effect.mapError((cause) => new ScratchFolderError({ folder, cause })));
 
   const ensureScratchProject: ManagedProjectFolders["Service"]["ensureScratchProject"] = Effect.gen(
     function* () {
@@ -359,7 +386,15 @@ const make = Effect.gen(function* () {
     "ManagedProjectFolders.folderForThread",
   )(function* (input) {
     const root = yield* scratchRoot;
-    if (Option.isNone(root)) return Option.none();
+    if (Option.isNone(root)) {
+      if (yield* isScratchProject(input.projectId, configuredScratchRoot)) {
+        return yield* new ScratchFolderError({
+          folder: configuredScratchRoot,
+          cause: "Scratch is unavailable.",
+        });
+      }
+      return Option.none();
+    }
     if (!(yield* isScratchProject(input.projectId, root.value))) return Option.none();
     const date = DateTime.formatIso(yield* DateTime.now).slice(0, 10);
     const words = folderWords(input.text);
@@ -472,6 +507,7 @@ const make = Effect.gen(function* () {
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
   )(function* (input) {
+    if (!options.namedProjectsEnabled) return yield* new NamedProjectUnavailableError();
     const workspaceRoot = yield* claimNamedFolder(input.name);
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
     // Until the create is dispatched nothing else can use the folder, so any
@@ -524,4 +560,10 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ManagedProjectFolders, make);
+/** Service construction for isolated folder-mechanics tests; the product uses its fixed policy. */
+export const layerWithOptions = (options: { readonly namedProjectsEnabled: boolean }) =>
+  Layer.effect(ManagedProjectFolders, make(options));
+
+export const layer = layerWithOptions({
+  namedProjectsEnabled: SCIENT_DESKTOP_IDENTITY.createProjectFromNameEnabled,
+});

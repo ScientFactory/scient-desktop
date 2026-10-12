@@ -6,6 +6,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { VcsExecutableUnavailableError, VcsProcessSpawnError } from "@t3tools/contracts";
+import * as PlatformError from "effect/PlatformError";
 import {
   type DeviceServiceState,
   AuthAccessTokenType,
@@ -5535,6 +5537,113 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(yield* app.v2.eventSink.latestSequence(), 0);
       assert.deepEqual((yield* app.v2.threads.getShellSnapshot()).threads, []);
     }).pipe(Effect.provide(NodeHttpServerTest)),
+  );
+
+  it.effect.each(["spawn", "unavailable"] as const)(
+    "Scratch RPC and first launch share the development root without Git (%s)",
+    (kind) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const checkout = yield* fs.makeTempDirectoryScoped({
+          prefix: "scient-rpc-scratch-profile-",
+        });
+        const external = yield* fs.makeTempDirectoryScoped({
+          prefix: "scient-rpc-scratch-external-",
+        });
+        yield* fs.makeDirectory(path.join(checkout, ".git"));
+        const baseDir = path.join(checkout, ".scient-next");
+        yield* fs.makeDirectory(baseDir);
+        const scratchRoot = path.join(external, "scratch");
+        const missing =
+          kind === "spawn"
+            ? new VcsProcessSpawnError({
+                operation: "test",
+                command: "git",
+                cwd: baseDir,
+                cause: PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  syscall: "spawn git",
+                }),
+              })
+            : new VcsExecutableUnavailableError({
+                operation: "test",
+                kind: "git",
+                command: "git",
+                cwd: baseDir,
+              });
+        const app = yield* buildAppUnderTest({
+          config: {
+            baseDir,
+            devUrl: new URL("http://127.0.0.1:5173"),
+            developmentScratchRoot: scratchRoot,
+          },
+          layers: {
+            vcsDriverRegistry: { detect: () => Effect.fail(missing) },
+            providerInstanceRegistry: {
+              getInstance: () => Effect.succeed(nativeAdmissionInstance),
+            },
+          },
+        });
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const projectId = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const config = yield* client[WS_METHODS.serverGetConfig]({});
+              assert.equal(config.scratchWorkspaceRoot, scratchRoot);
+              return (yield* client[WS_METHODS.projectsEnsureScratch]({})).projectId;
+            }),
+          ),
+        );
+        const { projectId: again } = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) => client[WS_METHODS.projectsEnsureScratch]({})),
+        );
+        assert.equal(again, projectId);
+        const folders: string[] = [];
+        for (const suffix of ["one", "two"]) {
+          const threadId = ThreadId.make(`scratch-rpc-${kind}-${suffix}`);
+          const input = {
+            commandId: CommandId.make(`scratch-launch-${kind}-${suffix}`),
+            threadId,
+            projectId,
+            title: "Synthetic scratch",
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+            workspaceStrategy: { type: "root" as const },
+            initialMessage: {
+              messageId: MessageId.make(`scratch-message-${kind}-${suffix}`),
+              text: "Synthetic first message",
+              attachments: [],
+            },
+          };
+          const launched = yield* Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[ORCHESTRATION_V2_WS_METHODS.launchThread](input),
+            ),
+          );
+          const worktreePath = launched.projection.thread.worktreePath;
+          assert.isNotNull(worktreePath);
+          assert.equal(path.dirname(worktreePath!), scratchRoot);
+          assert.isTrue(yield* fs.exists(worktreePath!));
+          folders.push(worktreePath!);
+          const repeated = yield* Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[ORCHESTRATION_V2_WS_METHODS.launchThread](input),
+            ),
+          );
+          assert.equal(repeated.projection.thread.worktreePath, worktreePath);
+          assert.isTrue(repeated.resumed);
+          assert.equal(
+            (yield* app.v2.threads.getThreadProjection(threadId)).messages[0]?.text,
+            input.initialMessage.text,
+          );
+        }
+        assert.notEqual(folders[0], folders[1]);
+        assert.isFalse(yield* fs.exists(path.join(baseDir, "scratch")));
+      }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
   it.effect("withholds projects created from a name while the Scient gate is off", () =>

@@ -915,10 +915,12 @@ server's scratch project, with verified non-Git evidence. It rejects the shared
 parent, nested descendants, and symlink escapes, while retaining ordinary Git
 worktree lineage and existing authority-generation/publication checks.
 
-The server still withholds `ServerConfig.scratchWorkspaceRoot` and
-`projects.ensureScratch` when the selected scratch root's parent is inside a Git
-checkout or VCS detection fails. Clients gate on the advertised root, including remote/mobile
-entry points. The dev runner selects persistent scratch storage outside the
+The upstream managed-folder service owns scratch advertisement, project creation and thread
+allocation for RPC, MCP and launch. It withholds the capability when the configured root has
+Git ancestry or inspection fails. Missing Git alone does not disable scratch: both unavailable-
+executable and spawn-NotFound errors use canonical filesystem evidence limited to host-owned
+scratch folders. Other Git failures remain closed, and failed admission is retried on the next
+request. Clients gate on the advertised root, including remote/mobile entry points. The dev runner selects persistent scratch storage outside the
 checkout without moving its existing profile; that selected parent must also be
 outside Git.
 Thread deletion retains scratch files. Moving a started scratch conversation and

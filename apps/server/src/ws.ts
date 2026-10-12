@@ -7,6 +7,7 @@ import {
   WsDeviceAndTelemetryRpcGroup,
   WsScientificRpcGroup,
 } from "@t3tools/contracts";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
 
 import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
@@ -288,7 +289,7 @@ import {
   makeScientificRpcHandlers,
 } from "./scient/analysis/ScientificRpcHandlers.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
-import { makeScientProjectFolders } from "./scient/projectScope/ScientProjectFolders.ts";
+import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { captureScientWsServices } from "./scient/ScientWsServices.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
@@ -1799,19 +1800,10 @@ const layerWsRpc = (
         startup,
         conversationForks,
       });
-      const {
-        resolveScratchWorkspaceRoot,
-        ensureScratchProject,
-        newProjectsRoot,
-        createNewProject,
-      } = yield* makeScientProjectFolders({
-        config,
-        gitWorkflow,
-        projectService,
-        randomUUID,
-        serverCommandId,
-        toDispatchCommandError,
-      });
+      const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const newProjectsRoot = SCIENT_DESKTOP_IDENTITY.createProjectFromNameEnabled
+        ? managedFolders.namedProjectsRoot
+        : undefined;
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
         Effect.gen(function* () {
           const keybindingsConfig = yield* keybindings.loadConfigState;
@@ -1826,7 +1818,7 @@ const layerWsRpc = (
           );
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
-          const scratchWorkspaceRoot = yield* resolveScratchWorkspaceRoot;
+          const scratchWorkspaceRoot = Option.getOrUndefined(yield* managedFolders.scratchRoot);
           const editorConfig = yield* resolveEditorConfig(
             yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
             resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
@@ -2927,13 +2919,25 @@ const layerWsRpc = (
               ),
           }),
         [WS_METHODS.projectsEnsureScratch]: () =>
-          observeRpcEffect(WS_METHODS.projectsEnsureScratch, ensureScratchProject, {
-            "rpc.aggregate": "orchestration",
-          }),
+          observeRpcEffect(
+            WS_METHODS.projectsEnsureScratch,
+            managedFolders.ensureScratchProject.pipe(
+              Effect.mapError((cause) => toDispatchCommandError(cause, cause.message)),
+            ),
+            {
+              "rpc.aggregate": "orchestration",
+            },
+          ),
         [WS_METHODS.projectsCreateNew]: (input) =>
-          observeRpcEffect(WS_METHODS.projectsCreateNew, createNewProject(input), {
-            "rpc.aggregate": "orchestration",
-          }),
+          observeRpcEffect(
+            WS_METHODS.projectsCreateNew,
+            managedFolders
+              .createNamedProject(input)
+              .pipe(Effect.mapError((cause) => toDispatchCommandError(cause, cause.message))),
+            {
+              "rpc.aggregate": "orchestration",
+            },
+          ),
         [WS_METHODS.projectCloneCancel]: (input) =>
           projectCloneTracker.cancel(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.projectCloneRetry]: (input) =>

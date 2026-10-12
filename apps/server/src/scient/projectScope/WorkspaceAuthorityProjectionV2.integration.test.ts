@@ -1,3 +1,5 @@
+import * as Path from "effect/Path";
+import { VcsExecutableUnavailableError } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject } from "@scientfactory/project-init";
@@ -541,4 +543,75 @@ it.effect(
         ),
       ),
     ),
+);
+
+it.effect("binds registered native Scratch children without Git and rejects the shared root", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-native-no-git-" });
+    const scratchRoot = path.join(baseDir, "scratch");
+    const child = path.join(scratchRoot, "conversation");
+    yield* fs.makeDirectory(child, { recursive: true });
+    const missing = new VcsExecutableUnavailableError({
+      operation: "test",
+      kind: "git",
+      command: "git",
+      cwd: child,
+    });
+    const missingRegistry = Layer.effect(
+      VcsDriverRegistry.VcsDriverRegistry,
+      VcsDriverRegistry.VcsDriverRegistry.pipe(
+        Effect.map((registry) => ({
+          ...registry,
+          get: (kind) =>
+            registry
+              .get(kind)
+              .pipe(Effect.map((driver) => ({ ...driver, execute: () => Effect.fail(missing) }))),
+        })),
+      ),
+    ).pipe(Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))));
+    const live = BindingResolver.layer.pipe(
+      Layer.provideMerge(
+        Layer.merge(BindingStore.layer, BindingEvidence.layer.pipe(Layer.provide(missingRegistry))),
+      ),
+      Layer.provideMerge(testLayer),
+      Layer.provide(
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("native-scratch")),
+        }),
+      ),
+      Layer.provide(ServerConfig.layerTest(baseDir, baseDir)),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    yield* Effect.gen(function* () {
+      yield* createProject(scratchRoot);
+      const sink = yield* EventSink.EventSinkV2;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("native-scratch-created"),
+            type: "thread.created",
+            threadId,
+            providerInstanceId,
+            occurredAt: now,
+            payload: { ...thread, worktreePath: child },
+          },
+        ],
+      });
+      const resolver = yield* BindingResolver.WorkspaceBindingResolver;
+      const resolved = yield* resolver.resolveThread(threadId);
+      assert.equal(resolved.binding.canonicalRoot, yield* fs.realPath(child));
+      assert.equal(resolved.binding.trustState, "verified");
+      yield* resolver.assertCurrentThreadScope({
+        threadId,
+        bindingId: resolved.binding.bindingId,
+        authorityGeneration: resolved.binding.authorityGeneration,
+        scopeRevision: resolved.scopeRevision,
+      });
+      yield* writeThread("scratch-shared-parent", { worktreePath: scratchRoot });
+      const error = yield* resolver.resolveThread(threadId).pipe(Effect.flip);
+      assert.equal(error.kind, "lineage-conflict");
+    }).pipe(Effect.provide(live));
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
