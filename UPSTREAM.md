@@ -119,12 +119,12 @@ divergence.
 - Authoritative migration policy: `Scient/docs/planning/t3-foundation-migration-plan.md`
 
 Scient's public desktop CLI command is `scient`: Settings, the PATH installer,
-root CLI help/version output, and public parser recovery instructions use this
-name. `SCIENT_DESKTOP_IDENTITY.cliCommandName` owns the executable name.
-Operational recovery commands instead bind to this installation's absolute
-launcher or running executable and entry script, with its resolved profile;
-they never guess an npm package or dispatch an unrelated PATH command. Linux
-elevation preserves the profile through `--base-dir`, and direct Electron
+and root CLI help/version output use this name.
+`SCIENT_DESKTOP_IDENTITY.cliCommandName` owns the executable name.
+Recovery commands, including parser advice, bind to this installation's absolute
+launcher or running executable and entry script; they never guess an npm
+package or dispatch an unrelated PATH command. Operational recovery retains
+the resolved profile. Linux elevation preserves it through `--base-dir`, and direct Electron
 invocations explicitly preserve Node mode. Windows snippets use PowerShell.
 
 Scient-written `t3` launchers and existing owned PATH shortcuts are refreshed
