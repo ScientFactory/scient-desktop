@@ -1,6 +1,7 @@
 import { isValidElement, type ReactElement } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -13,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { visitElements } from "../../test/reactElementTree";
 import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 import { DRIVER_OPTIONS } from "./providerDriverMeta";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 const atoms = vi.hoisted(() => ({
   providers: null as ReadonlyArray<ServerProvider> | null,
@@ -37,6 +39,7 @@ const settingsState = vi.hoisted(() => ({
   readEnvironmentIds: [] as EnvironmentId[],
   updateEnvironmentIds: [] as EnvironmentId[],
   mutationEnvironmentIds: [] as EnvironmentId[],
+  modelPreferenceEnvironmentIds: [] as Array<EnvironmentId | null>,
   updateSettings: vi.fn(),
   mutateProviderInstance: vi.fn(),
   updateClientSettings: vi.fn(),
@@ -110,7 +113,10 @@ vi.mock("../../hooks/useSettings", () => ({
     settingsState.updateEnvironmentIds.push(environmentId);
     return settingsState.updateSettings;
   },
-  useUpdateEnvironmentModelPreferences: () => settingsState.updateSettings,
+  useUpdateEnvironmentModelPreferences: (environmentId: EnvironmentId | null) => {
+    settingsState.modelPreferenceEnvironmentIds.push(environmentId);
+    return settingsState.updateSettings;
+  },
   useToggleEnvironmentModelFavorite: () => () => undefined,
   usePersistEnvironmentProviderInstanceMutation: (environmentId: EnvironmentId) => {
     settingsState.mutationEnvironmentIds.push(environmentId);
@@ -275,6 +281,7 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.readEnvironmentIds = [];
     settingsState.updateEnvironmentIds = [];
     settingsState.mutationEnvironmentIds = [];
+    settingsState.modelPreferenceEnvironmentIds = [];
     settingsState.updateSettings.mockReset();
     settingsState.updateClientSettings.mockReset();
     settingsSearchState.targetId = null;
@@ -532,9 +539,13 @@ describe("EnvironmentProviderSettings routing", () => {
     ).not.toBeNull();
   });
 
-  it.each(["pi", "omp", "scient"])(
-    "shows %s curated defaults and persists enabling every model",
-    (driver) => {
+  it.each(
+    ["pi", "omp", "scient"].flatMap((driver) =>
+      ["missing", "empty"].map((preferences) => ({ driver, preferences })),
+    ),
+  )(
+    "saves $driver visibility on its owning environment with $preferences preferences",
+    ({ driver, preferences }) => {
       const instanceId = ProviderInstanceId.make(driver);
       const native = {
         ...provider(),
@@ -554,31 +565,56 @@ describe("EnvironmentProviderSettings routing", () => {
           capabilities: {},
         })),
       };
+      const curatedHidden = ["anthropic/claude-haiku-4-5", "google-antigravity/claude-opus-4-5"];
+      const initialRecord = { hiddenModels: [], modelOrder: [] };
+      const initialPreferences = preferences === "empty" ? { [instanceId]: initialRecord } : {};
       settingsState.value = {
         ...DEFAULT_UNIFIED_SETTINGS,
         providerInstances: { [instanceId]: { driver: native.driver, enabled: true } },
+        providerModelPreferences: initialPreferences,
       };
       atoms.providers = [native];
       const editor = visitElements(
         renderPanel({ targetInstanceId: instanceId }),
         (element) => element.props.instanceId === instanceId && element.props.mode === "editor",
       );
-      expect(editor?.props.hiddenModels).toEqual([
-        "anthropic/claude-haiku-4-5",
-        "google-antigravity/claude-opus-4-5",
-      ]);
+      const hiddenModels = preferences === "missing" ? curatedHidden : [];
+      const modelOrder = native.models.map((model) => model.slug);
+      expect(editor?.props.hiddenModels).toEqual(hiddenModels);
+      expect(editor?.props.modelOrder).toEqual(modelOrder);
       if (!editor) throw new Error("Provider editor was not rendered");
-      (editor.props.onHiddenModelsChange as (models: string[]) => void)([]);
-      const saved = { [instanceId]: { hiddenModels: [], modelOrder: [] } };
-      expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith({
-        providerModelPreferences: saved,
+      // Missing visibility starts curated; an explicit empty record starts fully visible.
+      const nextHidden = preferences === "missing" ? [] : ["anthropic/claude-opus-5-5"];
+      (editor.props.onHiddenModelsChange as (models: string[]) => void)(nextHidden);
+      const expected = {
+        setModelsHidden: (preferences === "missing" ? curatedHidden : nextHidden).map((model) => ({
+          provider: instanceId,
+          model,
+          hidden: nextHidden.includes(model),
+          initialPreferences: { hiddenModels, modelOrder },
+        })),
+      };
+      expect(settingsState.modelPreferenceEnvironmentIds).toEqual([environmentId]);
+      expect(settingsState.updateSettings).toHaveBeenCalledExactlyOnceWith(expected);
+      expect(settingsState.updateClientSettings).not.toHaveBeenCalled();
+      // Compose the client patch with the actual server reducer. Existing empty order wins.
+      const saved = applyServerSettingsPatch(
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerModelPreferences: initialPreferences,
+        },
+        expected,
+      ).providerModelPreferences;
+      expect(saved?.[instanceId]).toEqual({
+        hiddenModels: nextHidden,
+        modelOrder: preferences === "missing" ? modelOrder : [],
       });
-      settingsState.value = { ...settingsState.value, providerModelPreferences: saved };
+      settingsState.value = { ...settingsState.value, providerModelPreferences: saved ?? {} };
       const restored = visitElements(
         renderPanel({ targetInstanceId: instanceId }),
         (element) => element.props.instanceId === instanceId && element.props.mode === "editor",
       );
-      expect(restored?.props.hiddenModels).toEqual([]);
+      expect(restored?.props.hiddenModels).toEqual(nextHidden);
     },
   );
 

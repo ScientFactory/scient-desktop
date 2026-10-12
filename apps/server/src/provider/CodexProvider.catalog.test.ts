@@ -7,7 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { checkCodexProviderStatus } from "./CodexProvider.ts";
+import { checkCodexProviderStatus, codexAppServerEnvironment } from "./CodexProvider.ts";
 
 /**
  * Stand-in for Codex 0.162's app-server catalog behavior:
@@ -35,9 +35,11 @@ setTimeout(() => {
 }, 300);
 const write = (message) => process.stdout.write(JSON.stringify(message) + "\n");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
-  const { id, method } = JSON.parse(line);
+  const { id, method, params } = JSON.parse(line);
   if (id === undefined) return;
   if (method === "initialize") {
+    fs.writeFileSync(path.join(process.env.CODEX_HOME, "probe-identity.json"),
+      JSON.stringify({ originator, clientInfo: params.clientInfo }));
     write({ id, result: { userAgent: "codex/0.162.0", codexHome: process.env.CODEX_HOME, platformFamily: "unix", platformOs: "macos" } });
   } else if (method === "account/read") {
     write({ id, result: { account: { type: "chatgpt", email: "test@example.com", planType: "promax" }, requiresOpenaiAuth: false } });
@@ -52,6 +54,18 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 `;
 
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+const decodeProbeIdentity = Schema.decodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      originator: Schema.String,
+      clientInfo: Schema.Struct({
+        name: Schema.String,
+        title: Schema.String,
+        version: Schema.String,
+      }),
+    }),
+  ),
+);
 
 const solServiceTiers = Effect.fn("solServiceTiers")(function* (ultrafastEntitled: boolean) {
   const fs = yield* FileSystem.FileSystem;
@@ -90,6 +104,13 @@ const solServiceTiers = Effect.fn("solServiceTiers")(function* (ultrafastEntitle
     undefined,
     { ...environment, FAKE_ULTRAFAST_ENTITLED: ultrafastEntitled ? "1" : "0" },
   );
+  const identity = decodeProbeIdentity(
+    yield* fs.readFileString(path.join(dir, "probe-identity.json")),
+  );
+  // Observe the real child spawn and initialize frame, not a stand-in identity.
+  assert.equal(identity.originator, "T3 Code");
+  assert.equal(identity.clientInfo.name, "t3code_desktop");
+  assert.equal(identity.clientInfo.title, "Scient Desktop");
   const serviceTier = provider.models
     .find((model) => model.slug === "gpt-6.1-sol")
     ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === "serviceTier");
@@ -97,6 +118,17 @@ const solServiceTiers = Effect.fn("solServiceTiers")(function* (ultrafastEntitle
 });
 
 it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog discovery", (it) => {
+  it.effect("preserves a caller-configured native originator", () =>
+    Effect.sync(() => {
+      assert.equal(
+        codexAppServerEnvironment({
+          CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "configured-native-client",
+        }).CODEX_INTERNAL_ORIGINATOR_OVERRIDE,
+        "configured-native-client",
+      );
+    }),
+  );
+
   it.effect("keeps Ultrafast when another Codex client wrote the shared catalog cache", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* solServiceTiers(true), ["default", "priority", "ultrafast"]);

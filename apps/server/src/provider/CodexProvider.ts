@@ -71,7 +71,9 @@ type CodexRateLimitsProbe =
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT = "3 seconds" as const;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
-const CODEX_CLIENT_NAME = "T3 Code";
+// Codex model catalogs are selected by this opaque upstream request identity.
+// Preserve it independently of Scient's human-readable initialize title.
+const CODEX_COMPATIBILITY_ORIGINATOR = "T3 Code";
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -360,7 +362,7 @@ const readCodexModelsCacheFetchedAt = Effect.fn("readCodexModelsCacheFetchedAt")
 });
 
 /**
- * Lists the ChatGPT model catalog as fetched for T3 Code.
+ * Lists the ChatGPT model catalog as fetched for Scient Desktop.
  *
  * `model/list` serves `CODEX_HOME/models_cache.json` while it is under five
  * minutes old. Every Codex client on the machine shares that file, and the
@@ -394,7 +396,7 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
 });
 
 /**
- * Environment for every `codex app-server` T3 Code spawns.
+ * Environment for every `codex app-server` Scient Desktop spawns.
  *
  * Codex sends its client name as the `originator` header, and the backend
  * tailors the model catalog to it. App-server starts its catalog refresh
@@ -406,7 +408,7 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
 export const codexAppServerEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
 ): NodeJS.ProcessEnv => ({
-  CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_CLIENT_NAME,
+  CODEX_INTERNAL_ORIGINATOR_OVERRIDE: CODEX_COMPATIBILITY_ORIGINATOR,
   ...environment,
 });
 
