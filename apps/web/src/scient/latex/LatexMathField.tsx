@@ -35,6 +35,7 @@ import {
 } from "./mathFieldMountQueue";
 import { retainMathField } from "./mathFieldPool";
 import { captureMathField, restoreMathField, type MathFieldSnapshot } from "./mathFieldSnapshot";
+import { refreshMathFieldAccessibleLabel } from "./mathFieldAccessibility";
 import {
   installMathReadingPreview,
   mathReadingPreview,
@@ -475,6 +476,7 @@ export const LatexMathField = forwardRef<
         );
       }
       dirty.current = recovered !== lastAcknowledged.current;
+      refreshMathFieldAccessibleLabel(math);
       reportDraft(draftId, dirty.current);
       math.smartFence = true;
       math.smartSuperscript = true;
@@ -610,6 +612,7 @@ export const LatexMathField = forwardRef<
       flush.current = publish;
       const revealCaret = () => mathViewport.revealCaret();
       const input = () => {
+        refreshMathFieldAccessibleLabel(math);
         lease?.touch();
         verticalIntent = null;
         selectionContinuation = null;
@@ -1542,6 +1545,7 @@ export const LatexMathField = forwardRef<
       };
       math.executeCommand(["switchMode", mode]);
       appliedMacroSignature.current = signature;
+      refreshMathFieldAccessibleLabel(math);
     };
     apply();
     math.addEventListener("mode-change", apply);
@@ -1576,6 +1580,7 @@ export const LatexMathField = forwardRef<
       reportDraft(draftId, false);
     }
     lastAcknowledged.current = value;
+    refreshMathFieldAccessibleLabel(field.current);
   }, [disabled, value, reportDraft, draftId]);
   return (
     <span ref={host} className="scient-latex-mathfield" contentEditable={false}>
