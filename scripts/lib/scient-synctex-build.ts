@@ -93,7 +93,11 @@ export async function stageScientSyncTexRuntimeForDesktopBuild(
   if (input.sourceDirectory !== undefined) {
     await verifyRuntimeDirectory(input.sourceDirectory, input.platform, input.arch);
     await NodeFSP.rm(outputDirectory, { recursive: true, force: true });
-    await NodeFSP.cp(input.sourceDirectory, outputDirectory, { recursive: true });
+    // Materialize POSIX links so restoring a staged mode cannot chmod the source.
+    await NodeFSP.cp(input.sourceDirectory, outputDirectory, {
+      recursive: true,
+      dereference: input.platform !== "win",
+    });
   } else {
     const stageScript = NodePath.join(input.repoRoot, "scripts/stage-synctex-runtime.ts");
     await run(
@@ -112,4 +116,9 @@ export async function stageScientSyncTexRuntimeForDesktopBuild(
     );
   }
   await verifyRuntimeDirectory(outputDirectory, input.platform, input.arch);
+  // Loose CI artifacts lose POSIX modes. Restore only the verified staged
+  // executable; the downloaded source and its receipt remain untouched.
+  if (input.platform !== "win") {
+    await NodeFSP.chmod(NodePath.join(outputDirectory, executableName(input.platform)), 0o755);
+  }
 }
