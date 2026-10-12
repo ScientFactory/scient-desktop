@@ -6,6 +6,7 @@ import { readLocalApi } from "~/localApi";
 import { showContextMenuFallback } from "~/contextMenuFallback";
 import { toastManager } from "~/components/ui/toast";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { observeMathFieldReadiness } from "./mathFieldReadiness";
 import {
   MATH_FORMATTING_ARGUMENTS,
   enterMathArgument,
@@ -259,7 +260,10 @@ export const LatexMathField = forwardRef<
     () => ({
       focus: () => {
         mountField.current();
-        field.current?.focus();
+        // Passive-node admission initializes this field behind reading ink.
+        // Defer focus until publication so hidden input cannot take the
+        // original click or receive typing before its visible handoff.
+        if (!field.current?.closest("[data-math-editor-staging]")) field.current?.focus();
       },
       flush: () => {
         // Unopened reading previews have no input to publish. A document save
@@ -376,6 +380,10 @@ export const LatexMathField = forwardRef<
       previewPending = false;
       if (preview.current) preview.current.hidden = true;
       const math = new MathfieldElement();
+      // MathLive infers this from user-select at connection time. A staged
+      // selected atom can inherit user-select:none, which otherwise leaves
+      // its shadow keyboard sink without a native editing host after reveal.
+      math.contentEditable = "true";
       math.id = `scient-latex-math-${draftId}`;
       container.append(math);
       const mathViewport = installLatexMathViewport(math, container);
@@ -1337,6 +1345,11 @@ export const LatexMathField = forwardRef<
       window.addEventListener("pagehide", publish);
       window.addEventListener("scient-latex-checkpoint-fields", checkpoint);
       field.current = math;
+      const cancelReadiness = observeMathFieldReadiness(
+        math,
+        container,
+        !currentConfiguration.current.value.trim(),
+      );
       lease = retainMathField(() => {
         if (
           field.current !== math ||
@@ -1369,6 +1382,7 @@ export const LatexMathField = forwardRef<
         return true;
       });
       return () => {
+        cancelReadiness();
         lease?.release();
         selectionSession.dispose();
         document.removeEventListener("pointerdown", resetVerticalIntent, true);

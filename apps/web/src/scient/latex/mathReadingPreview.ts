@@ -19,6 +19,9 @@ function mathReadingStyles() {
 }
 /** Passive completion state stays inside the shadow root, outside the editor's DOM observer. */
 export function mathReadingPreviewReady(element: Element): boolean {
+  // Admission keeps the compatible passive formula visible. Hidden editor
+  // preparation must not cover its already readable page with a loading mask.
+  if (element.closest("[data-math-editor-staging]")) return true;
   return (
     element.hasAttribute("data-math-preview-ready") ||
     Boolean(

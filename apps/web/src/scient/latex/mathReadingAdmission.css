@@ -1,0 +1,27 @@
+[data-math-editor-admission="pending"] {
+  position: relative;
+}
+[data-math-editor-staging] {
+  position: absolute !important;
+  inset: 0 auto auto 0;
+  opacity: 0;
+  pointer-events: none;
+  width: max-content;
+}
+[data-math-editor-display="true"] > [data-math-editor-staging] {
+  width: 100%;
+}
+.scient-latex-math-admission-hint {
+  position: absolute;
+  inset: 0 auto auto calc(100% + 4px);
+  z-index: 3;
+  white-space: nowrap;
+  font: 12px/1.4 sans-serif;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--background, white);
+  color: var(--foreground, black);
+}
+[data-math-editor-display="true"] .scient-latex-math-admission-hint {
+  left: 0;
+}
