@@ -4515,7 +4515,7 @@ export function projectLatexVisualDocument(
       .map((option) => option.trim()) ?? [];
   if (
     depth === 0 &&
-    begin >= 0 &&
+    boundary !== null &&
     (classOptions.includes("twocolumn") ||
       blocks.some((block) => /^\\(?:onecolumn|twocolumn)\b/u.test(block.source)))
   ) {

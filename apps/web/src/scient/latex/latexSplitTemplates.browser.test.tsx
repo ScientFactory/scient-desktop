@@ -12,6 +12,7 @@ vi.mock("~/assets/assetUrls", async (importOriginal) => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { EditableFileEditor, useFileLineReveal } from "~/components/files/FilePreviewPanel";
 import { sourcePosition } from "../math/input/sourceAdapter";
 import { latexTextSelectionRects } from "./latexTextSelectionRects";
@@ -64,6 +65,7 @@ async function mount(input: string, name: string) {
   const reveals: { from: number; to: number; precise?: boolean }[] = [];
   function Harness() {
     const [source, setSource] = useState(input);
+    const owner = useLatexVisualTestOwner(source);
     const [reveal, setReveal] = useState<{
       source: string;
       from: number;
@@ -106,14 +108,17 @@ async function mount(input: string, name: string) {
         <div style={{ width: 710, height: 840, display: "flex" }}>
           <LatexVisualEditor
             source={source}
+            sourceSnapshot={owner.snapshot}
             draftKey={`split-browser-${name}`}
             fileRevision="1"
             disabled={false}
-            onEdit={(expected, next) => {
-              if (expected !== current) return false;
-              current = next;
-              setSource(next);
-              return true;
+            onEdit={(request) => {
+              const result = owner.edit(request);
+              if (result.accepted) {
+                current = result.snapshot.source;
+                setSource(current);
+              }
+              return result;
             }}
             onEditingChange={() => {}}
             onOpenSource={() => {}}

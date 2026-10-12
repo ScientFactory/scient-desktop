@@ -1,7 +1,7 @@
 import type { JSONContent } from "@tiptap/core";
 import { projectLatexVisualDocument, type LatexVisualDocument } from "./latexVisualDocument";
 import { latexRunningPageStyle, latexRunningPageFields } from "./latexPageLayouts";
-import { latexWithoutComments, latexPreambleEnd } from "./latexPackages";
+import { latexWithoutComments, latexPreambleEnd } from "./latexSourceSyntax";
 
 /** Render acceptance is separate from typesetting fidelity and content coverage. */
 export function latexVisualCompatibility(source: string, projection: LatexVisualDocument) {

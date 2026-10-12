@@ -1,6 +1,6 @@
 import { latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
 import { latexLayoutLength } from "./latexPageLayouts";
-import { latexWithoutComments, latexPreambleEnd } from "./latexPackages";
+import { latexWithoutComments, latexPreambleEnd } from "./latexSourceSyntax";
 
 const sizes = new Set([
   "tiny",
