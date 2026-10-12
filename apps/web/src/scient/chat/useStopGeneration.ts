@@ -1,6 +1,10 @@
 import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+interface StopRequest {
+  readonly targetKey: string;
+}
+
 /** Acknowledges Stop for its captured thread/attempt while the server finishes cancellation. */
 export function useStopGeneration(input: {
   readonly threadKey: string | null;
@@ -17,8 +21,8 @@ export function useStopGeneration(input: {
     input.canInterrupt && input.threadKey !== null
       ? JSON.stringify([input.threadKey, input.runId, run?.activeAttemptId ?? null])
       : null;
-  const [requestedKey, setRequestedKey] = useState<string | null>(null);
-  const submittingKey = useRef<string | null>(null);
+  const [requested, setRequested] = useState<StopRequest | null>(null);
+  const submitting = useRef<StopRequest | null>(null);
   const serverRequested = useMemo(() => {
     if (ownedRunId === undefined || turnItems === undefined) return false;
     let requested = false;
@@ -31,27 +35,27 @@ export function useStopGeneration(input: {
   }, [ownedRunId, rootNodeId, turnItems]);
 
   useEffect(() => {
-    setRequestedKey((previous) => (previous === targetKey ? previous : null));
+    setRequested((previous) => (previous?.targetKey === targetKey ? previous : null));
   }, [targetKey]);
 
   const onInterrupt = useCallback(async () => {
-    if (targetKey === null || submittingKey.current === targetKey) return;
-    const owner = targetKey;
-    submittingKey.current = owner;
-    setRequestedKey(owner);
+    if (targetKey === null || submitting.current?.targetKey === targetKey) return;
+    const request = { targetKey };
+    submitting.current = request;
+    setRequested(request);
     const clearOwnedRequest = () =>
-      setRequestedKey((current) => (current === owner ? null : current));
+      setRequested((current) => (current === request ? null : current));
     try {
       if ((await input.operation()) !== true) clearOwnedRequest();
     } catch (error) {
       clearOwnedRequest();
       throw error;
     } finally {
-      if (submittingKey.current === owner) submittingKey.current = null;
+      if (submitting.current === request) submitting.current = null;
     }
   }, [input.operation, targetKey]);
   return {
-    isStopping: targetKey !== null && (requestedKey === targetKey || serverRequested),
+    isStopping: targetKey !== null && (requested?.targetKey === targetKey || serverRequested),
     onInterrupt,
   };
 }

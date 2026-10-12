@@ -155,6 +155,48 @@ it("a late failed response cannot clear a different conversation's acknowledgeme
   expect(controller.isStopping).toBe(true);
 });
 
+it("a late failure cannot clear or unlock a newer request after returning to the same conversation", async () => {
+  const first = pendingResponse();
+  const other = pendingResponse();
+  const latest = pendingResponse();
+  input = { ...input, operation: () => first.promise };
+  render();
+  let a!: Promise<void>;
+  act(() => {
+    a = controller.onInterrupt();
+  });
+  input = { ...input, threadKey: "remote:thread-b", operation: () => other.promise };
+  render();
+  let b!: Promise<void>;
+  act(() => {
+    b = controller.onInterrupt();
+  });
+  const operation = vi.fn(() => latest.promise);
+  input = { ...input, threadKey: "local:thread-a", operation };
+  render();
+  let returned!: Promise<void>;
+  act(() => {
+    returned = controller.onInterrupt();
+  });
+  await act(async () => {
+    first.resolve(false);
+    await a;
+  });
+  const acknowledged = controller.isStopping;
+  let repeated!: Promise<void>;
+  act(() => {
+    repeated = controller.onInterrupt();
+  });
+  const calls = operation.mock.calls.length;
+  await act(async () => {
+    other.resolve(true);
+    latest.resolve(true);
+    await Promise.all([b, returned, repeated]);
+  });
+  expect(acknowledged).toBe(true);
+  expect(calls).toBe(1);
+});
+
 it("does not carry acknowledgement to a replacement attempt in the same run", async () => {
   await act(() => controller.onInterrupt());
   const current = projection();
