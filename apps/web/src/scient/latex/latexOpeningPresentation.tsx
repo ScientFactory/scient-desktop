@@ -13,6 +13,7 @@ export function LatexDocumentPreparation(props: { readonly overlay?: boolean }) 
       aria-live="polite"
       aria-busy="true"
     >
+      <span data-latex-preparation-spinner="true" aria-hidden="true" />
       <span>{LATEX_DOCUMENT_PREPARATION_LABEL}</span>
     </div>
   );

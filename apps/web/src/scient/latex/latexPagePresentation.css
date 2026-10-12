@@ -1,3 +1,5 @@
+@import "./latexPreparationSpinner.css";
+
 .scient-latex-page-preparation-layer {
   position: absolute;
   inset: 0;
@@ -11,6 +13,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 9px;
   box-sizing: border-box;
   background: #fff;
   color: #666;
@@ -44,6 +47,9 @@
   overflow: visible !important;
 }
 @media print {
+  .scient-latex-visual-paper[data-latex-page-presentation] .scient-latex-visual-document {
+    clip-path: none !important;
+  }
   .scient-latex-page-preparation-layer {
     display: none;
   }

@@ -178,11 +178,17 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
     const shell = container.querySelector<HTMLElement>(".scient-latex-opening-shell");
     if (shell?.dataset.opening !== "false") {
       const labels = container.querySelectorAll<HTMLElement>(
-        ".scient-latex-document-preparation span",
+        '.scient-latex-document-preparation span:not([aria-hidden="true"])',
       );
       if (labels.length !== 1)
         failures.push(`Expected one opening message, found ${labels.length}`);
       const label = labels[0];
+      if (
+        container.querySelectorAll(
+          ".scient-latex-document-preparation [data-latex-preparation-spinner]",
+        ).length !== 1
+      )
+        failures.push("Expected one opening spinner");
       if (label) {
         if (label.textContent !== LATEX_DOCUMENT_PREPARATION_LABEL)
           failures.push("Message changed");

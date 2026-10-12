@@ -1738,8 +1738,14 @@ reflects missing visible content rather than distant unfinished work.
 
 Scrolling uses one preparation mask per sheet, outside the editable DOM. Complete
 visible pages and one page ahead are admitted independently of thumbnail demand.
-The mask preserves page geometry, hides intermediate block labels and reveals a
-settled page together. Active caret/selection pages retain interaction priority.
+The mask is installed before DOM admission and readiness updates run before paint.
+A paint-only clip admits settled physical sheets, keeping unfinished ink and page
+gaps hidden without changing source or measurement geometry. Newly mounted cached
+pages pass the same stability fence; unchanged previously revealed geometry can be
+reused. The mask preserves page geometry, hides intermediate block labels and
+reveals a settled page together. Active caret/selection pages retain interaction priority.
+Document and page preparation share a spinner, removed when preparation settles
+and static when the reader requests reduced motion.
 After five seconds, pending math/image dependencies resolve into localized source
 or unavailable-preview fallbacks with Retry, rather than holding the page indefinitely.
 Failed math fallbacks are reusable until an explicit retry or changed math context.

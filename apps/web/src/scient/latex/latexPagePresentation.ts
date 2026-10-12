@@ -47,20 +47,37 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
   let demand = new Set<DocumentNode>();
   let disposed = false;
   let reconciling = false;
+  const previousClip = view.dom.style.clipPath;
+  const revealed = new Map<number, string>();
   let cancel: (() => void) | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
-  const schedule = () => {
-    if (!disposed && !cancel)
-      cancel = afterEditorPaint(() => {
+  const queue = () => {
+    if (!disposed && !cancel) {
+      const run = () => {
+        cancel?.();
         cancel = undefined;
         reconcile();
-      });
+      };
+      const frame = requestAnimationFrame(run);
+      // A hidden review window still has to retire stalled preparation.
+      const fallback = setTimeout(run, 250);
+      cancel = () => {
+        cancelAnimationFrame(frame);
+        clearTimeout(fallback);
+      };
+    }
+  };
+  const schedule = () => {
+    // Cover invalidated content in this task, including ProseMirror updates.
+    // Admission and measurement run in the next pre-paint frame, never here.
+    reconcile(false);
+    queue();
   };
   const remove = (page: number) => {
     pending.get(page)?.element.remove();
     pending.delete(page);
   };
-  const reconcile = () => {
+  const reconcile = (advance = true) => {
     if (disposed || reconciling || view.isDestroyed || !scroll.clientHeight) return;
     reconciling = true;
     try {
@@ -71,6 +88,7 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
         for (const page of pending.keys()) remove(page);
         document = view.state.doc;
         context = nextContext;
+        revealed.clear();
       }
       const dimensions = pagination.dimensions;
       const pitch = dimensions.pageHeight + dimensions.pageGap;
@@ -89,11 +107,10 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
         wanted.add(page + 1);
       const units = latexViewportPageNodes(view, wanted, pagination.pages);
       const nextDemand = new Set(units.map((unit) => unit.node));
-      if (nextDemand.size !== demand.size || [...nextDemand].some((node) => !demand.has(node))) {
-        demand = nextDemand;
-        demandLatexViewportPages(view, demand);
-      }
+      const demandChanged =
+        nextDemand.size !== demand.size || [...nextDemand].some((node) => !demand.has(node));
       for (const page of pending.keys()) if (!wanted.has(page + 1)) remove(page);
+      const paintable = new Set<number>();
       let nextDeadline = Infinity;
       let openingReady = true;
       const focused = new Set<number>();
@@ -166,13 +183,13 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
             (element) => element.getAttribute("data-latex-preview-state") === "unavailable",
           );
         let record = pending.get(page);
-        if (record?.waitingForContent && contentReady) {
+        if (advance && record?.waitingForContent && contentReady) {
           record.awaitingLayout = layoutSettlement;
           view.dom.dispatchEvent(
             new CustomEvent("scient-latex-viewport-measure", { bubbles: true, detail: blocks }),
           );
         }
-        if (record) record.waitingForContent = !contentReady;
+        if (advance && record) record.waitingForContent = !contentReady;
         const ready =
           geometryReady &&
           contentReady &&
@@ -180,9 +197,27 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
         // Current typing/caret ownership is stronger than passive presentation.
         if (focused.has(page)) {
           remove(page);
+          paintable.add(page);
           continue;
         }
-        if (!record && ready && !unavailable) continue;
+        const geometry = pageUnits
+          .map((unit) => {
+            const element = view.nodeDOM(unit.position);
+            if (!(element instanceof HTMLElement)) return "missing";
+            const rect = element.getBoundingClientRect();
+            return `${unit.position}:${rect.top - paperBox.top}:${rect.height}`;
+          })
+          .join("|");
+        if (
+          ready &&
+          !unavailable &&
+          (record == null || (!record.waitingForContent && record.awaitingLayout == null)) &&
+          revealed.get(page) === geometry
+        ) {
+          remove(page);
+          paintable.add(page);
+          continue;
+        }
         if (!record) {
           const element = globalThis.document.createElement("div");
           element.className = "scient-latex-page-preparation";
@@ -204,35 +239,33 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
         record.element.style.top = `${page * pitch}px`;
         record.element.style.height = `${dimensions.pageHeight}px`;
         const expired = performance.now() - record.started >= maximumWaitMs;
-        if (!ready && expired && !record.released) {
+        if (advance && expired && !record.released && (!ready || record.stable < 2)) {
           record.released = true;
           settleMathReadingPreviews(previews);
           for (const element of assets)
             element.dispatchEvent(new Event("scient-latex-preview-fallback"));
           fallbackLatexViewportPage(view, nodes, true);
-          schedule();
+          queue();
         }
         if (ready) {
-          const geometry = pageUnits
-            .map((unit) => {
-              const element = view.nodeDOM(unit.position) as HTMLElement;
-              const rect = element.getBoundingClientRect();
-              return `${rect.top - paperBox.top}:${rect.height}`;
-            })
-            .join("|");
-          record.stable = geometry === record.geometry ? record.stable + 1 : 1;
-          record.geometry = geometry;
+          if (advance) {
+            record.stable = geometry === record.geometry ? record.stable + 1 : 1;
+            record.geometry = geometry;
+          }
           if (record.stable >= 2 && !unavailable) {
+            revealed.set(page, geometry);
+            paintable.add(page);
             remove(page);
             continue;
           }
-          if (record.stable < 2) schedule();
+          if (record.stable < 2) queue();
         } else if (!ready) record.stable = 0;
         const released = record.released || (ready && unavailable);
         openingReady &&= released || (ready && record.stable >= 2);
         record.element.dataset.state = released ? "unavailable" : "preparing";
         record.element.setAttribute("aria-busy", String(!released));
         if (released) {
+          paintable.add(page);
           if (!record.element.querySelector("button")) {
             record.element.replaceChildren();
             const label = globalThis.document.createElement("span");
@@ -257,15 +290,43 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
             record.element.append(label, retry);
           }
         } else {
-          if (record.element.textContent !== "Preparing page…")
-            record.element.textContent = "Preparing page…";
+          if (!record.element.querySelector("[data-latex-preparation-spinner]")) {
+            const spinner = globalThis.document.createElement("span");
+            spinner.dataset.latexPreparationSpinner = "true";
+            spinner.setAttribute("aria-hidden", "true");
+            const label = globalThis.document.createElement("span");
+            label.textContent = "Preparing page…";
+            record.element.replaceChildren(spinner, label);
+          }
           nextDeadline = Math.min(nextDeadline, record.started + maximumWaitMs);
         }
       }
+      // Clipping affects paint only. Source DOM, native selection and measured
+      // rectangles stay intact, while newly scrolled sheets and gaps cannot
+      // expose ink before their page has passed the readiness fence.
+      for (const page of focused) paintable.add(page);
+      const origin = (view.dom.getBoundingClientRect().top - paperBox.top) / scale;
+      const path = [...paintable]
+        .map((page) => {
+          const top = page * pitch - origin;
+          const bottom = top + dimensions.pageHeight;
+          return `M0 ${top}H${width}V${bottom}H0Z`;
+        })
+        .join(" ");
+      const clip = path ? `path("${path}")` : "inset(100%)";
+      if (view.dom.style.clipPath !== clip) view.dom.style.clipPath = clip;
+      if (advance && demandChanged) {
+        demand = nextDemand;
+        demandLatexViewportPages(view, demand);
+        queue();
+      }
       clearTimeout(deadline);
       updateLatexOpeningPageReadiness(view, openingReady);
-      if (Number.isFinite(nextDeadline))
-        deadline = setTimeout(schedule, Math.max(0, nextDeadline - performance.now()));
+      if (Number.isFinite(nextDeadline)) {
+        const remaining = nextDeadline - performance.now();
+        if (remaining > 0) deadline = setTimeout(schedule, remaining);
+        else queue();
+      }
     } finally {
       reconciling = false;
     }
@@ -275,17 +336,18 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
     layoutSettlement++;
     schedule();
   };
+  const scrolled = () => reconcile();
   const dependencies = new MutationObserver(schedule);
   dependencies.observe(view.dom, {
     subtree: true,
     attributes: true,
     attributeFilter: ["data-latex-preview-state"],
   });
-  scroll.addEventListener("scroll", reconcile, { passive: true });
+  scroll.addEventListener("scroll", scrolled, { passive: true });
   view.dom.addEventListener("scient-latex-math-preview", schedule);
   view.dom.addEventListener("load", schedule, true);
   view.dom.addEventListener("error", schedule, true);
-  view.dom.addEventListener("focus", reconcile, true);
+  view.dom.addEventListener("focus", schedule, true);
   view.dom.addEventListener("scient-latex-page-layout-ready", layoutReady);
   schedule();
   return {
@@ -296,13 +358,14 @@ function createPagePresentation(view: EditorView, maximumWaitMs: number) {
       clearTimeout(deadline);
       stopObserving();
       dependencies.disconnect();
-      scroll.removeEventListener("scroll", reconcile);
+      scroll.removeEventListener("scroll", scrolled);
       view.dom.removeEventListener("scient-latex-math-preview", schedule);
       view.dom.removeEventListener("load", schedule, true);
       view.dom.removeEventListener("error", schedule, true);
-      view.dom.removeEventListener("focus", reconcile, true);
+      view.dom.removeEventListener("focus", schedule, true);
       view.dom.removeEventListener("scient-latex-page-layout-ready", layoutReady);
       layer.remove();
+      view.dom.style.clipPath = previousClip;
       delete paper.dataset.latexPagePresentation;
     },
   };

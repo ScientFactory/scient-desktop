@@ -143,6 +143,54 @@ function jump(editor: Editor, paragraph: number) {
   return () => editor.view.nodeDOM(position) as HTMLElement;
 }
 
+it("covers a newly pending dependency before the next paint", async () => {
+  const source = fixture(8, 7201);
+  const opened = await mount(source, "page-before-paint");
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
+  const preview = opened.editor.view.dom.querySelector<HTMLElement>(".scient-latex-math-preview")!;
+  const content = preview.shadowRoot!.querySelector<HTMLElement>("[data-math-preview-content]")!;
+  content.removeAttribute("data-math-preview-ready");
+  preview.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
+  const coveredAtPaint = await new Promise<boolean>((resolve) =>
+    requestAnimationFrame(() => resolve(!!container!.querySelector("[data-state='preparing']"))),
+  );
+  expect(coveredAtPaint).toBe(true);
+  const mask = container!.querySelector<HTMLElement>("[data-state='preparing']")!;
+  const spinner = mask.querySelector<HTMLElement>("[data-latex-preparation-spinner]")!;
+  expect(mask.querySelectorAll("[data-latex-preparation-spinner]")).toHaveLength(1);
+  expect(spinner.getAttribute("aria-hidden")).toBe("true");
+  expect(getComputedStyle(spinner).animationTimingFunction).toBe("steps(12)");
+  expect(CSS.supports("clip-path", opened.editor.view.dom.style.clipPath)).toBe(true);
+  content.dataset.mathPreviewReady = "true";
+  preview.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
+  expect(container!.querySelector("[data-state='preparing']")).toBeTruthy();
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
+  expect(opened.source()).toBe(source);
+}, 30000);
+
+it("covers a cached remount before admitting its DOM and waits for stable page geometry", async () => {
+  const source = fixture(80, 7202);
+  const opened = await mount(source, "page-cached-admission");
+  await expect
+    .poll(() => opened.editor.view.dom.dataset.latexViewportPending, { timeout: 60000 })
+    .toBe("0");
+  let position = -1;
+  opened.editor.state.doc.descendants((node, offset) => {
+    if (node.type.name === "paragraph" && node.textContent.startsWith("Paragraph 30."))
+      position = offset;
+  });
+  expect(
+    (opened.editor.view.nodeDOM(position) as HTMLElement).hasAttribute(
+      "data-latex-viewport-closed",
+    ),
+  ).toBe(true);
+  const target = jump(opened.editor, 30);
+  expect(container!.querySelector("[data-state='preparing']")).toBeTruthy();
+  await expect.poll(() => target().hasAttribute("data-latex-viewport-closed")).toBe(false);
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
+  expect(opened.source()).toBe(source);
+}, 80000);
+
 it("retains completed idle preparation beyond 512 formulas and paints an earlier page from cache", async () => {
   const source = fixture(304, 7101);
   const opened = await mount(source, "page-cache-idle");
@@ -167,7 +215,7 @@ it("retains completed idle preparation beyond 512 formulas and paints an earlier
   );
   expect(audit.completions.slice(before).every((entry) => entry.cached)).toBe(true);
   expect(getComputedStyle(target(), "::after").display).toBe("none");
-  expect(container!.querySelector("[data-state='preparing']")).toBeNull();
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
   expect(opened.source()).toBe(source);
 }, 150000);
 
@@ -199,7 +247,8 @@ it("shows one message per cold page, releases a stalled formula, and retries wit
   await expect
     .poll(() => container!.querySelector("[data-state='unavailable'] button"), { timeout: 10000 })
     .toBeTruthy();
-  expect(container!.querySelector("[data-state='preparing']")).toBeNull();
+  // Neighboring pages own independent deadlines and geometry settlement.
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
   expect(target().querySelector("[data-math-preview-fallback]")).toBeTruthy();
   expect(
     [...target().querySelectorAll(".scient-latex-math-preview")].every(mathReadingPreviewReady),
@@ -208,7 +257,7 @@ it("shows one message per cold page, releases a stalled formula, and retries wit
   const previousTop = scroll.scrollTop;
   scroll.scrollTop = 0;
   scroll.dispatchEvent(new Event("scroll"));
-  expect(container!.querySelector("[data-state='preparing']")).toBeNull();
+  await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeNull();
   scroll.scrollTop = previousTop;
   scroll.dispatchEvent(new Event("scroll"));
   await expect
@@ -242,6 +291,10 @@ Visible prose after the image.
     .poll(() => container!.querySelector("[data-latex-preview-state='pending']"))
     .toBeTruthy();
   await expect.poll(() => container!.querySelector("[data-state='preparing']")).toBeTruthy();
+  const openingSpinner = container!.querySelector(
+    ".scient-latex-document-preparation [data-latex-preparation-spinner]",
+  );
+  expect(openingSpinner).toBeTruthy();
   await expect
     .poll(() => container!.querySelector("[data-state='unavailable'] button"), { timeout: 10000 })
     .toBeTruthy();

@@ -1,9 +1,12 @@
+@import "./latexPreparationSpinner.css";
+
 .scient-latex-document-preparation {
   display: flex;
   flex: 1;
   min-height: 0;
   align-items: center;
   justify-content: center;
+  gap: 9px;
   padding: 24px;
   text-align: center;
   color: var(--muted-foreground);
