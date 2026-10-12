@@ -149,9 +149,27 @@ it("keeps recently read markup when background scanning exceeds the cache budget
   mathReadingPreview("reading", false, macros, undefined, complete, () => 2);
   expect(complete).toHaveBeenLastCalledWith("ready reading", true);
   expect(worker.messages).toHaveLength(before);
+  const early = vi.fn();
+  mathReadingPreview("background-0", false, macros, undefined, early);
+  expect(early).toHaveBeenCalledExactlyOnceWith("ready background-0", true);
+  // Actual byte pressure still evicts background work before visited content.
+  for (let i = 0; i < 100; i++) {
+    mathReadingPreview(
+      `large-${i}`,
+      false,
+      macros,
+      undefined,
+      () => {},
+      () => 0,
+    );
+    worker.receive({ id: worker.messages.at(-1)!.id, markup: "x".repeat(150_000) });
+  }
+  const pressureBefore = worker.messages.length;
+  mathReadingPreview("reading", false, macros, undefined, complete, () => 2);
+  expect(complete).toHaveBeenLastCalledWith("ready reading", true);
   const evicted = vi.fn();
   const cancel = mathReadingPreview("background-0", false, macros, undefined, evicted);
   expect(evicted).not.toHaveBeenCalled();
-  expect(worker.messages).toHaveLength(before + 1);
+  expect(worker.messages).toHaveLength(pressureBefore + 1);
   cancel();
 });

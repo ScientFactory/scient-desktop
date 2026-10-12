@@ -1,3 +1,4 @@
+import { latexReadingCacheBudget } from "./latexReadingCache";
 import { MathfieldElement, type MacroDictionary } from "mathlive";
 import type { DocumentMathMacro } from "./latexDocumentMacros";
 import { mathSymbolMacros } from "./mathSymbolPresentation";
@@ -86,10 +87,7 @@ type PreviewJob = {
 };
 const pending = new Map<number, PreviewJob>();
 const requests = new Map<string, PreviewJob>();
-const markupCache = new Map<string, { markup: string; reading: boolean }>();
-let cacheBytes = 0;
-const maximumCacheBytes = 16 * 1024 * 1024;
-const maximumCacheEntries = 512;
+const markupCache = latexReadingCacheBudget.cache<string | null>("formula");
 let worker: Worker | undefined;
 let ready = false;
 let active: PreviewJob | undefined;
@@ -146,20 +144,29 @@ function stopWorker() {
   sentContexts.clear();
 }
 
-function remember(key: string, markup: string, reading: boolean) {
-  const bytes = (key.length + markup.length) * 2;
-  if (bytes > maximumCacheBytes) return;
-  const previous = markupCache.get(key);
-  if (previous !== undefined) cacheBytes -= (key.length + previous.markup.length) * 2;
-  markupCache.delete(key);
-  markupCache.set(key, { markup, reading: reading || (previous?.reading ?? false) });
-  cacheBytes += bytes;
-  while (cacheBytes > maximumCacheBytes || markupCache.size > maximumCacheEntries) {
-    const oldest =
-      [...markupCache].find(([, entry]) => !entry.reading) ?? markupCache.entries().next().value!;
-    cacheBytes -= (oldest[0].length + oldest[1].markup.length) * 2;
-    markupCache.delete(oldest[0]);
-  }
+function remember(key: string, markup: string | null, reading: boolean) {
+  markupCache.put(key, markup, (markup?.length ?? 0) * 2, reading);
+}
+
+export function rememberMathReadingFallback(
+  source: string,
+  display: boolean,
+  macros: Readonly<Record<string, DocumentMathMacro>>,
+  colors: Readonly<Record<string, string>> | undefined,
+) {
+  const context = contextFor(macros, colors);
+  remember(JSON.stringify([context.id, display, source]), null, true);
+}
+
+export function forgetMathReadingFallback(
+  source: string,
+  display: boolean,
+  macros: Readonly<Record<string, DocumentMathMacro>>,
+  colors: Readonly<Record<string, string>> | undefined,
+) {
+  const context = contextFor(macros, colors);
+  const key = JSON.stringify([context.id, display, source]);
+  if (markupCache.get(key) === null) markupCache.delete(key);
 }
 
 /** A previously offscreen result becomes a reading-cache entry when visited. */
@@ -303,12 +310,9 @@ export function mathReadingPreview(
 ) {
   const context = contextFor(macros, colors);
   const key = JSON.stringify([context.id, display, source]);
-  const cached = markupCache.get(key);
+  const cached = markupCache.get(key, priority() >= 2);
   if (cached !== undefined) {
-    cached.reading ||= priority() >= 2;
-    markupCache.delete(key);
-    markupCache.set(key, cached);
-    complete(cached.markup, true);
+    complete(cached, true);
     return () => {};
   }
   let job = requests.get(key);

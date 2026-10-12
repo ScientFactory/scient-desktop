@@ -64,6 +64,7 @@ import {
 } from "./scientificStatementNodeView";
 import { LatexViewport, latexViewportNodeView, navigateLatexViewport } from "./latexViewport";
 import { LatexDocumentPreparation, LatexOpeningPresentation } from "./latexOpeningPresentation";
+import { LatexPagePresentation } from "./latexPagePresentation";
 import {
   Fragment,
   createContext,
@@ -2318,20 +2319,51 @@ function LatexFigureImage(props: {
   );
   const asset = useAssetUrlState(props.workspace.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const previewIdentity = JSON.stringify([
+    props.workspace.cwd,
+    relativePath,
+    asset._tag === "Success" ? asset.url : null,
+  ]);
+  const [timedOutIdentity, setTimedOutIdentity] = useState<string | null>(null);
+  const timedOut = timedOutIdentity === previewIdentity;
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const attachPreview = useCallback(
+    (element: HTMLElement | null) => {
+      if (!element) return;
+      const fallback = () => setTimedOutIdentity(previewIdentity);
+      const retry = () => {
+        setTimedOutIdentity(null);
+        setFailedUrl(null);
+        asset.refresh();
+      };
+      element.addEventListener("scient-latex-preview-fallback", fallback);
+      element.addEventListener("scient-latex-preview-retry", retry);
+      return () => {
+        element.removeEventListener("scient-latex-preview-fallback", fallback);
+        element.removeEventListener("scient-latex-preview-retry", retry);
+      };
+    },
+    [asset, previewIdentity],
+  );
   const style = { width: visualFigureWidth(props.width) };
-  if (asset._tag === "Success" && failedUrl !== asset.url)
+  if (asset._tag === "Success" && failedUrl !== asset.url && !timedOut)
     return (
       <img
+        ref={attachPreview}
+        data-latex-preview-state={loadedUrl === asset.url ? "ready" : "pending"}
         alt={props.alt || props.path}
         draggable={false}
+        onLoad={() => setLoadedUrl(asset.url)}
         onError={() => setFailedUrl(asset.url)}
         src={asset.url}
         style={style}
       />
     );
-  const failed = asset._tag === "Failure" || failedUrl !== null;
+  const failed = asset._tag === "Failure" || failedUrl !== null || timedOut;
   return (
     <div
+      ref={attachPreview}
+      data-latex-preview-state={failed ? "unavailable" : "pending"}
       className="scient-latex-figure-placeholder"
       role="img"
       aria-label={props.alt || props.path}
@@ -2342,6 +2374,7 @@ function LatexFigureImage(props: {
       {failed ? (
         <button
           onClick={() => {
+            setTimedOutIdentity(null);
             setFailedUrl(null);
             asset.refresh();
           }}
@@ -6202,6 +6235,7 @@ function LatexVisualEditorReady(
         onOpeningChange: setOpening,
       }),
       LatexVisualPagination.configure({ onPageCount: setPageCount }),
+      LatexPagePresentation,
       richPreviewExtension,
       Extension.create({
         name: "latexEquationReferences",

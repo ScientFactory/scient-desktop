@@ -9,6 +9,8 @@ import {
   mathReadingPreviewContextId,
   mathReadingPreviewReady,
   retainMathReadingPreview,
+  rememberMathReadingFallback,
+  forgetMathReadingFallback,
 } from "./mathReadingPreview";
 import {
   mathReadingPriority,
@@ -30,6 +32,18 @@ interface Reader {
 
 const owners = new WeakMap<Editor, ReturnType<typeof createOwner>>();
 const noMacros = {};
+const previewActions = new WeakMap<Element, { fallback(): void; retry(): void }>();
+
+/** A page deadline releases only its pending previews; later retries keep source authority. */
+export function settleMathReadingPreviews(elements: readonly Element[]) {
+  for (const element of elements)
+    if (!mathReadingPreviewReady(element)) previewActions.get(element)?.fallback();
+}
+
+export function retryMathReadingPreviews(elements: readonly Element[]) {
+  for (const element of elements)
+    if (element.hasAttribute("data-math-preview-fallback")) previewActions.get(element)?.retry();
+}
 
 /** Preamble changes can leave the document nodes identical. Refresh their reading views explicitly. */
 export function refreshMathReadingContext(editor: Editor): void {
@@ -144,12 +158,16 @@ export function mathReadingNodeView(
     cancelPreview?.();
     queued?.cancel();
     delete content.dataset.mathPreviewReady;
+    delete preview.dataset.mathPreviewFallback;
     preview.setAttribute("aria-label", value);
     const apply = (markup: string | null, cached = false) => {
       const present = () => {
         if (disposed || full || version !== epoch) return;
         if (markup === null) content.textContent = value;
         else content.innerHTML = markup;
+        preview.toggleAttribute("data-math-preview-fallback", markup === null);
+        if (markup === null)
+          rememberMathReadingFallback(value, display, macros, configuration.colors);
         renderedMarkup = markup;
         content.dataset.mathPreviewReady = "true";
         field.dispatchEvent(
@@ -174,6 +192,35 @@ export function mathReadingNodeView(
       apply(null);
     }
   };
+  previewActions.set(preview, {
+    fallback() {
+      cancelPreview?.();
+      queued?.cancel();
+      content.textContent = sourceFor(props.node);
+      renderedMarkup = null;
+      content.dataset.mathPreviewReady = "true";
+      preview.dataset.mathPreviewFallback = "";
+      const configuration = context();
+      rememberMathReadingFallback(
+        sourceFor(props.node),
+        display,
+        configuration.macros ?? noMacros,
+        configuration.colors,
+      );
+      field.dispatchEvent(new CustomEvent("scient-latex-math-preview", { bubbles: true }));
+    },
+    retry() {
+      const configuration = context();
+      forgetMathReadingFallback(
+        sourceFor(props.node),
+        display,
+        configuration.macros ?? noMacros,
+        configuration.colors,
+      );
+      signature = "";
+      refresh();
+    },
+  });
   const releaseReading = () => {
     epoch++;
     cancelPreview?.();

@@ -1725,13 +1725,27 @@ geometry. Retention never grants validity to an old measurement.
 Recent viewport blocks remain mounted under a 128-block, 4 MiB estimated
 source/DOM admission budget, without a time expiry. Visible, selected and active
 blocks retain their separate admission rules. Geometry and passive formula markup
-have independent bounded caches; background scan results are evicted before
-recently read results. DOM eviction preserves compatible geometry and markup.
+share a 24 MiB estimated byte budget, including keys and entry overhead, with
+background results evicted before recently read results. Exact layout-context
+identities avoid repeating the full document reference/font setup in each key.
+There is no independent 512-formula ceiling; many small results can remain
+available within the byte budget. DOM eviction preserves compatible geometry and markup.
 Scroll direction and velocity enlarge forward overscan temporarily. Visible demand
 preempts idle preparation, admitting at most eight blocks per paint and measuring
 up to 32 required units separately from background cohorts of up to 64. Typing,
 composition and active scrolling defer background admission. Reading feedback
 reflects missing visible content rather than distant unfinished work.
+
+Scrolling uses one preparation mask per sheet, outside the editable DOM. Complete
+visible pages and one page ahead are admitted independently of thumbnail demand.
+The mask preserves page geometry, hides intermediate block labels and reveals a
+settled page together. Active caret/selection pages retain interaction priority.
+After five seconds, pending math/image dependencies resolve into localized source
+or unavailable-preview fallbacks with Retry, rather than holding the page indefinitely.
+Failed math fallbacks are reusable until an explicit retry or changed math context.
+Retry discards fallback geometry and waits for a new measurement of settled
+content before revealing the page again.
+No native TeX compilation is initiated by page preparation.
 
 Ready math markup appears immediately on cache hits. Prepared geometry remains
 in force while a cache miss renders, and unchanged remounts reuse natural units

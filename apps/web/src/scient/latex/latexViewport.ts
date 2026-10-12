@@ -1,3 +1,4 @@
+import { latexReadingCacheBudget, latexReadingContextIdentity } from "./latexReadingCache";
 import {
   Extension,
   getRenderedAttributes,
@@ -53,6 +54,8 @@ interface ViewportState {
   readonly preparing: ReadonlySet<DocumentNode>;
   readonly pinned: ReadonlySet<DocumentNode>;
   readonly presented: ReadonlySet<DocumentNode>;
+  readonly pageDemand: ReadonlySet<DocumentNode>;
+  readonly fallback: ReadonlySet<DocumentNode>;
   readonly print: boolean;
   readonly revision: number;
   readonly pending: number;
@@ -66,6 +69,8 @@ interface ViewportUpdate {
   readonly preparing?: ReadonlySet<DocumentNode>;
   readonly pinned?: ReadonlySet<DocumentNode>;
   readonly presented?: ReadonlySet<DocumentNode>;
+  readonly pageDemand?: ReadonlySet<DocumentNode>;
+  readonly fallback?: ReadonlySet<DocumentNode>;
   readonly print?: boolean;
   readonly refresh?: boolean;
   readonly pending?: number;
@@ -78,13 +83,7 @@ const unitPositions = new WeakMap<DocumentNode, ReadonlyMap<number, DocumentNode
 const signatures = new WeakMap<DocumentNode, string>();
 const readingSignatures = new WeakMap<DocumentNode, string>();
 const measurements = new WeakMap<DocumentNode, Map<string, ViewportMeasurement>>();
-const retained = new Map<
-  string,
-  { measurement: ViewportMeasurement; bytes: number; reading: boolean }
->();
-let retainedBytes = 0;
-const maximumBytes = 8 * 1024 * 1024;
-const maximumEntries = 512;
+const retained = latexReadingCacheBudget.cache<ViewportMeasurement>("geometry");
 
 interface Member {
   readonly dom: HTMLElement;
@@ -214,22 +213,18 @@ export function latexViewportMeasurement(
   if (local) {
     if (owners.get(view)?.reading(node)) {
       const signature = `${context}|${sourceSignature(node)}`;
-      const entry = retained.get(signature);
-      if (entry) entry.reading = true;
+      retained.get(signature, true);
     }
     return local;
   }
   const signature = `${context}|${sourceSignature(node)}`;
-  const previous = retained.get(signature);
+  const previous = retained.get(signature, owners.get(view)?.reading(node) ?? false);
   if (!previous) return null;
-  retained.delete(signature);
-  previous.reading ||= owners.get(view)?.reading(node) ?? false;
-  retained.set(signature, previous);
   let byContext = measurements.get(node);
   if (!byContext) measurements.set(node, (byContext = new Map()));
   byContext.clear();
-  byContext.set(context, previous.measurement);
-  return previous.measurement;
+  byContext.set(context, previous);
+  return previous;
 }
 
 /** Publish geometry only after natural-flow measurement; viewport changes never edit source. */
@@ -269,24 +264,12 @@ export function recordLatexViewportMeasurement(
   byContext.set(context, measurement);
   owners.get(view)?.recorded(node);
   const signature = `${context}|${sourceSignature(node)}`;
-  const bytes = 2 * (signature.length + JSON.stringify(measurement).length);
-  const old = retained.get(signature);
-  if (old) retainedBytes -= old.bytes;
-  retained.delete(signature);
-  if (bytes <= maximumBytes) {
-    retained.set(signature, {
-      measurement,
-      bytes,
-      reading: owners.get(view)?.reading(node) ?? false,
-    });
-    retainedBytes += bytes;
-  }
-  while (retained.size > maximumEntries || retainedBytes > maximumBytes) {
-    const first =
-      [...retained].find(([, item]) => !item.reading)?.[0] ?? retained.keys().next().value!;
-    retainedBytes -= retained.get(first)!.bytes;
-    retained.delete(first);
-  }
+  retained.put(
+    signature,
+    measurement,
+    JSON.stringify(measurement).length * 2,
+    owners.get(view)?.reading(node) ?? false,
+  );
 }
 
 export function latexViewportClosed(view: EditorView, position: number): boolean {
@@ -409,6 +392,57 @@ export function finishLatexViewportMeasurements(view: EditorView): void {
   owners.get(view)?.measured();
 }
 
+/** Source units touching complete pages, including paragraphs split across sheets. */
+const orderedPagePlacements = new WeakMap<
+  readonly { position: number; page: number }[],
+  readonly { position: number; page: number }[]
+>();
+
+export function latexViewportPageNodes(
+  view: EditorView,
+  pages: ReadonlySet<number>,
+  placements: readonly { position: number; page: number }[],
+) {
+  let ordered = orderedPagePlacements.get(placements);
+  if (!ordered) {
+    ordered = [...placements].sort((a, b) => a.position - b.position);
+    orderedPagePlacements.set(placements, ordered);
+  }
+  return documentUnits(view.state.doc).filter((unit) => {
+    let low = 0,
+      high = ordered.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (ordered[middle]!.position <= unit.position) low = middle + 1;
+      else high = middle;
+    }
+    if (low && pages.has(ordered[low - 1]!.page + 1)) return true;
+    for (
+      let index = low;
+      index < ordered.length && ordered[index]!.position < unit.position + unit.node.nodeSize;
+      index++
+    )
+      if (pages.has(ordered[index]!.page + 1)) return true;
+    return false;
+  });
+}
+
+export function demandLatexViewportPages(view: EditorView, nodes: ReadonlySet<DocumentNode>) {
+  owners.get(view)?.demand(nodes);
+}
+
+export function updateLatexOpeningPageReadiness(view: EditorView, ready: boolean) {
+  owners.get(view)?.pageReady(ready);
+}
+
+export function fallbackLatexViewportPage(
+  view: EditorView,
+  nodes: ReadonlySet<DocumentNode>,
+  enabled: boolean,
+) {
+  owners.get(view)?.fallback(nodes, enabled);
+}
+
 /** Thumbnail pages are independent of the reading viewport, but share its model. */
 export function presentLatexViewportPages(
   view: EditorView,
@@ -455,7 +489,8 @@ function mounted(state: EditorState, node: DocumentNode, position: number): bool
     viewport.warm.has(node) ||
     viewport.preparing.has(node) ||
     viewport.pinned.has(node) ||
-    viewport.presented.has(node)
+    viewport.presented.has(node) ||
+    viewport.pageDemand.has(node)
   )
     return true;
   const contains = (point: number) => point > position && point < position + node.nodeSize;
@@ -718,6 +753,7 @@ function createOwner(
   let scrollIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let cancel: (() => void) | undefined;
   let contextValue = "";
+  let contextIdentity = 0;
   let contextReferences: ReturnType<typeof latexReferencePresentation>;
   let referenceValue = "";
   let visible = new Set<DocumentNode>();
@@ -737,6 +773,7 @@ function createOwner(
   const visited = new WeakSet<DocumentNode>();
   let layoutReady = false;
   let loadingFonts = false;
+  let openingPagesReady = true;
   let stableOpeningFrames = 0;
   let previousOpeningGeometry: string | null = null;
   const resetOpeningFrames = () => {
@@ -745,7 +782,7 @@ function createOwner(
   };
   const keepOpening = (ready: boolean, geometry: string) => {
     if (!key.getState(view.state)?.opening) return false;
-    if (!ready) {
+    if (!ready || !openingPagesReady) {
       resetOpeningFrames();
       return true;
     }
@@ -774,7 +811,7 @@ function createOwner(
   status.hidden = true;
   const statusLabel = document.createElement("span");
   status.append(statusLabel);
-  const context = () => contextValue;
+  const context = () => String(contextIdentity);
   const root = () => view.dom.closest<HTMLElement>(".scient-latex-visual-scroll");
   const restoreOpening = () => {
     const scroll = root();
@@ -816,6 +853,8 @@ function createOwner(
       (!update.preparing || same(update.preparing, previous.preparing)) &&
       (!update.pinned || same(update.pinned, previous.pinned)) &&
       (!update.presented || same(update.presented, previous.presented)) &&
+      (!update.pageDemand || same(update.pageDemand, previous.pageDemand)) &&
+      (!update.fallback || same(update.fallback, previous.fallback)) &&
       (update.pending === undefined || update.pending === previous.pending) &&
       (update.opening === undefined || update.opening === previous.opening) &&
       (update.print === undefined || update.print === previous.print)
@@ -867,6 +906,7 @@ function createOwner(
     ]);
     if (nextContext !== contextValue) {
       contextValue = nextContext;
+      contextIdentity = latexReadingContextIdentity(nextContext);
       resetOpeningFrames();
       retention.clear();
       layoutReady = false;
@@ -1011,6 +1051,7 @@ function createOwner(
         if (member.mounted) visited.add(member.node());
       }
     }
+    for (const node of viewport.pageDemand) required.add(node);
     const warm = retention.update(visible, currentNodes, (node) => {
       const element = byNode.get(node)?.dom;
       const base = node.nodeSize * 2 + 1024;
@@ -1094,7 +1135,11 @@ function createOwner(
         return unit && !latexViewportMeasurement(view, node, unit.position);
       }),
     );
-    const pending = all.filter((unit) => !latexViewportMeasurement(view, unit.node, unit.position));
+    const pending = all.filter(
+      (unit) =>
+        !viewport.fallback.has(unit.node) &&
+        !latexViewportMeasurement(view, unit.node, unit.position),
+    );
     const readingPending = pending.filter((unit) => required.has(unit.node));
     const urgent = readingPending.length
       ? readingPending
@@ -1200,7 +1245,7 @@ function createOwner(
           ? "Rendering content…"
           : "";
     if (statusLabel.textContent !== label) statusLabel.textContent = label;
-    status.hidden = opening || !label;
+    status.hidden = opening || !!view.dom.closest("[data-latex-page-presentation]") || !label;
     saveReadingPosition();
   };
   const typing = () => {
@@ -1393,9 +1438,38 @@ function createOwner(
       // them here makes its DOM observer re-read native selection and force
       // layout after every preparation batch.
       schedule();
+      view.dom.dispatchEvent(new CustomEvent("scient-latex-page-layout-ready"));
     },
     recorded(node: DocumentNode) {
       refreshNodes.add(node);
+    },
+    demand(pageDemand: ReadonlySet<DocumentNode>) {
+      publish({ pageDemand });
+      schedule();
+    },
+    pageReady(ready: boolean) {
+      if (openingPagesReady === ready) return;
+      openingPagesReady = ready;
+      resetOpeningFrames();
+      schedule();
+    },
+    fallback(nodes: ReadonlySet<DocumentNode>, enabled: boolean) {
+      if (enabled) layoutReady = true;
+      if (!enabled) {
+        for (const unit of documentUnits(view.state.doc))
+          if (nodes.has(unit.node)) {
+            measurements.delete(unit.node);
+            retained.delete(
+              `${latexViewportContext(view, unit.node, unit.position)}|${sourceSignature(unit.node)}`,
+            );
+          }
+      }
+      const fallback = new Set(key.getState(view.state)?.fallback);
+      for (const node of nodes)
+        if (enabled) fallback.add(node);
+        else fallback.delete(node);
+      publish({ fallback, refreshNodes: new Set(nodes) });
+      schedule();
     },
     present(presented: ReadonlySet<DocumentNode>) {
       publish({ presented });
@@ -1479,6 +1553,8 @@ export const LatexViewport = Extension.create<{
               preparing: new Set(),
               pinned: new Set(),
               presented: new Set(),
+              pageDemand: new Set(),
+              fallback: new Set(),
               print: false,
               revision: 0,
               pending: all.length > 24 ? all.length : 0,
@@ -1519,6 +1595,8 @@ export const LatexViewport = Extension.create<{
               preparing: map(previous.preparing),
               pinned: map(previous.pinned),
               presented: map(previous.presented),
+              pageDemand: map(previous.pageDemand),
+              fallback: transaction.docChanged ? new Set() : previous.fallback,
               ...presentation,
               enabled: all.length > 24,
               revision: previous.revision + (refresh ? 1 : 0),
@@ -1543,7 +1621,10 @@ export const LatexViewport = Extension.create<{
                 Decoration.node(
                   position,
                   position + node.nodeSize,
-                  { "data-latex-viewport": mounted(state, node, position) ? "mounted" : "closed" },
+                  {
+                    "data-latex-viewport": mounted(state, node, position) ? "mounted" : "closed",
+                    "data-latex-viewport-fallback": String(viewport.fallback.has(node)),
+                  },
                   {
                     revision: viewport.revision,
                     geometryRevision: viewport.geometryRevisions.get(node) ?? 0,

@@ -140,6 +140,13 @@ The list footer has a **Numbering** menu for the format, starting number and
 continuing a previous list. Description lists have an **Items** menu for inserting
 or deleting the current item.
 
+Large Visual documents prepare nearby pages first and continue preparing later
+content while you read. A page that needs preparation shows one **Preparing page…**
+message, then appears as a whole. If a preview takes more than five seconds, the
+page shows the available content with a fallback and **Retry page**. Source remains
+available. Prepared results stay cached within a memory budget; a long reading pause
+alone does not expire them, but source, font or layout changes can require preparation.
+
 PDF, Visual and Split use one header row. From the left it holds build status,
 search and the view switch; sidebar, page and zoom controls follow, with the
 PDF/Visual choice after the page controls in Split. Rebuild and More are on the right. Click the search field and type: the
