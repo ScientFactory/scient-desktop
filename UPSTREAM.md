@@ -950,6 +950,15 @@ are routed through `apps/web/src/scient/typography/profile.css`; do not spread t
 overrides across inherited components during upstream conflict resolution. See
 [Scient typography profile](docs/internals/scient-typography.md).
 
+Scient's bordered form controls indicate focus with a single border, retaining
+upstream focus and validation colors. The owned override lives in
+`apps/web/src/scient/presentation/scient-form-focus.css`, imported by
+`scient-utilities.css` through its existing `SCIENT-FORK` mount in `index.css`.
+Comboboxes reuse the input override; ghost selects and unrelated controls retain
+their focus rings. Preserve this mount during alignment rather than deleting
+ring classes from inherited components. The production-CSS regression in
+`scient-form-focus.browser.test.tsx` runs in the existing web layout CI job.
+
 Composer collapse is opt-in in Scient: `composerCollapseOnScroll` defaults to
 `false`. Upstream removed blur-triggered collapse; do not restore that obsolete
 setting. Preserve saved scroll-collapse choices and the shared focus-scope marker
