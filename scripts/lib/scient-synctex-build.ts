@@ -112,4 +112,9 @@ export async function stageScientSyncTexRuntimeForDesktopBuild(
     );
   }
   await verifyRuntimeDirectory(outputDirectory, input.platform, input.arch);
+  // Loose CI artifacts lose POSIX modes. Restore only the verified staged
+  // executable; the downloaded source and its receipt remain untouched.
+  if (input.platform !== "win") {
+    await NodeFSP.chmod(NodePath.join(outputDirectory, executableName(input.platform)), 0o755);
+  }
 }

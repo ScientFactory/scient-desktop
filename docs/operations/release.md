@@ -75,6 +75,10 @@ provenance, and licenses. On POSIX targets it also checks that executable files
 retain executable permission and requires the named runtime binaries to be
 executable even if staging already lost their mode. Linux's archived
 registration icon is required.
+SyncTeX staging restores `0755` on the macOS/Linux executable after verifying
+its target receipt, size, and checksum. This handles loose CI artifacts arriving
+with mode `0644` without changing the downloaded source, licenses, receipt, or
+Windows executable.
 Windows validation separately inspects the actual WSL tar members and rejects
 maps even when the archive digest is valid.
 
