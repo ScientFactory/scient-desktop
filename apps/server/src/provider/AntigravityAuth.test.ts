@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -24,6 +26,7 @@ import {
   ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE,
   ANTIGRAVITY_LINK_CAPTURE_FAILED_MESSAGE,
   ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE,
+  ANTIGRAVITY_RUNTIME_RESOLUTION_FAILED_MESSAGE,
   makeAntigravityStderrHandler,
 } from "./antigravityAuthSupport.ts";
 
@@ -159,6 +162,35 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
 });
 
 it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
+  it.effect("records safe metadata when the current startup fails", () => {
+    const records: Array<{ message: unknown; metadata: Record<string, unknown> }> = [];
+    const logger = Logger.make<unknown, void>(({ fiber, message }) => {
+      records.push({ message, metadata: { ...fiber.getRef(References.CurrentLogAnnotations) } });
+    });
+    return Effect.gen(function* () {
+      const sensitive = `/private/profile/secret-key ${authorizationUrl}`;
+      const harness = yield* makeHarness({
+        runtimePreparation: Effect.fail(
+          new AcpErrors.AcpSpawnError({
+            command: sensitive,
+            cause: { code: "EPERM", message: sensitive },
+          }),
+        ),
+      });
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "failed");
+      yield* Deferred.await(harness.closed);
+      assert.equal(records.length, 1);
+      assert.include(records[0]!.metadata, {
+        phase: "before-authorization",
+        failureType: "AcpSpawnError",
+        systemErrorCode: "EPERM",
+      });
+      assert.notInclude(JSON.stringify(records), "secret-key");
+      assert.notInclude(JSON.stringify(records), authorizationUrl);
+    }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+  });
+
   it.effect("keeps bridge startup alive for a Google link arriving after 45 seconds", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ beforeAuthorizationUrl: Effect.sleep("45 seconds") });
@@ -193,6 +225,25 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       assert.deepEqual(harness.catalog(), ["gemini-test"]);
     }),
   );
+
+  it.effect("settles the native failure even when diagnostic logging fails", () => {
+    const logger = Logger.make(() => {
+      throw new Error("synthetic logger failure");
+    });
+    return Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        runtimePreparation: Effect.fail(
+          new AcpErrors.AcpSpawnError({ command: "synthetic-agent", cause: undefined }),
+        ),
+      });
+      yield* harness.auth.controller.start(owner);
+      assert.equal(
+        (yield* phase(harness.auth, "failed")).message,
+        ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE,
+      );
+      yield* Deferred.await(harness.closed);
+    }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+  });
 
   it.effect("expires stalled bridge startup at 300 seconds and closes its runtime", () =>
     Effect.gen(function* () {
@@ -270,6 +321,19 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     Effect.gen(function* () {
       const sensitive = `/private/profile/secret-key ${authorizationUrl} ${callbackUrl}`;
       const cases = [
+        {
+          options: {
+            runtimePreparation: Effect.fail(
+              new ProviderSetupError({
+                instanceId,
+                operation: "resolve",
+                detail: sensitive,
+                cause: new Error(sensitive),
+              }),
+            ),
+          },
+          message: ANTIGRAVITY_RUNTIME_RESOLUTION_FAILED_MESSAGE,
+        },
         {
           options: {
             runtimePreparation: Effect.fail(
