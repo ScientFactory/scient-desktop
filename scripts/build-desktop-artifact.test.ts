@@ -2852,6 +2852,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "--exclude=node_modules/@ff-labs/fff-bin-win32-*",
       "--exclude=node_modules/@yuuang/ffi-rs-win32-*",
       "--exclude=node_modules/@msgpackr-extract/msgpackr-extract-win32-*",
+      "--exclude=node_modules/@napi-rs/canvas-win32-*",
+      "--exclude=node_modules/@napi-rs/keyring-win32-*",
+      "--exclude=node_modules/@cursor/sdk-win32-*",
       "apps/server/dist",
       "node_modules",
     ]);
@@ -2956,6 +2959,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so",
           "node_modules/@msgpackr-extract/msgpackr-extract-win32-x64/addon.node",
           "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
+          "node_modules/@napi-rs/canvas-win32-x64-msvc/skia.win32-x64-msvc.node",
+          "node_modules/@napi-rs/canvas-win32-arm64-msvc/skia.win32-arm64-msvc.node",
+          "node_modules/@napi-rs/canvas/js-binding.js",
+          "node_modules/@napi-rs/canvas-linux-x64-gnu/skia.linux-x64-gnu.node",
+          "node_modules/@napi-rs/canvas-linux-x64-musl/skia.linux-x64-musl.node",
+          "node_modules/@napi-rs/keyring-win32-x64-msvc/keyring.win32-x64-msvc.node",
+          "node_modules/@napi-rs/keyring-win32-arm64-msvc/keyring.win32-arm64-msvc.node",
+          "node_modules/@napi-rs/keyring/index.js",
+          "node_modules/@napi-rs/keyring-linux-x64-gnu/keyring.linux-x64-gnu.node",
+          "node_modules/@napi-rs/keyring-linux-x64-musl/keyring.linux-x64-musl.node",
+          "node_modules/@cursor/sdk-win32-x64/bin/rg.exe",
+          "node_modules/@cursor/sdk-win32-arm64/bin/rg.exe",
+          "node_modules/@cursor/sdk/dist/esm/index.js",
+          "node_modules/@cursor/sdk-linux-x64/bin/rg",
+          "node_modules/@cursor/sdk-linux-x64/vendor/tree-sitter/binding.node",
           "node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/index.js",
           "node_modules/.bin/tool",
           "node_modules/.pnpm/lock.yaml",
@@ -2994,6 +3012,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.include(listing, "node_modules/node-pty/prebuilds/linux-x64/pty.node");
         assert.include(listing, "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff.so");
         assert.include(listing, "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so");
+        for (const retained of members.filter((member) => member.includes("-linux-"))) {
+          assert.include(listing, retained);
+        }
+        for (const wrapper of [
+          "node_modules/@napi-rs/canvas/js-binding.js",
+          "node_modules/@napi-rs/keyring/index.js",
+          "node_modules/@cursor/sdk/dist/esm/index.js",
+        ]) {
+          assert.include(listing, wrapper);
+        }
         assert.include(
           listing,
           "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
@@ -3006,6 +3034,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "fff-bin-win32-",
           "ffi-rs-win32-",
           "msgpackr-extract-win32-",
+          "canvas-win32-",
+          "keyring-win32-",
+          "sdk-win32-",
           "claude-agent-sdk-",
           "node_modules/.bin",
           "node_modules/.pnpm",
@@ -3013,6 +3044,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "node_modules/.pnpm-workspace-state-v1.json",
         ]) {
           assert.notInclude(listing, excluded);
+        }
+        // Tar exclusions must not mutate the shared tree packed for Windows.
+        for (const member of members.filter((member) => member.includes("-win32-"))) {
+          assert.equal(yield* fs.readFileString(path.join(sourceDir, member)), member);
         }
       }),
     ),

@@ -43,6 +43,12 @@ the stable scheduler and production gate.
   from the checksum-pinned 0.6.21 installer without signing
   secrets or publication authority. Release Smoke uses synthetic artifacts and
   remains a separate workflow/manifest check.
+- The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
+  packages; their Linux variants remain, and the Windows sidecar is separate.
+  Windows Packaging also executes that exact packaged archive on Linux without
+  installing replacement dependencies, checking native loads, terminals, CLI,
+  HTTP startup, and shutdown. This qualifies the Linux payload; WSL distro and
+  Windows/Linux interoperability acceptance remain separate platform checks.
 - Windows loose-file validation retains an 80-file core budget. Pinned voice
   and Windows/WSL Cursor inventories are admitted separately only after their
   exact file sets pass validation; missing or extra component files fail even
