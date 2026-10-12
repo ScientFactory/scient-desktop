@@ -26,6 +26,7 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/scientific-computing"
+  | "/settings/documents"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -107,6 +108,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/voice": "Voice",
   "/settings/skills": "Skills",
   "/settings/scientific-computing": "Scientific Computing",
+  "/settings/documents": "Documents",
   "/settings/keybindings": "Shortcuts",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
@@ -198,10 +200,95 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["scientific computing languages"],
   },
   {
+    id: "documents",
+    title: "Documents",
+    to: "/settings/documents",
+    searchTerms: ["documents", "latex", "tex", "markdown", "writing"],
+  },
+  {
+    id: "latex-installation",
+    title: "LaTeX tools",
+    to: "/settings/documents",
+    targetId: "latex-installation",
+    searchTerms: [
+      "installation",
+      "install latex",
+      "additional compilers",
+      "tinytex",
+      "tex live",
+      "miktex",
+      "tectonic",
+      "pdf build",
+    ],
+  },
+  {
+    id: "latex-compilers",
+    title: "LaTeX compiler status and technical details",
+    to: "/settings/documents",
+    targetId: "latex-compilers",
+    searchTerms: [
+      "available compilers",
+      "compiler status",
+      "latexmk",
+      "compiler versions",
+      "executable paths",
+      "engine capabilities",
+    ],
+  },
+  {
+    id: "new-document-compiler",
+    title: "Default LaTeX compiler for new documents",
+    to: "/settings/documents",
+    targetId: "new-document-compiler",
+    searchTerms: ["compiler", "pdflatex", "xelatex", "lualatex", "hebrew compiler", "automatic"],
+  },
+  {
+    id: "latex-compilation",
+    title: "PDF compilation",
+    to: "/settings/documents",
+    targetId: "latex-compilation",
+    searchTerms: [
+      "latex",
+      "auto-compile",
+      "autocompile",
+      "rebuild",
+      "on save",
+      "manual",
+      "pdf compilation",
+    ],
+  },
+  {
+    id: "new-document-template",
+    title: "Templates and language for new documents",
+    to: "/settings/documents",
+    targetId: "new-document-template",
+    searchTerms: [
+      "template",
+      "manage templates",
+      "default template",
+      "hide",
+      "arrange",
+      "restore defaults",
+      "new document",
+      "article",
+      "thesis",
+      "lab report",
+      "hebrew",
+    ],
+  },
+  {
+    id: "document-open-view",
+    title: "Open documents in Visual, Source, or Rich",
+    to: "/settings/documents",
+    targetId: "documents",
+    searchTerms: ["visual", "split", "source", "rich", "view", "open in"],
+  },
+  {
     id: "word-export",
     title: "Word export (Pandoc)",
-    to: "/settings/scientific-computing",
-    searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "latex", "reinstall"],
+    to: "/settings/documents",
+    targetId: "word-export",
+    searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "reinstall"],
   },
   {
     id: "storage-worktree-keep-when",
@@ -1078,6 +1165,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/integrations": null,
   "/settings/scheduled-tasks": null,
   "/settings/scientific-computing": null,
+  "/settings/documents": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",

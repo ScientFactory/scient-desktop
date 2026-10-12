@@ -86,6 +86,7 @@ class ScientMathNodeView implements NodeView {
           to: this.sourceEditor.selectionEnd ?? 0,
         },
         format: "tex",
+        display: this.isDisplay(this.node),
         editable: this.view.editable && !this.sourceEditor.hidden,
       }),
       apply: (expected, edit) => {

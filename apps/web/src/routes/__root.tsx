@@ -68,6 +68,11 @@ import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
+import {
+  fetchSessionState,
+  isPrimaryEnvironmentRequestError,
+  isTransientBootstrapError,
+} from "../environments/primary/auth";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useAtomValue } from "@effect/atom-react";
@@ -387,19 +392,57 @@ function HostedStaticEnvironmentBootstrap() {
   return null;
 }
 
+function isTransientSessionError(error: unknown) {
+  return (
+    isPrimaryEnvironmentRequestError(error) &&
+    error.operation === "fetch-session-state" &&
+    isTransientBootstrapError(error)
+  );
+}
+
 function RootRouteErrorView({ error }: ErrorComponentProps) {
   const router = useRouter();
   const message = errorMessage(error);
+  const reconnecting = isTransientSessionError(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
   const report = useMemo(() => errorReport(error, pathname), [error, pathname]);
 
+  useEffect(() => {
+    if (!isTransientSessionError(error)) return;
+    let disposed = false;
+    let retryTimeout: number;
+    const retry = async () => {
+      try {
+        // Keep this page visible until the backend answers; invalidating an
+        // unavailable route repeatedly would replace it with a blank pending view.
+        await fetchSessionState();
+        if (!disposed) await router.invalidate();
+      } catch (error) {
+        if (!isTransientBootstrapError(error)) {
+          // Let the route surface authentication or server failures normally.
+          if (!disposed) await router.invalidate().catch(() => undefined);
+        }
+      }
+      if (!disposed) retryTimeout = window.setTimeout(() => void retry(), 3_000);
+    };
+    retryTimeout = window.setTimeout(() => void retry(), 3_000);
+    return () => {
+      disposed = true;
+      window.clearTimeout(retryTimeout);
+    };
+  }, [error, router]);
+
   return (
-    <StandalonePage tone="error">
+    <StandalonePage tone={reconnecting ? "brand" : "error"}>
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
-        title="Something went wrong."
-        description={message}
+        title={reconnecting ? "Connecting to your server" : "Something went wrong."}
+        description={
+          reconnecting
+            ? "The server is temporarily unavailable. Scient will reconnect automatically when it is ready."
+            : message
+        }
       />
 
       <div className="mt-5 flex flex-wrap gap-2">

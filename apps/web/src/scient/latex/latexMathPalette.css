@@ -1,0 +1,219 @@
+.scient-latex-symbol-palette {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-width: 0;
+}
+.scient-latex-symbol-palette-panel {
+  position: absolute;
+  z-index: 70;
+  inset-inline-end: 8px;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100cqw - 16px));
+  max-width: calc(100% - 16px);
+  max-height: min(520px, calc(100dvh - 100px));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 8px 24px #0002;
+  overflow: hidden;
+  font: 12px/1.45 var(--font-sans);
+  text-align: start;
+  white-space: normal;
+  container: latex-symbols / inline-size;
+}
+.scient-latex-symbol-palette-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 6px;
+  flex: none;
+}
+.scient-latex-symbol-palette-move {
+  flex: 1;
+  align-self: stretch;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.scient-latex-symbol-palette-panel[data-dragging] .scient-latex-symbol-palette-move {
+  cursor: grabbing;
+}
+.scient-latex-symbol-palette-search {
+  padding: 0 12px 10px;
+  flex: none;
+}
+.scient-latex-symbol-palette-body {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  min-height: 0;
+  height: min(320px, 45dvh);
+  border-block: 1px solid var(--border);
+}
+.scient-latex-symbol-palette-categories {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 6px;
+  border-inline-end: 1px solid var(--border);
+}
+.scient-latex-symbol-palette-categories > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  border: 0;
+  border-radius: var(--control-radius);
+  padding: 5px 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.scient-latex-symbol-palette-categories > button:hover,
+.scient-latex-symbol-palette-categories > button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.scient-latex-symbol-palette-categories > button > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.scient-latex-symbol-palette-results {
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 10px;
+}
+.scient-latex-symbol-palette-count {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.scient-latex-symbol-palette-count > span {
+  font-variant-numeric: tabular-nums;
+}
+.scient-latex-symbol-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 48px);
+  grid-auto-rows: 48px;
+  grid-auto-flow: row;
+  gap: 4px;
+  direction: ltr;
+}
+.scient-latex-symbol-palette-grid button[data-symbol] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  width: 48px;
+  height: 48px;
+  box-sizing: border-box;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--control-radius);
+  background: transparent;
+  color: var(--foreground);
+  font: 16px/1.2 var(--font-sans);
+  cursor: pointer;
+}
+.scient-latex-symbol-palette-glyph {
+  display: inline-block;
+  flex: none;
+  white-space: nowrap;
+  transform-origin: center;
+}
+.scient-latex-symbol-palette-grid button[data-active],
+.scient-latex-symbol-palette-grid button:hover {
+  border-color: var(--border);
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.scient-latex-symbol-palette-grid .ML__latex {
+  font-size: 1em;
+}
+.scient-latex-symbol-palette-panel button:not([data-slot]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.scient-latex-symbol-illustration {
+  display: block;
+  width: 32px;
+  height: 32px;
+}
+.scient-latex-symbol-palette-detail {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 64px;
+  padding: 10px 12px;
+  flex: none;
+}
+.scient-latex-symbol-palette-detail > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.scient-latex-symbol-command-detail {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.scient-latex-symbol-command-detail code {
+  overflow-wrap: anywhere;
+  font: 500 12px/1.45 var(--font-mono);
+}
+.scient-latex-symbol-palette-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 4px;
+}
+.scient-latex-symbol-palette-empty {
+  margin: 0;
+  padding: 20px 0;
+  color: var(--muted-foreground);
+}
+@container latex-symbols (max-width: 440px) {
+  .scient-latex-symbol-palette-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .scient-latex-symbol-palette-categories {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .scient-latex-symbol-palette-categories > button {
+    width: auto;
+    flex: none;
+    white-space: nowrap;
+  }
+}
+@media (forced-colors: active) {
+  .scient-latex-symbol-palette-grid button[data-active],
+  .scient-latex-symbol-palette-categories > button[aria-pressed="true"] {
+    outline: 1px solid Highlight;
+  }
+}

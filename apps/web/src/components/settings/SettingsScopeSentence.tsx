@@ -18,6 +18,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { settingsPageIgnoresProjects } from "../../scient/settings/settingsPageScopes";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
   ALL_ENVIRONMENTS_VALUE,
@@ -62,6 +63,16 @@ export function SettingsScopeSentence() {
     environments,
     onChange: scope.selectScope,
   };
+  // SCIENT-FORK: a server-only page (Documents) offers just the environment its
+  // tools install on; its other choices stay on this device.
+  if (settingsPageIgnoresProjects(pathname)) {
+    return (
+      <p className="flex min-w-0 items-center gap-1.5 px-3 text-base text-muted-foreground sm:px-4">
+        <span className="shrink-0">Tools on</span>
+        <EnvironmentScopeMenu {...props} />
+      </p>
+    );
+  }
   return (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-base text-muted-foreground sm:px-4">
       {/* Each connective stays with its picker so a wrap never strands "on". */}

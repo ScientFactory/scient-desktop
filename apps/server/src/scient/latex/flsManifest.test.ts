@@ -4,6 +4,7 @@ import {
   MAX_RECORDER_DEPENDENCIES,
   normalizePosixPath,
   parseLatexRecorderManifest,
+  parseTectonicMakefileRules,
 } from "./flsManifest.ts";
 
 const POSIX = {
@@ -64,6 +65,7 @@ describe("parseLatexRecorderManifest", () => {
         "INPUT /home/u/.scient/userdata/latex/builds/abc123/main.aux",
         "INPUT /home/u/.scient/userdata/latex/builds/abc123/main.toc",
         "INPUT main.tex",
+        "OUTPUT /home/u/.scient/userdata/latex/builds/abc123/main.pdf",
         "",
       ].join("\n"),
     });
@@ -79,6 +81,7 @@ describe("parseLatexRecorderManifest", () => {
       contents: [
         "INPUT /home/u/Workspace/paper/main.tex",
         "INPUT /home/u/workspace/other.tex",
+        "OUTPUT /home/u/.scient/userdata/latex/builds/abc123/main.pdf",
         "",
       ].join("\n"),
     });
@@ -95,6 +98,7 @@ describe("parseLatexRecorderManifest", () => {
         String.raw`INPUT sections\intro.tex`,
         String.raw`INPUT C:\Users\u\AppData\scient\latex\builds\abc123\main.aux`,
         String.raw`INPUT C:\texlive\2026\tex\latex\base\article.cls`,
+        String.raw`OUTPUT C:\Users\u\AppData\scient\latex\builds\abc123\main.pdf`,
         "",
       ].join("\n"),
     });
@@ -109,7 +113,10 @@ describe("parseLatexRecorderManifest", () => {
       workspaceRoot: String.raw`\\server\share\Workspace`,
       compileDirectory: String.raw`\\server\share\Workspace\paper`,
       workDirectory: String.raw`\\server\share\.scient\builds\abc123`,
-      contents: String.raw`INPUT \\SERVER\SHARE\workspace\paper\main.tex`,
+      contents: [
+        String.raw`INPUT \\SERVER\SHARE\workspace\paper\main.tex`,
+        String.raw`OUTPUT \\server\share\.scient\builds\abc123\main.pdf`,
+      ].join("\n"),
     });
 
     expect(manifest.dependencies).toEqual(["paper/main.tex"]);
@@ -118,7 +125,12 @@ describe("parseLatexRecorderManifest", () => {
   it("falls back to a relative reading when the run declared no working directory", () => {
     const manifest = parseLatexRecorderManifest({
       ...POSIX,
-      contents: ["INPUT main.tex", "INPUT sections/intro.tex", ""].join("\n"),
+      contents: [
+        "INPUT main.tex",
+        "INPUT sections/intro.tex",
+        "OUTPUT /home/u/.scient/userdata/latex/builds/abc123/main.pdf",
+        "",
+      ].join("\n"),
     });
 
     expect(manifest.dependencies).toEqual(["paper/main.tex", "paper/sections/intro.tex"]);
@@ -131,7 +143,11 @@ describe("parseLatexRecorderManifest", () => {
     );
     const manifest = parseLatexRecorderManifest({
       ...POSIX,
-      contents: [...inputs, ""].join("\n"),
+      contents: [
+        ...inputs,
+        "OUTPUT /home/u/.scient/userdata/latex/builds/abc123/main.pdf",
+        "",
+      ].join("\n"),
     });
 
     // Truncating to the first 256 would claim to be checking a document it is
@@ -146,32 +162,89 @@ describe("parseLatexRecorderManifest", () => {
     );
     const manifest = parseLatexRecorderManifest({
       ...POSIX,
-      contents: [...inputs, ""].join("\n"),
+      contents: [
+        ...inputs,
+        "OUTPUT /home/u/.scient/userdata/latex/builds/abc123/main.pdf",
+        "",
+      ].join("\n"),
     });
 
     expect(manifest.truncated).toBe(false);
     expect(manifest.dependencies).toHaveLength(MAX_RECORDER_DEPENDENCIES);
   });
 
-  it("reads nothing out of an empty or unrelated file", () => {
+  it("fails closed on an empty, unrelated, or incomplete recorder", () => {
     expect(parseLatexRecorderManifest({ ...POSIX, contents: "" })).toEqual({
       dependencies: [],
-      truncated: false,
+      truncated: true,
     });
     expect(
       parseLatexRecorderManifest({ ...POSIX, contents: "This is pdfTeX, Version 3.14\n" }),
-    ).toEqual({ dependencies: [], truncated: false });
+    ).toEqual({ dependencies: [], truncated: true });
+    expect(parseLatexRecorderManifest({ ...POSIX, contents: "INPUT main.tex\n" })).toEqual({
+      dependencies: [],
+      truncated: true,
+    });
   });
 
   it("never lets a recorded parent walk name a file outside the workspace", () => {
     const manifest = parseLatexRecorderManifest({
       ...POSIX,
-      contents: ["INPUT ../../../etc/passwd", "INPUT ../../secrets.tex", "INPUT main.tex", ""].join(
-        "\n",
-      ),
+      contents: [
+        "INPUT ../../../etc/passwd",
+        "INPUT ../../secrets.tex",
+        "INPUT main.tex",
+        "OUTPUT /home/u/.scient/userdata/latex/builds/abc123/main.pdf",
+        "",
+      ].join("\n"),
     });
 
     expect(manifest.dependencies).toEqual(["paper/main.tex"]);
+  });
+});
+
+describe("parseTectonicMakefileRules", () => {
+  it("keeps exact workspace inputs and drops generated targets and auxiliaries", () => {
+    const manifest = parseTectonicMakefileRules({
+      ...POSIX,
+      contents: [
+        "/home/u/.scient/userdata/latex/builds/abc123/main.synctex.gz \\",
+        "  /home/u/.scient/userdata/latex/builds/abc123/main.pdf : main.tex \\",
+        "  sections/intro.tex figures/plot\\ with\\ spaces.pdf \\",
+        "  /home/u/.scient/userdata/latex/builds/abc123/results.out",
+        "",
+      ].join("\n"),
+    });
+
+    expect(manifest).toEqual({
+      truncated: false,
+      dependencies: [
+        "paper/figures/plot with spaces.pdf",
+        "paper/main.tex",
+        "paper/results.out",
+        "paper/sections/intro.tex",
+      ],
+    });
+  });
+
+  it("preserves literal Windows separators while decoding Make escapes", () => {
+    const manifest = parseTectonicMakefileRules({
+      ...WINDOWS,
+      contents: String.raw`C:\Users\u\AppData\scient\latex\builds\abc123\main.pdf : main.tex sections\intro.tex`,
+    });
+
+    expect(manifest.dependencies).toEqual(["paper/main.tex", "paper/sections/intro.tex"]);
+  });
+
+  it("fails closed when no complete make rule was recorded", () => {
+    expect(parseTectonicMakefileRules({ ...POSIX, contents: "" })).toEqual({
+      dependencies: [],
+      truncated: true,
+    });
+    expect(parseTectonicMakefileRules({ ...POSIX, contents: "main.pdf :\n" })).toEqual({
+      dependencies: [],
+      truncated: true,
+    });
   });
 });
 

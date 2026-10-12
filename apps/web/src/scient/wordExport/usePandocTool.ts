@@ -22,41 +22,80 @@ export interface PandocToolController {
    * the reinstall offer.
    */
   readonly refresh: () => void;
+  /** A status read is in flight; the install waits for its answer. */
+  readonly checking: boolean;
 }
 
 /**
  * The managed Pandoc on one environment: its status, polled while an install
  * runs, and the install action. `onInstalled` runs once when an install this
- * control watched finishes.
+ * control watched finishes. Mount it once per environment.
  */
 export function usePandocTool(
   environmentId: EnvironmentId,
   onInstalled?: () => void,
 ): PandocToolController {
   const [status, setStatus] = useState<ScientPandocToolStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{
+    readonly message: string;
+    readonly fromCheck: boolean;
+  } | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const [checks, setChecks] = useState(0);
   const onInstalledRef = useRef(onInstalled);
   onInstalledRef.current = onInstalled;
   const wasInstalledRef = useRef<boolean | null>(null);
+  // Status reads take a number and only the most recently started one may
+  // change what is shown. While an install request waits for its answer, that
+  // answer is in charge: reads finishing meanwhile, or started before it
+  // arrived, describe the server from before the install and are set aside.
+  const latestReadRef = useRef(0);
+  const staleUpToRef = useRef(0);
+  const installRef = useRef<number | null>(null);
+  const installsRef = useRef(0);
 
   const accept = useCallback((next: ScientPandocToolStatus) => {
-    if (wasInstalledRef.current === false && next.installed) onInstalledRef.current?.();
+    // Pandoc became installed after a state that was not: missing, or not
+    // known because a check failed. Callers recheck what depends on it.
+    if (wasInstalledRef.current !== true && wasInstalledRef.current !== null && next.installed)
+      onInstalledRef.current?.();
     wasInstalledRef.current = next.installed;
     setStatus(next);
   }, []);
 
   const read = useCallback(async () => {
+    const request = ++latestReadRef.current;
+    const current = () =>
+      request === latestReadRef.current &&
+      request > staleUpToRef.current &&
+      installRef.current === null;
+    setChecks((count) => count + 1);
     try {
-      accept(await readPandocTool(environmentId));
+      const next = await readPandocTool(environmentId);
+      if (!current()) return;
+      accept(next);
       setError(null);
     } catch (cause) {
-      setError(errorMessage(cause, "Scient could not check Word export on this server."));
+      if (!current()) return;
+      if (wasInstalledRef.current !== true) wasInstalledRef.current = false;
+      setError({
+        message: errorMessage(cause, "Scient could not check Word export on this server."),
+        fromCheck: true,
+      });
+    } finally {
+      setChecks((count) => count - 1);
     }
   }, [accept, environmentId]);
 
   useEffect(() => {
     void read();
+    return () => {
+      // Nothing this environment answers later applies.
+      staleUpToRef.current = ++latestReadRef.current;
+      installRef.current = null;
+      installsRef.current++;
+      setRequesting(false);
+    };
   }, [read]);
 
   const active = isActivePandocInstall(status);
@@ -66,28 +105,59 @@ export function usePandocTool(
     return () => clearTimeout(timer);
   }, [active, error, read, status]);
 
+  const checking = checks > 0;
   const act = useCallback(() => {
     if (error !== null || status === null) {
       void read();
       return;
     }
-    if (requesting || isActivePandocInstall(status) || status.installed || !status.canInstall)
+    if (
+      checking ||
+      requesting ||
+      isActivePandocInstall(status) ||
+      status.installed ||
+      !status.canInstall
+    )
       return;
+    const request = ++installsRef.current;
+    installRef.current = request;
     setRequesting(true);
     setError(null);
-    installPandocTool(environmentId).then(
-      (next) => {
+    const current = () => installRef.current === request;
+    void (async () => {
+      try {
+        const next = await installPandocTool(environmentId);
+        if (!current()) return;
+        staleUpToRef.current = latestReadRef.current;
         accept(next);
-        setRequesting(false);
-      },
-      (cause: unknown) => {
-        setError(errorMessage(cause, "Scient could not start installing Pandoc."));
-        setRequesting(false);
-      },
-    );
-  }, [accept, environmentId, error, read, requesting, status]);
+      } catch (cause) {
+        if (!current()) return;
+        staleUpToRef.current = latestReadRef.current;
+        setError({
+          message: errorMessage(cause, "Scient could not start installing Pandoc."),
+          fromCheck: false,
+        });
+      } finally {
+        if (current()) {
+          installRef.current = null;
+          setRequesting(false);
+        }
+      }
+    })();
+  }, [accept, checking, environmentId, error, read, requesting, status]);
 
   const refresh = useCallback(() => void read(), [read]);
 
-  return { status, view: pandocToolView({ status, requesting, error }), act, refresh };
+  return {
+    status,
+    view: pandocToolView({
+      status,
+      requesting,
+      error: error?.message ?? null,
+      errorFromCheck: error?.fromCheck ?? false,
+    }),
+    act,
+    refresh,
+    checking,
+  };
 }

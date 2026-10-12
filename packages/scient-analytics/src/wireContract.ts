@@ -1,5 +1,5 @@
 // Scient desktop wire contract. The website gateway consumes a generated copy.
-export const ANALYTICS_CONTRACT_REVISION = "4" as const;
+export const ANALYTICS_CONTRACT_REVISION = "5" as const;
 export const PRIVACY_LEVELS = ["essential", "product", "diagnostic", "contribution"] as const;
 
 export type PrivacyLevel = (typeof PRIVACY_LEVELS)[number];
@@ -537,8 +537,12 @@ export const EVENT_DEFINITIONS = {
           "voice",
           "skills",
           "integrations",
+          "scheduled-tasks",
+          "snap-shot",
           "scientific-computing",
+          "documents",
           "source-control",
+          "storage",
           "connections",
           "archived",
           "other",
@@ -670,7 +674,7 @@ export function eventContractViolation(input: {
   const rules: Readonly<Record<string, PropertyRule>> = {
     appVersion,
     buildChannel,
-    contractRevision: { kind: "enum", values: ["1", "2", "3", "4"], optional: true },
+    contractRevision: { kind: "enum", values: ["1", "2", "3", "4", "5"], optional: true },
     ...definition.properties,
   };
   for (const key of Object.keys(input.properties)) {

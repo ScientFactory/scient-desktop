@@ -93,6 +93,34 @@ export const traceMaxFilesConfig = Config.Int("T3CODE_TRACE_MAX_FILES").pipe(
 );
 
 const EnvServerConfig = Config.all({
+  filePublicationHelperPath: Config.String("SCIENT_FILE_PUBLICATION_HELPER").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  filePublicationRetentionRoot: Config.String("SCIENT_FILE_PUBLICATION_RETENTION_ROOT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  filePublicationRetentionLimitBytes: Config.Int(
+    "SCIENT_FILE_PUBLICATION_RETENTION_LIMIT_BYTES",
+  ).pipe(
+    Config.mapEffect((limit) =>
+      limit > 0 && Number.isSafeInteger(limit)
+        ? Effect.succeed(limit)
+        : Effect.fail(
+            new Config.ConfigError(
+              new Schema.SchemaError(
+                new SchemaIssue.InvalidValue({
+                  message:
+                    "SCIENT_FILE_PUBLICATION_RETENTION_LIMIT_BYTES must be a positive safe integer.",
+                }),
+              ),
+            ),
+          ),
+    ),
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   developmentScratchRoot: Config.String("SCIENT_DEV_SCRATCH_ROOT").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -417,6 +445,12 @@ export const resolveServerConfig = (
     const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
     const resourceMonitorPath = bootstrap?.resourceMonitorPath;
     const syncTexNavigatorPath = bootstrap?.syncTexNavigatorPath;
+    const filePublicationHelperPath =
+      bootstrap?.filePublicationHelperPath ?? env.filePublicationHelperPath;
+    const filePublicationRetentionRoot =
+      env.filePublicationRetentionRoot === undefined
+        ? undefined
+        : path.resolve(yield* expandHomePath(env.filePublicationRetentionRoot));
     const autoBootstrapProjectFromCwd = Option.getOrElse(
       resolveOptionPrecedence(
         Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
@@ -543,6 +577,11 @@ export const resolveServerConfig = (
       desktopBrowserControlFd,
       resourceMonitorPath,
       syncTexNavigatorPath,
+      ...(filePublicationHelperPath === undefined ? {} : { filePublicationHelperPath }),
+      ...(filePublicationRetentionRoot === undefined ? {} : { filePublicationRetentionRoot }),
+      ...(env.filePublicationRetentionLimitBytes === undefined
+        ? {}
+        : { filePublicationRetentionLimitBytes: env.filePublicationRetentionLimitBytes }),
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
       tailscaleServeEnabled,

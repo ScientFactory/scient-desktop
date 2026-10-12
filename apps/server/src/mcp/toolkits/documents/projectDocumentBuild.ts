@@ -4,6 +4,10 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { ProjectFilePublicationOutcome } from "@t3tools/contracts";
+import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
+import { inspectGuardedFile } from "../../../scient/workspace/RetainedFileMutation.ts";
+
 import type {
   WorkspaceBindingId,
   WorkspaceAuthorityScopeRevision,
@@ -26,6 +30,10 @@ export class ProjectDocumentBuildBoundaryError extends Schema.TaggedError<Projec
       "output-write-failed",
     ]),
     message: NonEmptyMessage,
+    publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
+    recoveryId: Schema.optional(Schema.String),
+    retainedPaths: Schema.optional(Schema.Array(Schema.String)),
+    mutationId: Schema.optional(Schema.String),
   },
 ) {}
 
@@ -41,13 +49,14 @@ export interface ResolvedPdfOutput {
   readonly absolutePath: string;
   readonly canonicalRoot: string;
   readonly outputPath: string;
+  readonly expectedRevision: string | null;
 }
 
-export interface StagedPdfOutput {
-  readonly canonicalRoot: string;
-  readonly canonicalTargetDirectory: string;
-  readonly finalPath: string;
-  readonly temporaryPath: string;
+export interface ProjectPdfOutputIntent {
+  readonly output: ResolvedPdfOutput;
+  readonly bytes: Uint8Array;
+  readonly mutationId: string;
+  readonly expectedMutationEpoch: string;
 }
 
 const boundaryError = (code: ProjectDocumentBuildBoundaryError["code"], message: string) =>
@@ -180,118 +189,54 @@ export const resolveProjectPdfOutput = Effect.fn("ProjectDocumentBuild.resolvePd
       existingAncestor = parent;
     }
 
+    const observed = yield* Effect.tryPromise({
+      try: () => inspectGuardedFile(absolutePath),
+      catch: () =>
+        boundaryError("invalid-output-path", "Scient could not inspect the current PDF output."),
+    });
     return {
       absolutePath,
       canonicalRoot,
+      expectedRevision: observed?.revision ?? null,
       outputPath: path.relative(canonicalRoot, absolutePath).split(path.sep).join("/"),
     } satisfies ResolvedPdfOutput;
   },
 );
 
-export const stageProjectPdfOutput = Effect.fn("ProjectDocumentBuild.stagePdfOutput")(function* (
+export const prepareProjectPdfOutputIntent = (
   output: ResolvedPdfOutput,
   bytes: Uint8Array,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const targetDirectory = path.dirname(output.absolutePath);
-  const writeError = () =>
-    boundaryError(
-      "output-write-failed",
-      "Scient validated the PDF but could not write it to the requested project path.",
-    );
+  intent: { readonly mutationId: string; readonly expectedMutationEpoch: string },
+): ProjectPdfOutputIntent => Object.freeze({ output, bytes, ...intent });
 
-  yield* fileSystem
-    .makeDirectory(targetDirectory, { recursive: true })
-    .pipe(Effect.mapError(writeError));
-  const canonicalTargetDirectory = yield* fileSystem
-    .realPath(targetDirectory)
-    .pipe(Effect.mapError(writeError));
-  if (!isInsideRoot(output.canonicalRoot, canonicalTargetDirectory, path)) {
-    return yield* boundaryError(
-      "invalid-output-path",
-      "The PDF output directory no longer belongs to the current project.",
-    );
-  }
-
-  const finalPath = path.join(canonicalTargetDirectory, path.basename(output.absolutePath));
-  const existingOutput = yield* fileSystem.stat(finalPath).pipe(Effect.option);
-  if (Option.isSome(existingOutput) && existingOutput.value.type !== "File") {
-    return yield* writeError();
-  }
-
-  const temporaryDirectory = yield* Effect.acquireRelease(
-    fileSystem
-      .makeTempDirectory({
-        directory: canonicalTargetDirectory,
-        prefix: `.${path.basename(output.absolutePath)}.`,
+export const publishProjectPdfOutput = Effect.fn("ProjectDocumentBuild.publishPdfOutput")(
+  function* (intent: ProjectPdfOutputIntent) {
+    const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+    return yield* workspace
+      .writeBinaryFile({
+        cwd: intent.output.canonicalRoot,
+        relativePath: intent.output.outputPath,
+        bytes: intent.bytes,
+        mutationId: intent.mutationId,
+        expectedMutationEpoch: intent.expectedMutationEpoch,
+        ...(intent.output.expectedRevision === null
+          ? { createOnly: true as const }
+          : { expectedRevision: intent.output.expectedRevision }),
       })
-      .pipe(Effect.mapError(writeError)),
-    (directory) =>
-      Effect.gen(function* () {
-        const currentParent = yield* fileSystem
-          .realPath(path.dirname(directory))
-          .pipe(Effect.option);
-        if (Option.isNone(currentParent) || currentParent.value !== canonicalTargetDirectory) {
-          return;
-        }
-        const currentDirectory = yield* fileSystem.realPath(directory).pipe(Effect.option);
-        if (
-          Option.isNone(currentDirectory) ||
-          currentDirectory.value === canonicalTargetDirectory ||
-          !isInsideRoot(canonicalTargetDirectory, currentDirectory.value, path)
-        ) {
-          return;
-        }
-        yield* fileSystem.remove(directory, { recursive: true }).pipe(Effect.ignore);
-      }),
-  );
-  const temporaryPath = path.join(temporaryDirectory, "document.pdf");
-  yield* fileSystem.writeFile(temporaryPath, bytes).pipe(Effect.mapError(writeError));
-  yield* Effect.scoped(
-    fileSystem.open(temporaryPath, { flag: "r+" }).pipe(Effect.flatMap((file) => file.sync)),
-  ).pipe(Effect.mapError(writeError));
-
-  return {
-    canonicalRoot: output.canonicalRoot,
-    canonicalTargetDirectory,
-    finalPath,
-    temporaryPath,
-  } satisfies StagedPdfOutput;
-});
-
-export const commitStagedProjectPdfOutput = Effect.fn("ProjectDocumentBuild.commitStagedPdfOutput")(
-  function* (staged: StagedPdfOutput) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const writeError = () =>
-      boundaryError(
-        "output-write-failed",
-        "Scient validated the PDF but could not write it to the requested project path.",
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectDocumentBuildBoundaryError({
+              code: "output-write-failed",
+              message: cause.message,
+              mutationId: intent.mutationId,
+              ...("publicationOutcome" in cause && cause.publicationOutcome !== undefined
+                ? { publicationOutcome: cause.publicationOutcome }
+                : {}),
+              ...("recoveryId" in cause ? { recoveryId: cause.recoveryId } : {}),
+              ...("retainedPaths" in cause ? { retainedPaths: cause.retainedPaths } : {}),
+            }),
+        ),
       );
-    const currentTargetDirectory = yield* fileSystem
-      .realPath(path.dirname(staged.finalPath))
-      .pipe(Effect.mapError(writeError));
-    const currentTemporaryPath = yield* fileSystem
-      .realPath(staged.temporaryPath)
-      .pipe(Effect.mapError(writeError));
-    if (
-      currentTargetDirectory !== staged.canonicalTargetDirectory ||
-      currentTemporaryPath !== staged.temporaryPath ||
-      !isInsideRoot(staged.canonicalRoot, currentTargetDirectory, path) ||
-      !isInsideRoot(staged.canonicalTargetDirectory, currentTemporaryPath, path)
-    ) {
-      return yield* boundaryError(
-        "invalid-output-path",
-        "The PDF output directory changed before the project file could be written.",
-      );
-    }
-    const existingOutput = yield* fileSystem.stat(staged.finalPath).pipe(Effect.option);
-    if (Option.isSome(existingOutput) && existingOutput.value.type !== "File") {
-      return yield* writeError();
-    }
-    yield* fileSystem
-      .rename(staged.temporaryPath, staged.finalPath)
-      .pipe(Effect.mapError(writeError));
   },
 );

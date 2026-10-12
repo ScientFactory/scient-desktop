@@ -59,6 +59,40 @@ describe("portable keyboard preferences", () => {
     expect(validateKeyboardPreferences(defaults, mac)).toEqual(defaults);
     expect(effectiveSurfaceBindings(defaults, mac).length).toBeGreaterThan(100);
   });
+  it("migrates existing preferences when adding scope selection", () => {
+    const migrated = importKeyboardPreferences(
+      JSON.stringify({
+        ...defaults,
+        writingPresetVersion: 3,
+        overrides: { "math.symbol.alpha": ["ctrl+alt+u"] },
+      }),
+      false,
+    );
+    expect(migrated.overrides["math.symbol.alpha"]).toEqual(["ctrl+alt+u"]);
+    expect(effectiveSurfaceBindings(migrated, false)).toContainEqual({
+      command: "latex.selectionScopeExpand",
+      scope: "latex",
+      keys: "mod+a",
+    });
+    expect(migrated.writingPresetVersion).toBe(defaults.writingPresetVersion);
+  });
+  it.each([false, true])(
+    "allows configuring Select All only for scope selection on mac=%s",
+    (mac) => {
+      expect(() =>
+        validateKeyboardPreferences(
+          { ...defaults, overrides: { "latex.selectionScopeExpand": ["mod+a"] } },
+          mac,
+        ),
+      ).not.toThrow();
+      expect(() =>
+        validateKeyboardPreferences(
+          { ...defaults, overrides: { "math.symbol.alpha": ["mod+a"] } },
+          mac,
+        ),
+      ).toThrow(/reserved/);
+    },
+  );
   it("distinguishes Control from Command on Mac but resolves Mod aliases", () => {
     expect(keysOverlap("ctrl+m", "mod+m", true)).toBe(false);
     expect(keysOverlap("meta+m", "mod+m", true)).toBe(true);
@@ -73,7 +107,7 @@ describe("portable keyboard preferences", () => {
   it("rejects default-shadowed sequences and sequence-shadowing direct bindings", () => {
     expect(() =>
       validateKeyboardPreferences(
-        { ...defaults, overrides: { "math.symbol.alpha": ["ctrl+space a"] } },
+        { ...defaults, overrides: { "math.symbol.alpha": ["alt+i s a"] } },
         false,
       ),
     ).toThrow(/conflict/);
@@ -150,6 +184,71 @@ describe("portable keyboard preferences", () => {
     expect(getKeyboardPreferences().error).toContain("conflict");
     expect(getKeyboardPreferences().preferences).toEqual(defaults);
     expect(localStorage.getItem("scient.mathInputBindings.v1")).toBe(legacy);
+  });
+  it("keeps preferences saved before Inline code and Link got default shortcuts", () => {
+    // Valid when it was saved: Bold on mod+e, a spare command on mod+k, one custom key kept.
+    const stored = JSON.stringify({
+      ...defaults,
+      writingPresetVersion: 1,
+      overrides: {
+        "latex.bold": ["mod+e"],
+        "latex.figure": ["mod+k"],
+        "latex.table": ["alt+shift+t"],
+      },
+    });
+    const imported = importKeyboardPreferences(stored);
+    expect(imported.overrides["latex.bold"]).toEqual(["mod+e"]);
+    expect(imported.overrides["latex.figure"]).toEqual(["mod+k"]);
+    expect(imported.overrides["latex.table"]).toEqual(["alt+shift+t"]);
+    // The new defaults step aside instead of invalidating the file.
+    expect(imported.overrides["latex.inlineCode"]).toEqual([]);
+    expect(imported.overrides["latex.link"]).toEqual([]);
+    expect(imported.writingPresetVersion).toBe(defaults.writingPresetVersion);
+    // Importing the migrated result again changes nothing.
+    expect(importKeyboardPreferences(JSON.stringify(imported))).toEqual(imported);
+
+    localStorage.setItem(KEYBOARD_PREFERENCES_KEY, stored);
+    reloadKeyboardPreferences();
+    expect(getKeyboardPreferences().error).toBe("");
+    expect(getKeyboardPreferences().preferences.overrides["latex.bold"]).toEqual(["mod+e"]);
+  });
+  it("keeps a writer's own math command on a key a new default would take", () => {
+    const stored = JSON.stringify({
+      ...defaults,
+      writingPresetVersion: 1,
+      customMath: [{ id: "math.custom.flux", label: "Flux", latex: "\\mathbf{q}" }],
+      overrides: { "markdown.inlineCode": [], "math.custom.flux": ["mod+e"] },
+    });
+    const imported = importKeyboardPreferences(stored);
+    expect(imported.overrides["math.custom.flux"]).toEqual(["mod+e"]);
+    expect(imported.overrides["latex.inlineCode"]).toEqual([]);
+    expect(imported.customMath).toHaveLength(1);
+    // The same file saved before presets were versioned at all.
+    const { writingPresetVersion: _version, ...unversioned } = JSON.parse(stored);
+    expect(
+      importKeyboardPreferences(JSON.stringify(unversioned)).overrides["latex.inlineCode"],
+    ).toEqual([]);
+  });
+  it("keeps a custom key from the second preset when the third adds a default on it", () => {
+    const imported = importKeyboardPreferences(
+      JSON.stringify({
+        ...defaults,
+        writingPresetVersion: 2,
+        overrides: { "latex.bold": ["mod+shift+8"] },
+      }),
+    );
+    expect(imported.overrides["latex.bold"]).toEqual(["mod+shift+8"]);
+    // The new default on that key is switched off; the key sequence stays.
+    expect(imported.overrides["latex.bulletList"]).toEqual(["alt+p b"]);
+    expect(imported.overrides["latex.orderedList"]).toBeUndefined();
+    expect(imported.writingPresetVersion).toBe(defaults.writingPresetVersion);
+  });
+  it("gives older preferences without conflicts the new default shortcuts", () => {
+    const imported = importKeyboardPreferences(
+      JSON.stringify({ ...defaults, writingPresetVersion: 1, overrides: {} }),
+    );
+    expect(imported.overrides).toEqual({});
+    expect(imported.writingPresetVersion).toBe(defaults.writingPresetVersion);
   });
   it("strips unknown top-level properties and rejects unknown commands", () => {
     expect(importKeyboardPreferences(JSON.stringify({ ...defaults, unexpected: 123 }))).toEqual(

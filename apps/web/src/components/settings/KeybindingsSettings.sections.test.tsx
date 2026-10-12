@@ -80,17 +80,24 @@ it("opens Math when a settings search first navigates to authoring", async () =>
   expect(host.querySelector('[aria-label^="Edit math.symbol.alpha"]')).not.toBeNull();
 });
 
-it("uses the shared selector for four persistent, isolated shortcut sections", async () => {
+it("uses the shared selector for six persistent, isolated shortcut sections", async () => {
   expect(host.textContent).toContain("Shortcuts");
   const sourceGroup = host.querySelector(".settings-source-group");
   const sectionSurface = sourceGroup?.parentElement?.parentElement;
   expect(sectionSurface?.classList.contains("space-y-1")).toBe(true);
   expect(sectionSurface?.classList.contains("rounded-xl")).toBe(false);
   expect(sourceGroup?.querySelectorAll("[data-source-panel]")).toHaveLength(1);
-  expect([...host.querySelectorAll(".settings-source-strip button")]).toHaveLength(4);
+  expect([...host.querySelectorAll(".settings-source-strip button")]).toHaveLength(6);
   expect(section("General").getAttribute("aria-expanded")).toBe("true");
   expect(host.textContent).toContain("Appearance: Cycle");
   expect(host.textContent).not.toContain("Document shortcut profile");
+
+  await act(() => section("Write").click());
+  expect(host.querySelector('[aria-label^="Edit latex.bold"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label^="Edit table.addRow"]')).toBeNull();
+  await act(() => section("Tables").click());
+  expect(host.querySelector('[aria-label^="Edit table.addRow"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label^="Edit latex.bold"]')).toBeNull();
 
   await act(() => section("Markdown").click());
   expect(section("Markdown").getAttribute("aria-expanded")).toBe("true");
@@ -116,7 +123,7 @@ it("uses the shared selector for four persistent, isolated shortcut sections", a
   expect(host.querySelector("#math-input-behavior")).toBeNull();
   expect(document.querySelector("#math-input-behavior")).not.toBeNull();
   expect(document.querySelector("#math-input-behavior")?.textContent).toContain(
-    "Applies to Markdown, Math, and PDF shortcuts.",
+    "Applies to Write, Tables, Markdown, Math, and PDF shortcuts.",
   );
   expect(host.querySelector('[aria-label^="Edit markdown.bold"]')).toBeNull();
 

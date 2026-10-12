@@ -89,6 +89,8 @@ const buttonVariants = cva(
           "border-transparent bg-secondary text-secondary-foreground [:active,[data-pressed]]:bg-secondary/80 [:hover,[data-pressed]]:bg-secondary/90",
         selected:
           "border-transparent bg-accent/60 text-foreground [:hover,[data-pressed]]:bg-accent",
+        "selected-strong":
+          "[--control-icon-color:currentColor] border-foreground/40 bg-foreground/20 text-foreground font-semibold inset-shadow-[0_1px_2px_--theme(--color-black/16%)] [:hover,[data-pressed]]:bg-foreground/25 dark:bg-foreground/25 dark:[:hover,[data-pressed]]:bg-foreground/30",
         "warning-outline":
           "border-warning/32 bg-warning-surface text-warning-foreground shadow-xs/5 [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:border-warning/40 [:hover,[data-pressed]]:bg-warning/16 dark:[:hover,[data-pressed]]:bg-warning/24",
       },

@@ -11,8 +11,10 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 
 import type {
+  ProjectFilePublicationAttention,
   FilesystemEntryMetadata,
   FilesystemGetMetadataInput,
   FilesystemGetMetadataResult,
@@ -30,18 +32,29 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as ServerConfig from "../config.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 // SCIENT-FORK:START — saves, creates, renames and the open-file watch.
 import {
+  isNodeError,
   WorkspaceFileExistsError,
   WorkspaceFileRevisionConflictError,
+  WorkspaceFileTargetChangedError,
+  WorkspaceFileRecoveryRequiredError,
+  WorkspaceFileMutationUnavailableError,
+  WorkspaceFileMutationIntentConflictError,
 } from "../scient/workspace/WorkspaceFileErrors.ts";
 import {
   makeWorkspaceFileMutations,
   revisionForBytes,
   type WorkspaceFileMutationMethods,
 } from "../scient/workspace/WorkspaceFileMutations.ts";
+import {
+  ensureNativePrivateRetentionDirectory,
+  resolveNativeFilePublicationHelperPath,
+} from "../scient/workspace/NativeFilePublication.ts";
+import { RetainedMutationError } from "../scient/workspace/RetainedFileMutation.ts";
 import {
   makeWorkspaceFileWatch,
   type WorkspaceFileWatchMethods,
@@ -69,11 +82,17 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedError<Worksp
       "make-directory",
       "write-file",
       "atomic-write-file",
+      "retained-publication",
       "link",
       "unlink",
       "watch",
     ]),
     cause: Schema.Defect(),
+    currentMissing: Schema.optional(Schema.Literal(true)),
+    publicationOutcome: Schema.optional(Schema.Literals(["unchanged", "retained-attention"])),
+    mutationId: Schema.optional(Schema.String),
+    recoveryId: Schema.optional(Schema.String),
+    retainedPaths: Schema.optional(Schema.Array(Schema.String)),
   },
 ) {
   override get message(): string {
@@ -136,6 +155,14 @@ export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceBinaryFileError,
   WorkspaceFileRevisionConflictError,
   WorkspaceFileExistsError,
+  WorkspaceFileTargetChangedError,
+  WorkspaceFileRecoveryRequiredError,
+  WorkspaceFileMutationUnavailableError,
+  WorkspaceFileMutationIntentConflictError,
+  WorkspacePaths.WorkspaceRootNotExistsError,
+  WorkspacePaths.WorkspaceRootCreateFailedError,
+  WorkspacePaths.WorkspaceRootStatFailedError,
+  WorkspacePaths.WorkspaceRootNotDirectoryError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
@@ -185,7 +212,7 @@ export class WorkspaceFileSystem extends Context.Service<
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
   } &
-    // SCIENT-FORK:START — save, create, rename and watch methods.
+    // SCIENT-FORK:START — save, create, rename, delete and watch methods.
     WorkspaceFileMutationMethods &
     WorkspaceFileWatchMethods
   // SCIENT-FORK:END
@@ -197,6 +224,38 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const config = yield* ServerConfig.ServerConfig;
+  const nativePublicationHelper = yield* Effect.promise(() =>
+    resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
+  );
+  const retentionStorageDirectory =
+    config.filePublicationRetentionRoot ??
+    path.join(NodeOS.homedir(), ".scient-next", "file-publications");
+  const retentionDirectoryFor = async (_canonicalRoot: string, parentPath: string) => {
+    const parent = await NodeFSP.lstat(parentPath, { bigint: true });
+    if (!parent.isDirectory() || parent.isSymbolicLink()) {
+      throw new Error("Publication parent binding changed.");
+    }
+    if (nativePublicationHelper === undefined) {
+      throw new RetainedMutationError(
+        "unavailable",
+        "Native publication helper is unavailable.",
+        "storage",
+      );
+    }
+    await ensureNativePrivateRetentionDirectory(nativePublicationHelper, retentionStorageDirectory);
+    const directory = path.join(retentionStorageDirectory, `${parent.dev}-${parent.ino}`);
+    await ensureNativePrivateRetentionDirectory(nativePublicationHelper, directory);
+    const storage = await NodeFSP.lstat(directory, { bigint: true });
+    if (storage.dev !== parent.dev) {
+      throw new RetainedMutationError(
+        "unavailable",
+        "Retained publication storage must share the source filesystem. Configure SCIENT_FILE_PUBLICATION_RETENTION_ROOT on that filesystem.",
+        "storage-volume",
+      );
+    }
+    return directory;
+  };
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
@@ -364,7 +423,7 @@ export const make = Effect.gen(function* () {
     const target = yield* resolveReadTarget(input, purpose);
     const realTargetPath = target.realTargetPath;
 
-    return yield* Effect.acquireUseRelease(
+    const currentRead = Effect.acquireUseRelease(
       Effect.tryPromise({
         // Non-blocking so a FIFO cannot hang the open; the stat below rejects
         // it. Regular files ignore the flag. The target was already resolved,
@@ -458,38 +517,138 @@ export const make = Effect.gen(function* () {
             }),
         }),
     );
+    return yield* currentRead;
   });
+  const settledReadFailure = (
+    error: WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError,
+    attention: ProjectFilePublicationAttention | null,
+    currentMissing: boolean,
+  ) => {
+    if (error._tag !== "WorkspaceFileSystemOperationError") return error;
+    const missing =
+      currentMissing && error.operation === "realpath-target" && isNodeError(error.cause, "ENOENT");
+    if (!missing && attention === null) return error;
+    return new WorkspaceFileSystemOperationError({
+      workspaceRoot: error.workspaceRoot,
+      relativePath: error.relativePath,
+      resolvedPath: error.resolvedPath,
+      operationPath: error.operationPath,
+      operation: error.operation,
+      cause: error.cause,
+      ...(missing ? { currentMissing: true as const } : {}),
+      ...(attention === null
+        ? {}
+        : {
+            publicationOutcome: "retained-attention" as const,
+            mutationId: attention.mutationId,
+            recoveryId: attention.recoveryId,
+            retainedPaths: attention.retainedPaths,
+          }),
+    });
+  };
 
-  const readFile: WorkspaceFileSystem["Service"]["readFile"] = (input) =>
-    readResolvedFile(input, "contained");
-  const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = (input) =>
-    readResolvedFile(input, "view");
-  // SCIENT-FORK:START — revision-checked saves, exclusive creates and renames.
+  const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
+    "WorkspaceFileSystem.readFile",
+  )(function* (input) {
+    if (!path.isAbsolute(input.relativePath)) {
+      yield* workspacePaths.resolveRelativePathWithinRoot({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+    }
+    return yield* (
+      path.isAbsolute(input.relativePath) ? withSettledWorkspaceRead : withSettledFileRead
+    )(input, (attention, settlement) =>
+      readResolvedFile(input, "contained").pipe(
+        Effect.map((result) =>
+          attention === null ? result : { ...result, publicationAttention: attention },
+        ),
+        Effect.mapError((error) => settledReadFailure(error, attention, settlement.currentMissing)),
+      ),
+    );
+  });
+  const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = Effect.fn(
+    "WorkspaceFileSystem.viewFile",
+  )(function* (input) {
+    const rootExists = yield* fileSystem.exists(input.cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: path.resolve(input.cwd, input.relativePath),
+            operationPath: input.cwd,
+            operation: "stat",
+            cause,
+          }),
+      ),
+    );
+    if (!rootExists) return yield* readResolvedFile(input, "view");
+    return yield* withSettledWorkspaceRead(input, (attention, settlement) =>
+      readResolvedFile(input, "view").pipe(
+        Effect.map((result) =>
+          attention === null ? result : { ...result, publicationAttention: attention },
+        ),
+        Effect.mapError((error) => settledReadFailure(error, attention, settlement.currentMissing)),
+      ),
+    );
+  });
+  // SCIENT-FORK:START — revision-checked saves, exclusive creates, renames and deletes.
   const {
     createBinaryFile,
+    writeBinaryFile,
+    deleteFile,
     inspectWriteTarget,
     renameFile,
     writeFile,
     replaceFileRetained,
     removeFileRetained,
+    registerRetainedFileHistory,
+    prepareRetainedDirectory,
+    listFileVersions,
+    discardFileVersion,
+    withSettledFileRead,
+    getMutationEpoch,
+    withWorkspacePublicationFence,
+    withSettledWorkspaceRead,
+    resolveFileMutation,
   } = yield* makeWorkspaceFileMutations({
     fileSystem,
     path,
     workspacePaths,
     workspaceEntries,
-    readFile,
+    readFile: (input) => readResolvedFile(input, "contained"),
+    ...(nativePublicationHelper === undefined ? {} : { nativePublicationHelper }),
+    retentionStorageDirectory,
+    retentionDirectoryFor,
+    retentionLimitBytes: config.filePublicationRetentionLimitBytes ?? null,
   });
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — open-file watch.
-  const { watchFile } = makeWorkspaceFileWatch({ path, workspacePaths });
+  const { watchFile } = makeWorkspaceFileWatch({
+    path,
+    workspacePaths,
+    waitForSettlement: (input) => withSettledFileRead(input, () => Effect.void),
+  });
   // SCIENT-FORK:END
 
   return WorkspaceFileSystem.of({
     getMetadata,
     replaceFileRetained,
     removeFileRetained,
+    registerRetainedFileHistory,
+    prepareRetainedDirectory,
+    listFileVersions,
+    discardFileVersion,
+    withSettledFileRead,
+    getMutationEpoch,
+    withWorkspacePublicationFence,
+    withSettledWorkspaceRead,
+    resolveFileMutation,
     createBinaryFile,
+    writeBinaryFile,
+    deleteFile,
     inspectWriteTarget,
     readFile,
     renameFile,

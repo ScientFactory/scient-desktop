@@ -235,7 +235,7 @@ async function waitForManagedProcessesToExit(app, timeoutMs) {
   return false;
 }
 
-function startApp() {
+async function startApp() {
   if (shuttingDown || currentApp !== null) {
     return;
   }
@@ -400,6 +400,11 @@ function startApp() {
       restartScheduler.request();
     }
   });
+
+  // LaunchServices returns before Electron publishes its identity. Keep the
+  // restart scheduler occupied until that launch and its backend are owned,
+  // otherwise a second rebuild can stop and replace a still-pending launch.
+  if (managedMacLaunch) await Promise.all([pidPromise, backendPidPromise]);
 }
 
 async function stopApp() {
@@ -419,7 +424,10 @@ async function stopApp() {
       signalOwnedProcesses(app.mainCommandPrefix, "SIGKILL");
       signalOwnedProcesses(app.backendCommandPrefix, "SIGKILL");
       if (developmentLauncherIsActive(app.launcher)) app.launcher.kill("SIGKILL");
-      await waitForManagedProcessesToExit(app, 2_000);
+      if (!(await waitForManagedProcessesToExit(app, 2_000))) {
+        currentApp = app;
+        throw new Error("The previous development app has not stopped; refusing a replacement.");
+      }
     }
     cleanupLaunchFiles(app);
     return;
@@ -458,7 +466,7 @@ const restartScheduler = createCoalescedRestartScheduler({
   restart: async () => {
     await stopApp();
     if (!shuttingDown) {
-      startApp();
+      await startApp();
     }
   },
 });
@@ -499,7 +507,7 @@ async function shutdown(exitCode) {
 }
 
 startWatchers();
-startApp();
+restartScheduler.request();
 
 process.once("SIGINT", () => {
   void shutdown(130);

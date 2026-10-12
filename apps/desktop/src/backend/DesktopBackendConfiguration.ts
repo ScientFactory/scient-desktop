@@ -236,6 +236,46 @@ const resolveResourceMonitorPath = Effect.fn(
   return Option.none<string>();
 });
 
+const resolveFilePublicationHelperPath = Effect.fn(
+  "desktop.backendConfiguration.resolveFilePublicationHelperPath",
+)(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const binaryName =
+    environment.platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
+  const candidates = environment.isDevelopment
+    ? [
+        // Pair the backend bundle with the helper staged by the same build.
+        // A cached native-tree build may speak an older publication protocol.
+        environment.path.join(environment.rootDir, "apps/server/dist/file-exchange", binaryName),
+        environment.path.join(
+          environment.rootDir,
+          "native/file-exchange",
+          `${environment.platform}-${environment.processArch}`,
+          binaryName,
+        ),
+        ...(environment.platform === "darwin"
+          ? [
+              environment.path.join(
+                environment.rootDir,
+                "native/file-exchange/darwin-universal",
+                binaryName,
+              ),
+            ]
+          : []),
+      ]
+    : environment.isPackaged
+      ? [environment.path.join(environment.resourcesPath, "file-exchange", binaryName)]
+      : environment.resolveResourcePathCandidates(
+          environment.path.join("file-exchange", binaryName),
+        );
+  for (const candidate of candidates) {
+    if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+      return Option.some(candidate);
+  }
+  return Option.none<string>();
+});
+
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -556,6 +596,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   function* (
     input: SharedBootstrapInput & {
       readonly resourceMonitorPath: Option.Option<string>;
+      readonly filePublicationHelperPath: Option.Option<string>;
       readonly syncTexNavigatorPath: Option.Option<string>;
       readonly cliPath: Option.Option<string>;
     },
@@ -589,6 +630,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       ...Option.match(input.resourceMonitorPath, {
         onNone: () => ({}),
         onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),
+      }),
+      ...Option.match(input.filePublicationHelperPath, {
+        onNone: () => ({}),
+        onSome: (filePublicationHelperPath) => ({ filePublicationHelperPath }),
       }),
       ...Option.match(input.syncTexNavigatorPath, {
         onNone: () => ({}),
@@ -943,6 +988,10 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
+    const filePublicationHelperPath = yield* resolveFilePublicationHelperPath().pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+    );
     // SCIENT-FORK:START — the bundled SyncTeX navigator for LaTeX source navigation.
     const syncTexNavigatorPath = yield* resolveSyncTexNavigatorPath().pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -956,6 +1005,7 @@ export const make = Effect.gen(function* () {
     return yield* resolvePrimaryStartConfig({
       ...shared,
       resourceMonitorPath,
+      filePublicationHelperPath,
       cliPath,
       // SCIENT-FORK:START — the bundled SyncTeX navigator.
       syncTexNavigatorPath,

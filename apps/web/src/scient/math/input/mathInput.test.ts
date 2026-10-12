@@ -80,6 +80,16 @@ describe("shared math commands", () => {
     expect(f.controller.execute("math.symbol.alpha")).toBe(true);
     expect(f.state().source).toBe("hello \\(\\alpha \\)");
   });
+  it("starts a blank equation with an empty group in Markdown only", () => {
+    // Markdown cannot round-trip an empty equation; LaTeX delimiters can stay empty.
+    const markdown = fixture("hello ", "markdown");
+    expect(markdown.controller.execute("math.inline")).toBe(true);
+    expect(markdown.state().source).toContain("{}");
+    const latex = fixture("hello ", "latex");
+    expect(latex.controller.execute("math.inline")).toBe(true);
+    expect(latex.state().source).not.toContain("{}");
+    expect(latex.state().source).not.toBe("hello ");
+  });
   it("completes a fraction and preserves surrounding math delimiters", () => {
     const f = fixture("$\\frac$", "markdown");
     f.set({ selection: { from: 6, to: 6 } });
@@ -264,6 +274,49 @@ describe("source context", () => {
 });
 
 describe("matrix transactions", () => {
+  it("uses display context when Enter creates a matrix's first row separator", () => {
+    const matrix = String.raw`\begin{bmatrix}a&b\end{bmatrix}`;
+    for (const format of ["markdown", "latex", "tex"] as const) {
+      for (const display of [false, true]) {
+        const source = format === "tex" ? matrix : display ? `\\[${matrix}\\]` : `\\(${matrix}\\)`;
+        const f = fixture(source, format);
+        const from = source.indexOf("a&b");
+        f.set({ selection: { from, to: from } });
+        if (format === "tex") f.set({ display });
+        const event = key("Enter");
+        expect(f.controller.owns(event)).toBe(true);
+        expect(f.edits).toHaveLength(0);
+        expect(f.controller.handle(event)).toBe(true);
+        expect(f.state().source.includes("[0.12em]")).toBe(display);
+        expect(matrixAt(f.state().source, f.state().selection.from)?.rows).toHaveLength(2);
+      }
+    }
+  });
+  it("keeps raw TeX inline math fields compact", () => {
+    const f = fixture("x", "tex");
+    f.set({ display: false });
+    expect(f.controller.matrix("bmatrix", 3, 3)).toBe(true);
+    expect(f.state().source).not.toContain("[0.12em]");
+  });
+  it.each(["markdown", "latex"] as const)(
+    "spaces new display matrices but not inline matrices in %s",
+    (format) => {
+      for (const [source, display] of [
+        ["prose ", true],
+        [String.raw`\[x\]`, true],
+        [String.raw`\(x\)`, false],
+      ] as const) {
+        const f = fixture(source, format);
+        f.set({ latexPackages: ["amsmath"] });
+        if (source.includes("x"))
+          f.set({ selection: { from: source.indexOf("x"), to: source.indexOf("x") } });
+        expect(f.controller.matrix("bmatrix", 2, 2)).toBe(true);
+        expect(f.state().source.includes("[0.12em]")).toBe(display);
+        expect(f.controller.execute("math.matrix.addRow")).toBe(true);
+        expect(f.state().source.includes("[0.12em]")).toBe(display);
+      }
+    },
+  );
   it("does not repeat structural edits while Enter is held", () => {
     const f = fixture();
     expect(f.controller.matrix("pmatrix", 2, 2)).toBe(true);

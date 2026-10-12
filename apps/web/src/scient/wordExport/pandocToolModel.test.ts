@@ -2,6 +2,7 @@ import type { ScientPandocToolStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  pandocToolSummary,
   formatMegabytes,
   isActivePandocInstall,
   pandocReleaseNotice,
@@ -130,7 +131,8 @@ describe("pandocToolView", () => {
     expect(pandocToolView({ status: null, requesting: false, error: "Offline." })).toMatchObject({
       kind: "failed",
       detail: "Offline.",
-      actionLabel: "Try again",
+      actionLabel: "Check again",
+      unchecked: true,
     });
     expect(pandocToolView({ status: null, requesting: false, error: null }).kind).toBe("loading");
   });
@@ -200,5 +202,19 @@ describe("helpers", () => {
         }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("pandocToolSummary", () => {
+  it("gives the Word tab one plain word or two for every state", () => {
+    const view = (kind: Parameters<typeof pandocToolSummary>[0]["kind"]) =>
+      pandocToolSummary({ kind, detail: "", actionLabel: null, busy: false });
+    expect(view("loading")).toBe("Checking…");
+    expect(view("ready")).toBe("Ready");
+    expect(view("installing")).toBe("Installing…");
+    expect(view("reinstall")).toBe("Not working");
+    expect(view("unavailable")).toBe("Unavailable");
+    expect(view("offer")).toBe("Not installed");
+    expect(view("failed")).toBe("Not installed");
   });
 });

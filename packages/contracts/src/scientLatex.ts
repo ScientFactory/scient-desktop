@@ -8,12 +8,12 @@ import * as Schema from "effect/Schema";
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const PathString = NonEmptyString.check(Schema.isMaxLength(4_096));
 
-/** The two engines Scient drives. `null` on a status means neither was found. */
+/** The two build drivers Scient uses. `null` on a status means neither was found. */
 export const ScientLatexToolchainKind = Schema.Literals(["latexmk", "tectonic"]);
 export type ScientLatexToolchainKind = typeof ScientLatexToolchainKind.Type;
 
 /**
- * Where the engine came from. `system` is anything already on this computer's
+ * Where the driver came from. `system` is anything already on this computer's
  * PATH; `scient-managed` is the distribution Scient installed and owns.
  */
 export const ScientLatexToolchainSource = Schema.Literals(["system", "scient-managed"]);
@@ -28,6 +28,18 @@ export const ScientLatexToolchainStatus = Schema.Struct({
   source: Schema.optionalKey(ScientLatexToolchainSource),
 });
 export type ScientLatexToolchainStatus = typeof ScientLatexToolchainStatus.Type;
+
+export const ScientLatexCompiler = Schema.Literals(["pdflatex", "xelatex", "lualatex"]);
+export type ScientLatexCompiler = typeof ScientLatexCompiler.Type;
+
+/** Standalone compiler binaries runnable through the selected build driver. */
+export const ScientLatexCompilerAvailability = Schema.Struct({
+  compiler: ScientLatexCompiler,
+  available: Schema.Boolean,
+  executable: Schema.NullOr(Schema.String),
+  version: Schema.NullOr(Schema.String),
+});
+export type ScientLatexCompilerAvailability = typeof ScientLatexCompilerAvailability.Type;
 
 /**
  * One managed install, from the client's point of view. `downloading` is the
@@ -82,8 +94,12 @@ export type ScientLatexManagedInstallState = typeof ScientLatexManagedInstallSta
  */
 export const ScientLatexToolchainReport = Schema.Struct({
   ...ScientLatexToolchainStatus.fields,
+  /** Tectonic's embedded XeTeX is not an independently installed compiler binary. */
+  compilers: Schema.Array(ScientLatexCompilerAvailability),
   /** Scient has a pinned distribution it can install on this platform. */
   canInstallManaged: Schema.Boolean,
+  /** Host-specific pinned base archive size, excluding additional packages; older servers omit it. */
+  downloadBytes: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   /** Absent until this server has been asked to install one. */
   managedInstall: Schema.optionalKey(ScientLatexManagedInstallState),
 });
@@ -131,6 +147,10 @@ export const ScientLatexBuildSnapshot = Schema.Struct({
   toolchain: Schema.NullOr(ScientLatexToolchainStatus),
   /** A rebuild was requested while this one was still running and will follow it. */
   pendingRerun: Schema.Boolean,
+  /** Source byte identities checked on both sides of this compile, never a navigation guess. */
+  visualSourceRevisions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  /** BibTeX presentation from this successful PDF revision, never an editable source file. */
+  compiledBibliography: Schema.optional(Schema.String.check(Schema.isMaxLength(1_000_000))),
   /**
    * Present only while this build is fetching packages the last compile said
    * were missing. The state stays `running` throughout, so a client polls as
@@ -139,90 +159,6 @@ export const ScientLatexBuildSnapshot = Schema.Struct({
   installingPackages: Schema.optional(Schema.Array(Schema.String)),
 });
 export type ScientLatexBuildSnapshot = typeof ScientLatexBuildSnapshot.Type;
-
-export const ScientLatexBuildRequest = Schema.Struct({
-  workspaceRoot: PathString,
-  relativePath: PathString,
-});
-export type ScientLatexBuildRequest = typeof ScientLatexBuildRequest.Type;
-
-export const ScientLatexStatusRequest = Schema.Struct({
-  workspaceRoot: PathString,
-  relativePath: PathString,
-});
-export type ScientLatexStatusRequest = typeof ScientLatexStatusRequest.Type;
-
-export const ScientLatexCancelRequest = Schema.Struct({
-  workspaceRoot: PathString,
-  relativePath: PathString,
-});
-export type ScientLatexCancelRequest = typeof ScientLatexCancelRequest.Type;
-
-const PositiveLine = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
-const NonNegativeColumn = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-const SyncCoordinate = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
-
-const ScientLatexSyncRevision = {
-  workspaceRoot: PathString,
-  rootRelativePath: PathString,
-  artifactId: ArtifactId,
-  revisionId: ArtifactRevisionId,
-} as const;
-
-export const ScientLatexForwardSyncRequest = Schema.Struct({
-  ...ScientLatexSyncRevision,
-  sourceRelativePath: PathString,
-  line: PositiveLine,
-  column: Schema.optional(NonNegativeColumn),
-  pageHint: Schema.optional(PositiveLine),
-});
-export type ScientLatexForwardSyncRequest = typeof ScientLatexForwardSyncRequest.Type;
-
-export const ScientLatexInverseSyncRequest = Schema.Struct({
-  ...ScientLatexSyncRevision,
-  page: PositiveLine,
-  x: SyncCoordinate,
-  y: SyncCoordinate,
-});
-export type ScientLatexInverseSyncRequest = typeof ScientLatexInverseSyncRequest.Type;
-
-export const ScientLatexSyncUnavailableReason = Schema.Literals([
-  "revision-unavailable",
-  "index-missing",
-  "index-invalid",
-  "navigator-unavailable",
-  "navigator-failed",
-  "query-timed-out",
-  "position-unmapped",
-  "invalid-source",
-]);
-export type ScientLatexSyncUnavailableReason = typeof ScientLatexSyncUnavailableReason.Type;
-
-export const ScientLatexSyncUnavailable = Schema.TaggedStruct("unavailable", {
-  reason: ScientLatexSyncUnavailableReason,
-  message: Schema.String,
-});
-export type ScientLatexSyncUnavailable = typeof ScientLatexSyncUnavailable.Type;
-
-export const ScientLatexForwardSyncResult = Schema.Union([
-  Schema.TaggedStruct("found", {
-    page: PositiveLine,
-    x: SyncCoordinate,
-    y: SyncCoordinate,
-  }),
-  ScientLatexSyncUnavailable,
-]);
-export type ScientLatexForwardSyncResult = typeof ScientLatexForwardSyncResult.Type;
-
-export const ScientLatexInverseSyncResult = Schema.Union([
-  Schema.TaggedStruct("found", {
-    relativePath: PathString,
-    line: PositiveLine,
-    column: Schema.NullOr(NonNegativeColumn),
-  }),
-  ScientLatexSyncUnavailable,
-]);
-export type ScientLatexInverseSyncResult = typeof ScientLatexInverseSyncResult.Type;
 
 export const ScientLatexRootEvidenceKind = Schema.Literals([
   "context",
@@ -253,6 +189,9 @@ export type ScientLatexResolutionIncompleteReason =
 const ScientLatexResolutionShared = {
   sourceRelativePath: PathString,
   candidates: Schema.Array(ScientLatexRootCandidate).check(Schema.isMaxLength(64)),
+  indexGeneration: Schema.optional(
+    Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)),
+  ),
   complete: Schema.Boolean,
   incompleteReasons: Schema.Array(ScientLatexResolutionIncompleteReason).check(
     Schema.isMaxLength(8),
@@ -262,7 +201,7 @@ const ScientLatexResolutionShared = {
 export const ScientLatexResolveRequest = Schema.Struct({
   workspaceRoot: PathString,
   sourceRelativePath: PathString,
-  /** A root explicitly chosen earlier or carried by navigation from a PDF. */
+  /** A root explicitly chosen or carried by navigation from an existing document. */
   contextRootRelativePath: Schema.optional(PathString),
 });
 export type ScientLatexResolveRequest = typeof ScientLatexResolveRequest.Type;
@@ -277,6 +216,125 @@ export const ScientLatexResolveResult = Schema.Union([
   Schema.TaggedStruct("unresolved", ScientLatexResolutionShared),
 ]);
 export type ScientLatexResolveResult = typeof ScientLatexResolveResult.Type;
+
+export const ScientLatexBuildRequest = Schema.Struct({
+  workspaceRoot: PathString,
+  relativePath: PathString,
+});
+export type ScientLatexBuildRequest = typeof ScientLatexBuildRequest.Type;
+
+export const ScientLatexArtworkRequest = Schema.Struct({
+  authorization: Schema.Literal("execute-host-tex"),
+  workspaceRoot: PathString,
+  relativePath: PathString,
+  preamble: Schema.String.check(Schema.isMaxLength(200_000)),
+  source: Schema.String.check(Schema.isMaxLength(100_000)),
+  widthInches: Schema.Number.check(Schema.isBetween({ minimum: 0.1, maximum: 30 })),
+  algorithmNumber: Schema.optional(
+    Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100_000 })),
+  ),
+  rasterPixelRatio: Schema.optional(
+    Schema.Number.check(Schema.isBetween({ minimum: 2, maximum: 3 })),
+  ),
+});
+export type ScientLatexArtworkRequest = typeof ScientLatexArtworkRequest.Type;
+
+export const ScientLatexArtworkResult = Schema.Union([
+  Schema.TaggedStruct("ready", {
+    pdfBase64: Schema.String.check(Schema.isMaxLength(8_000_000)),
+    raster: Schema.optional(
+      Schema.Struct({
+        pngBase64: Schema.String.check(Schema.isMaxLength(8_000_000)),
+        widthPoints: Schema.Number.check(Schema.isGreaterThan(0)),
+        heightPoints: Schema.Number.check(Schema.isGreaterThan(0)),
+      }),
+    ),
+  }),
+  Schema.TaggedStruct("unavailable", { message: Schema.String }),
+]);
+export type ScientLatexArtworkResult = typeof ScientLatexArtworkResult.Type;
+
+export const ScientLatexStatusRequest = Schema.Struct({
+  workspaceRoot: PathString,
+  relativePath: PathString,
+});
+export type ScientLatexStatusRequest = typeof ScientLatexStatusRequest.Type;
+
+export const ScientLatexCancelRequest = Schema.Struct({
+  workspaceRoot: PathString,
+  relativePath: PathString,
+});
+export type ScientLatexCancelRequest = typeof ScientLatexCancelRequest.Type;
+
+const PositiveLine = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+const NonNegativeColumn = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const SyncCoordinate = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
+
+const ScientLatexSyncRevision = {
+  workspaceRoot: PathString,
+  rootRelativePath: PathString,
+  artifactId: ArtifactId,
+  revisionId: ArtifactRevisionId,
+} as const;
+
+export const ScientLatexForwardSyncRequest = Schema.Struct({
+  ...ScientLatexSyncRevision,
+  sourceRelativePath: PathString,
+  /** Exact editor byte identity; coordinates are never applied to another saved revision. */
+  sourceRevision: Schema.NonEmptyString,
+  line: PositiveLine,
+  column: Schema.optional(NonNegativeColumn),
+  pageHint: Schema.optional(PositiveLine),
+});
+export type ScientLatexForwardSyncRequest = typeof ScientLatexForwardSyncRequest.Type;
+
+export const ScientLatexInverseSyncRequest = Schema.Struct({
+  ...ScientLatexSyncRevision,
+  page: PositiveLine,
+  x: SyncCoordinate,
+  y: SyncCoordinate,
+});
+export type ScientLatexInverseSyncRequest = typeof ScientLatexInverseSyncRequest.Type;
+
+export const ScientLatexSyncUnavailableReason = Schema.Literals([
+  "revision-unavailable",
+  "index-missing",
+  "index-invalid",
+  "source-stale",
+  "navigator-unavailable",
+  "navigator-failed",
+  "query-timed-out",
+  "position-unmapped",
+  "invalid-source",
+]);
+export type ScientLatexSyncUnavailableReason = typeof ScientLatexSyncUnavailableReason.Type;
+
+export const ScientLatexSyncUnavailable = Schema.TaggedStruct("unavailable", {
+  reason: ScientLatexSyncUnavailableReason,
+  message: Schema.String,
+});
+export type ScientLatexSyncUnavailable = typeof ScientLatexSyncUnavailable.Type;
+
+export const ScientLatexForwardSyncResult = Schema.Union([
+  Schema.TaggedStruct("found", {
+    page: PositiveLine,
+    x: SyncCoordinate,
+    y: SyncCoordinate,
+  }),
+  ScientLatexSyncUnavailable,
+]);
+export type ScientLatexForwardSyncResult = typeof ScientLatexForwardSyncResult.Type;
+
+export const ScientLatexInverseSyncResult = Schema.Union([
+  Schema.TaggedStruct("found", {
+    relativePath: PathString,
+    sourceRevision: Schema.NonEmptyString,
+    line: PositiveLine,
+    column: Schema.NullOr(NonNegativeColumn),
+  }),
+  ScientLatexSyncUnavailable,
+]);
+export type ScientLatexInverseSyncResult = typeof ScientLatexInverseSyncResult.Type;
 
 export const ScientLatexToolchainRequest = Schema.Struct({
   refresh: Schema.Boolean,

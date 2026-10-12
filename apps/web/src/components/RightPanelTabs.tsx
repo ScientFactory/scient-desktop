@@ -33,6 +33,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileDiff,
+  FileText,
   Files,
   Globe,
   Library,
@@ -96,6 +97,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { ScientRightPanelSurfaceIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon";
 import { scientRightPanelSurfaceTitle } from "~/scient/rightPanel/surfaces";
+import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
 import { useScientAnalyticsView } from "~/scient/analytics/client";
 import { panelCategory } from "~/scient/analytics/viewCategories";
 
@@ -165,6 +167,7 @@ interface RightPanelTabsProps {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
+  onAddDocuments?: ((format: NewDocumentFormat) => void) | undefined;
   onAddCompute: () => void;
 
   onAddDevice: () => void;
@@ -177,6 +180,7 @@ interface RightPanelTabsProps {
   agentsAvailable: boolean;
   liveAgentCount?: number;
   sourcesAvailable: boolean;
+  documentsAvailable?: boolean | undefined;
   computeAvailable: boolean;
 
   deviceAvailable: boolean;
@@ -209,6 +213,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: "No linked pull requests are available for this thread.",
   agents: "Agents are only available from a thread.",
   sources: "Sources are only available inside a project workspace.",
+  documents: "Open a project to create and edit documents.",
   compute: "Compute is only available inside a project workspace.",
 
   device: "Devices are only available from a thread.",
@@ -397,6 +402,22 @@ function SurfaceMenuItem(props: {
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
+/** The two kinds of document, each with the two words that tell them apart. */
+function NewDocumentMenuItems(props: { readonly onChoose: (format: NewDocumentFormat) => void }) {
+  return (
+    <>
+      <MenuItem onClick={() => props.onChoose("markdown")}>
+        <span className="flex-1">Markdown</span>
+        <span className="ps-3 text-muted-foreground/50 text-xs">Notes · Word</span>
+      </MenuItem>
+      <MenuItem onClick={() => props.onChoose("latex")}>
+        <span className="flex-1">LaTeX</span>
+        <span className="ps-3 text-muted-foreground/50 text-xs">Papers · PDF</span>
+      </MenuItem>
+    </>
+  );
+}
+
 /**
  * List launcher shown when the right panel has no surfaces. Keyboard-first
  * without palette chrome: a surface's letter opens it directly from anywhere
@@ -415,6 +436,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
+  onAddDocuments?: ((format: NewDocumentFormat) => void) | undefined;
   onAddCompute: () => void;
 
   onAddDevice: () => void;
@@ -426,12 +448,14 @@ function RightPanelEmptyState(props: {
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
   sourcesAvailable: boolean;
+  documentsAvailable?: boolean | undefined;
   computeAvailable: boolean;
 
   deviceAvailable: boolean;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
+  const [documentsMenuOpen, setDocumentsMenuOpen] = useState(false);
 
   const actions = [
     {
@@ -500,6 +524,16 @@ function RightPanelEmptyState(props: {
       available: props.deviceAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
+    },
+    {
+      label: "Documents",
+      icon: FileText,
+      shortcut: "W",
+      available: props.documentsAvailable === true && props.onAddDocuments !== undefined,
+      disabledReason: SURFACE_DISABLED_REASONS.documents,
+      // Opens the format choice anchored to the row, by click or by its letter.
+      onClick: () => setDocumentsMenuOpen(true),
+      badgeCount: 0,
     },
   ] as const;
 
@@ -611,25 +645,48 @@ function RightPanelEmptyState(props: {
                   )
                 }
               >
-                <button
-                  type="button"
-                  onClick={action.onClick}
-                  className={cn(
-                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
-                    isHighlighted(action) && "bg-accent/60",
-                  )}
-                >
-                  {actionIcon(action, "size-4")}
-                  <span
+                {action.label === "Documents" ? (
+                  <Menu open={documentsMenuOpen} onOpenChange={setDocumentsMenuOpen}>
+                    <MenuTrigger
+                      render={
+                        <button
+                          type="button"
+                          className={cn(
+                            "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
+                            (isHighlighted(action) || documentsMenuOpen) && "bg-accent/60",
+                          )}
+                        />
+                      }
+                    >
+                      {actionIcon(action, "size-4")}
+                      <span className="min-w-0 flex-1 truncate">{action.label}</span>
+                      <Kbd>{action.shortcut}</Kbd>
+                    </MenuTrigger>
+                    <MenuPopup align="start" side="bottom" sideOffset={4} className="min-w-0">
+                      <NewDocumentMenuItems onChoose={(format) => props.onAddDocuments?.(format)} />
+                    </MenuPopup>
+                  </Menu>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={action.onClick}
                     className={cn(
-                      "min-w-0 flex-1 truncate",
-                      action.label === "Browser" && props.browserProfiles.length > 1 && "pr-7",
+                      "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
+                      isHighlighted(action) && "bg-accent/60",
                     )}
                   >
-                    {action.label}
-                  </span>
-                  <Kbd>{action.shortcut}</Kbd>
-                </button>
+                    {actionIcon(action, "size-4")}
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate",
+                        action.label === "Browser" && props.browserProfiles.length > 1 && "pr-7",
+                      )}
+                    >
+                      {action.label}
+                    </span>
+                    <Kbd>{action.shortcut}</Kbd>
+                  </button>
+                )}
                 {/*
                   Same choice the tab bar's "+" menu offers: the row opens the
                   default profile, the chevron picks another. Only worth showing
@@ -683,13 +740,20 @@ function RightPanelEmptyState(props: {
         </div>
         {props.computeAvailable ? (
           <div className="mt-3 text-center">
-            <button
-              type="button"
-              className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
-              onClick={props.onAddCompute}
-            >
-              New compute session
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
+                    onClick={props.onAddCompute}
+                  />
+                }
+              >
+                Scientific computing
+              </TooltipTrigger>
+              <TooltipPopup>Run scientific code and inspect results and variables</TooltipPopup>
+            </Tooltip>
           </div>
         ) : null}
       </div>
@@ -1014,6 +1078,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
+  const [documentsSubmenuOpen, setDocumentsSubmenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
     canScrollLeft: false,
@@ -1140,10 +1205,20 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
+    {
+      label: "Documents",
+      icon: FileText,
+      shortcut: "W",
+      available: props.documentsAvailable === true && props.onAddDocuments !== undefined,
+      disabledReason: SURFACE_DISABLED_REASONS.documents,
+      // Its letter opens the format choice; the menu stays open for it.
+      onClick: () => setDocumentsSubmenuOpen(true),
+      badgeCount: 0,
+    },
   ] as const;
 
   const extraSessionAction = {
-    label: "New compute session",
+    label: "Scientific computing",
     icon: Sigma,
     shortcut: "C",
     available: props.computeAvailable,
@@ -1159,7 +1234,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (!action) return;
     event.preventDefault();
     event.stopPropagation();
-    setAddSurfaceMenuOpen(false);
+    if (action.label !== "Documents") setAddSurfaceMenuOpen(false);
     action.onClick();
   };
 
@@ -1566,6 +1641,29 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         </MenuSub>
                       );
                     }
+                    if (action.label === "Documents" && action.available) {
+                      return (
+                        <MenuSub
+                          key={action.label}
+                          open={documentsSubmenuOpen}
+                          onOpenChange={setDocumentsSubmenuOpen}
+                        >
+                          <MenuSubTrigger aria-keyshortcuts={action.shortcut}>
+                            <Icon />
+                            {action.label}
+                            <MenuShortcut>{action.shortcut}</MenuShortcut>
+                          </MenuSubTrigger>
+                          <MenuSubPopup className="min-w-0">
+                            <NewDocumentMenuItems
+                              onChoose={(format) => {
+                                setAddSurfaceMenuOpen(false);
+                                props.onAddDocuments?.(format);
+                              }}
+                            />
+                          </MenuSubPopup>
+                        </MenuSub>
+                      );
+                    }
                     return (
                       <SurfaceMenuItem
                         key={action.label}
@@ -1587,7 +1685,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     onClick={extraSessionAction.onClick}
                   >
                     <Sigma />
-                    New compute session
+                    Scientific computing
                   </SurfaceMenuItem>
                 </MenuPopup>
               </Menu>
@@ -1659,6 +1757,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddAgents={props.onAddAgents}
             onAddSources={props.onAddSources}
+            onAddDocuments={props.onAddDocuments}
             onAddCompute={props.onAddCompute}
 
             onAddDevice={props.onAddDevice}
@@ -1670,6 +1769,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestsAvailable={props.pullRequestsAvailable}
             agentsAvailable={props.agentsAvailable}
             sourcesAvailable={props.sourcesAvailable}
+            documentsAvailable={props.documentsAvailable}
             computeAvailable={props.computeAvailable}
 
             deviceAvailable={props.deviceAvailable}

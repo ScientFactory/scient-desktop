@@ -56,13 +56,14 @@ describe("settings sidebar order", () => {
     expect(searchSettings("t3", items).map((item) => item.id)).toEqual(["cli-command"]);
   });
 
-  it("keeps integrations prominent and keybindings below scientific computing", () => {
+  it("keeps integrations prominent, Documents after Scientific Computing, then keybindings", () => {
     const paths = Object.keys(SETTINGS_SECTION_LABELS);
 
     expect(paths.indexOf("/settings/integrations")).toBe(paths.indexOf("/settings/projects") + 1);
-    expect(paths.indexOf("/settings/keybindings")).toBe(
+    expect(paths.indexOf("/settings/documents")).toBe(
       paths.indexOf("/settings/scientific-computing") + 1,
     );
+    expect(paths.indexOf("/settings/keybindings")).toBe(paths.indexOf("/settings/documents") + 1);
   });
 
   it("shows Shortcuts without changing the existing route", () => {
@@ -377,10 +378,59 @@ describe("searchSettings", () => {
     for (const query of ["word export", "pandoc", "docx", "export"]) {
       expect(searchSettings(query)[0], query).toMatchObject({
         id: "word-export",
-        to: "/settings/scientific-computing",
+        to: "/settings/documents",
       });
     }
     expect(searchSettings("word wrap")[0]?.id).toBe("word-wrap");
+  });
+
+  it("finds the Documents page by format, engine, and template", () => {
+    for (const [query, id] of [
+      ["documents", "documents"],
+      ["latex", "latex-installation"],
+      ["tinytex", "latex-installation"],
+      ["template", "new-document-template"],
+    ] as const) {
+      expect(searchSettings(query)[0], query).toMatchObject({ id, to: "/settings/documents" });
+    }
+    // Markdown shortcuts lead; the Documents page still answers.
+    expect(searchSettings("markdown").some((item) => item.id === "documents")).toBe(true);
+  });
+
+  it("routes compiler status into technical details and installation into actionable tools", () => {
+    for (const query of [
+      "compiler status",
+      "available compilers",
+      "compiler versions",
+      "executable paths",
+    ]) {
+      expect(searchSettings(query)[0], query).toMatchObject({
+        id: "latex-compilers",
+        to: "/settings/documents",
+        targetId: "latex-compilers",
+      });
+    }
+    for (const query of ["install latex", "additional compilers", "tinytex"]) {
+      expect(searchSettings(query)[0], query).toMatchObject({
+        id: "latex-installation",
+        to: "/settings/documents",
+        targetId: "latex-installation",
+      });
+    }
+    expect(searchSettings("default latex compiler")[0]).toMatchObject({
+      id: "new-document-compiler",
+      targetId: "new-document-compiler",
+    });
+  });
+
+  it("routes compilation modes to the Documents picker", () => {
+    for (const query of ["autocompile", "auto-compile", "pdf compilation"]) {
+      expect(searchSettings(query)[0], query).toMatchObject({
+        id: "latex-compilation",
+        to: "/settings/documents",
+        targetId: "latex-compilation",
+      });
+    }
   });
 
   it("routes conditional window capture settings to the stable toggle row", () => {

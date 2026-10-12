@@ -6,6 +6,8 @@ import type {
 } from "@t3tools/contracts";
 import { lazy, Suspense, type ReactNode } from "react";
 
+import type { OpenFileOptions } from "~/rightPanelStore";
+
 import type { ScientRightPanelSurface } from "./surfaces";
 
 const ScientSourcesPanel = lazy(() =>
@@ -48,6 +50,7 @@ export interface ScientRightPanelContentProps {
   readonly activeWorkspaceRoot: string | undefined;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly keybindings: ResolvedKeybindingsConfig;
+  readonly openFileSourceSurface: (path: string, line?: number, options?: OpenFileOptions) => void;
   readonly closeRightPanelSurface: (surface: ScientRightPanelSurface) => void;
   readonly openScientSourcePdf: (input: {
     readonly sourceId: string;

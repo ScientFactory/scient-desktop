@@ -37,10 +37,6 @@ const SETTINGS_PAGE_SECTIONS: Partial<
     { label: "Motion", targetId: "motion" },
     { label: "Typography", targetId: "typography" },
   ],
-  "/settings/scientific-computing": [
-    { label: "Languages & runtimes", targetId: "scientific-computing" },
-    { label: "Word export", targetId: "word-export" },
-  ],
   "/settings/source-control": [
     { label: "Version control", targetId: "source-control" },
     { label: "Text generation", targetId: "source-control-text-generation" },

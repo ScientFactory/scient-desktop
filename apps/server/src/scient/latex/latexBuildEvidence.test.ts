@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ArtifactId, ArtifactRevisionId } from "@scientfactory/document-artifacts";
 import * as ByteSize from "effect/ByteSize";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -16,7 +17,9 @@ import {
   UNVERIFIED_FILE_DIGEST,
   collectLatexBuildEvidence,
   decodeLatexBuildEvidence,
+  decodePublishedLatexBuildEvidence,
   encodeLatexBuildEvidence,
+  encodePublishedLatexBuildEvidence,
   latexEvidenceMatches,
   probeLatexEvidence,
 } from "./latexBuildEvidence.ts";
@@ -200,6 +203,19 @@ describe("latexBuildEvidence", () => {
 
       const restored = decodeLatexBuildEvidence(encodeLatexBuildEvidence(evidence));
       expect(restored).toEqual(evidence);
+
+      const published = {
+        schemaVersion: 1 as const,
+        artifactId: ArtifactId.make("artifact-evidence-test"),
+        revisionId: ArtifactRevisionId.make("revision-evidence-test"),
+        evidence,
+      };
+      expect(
+        decodePublishedLatexBuildEvidence(encodePublishedLatexBuildEvidence(published)),
+      ).toEqual(published);
+      // The former unscoped file cannot be mistaken for evidence belonging to
+      // whichever PDF revision happens to be bound after a restart.
+      expect(decodePublishedLatexBuildEvidence(encodeLatexBuildEvidence(evidence))).toBeNull();
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

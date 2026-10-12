@@ -53,7 +53,8 @@ describe("compute result surface seam", () => {
       rightPanelTabsSource.indexOf("const extraSessionAction"),
     );
     expect(primaryActions).not.toContain('label: "Compute"');
-    expect(rightPanelTabsSource).toContain('label: "New compute session"');
+    expect(primaryActions).not.toContain('label: "Scientific computing"');
+    expect(rightPanelTabsSource).toContain('label: "Scientific computing"');
   });
 
   it("keys standalone controls by their owner and preserves producing result generations", () => {

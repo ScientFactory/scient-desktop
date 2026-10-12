@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { fileExchangeTestHelper } from "./fileExchange.testkit.ts";
+import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -12,19 +12,24 @@ import {
   type MutationPoint,
   type RetainedMutationInput,
 } from "./RetainedFileMutation.ts";
+import { nativeFilePublicationCapabilities } from "./NativeFilePublication.ts";
 const bytes = (text: string) => Buffer.from(text);
-const helper = await fileExchangeTestHelper();
-const available = helper !== undefined;
+const helper = await filePublicationTestHelper();
+const capabilities = helper === undefined ? null : await nativeFilePublicationCapabilities(helper);
+const qualifiedCapture =
+  capabilities?.strictCurrentRoot === true &&
+  capabilities.exclusiveMove &&
+  capabilities.exclusiveLink;
 async function fixture(
   body: (input: RetainedMutationInput, target: string, root: string) => Promise<void>,
-  native = false,
-  remove = false,
 ) {
-  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-retained-")),
+  const root = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-retained-")),
+    ),
     target = NodePath.join(root, "paper/main.tex");
   await NodeFSP.mkdir(NodePath.dirname(target));
-  await NodeFSP.mkdir(NodePath.join(root, "records"));
-  await NodeFSP.writeFile(target, "captured");
+  await NodeFSP.mkdir(NodePath.join(root, "records"), { mode: 0o700 });
+  await NodeFSP.writeFile(target, "captured", { mode: 0o600 });
   try {
     await body(
       {
@@ -32,9 +37,12 @@ async function fixture(
         relativePath: "main.tex",
         retentionDirectory: NodePath.join(root, "records"),
         id: "one",
+        mutationId: "one",
         expectedRevision: bytesRevision(bytes("captured")),
-        bytes: remove ? null : bytes("incoming"),
-        ...(native && helper ? { exchangeHelper: helper } : {}),
+        bytes: null,
+        kind: "delete",
+        condition: "revision",
+        ...(helper === undefined ? {} : { nativePublicationHelper: helper }),
       },
       target,
       root,
@@ -43,269 +51,261 @@ async function fixture(
     await NodeFSP.rm(root, { recursive: true, force: true });
   }
 }
-for (const native of [false, true])
-  describe.skipIf(native && !available)(native ? "exchange" : "move-aside", () => {
-    it("retains the exact displaced inode", () =>
+describe("retained publication admission", () => {
+  it.skipIf(!qualifiedCapture || !capabilities?.atomicExchange)(
+    "replaces bytes atomically, preserving permissions and the displaced inode",
+    () =>
       fixture(async (input, target) => {
-        const id = await fileIdentity(target),
-          r = await mutateRetainedFile(input, target);
-        expect(r.outcome).toBe("done");
+        const identity = await fileIdentity(target);
+        const result = await mutateRetainedFile(
+          { ...input, kind: "write", bytes: bytes("incoming") },
+          target,
+        );
+        expect(result.outcome).toBe("done");
+        expect(await fileIdentity(target)).not.toEqual(identity);
         expect(await NodeFSP.readFile(target, "utf8")).toBe("incoming");
-        expect(r.retainedIdentity).toEqual(id);
-        expect(await NodeFSP.readFile(r.retainedPath!, "utf8")).toBe("captured");
-      }, native));
-    it.each([false, true])("preserves whole-file=%s writes after the check", (swap) =>
+        expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o600);
+        expect(result.retainedIdentity).toEqual(identity);
+        expect(result.retainedRevision).toBe(bytesRevision(bytes("captured")));
+      }),
+  );
+  if (!qualifiedCapture)
+    it("refuses namespace mutation on an unqualified host without consuming the source", () =>
+      fixture(async (input, target) => {
+        const identity = await fileIdentity(target);
+        await expect(mutateRetainedFile(input, target)).rejects.toMatchObject({
+          reason: "unavailable",
+        });
+        expect(await fileIdentity(target)).toEqual(identity);
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("captured");
+      }));
+  if (qualifiedCapture) {
+    it("retains the actual removed inode with restrictive permissions and late descriptor writes", () =>
+      fixture(async (input, target) => {
+        const identity = await fileIdentity(target),
+          handle = await NodeFSP.open(target, "r+");
+        try {
+          const result = await mutateRetainedFile(input, target);
+          expect(result.outcome).toBe("done");
+          expect(result.retainedIdentity).toEqual(identity);
+          expect((await NodeFSP.stat(result.retainedPath!)).mode & 0o777).toBe(0o600);
+          await handle.truncate(0);
+          await handle.writeFile("late B");
+          await handle.sync();
+          const observed = await recheckRetainedFile(result, input.expectedRevision);
+          expect(observed.changed).toBe(true);
+          expect(await NodeFSP.readFile(observed.retainedPath!, "utf8")).toBe("late B");
+          await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+        } finally {
+          await handle.close();
+        }
+      }));
+    it.each([false, true])("retains a post-check outside edit, replacement=%s", (replacement) =>
       fixture(async (input, target, root) => {
-        let wrote = false;
-        const r = await mutateRetainedFile(input, target, {
-          at: async (p) => {
-            if (p === "checked" && !wrote) {
-              wrote = true;
-              if (swap) {
-                await NodeFSP.writeFile(NodePath.join(root, "external"), "later");
-                await NodeFSP.rename(NodePath.join(root, "external"), target);
-              } else await NodeFSP.writeFile(target, "later");
+        const result = await mutateRetainedFile(input, target, {
+          at: async (point) => {
+            if (point !== "checked") return;
+            if (replacement) {
+              const outside = NodePath.join(root, "outside");
+              await NodeFSP.writeFile(outside, "outside B");
+              await NodeFSP.rename(outside, target);
+            } else await NodeFSP.writeFile(target, "outside B");
+          },
+        });
+        expect(result.outcome).toBe("attention");
+        expect(result.failure).toBe("revision");
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("outside B");
+        expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("outside B");
+      }),
+    );
+    it("preserves a final link inserted at capture without opening its outside referent", () =>
+      fixture(async (input, target, root) => {
+        const outside = NodePath.join(root, "outside");
+        await NodeFSP.writeFile(outside, "outside kept");
+        const result = await mutateRetainedFile(input, target, {
+          at: async (point) => {
+            if (point === "checked") {
+              await NodeFSP.unlink(target);
+              await NodeFSP.symlink(outside, target);
             }
           },
         });
-        expect(await NodeFSP.readFile(target, "utf8")).toBe("later");
-        expect(r.outcome).not.toBe("done");
-      }, native),
-    );
-    it("retains late writes through an open handle", () =>
-      fixture(async (input, target) => {
-        const h = await NodeFSP.open(target, "r+");
-        try {
-          const r = await mutateRetainedFile(input, target);
-          await h.truncate(0);
-          await h.writeFile("late handle");
-          await h.sync();
-          const checked = await recheckRetainedFile(r, input.expectedRevision);
-          expect(checked.changed).toBe(true);
-          expect(await NodeFSP.readFile(checked.retainedPath!, "utf8")).toBe("late handle");
-          expect(await NodeFSP.readFile(target, "utf8")).toBe("incoming");
-        } finally {
-          await h.close();
-        }
-      }, native));
-    const crashCases = [false, true].flatMap((remove) =>
-      (
-        [
-          "intent",
-          "staged",
-          "prepared",
-          "checked",
-          "displaced",
-          "installed",
-          "done",
-        ] as MutationPoint[]
-      )
-        .filter((point) => !remove || point !== "staged")
-        .map((point) => ({ remove, point })),
-    );
-    it.each(crashCases)("recovers removal=$remove after $point", ({ remove, point }) =>
-      fixture(
-        async (input, target) => {
-          let crashed = false;
-          try {
-            await mutateRetainedFile(input, target, {
-              at: async (p) => {
-                if (p === point && !crashed) {
-                  crashed = true;
-                  throw new Error("synthetic crash");
-                }
-              },
-            });
-          } catch (e) {
-            expect(String(e)).toContain("synthetic crash");
-          }
-          const r = await mutateRetainedFile(input, target);
-          const text = await NodeFSP.readFile(target, "utf8").catch((e) =>
-            e.code === "ENOENT" ? null : Promise.reject(e),
-          );
-          expect(remove ? ["captured", null] : ["captured", "incoming"]).toContain(text);
-          if (r.retainedPath)
-            expect(await NodeFSP.readFile(r.retainedPath, "utf8")).toBe("captured");
-        },
-        native,
-        remove,
-      ),
-    );
-    it("preserves a foreign same-content file after a crash", () =>
+        expect(result.outcome).toBe("attention");
+        expect(await NodeFSP.readFile(outside, "utf8")).toBe("outside kept");
+        expect((await NodeFSP.lstat(target)).isSymbolicLink()).toBe(true);
+      }));
+    it("does not overwrite foreign D while exclusively returning retained B", () =>
       fixture(async (input, target, root) => {
+        const replace = async (contents: string) => {
+          const file = NodePath.join(root, "writer");
+          await NodeFSP.writeFile(file, contents);
+          await NodeFSP.rename(file, target);
+        };
+        const result = await mutateRetainedFile(input, target, {
+          at: async (point) => {
+            if (point === "checked") await replace("outside B");
+            if (point === "restore-intent") await replace("outside D");
+          },
+        });
+        expect(result.outcome).toBe("attention");
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("outside D");
+        expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("outside B");
+      }));
+    it.each(["intent", "prepared", "displaced", "done"] as MutationPoint[])(
+      "reconstructs a removal after durable boundary %s without repeating capture",
+      (point) =>
+        fixture(async (input, target) => {
+          await expect(
+            mutateRetainedFile(input, target, {
+              at: async (at) => {
+                if (at === point) throw new Error("owned process died");
+              },
+            }),
+          ).rejects.toThrow("owned process died");
+          const result = await mutateRetainedFile(input, target);
+          expect(result.outcome).toBe("done");
+          await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+          expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("captured");
+        }),
+    );
+    it("never re-captures after an ambiguous publishing boundary", () =>
+      fixture(async (input, target) => {
         await expect(
           mutateRetainedFile(input, target, {
-            at: async (p) => {
-              if (p === "displaced") throw new Error("crash");
+            at: async (point) => {
+              if (point === "checked") throw new Error("native admission interrupted");
             },
           }),
-        ).rejects.toThrow("crash");
-        await NodeFSP.writeFile(NodePath.join(root, "foreign"), "incoming");
-        await NodeFSP.rename(NodePath.join(root, "foreign"), target);
-        const id = await fileIdentity(target),
-          r = await mutateRetainedFile(input, target);
-        expect(await fileIdentity(target)).toEqual(id);
-        expect(r.outcome).toBe("attention");
-        expect(r.retainedPath).not.toBeNull();
-      }, native));
-    it("rejects reused ids with other bytes", () =>
+        ).rejects.toThrow("native admission interrupted");
+        await NodeFSP.writeFile(target, "outside D");
+        const identity = await fileIdentity(target);
+        const result = await mutateRetainedFile(input, target);
+        expect(result.outcome).toBe("attention");
+        expect(result.failure).toBe("recovery");
+        expect(await fileIdentity(target)).toEqual(identity);
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("outside D");
+      }));
+    it("refuses same-content private replacement as a captured receipt", () =>
+      fixture(async (input, target, root) => {
+        const recordDirectory = NodePath.join(input.retentionDirectory, input.id);
+        await expect(
+          mutateRetainedFile(input, target, {
+            at: async (point) => {
+              if (point === "displaced") throw new Error("captured before crash");
+            },
+          }),
+        ).rejects.toThrow("captured before crash");
+        const replacement = NodePath.join(root, "foreign");
+        await NodeFSP.writeFile(replacement, "captured");
+        await NodeFSP.rename(replacement, NodePath.join(recordDirectory, "retained"));
+        const foreign = await fileIdentity(NodePath.join(recordDirectory, "retained"));
+        const result = await mutateRetainedFile(input, target);
+        expect(result.outcome).toBe("attention");
+        expect(result.failure).toBe("recovery");
+        expect(result.retainedIdentity).toEqual(foreign);
+        await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+      }));
+    it("replays original terminal deletion after outside D instead of removing D", () =>
       fixture(async (input, target) => {
         await mutateRetainedFile(input, target);
+        await NodeFSP.writeFile(target, "outside D");
+        const replayed = await mutateRetainedFile(input, target);
+        expect(replayed.outcome).toBe("done");
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("outside D");
         await expect(
-          mutateRetainedFile({ ...input, bytes: bytes("other") }, target),
-        ).rejects.toThrow("different intent");
-      }, native));
-  });
-it("refuses a create in the fallback gap", () =>
-  fixture(async (input, target) => {
-    const r = await mutateRetainedFile(input, target, {
-      at: async (p) => {
-        if (p === "displaced") await NodeFSP.writeFile(target, "gap writer");
-      },
-    });
-    expect(r.outcome).toBe("attention");
-    expect(await NodeFSP.readFile(target, "utf8")).toBe("gap writer");
-    expect(await NodeFSP.readFile(r.retainedPath!, "utf8")).toBe("captured");
-  }));
-
-describe.skipIf(!available)("restoration recovery", () => {
-  it.each(["restore-intent", "restored", "return-intent", "returned"] as MutationPoint[])(
-    "recovers %s with competing newer versions",
-    (point) =>
-      fixture(async (input, target, root) => {
-        let crashed = false,
-          wroteA = false,
-          wroteB = false;
-        const swap = async (text: string) => {
-          const path = NodePath.join(root, "writer");
-          await NodeFSP.writeFile(path, text);
-          await NodeFSP.rename(path, target);
+          mutateRetainedFile(
+            { ...input, expectedRevision: bytesRevision(bytes("outside D")) },
+            target,
+          ),
+        ).rejects.toMatchObject({ reason: "intent" });
+      }));
+    it("refuses finite admission without consuming the workspace entry", () =>
+      fixture(async (input, target) => {
+        const identity = await fileIdentity(target);
+        await expect(
+          mutateRetainedFile({ ...input, retentionLimitBytes: 1 }, target),
+        ).rejects.toThrow("cannot admit");
+        expect(await fileIdentity(target)).toEqual(identity);
+      }));
+    it("creates a distinct public clone with normal mode and leaves late private-stage writes private", () =>
+      fixture(async (input, target) => {
+        await NodeFSP.unlink(target);
+        const created = await mutateRetainedFile(
+          {
+            ...input,
+            kind: "create",
+            condition: "absent",
+            expectedRevision: null,
+            bytes: bytes("C"),
+          },
+          target,
+        );
+        expect(created.outcome).toBe("done");
+        expect(await fileIdentity(target)).not.toEqual(created.retainedIdentity);
+        expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o666 & ~process.umask());
+        const stage = await NodeFSP.open(created.retainedPath!, "r+");
+        try {
+          await stage.truncate(0);
+          await stage.writeFile("private late D");
+          await stage.sync();
+        } finally {
+          await stage.close();
+        }
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
+        expect(await NodeFSP.readFile(created.retainedPath!, "utf8")).toBe("private late D");
+      }));
+    it.each(["installed", "done"] as MutationPoint[])(
+      "reconstructs a confirmed clone after %s without adopting its private inode",
+      (point) =>
+        fixture(async (input, target) => {
+          await NodeFSP.unlink(target);
+          const creation = {
+            ...input,
+            kind: "create" as const,
+            condition: "absent" as const,
+            expectedRevision: null,
+            bytes: bytes("C"),
+          };
+          await expect(
+            mutateRetainedFile(creation, target, {
+              at: async (at) => {
+                if (at === point) throw new Error("process died after confirmed clone");
+              },
+            }),
+          ).rejects.toThrow("process died");
+          const publicIdentity = await fileIdentity(target);
+          const recovered = await mutateRetainedFile(creation, target);
+          expect(recovered.outcome).toBe("done");
+          expect(await fileIdentity(target)).toEqual(publicIdentity);
+          expect(publicIdentity).not.toEqual(recovered.retainedIdentity);
+          expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
+        }),
+    );
+    it("does not mistake a foreign same-content object for an ambiguous creation receipt", () =>
+      fixture(async (input, target) => {
+        await NodeFSP.unlink(target);
+        const creation = {
+          ...input,
+          kind: "create" as const,
+          condition: "absent" as const,
+          expectedRevision: null,
+          bytes: bytes("C"),
         };
         await expect(
-          mutateRetainedFile(input, target, {
-            at: async (p) => {
-              if (p === "checked" && !wroteA) {
-                wroteA = true;
-                await swap("A");
-              }
-              if (p === "restore-intent" && !wroteB) {
-                wroteB = true;
-                await swap("B");
-              }
-              if (p === point && !crashed) {
-                crashed = true;
-                throw new Error("crash");
-              }
+          mutateRetainedFile(creation, target, {
+            at: async (point) => {
+              if (point === "install-intent")
+                throw new Error("process died without native receipt");
             },
           }),
-        ).rejects.toThrow("crash");
-        const result = await mutateRetainedFile(input, target);
-        expect(await NodeFSP.readFile(target, "utf8")).toBe("B");
-        expect(result.outcome).toBe("attention");
-      }, true),
-  );
-  it("returns the third writer displaced during the second exchange", () =>
-    fixture(async (input, target, root) => {
-      const swap = async (text: string) => {
-        const path = NodePath.join(root, "writer");
-        await NodeFSP.writeFile(path, text);
-        await NodeFSP.rename(path, target);
-      };
-      let first = true;
-      const result = await mutateRetainedFile(input, target, {
-        at: async (p) => {
-          if (p === "checked") await swap("A");
-          if (p === "restore-intent") await swap("B");
-          if (p === "return-intent" && first) {
-            first = false;
-            await swap("C");
-          }
-        },
-      });
-      expect(result.outcome).toBe("attention");
-      expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
-    }, true));
-});
-
-it.skipIf(!available)("returns a newer in-place write displaced by the return exchange", () =>
-  fixture(async (input, target, root) => {
-    const swap = async (value: string) => {
-      const writer = NodePath.join(root, "writer");
-      await NodeFSP.writeFile(writer, value);
-      await NodeFSP.rename(writer, target);
-    };
-    let once = true;
-    const result = await mutateRetainedFile(input, target, {
-      at: async (point) => {
-        if (point === "checked") await swap("A");
-        if (point === "restore-intent") await swap("B");
-        if (point === "return-intent" && once) {
-          once = false;
-          await NodeFSP.writeFile(target, "C in place");
-        }
-      },
-    });
-    expect(result.outcome).toBe("attention");
-    expect(await NodeFSP.readFile(target, "utf8")).toBe("C in place");
-  }, true),
-);
-
-it.skipIf(!available)("reports late writes through a handle to a restored staged file", () =>
-  fixture(async (input, target) => {
-    let handle: Awaited<ReturnType<typeof NodeFSP.open>> | undefined;
-    try {
-      await mutateRetainedFile(input, target, {
-        at: async (point) => {
-          if (point === "checked") await NodeFSP.writeFile(target, "A");
-          if (point === "displaced") handle = await NodeFSP.open(target, "r+");
-        },
-      });
-      await handle!.truncate(0);
-      await handle!.writeFile("held staged user edit");
-      await handle!.sync();
-      const recovered = await mutateRetainedFile(input, target);
-      expect(recovered.retainedPath).not.toBeNull();
-      expect(await NodeFSP.readFile(recovered.retainedPath!, "utf8")).toBe("held staged user edit");
-    } finally {
-      await handle?.close();
-    }
-  }, true),
-);
-
-describe.skipIf(!available)("restoration revision continuity", () => {
-  it.each(["between-rounds", "round-admitted", "crash-intent"])(
-    "keeps C written at %s without blessing it as harmless displacement",
-    (point) =>
-      fixture(async (input, target, root) => {
-        const swap = async (value: string) => {
-          const writer = NodePath.join(root, "writer");
-          await NodeFSP.writeFile(writer, value);
-          await NodeFSP.rename(writer, target);
-        };
-        let wrote = false,
-          crashed = false;
-        const applying = mutateRetainedFile(input, target, {
-          at: async (p) => {
-            if (p === "checked") await swap("A");
-            if (p === "restore-intent") await swap("B");
-            if (
-              !wrote &&
-              p === (point === "between-rounds" ? "between-rounds" : "round-admitted")
-            ) {
-              wrote = true;
-              await NodeFSP.writeFile(target, "C newest");
-            }
-            if (point === "crash-intent" && p === "return-intent" && !crashed) {
-              crashed = true;
-              throw new Error("crash");
-            }
-          },
-        });
-        if (point === "crash-intent") await expect(applying).rejects.toThrow("crash");
-        else await applying;
-        const recovered = await mutateRetainedFile(input, target);
+        ).rejects.toThrow("process died");
+        await NodeFSP.writeFile(target, "C");
+        const foreign = await fileIdentity(target);
+        const recovered = await mutateRetainedFile(creation, target);
         expect(recovered.outcome).toBe("attention");
-        expect(await NodeFSP.readFile(target, "utf8")).toBe("C newest");
-      }, true),
-  );
+        expect(await fileIdentity(target)).toEqual(foreign);
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
+        expect(await NodeFSP.readFile(recovered.retainedPath!, "utf8")).toBe("C");
+      }));
+  }
 });

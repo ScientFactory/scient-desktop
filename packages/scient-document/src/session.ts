@@ -13,12 +13,18 @@ export interface DocumentSession {
   readonly editVersion: number;
   readonly confirmedEditVersion: number;
   readonly conflict: DocumentExternalConflict | null;
+  /** The acknowledged source remains historical when an explicitly reviewed path is absent. */
+  readonly currentMissing?: boolean;
 }
 
 export interface DocumentSaveIntent {
+  /** Identity of one logical publication; replay this same intent after ambiguity. */
+  readonly mutationId: string;
   readonly source: string;
   readonly expectedRevision: string;
   readonly editVersion: number;
+  /** Exclusive recreation after reviewed absence; transports must omit the historical revision guard. */
+  readonly createOnly?: true;
 }
 
 export function createDocumentSession(input: {
@@ -56,11 +62,18 @@ export function applyUserDocumentSource(session: DocumentSession, source: string
 }
 
 export function beginDocumentSave(session: DocumentSession): DocumentSaveIntent | null {
-  if (session.conflict !== null || session.draftSource === session.baselineSource) return null;
+  if (
+    session.conflict !== null ||
+    (!session.currentMissing && session.draftSource === session.baselineSource)
+  )
+    return null;
   return {
+    // @effect-diagnostics-next-line cryptoRandomUUID:off -- This synchronous, framework-free session boundary also runs in browser editors.
+    mutationId: crypto.randomUUID(),
     source: session.draftSource,
     expectedRevision: session.baselineRevision,
     editVersion: session.editVersion,
+    ...(session.currentMissing ? { createOnly: true as const } : {}),
   };
 }
 
@@ -74,12 +87,18 @@ export function confirmDocumentSave(
   revision: string,
 ): DocumentSession {
   if (intent.expectedRevision !== session.baselineRevision) return session;
-  if (intent.editVersion <= session.confirmedEditVersion) return session;
+  if (
+    intent.editVersion < session.confirmedEditVersion ||
+    (intent.editVersion === session.confirmedEditVersion &&
+      !(intent.createOnly === true && session.currentMissing))
+  )
+    return session;
   return {
     ...session,
     baselineSource: intent.source,
     baselineRevision: revision,
     confirmedEditVersion: intent.editVersion,
+    currentMissing: false,
     // A later observed external write is not undone by an older command's
     // acknowledgement. Keep the explicit conflict until the user resolves it.
     conflict: session.conflict?.externalSource === intent.source ? null : session.conflict,
@@ -91,7 +110,7 @@ export function receiveExternalDocumentSource(
   session: DocumentSession,
   input: { readonly source: string; readonly revision: string },
 ): DocumentSession {
-  const locallyDirty = session.draftSource !== session.baselineSource;
+  const locallyDirty = session.currentMissing || session.draftSource !== session.baselineSource;
   if (!locallyDirty || input.source === session.draftSource) {
     return {
       ...session,
@@ -99,15 +118,17 @@ export function receiveExternalDocumentSource(
       baselineRevision: input.revision,
       draftSource: input.source,
       confirmedEditVersion: session.editVersion,
+      currentMissing: false,
       conflict: null,
     };
   }
   if (input.source === session.baselineSource) {
-    return { ...session, baselineRevision: input.revision };
+    return { ...session, currentMissing: false, baselineRevision: input.revision };
   }
   return {
     ...session,
     conflict: { externalSource: input.source, externalRevision: input.revision },
+    currentMissing: false,
   };
 }
 

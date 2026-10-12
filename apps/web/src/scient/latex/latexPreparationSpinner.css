@@ -1,0 +1,20 @@
+[data-latex-preparation-spinner] {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: scient-latex-preparing 1s steps(12) infinite;
+}
+@keyframes scient-latex-preparing {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-latex-preparation-spinner] {
+    animation: none;
+  }
+}

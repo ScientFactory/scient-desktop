@@ -27,6 +27,7 @@ const selectTriggerVariants = cva(
       width: {
         default: "",
         content: "w-auto min-w-0 px-2",
+        fluid: "w-full min-w-0",
       },
       size: {
         compact:
@@ -44,6 +45,7 @@ function SelectTrigger({
   className,
   size = "default",
   variant = "default",
+  width = "default",
   children,
   icon,
   ...props
@@ -51,7 +53,7 @@ function SelectTrigger({
   VariantProps<typeof selectTriggerVariants> & { icon?: React.ReactNode }) {
   return (
     <SelectPrimitive.Trigger
-      className={cn(selectTriggerVariants({ size, variant }), className)}
+      className={cn(selectTriggerVariants({ size, variant, width }), className)}
       data-slot="select-trigger"
       {...props}
     >

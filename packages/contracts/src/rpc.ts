@@ -250,6 +250,15 @@ import {
   ProjectRenameFileError,
   ProjectRenameFileInput,
   ProjectRenameFileResult,
+  ProjectDeleteFileError,
+  ProjectDeleteFileInput,
+  ProjectDeleteFileResult,
+  ProjectListFileVersionsInput,
+  ProjectListFileVersionsResult,
+  ProjectDiscardFileVersionInput,
+  ProjectDiscardFileVersionResult,
+  ProjectResolveFileMutationInput,
+  ProjectResolveFileMutationResult,
   ProjectFileWatchEvent,
   ProjectSubscribeFileChangesInput,
   ProjectSearchContentsError,
@@ -462,6 +471,10 @@ export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
   projectsReadFile: "projects.readFile",
   projectsRenameFile: "projects.renameFile",
+  projectsDeleteFile: "projects.deleteFile",
+  projectsListFileVersions: "projects.listFileVersions",
+  projectsDiscardFileVersion: "projects.discardFileVersion",
+  projectsResolveFileMutation: "projects.resolveFileMutation",
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
@@ -1351,6 +1364,30 @@ const WsProjectsRenameFileRpc = Rpc.make(WS_METHODS.projectsRenameFile, {
   error: Schema.Union([ProjectRenameFileError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsDeleteFileRpc = Rpc.make(WS_METHODS.projectsDeleteFile, {
+  payload: ProjectDeleteFileInput,
+  success: ProjectDeleteFileResult,
+  error: Schema.Union([ProjectDeleteFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsListFileVersionsRpc = Rpc.make(WS_METHODS.projectsListFileVersions, {
+  payload: ProjectListFileVersionsInput,
+  success: ProjectListFileVersionsResult,
+  error: Schema.Union([ProjectReadFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsDiscardFileVersionRpc = Rpc.make(WS_METHODS.projectsDiscardFileVersion, {
+  payload: ProjectDiscardFileVersionInput,
+  success: ProjectDiscardFileVersionResult,
+  error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsResolveFileMutationRpc = Rpc.make(WS_METHODS.projectsResolveFileMutation, {
+  payload: ProjectResolveFileMutationInput,
+  success: ProjectResolveFileMutationResult,
+  error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsSubscribeFileChangesRpc = Rpc.make(WS_METHODS.projectsSubscribeFileChanges, {
   payload: ProjectSubscribeFileChangesInput,
   success: ProjectFileWatchEvent,
@@ -2158,6 +2195,10 @@ export const WsRepositoryRpcGroup = RpcGroup.make(
   WsSubscribeDocumentBindingChangesRpc,
   WsProjectsWriteFileRpc,
   WsProjectsRenameFileRpc,
+  WsProjectsDeleteFileRpc,
+  WsProjectsListFileVersionsRpc,
+  WsProjectsDiscardFileVersionRpc,
+  WsProjectsResolveFileMutationRpc,
   WsAnalysisInspectRuntimesRpc,
 );
 

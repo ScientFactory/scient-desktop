@@ -53,20 +53,11 @@ function assertSafeBoundary(source: string, offset: number): void {
   }
 }
 
-/**
- * Apply exact source patches, all or none. This knows nothing about a document
- * format or an editor: callers first constrain the patches to the source ranges
- * their edit owns.
- *
- * Patches may come in any order and must not overlap. Patches that start at the
- * same offset are applied in the order given, insertions first; so two
- * insertions at one offset appear in the order given, and an insertion at the
- * start of a replaced range lands before the replacement.
- */
-export function applyDocumentSourcePatches(
+/** Validate and order a plan without allocating a replacement document. */
+export function validateDocumentSourcePatches(
   source: string,
   patches: ReadonlyArray<DocumentSourcePatch>,
-): string {
+): ReadonlyArray<DocumentSourcePatch> {
   const ordered = patches.toSorted(
     (left, right) => left.start - right.start || left.end - right.end,
   );
@@ -94,6 +85,19 @@ export function applyDocumentSourcePatches(
     }
     previousEnd = patch.end;
   }
+  return ordered;
+}
+
+/**
+ * Apply exact source patches, all or none. Callers first constrain the ranges
+ * to their source ownership. Equal-offset insertions keep their input order
+ * and precede a replacement starting at the same offset.
+ */
+export function applyDocumentSourcePatches(
+  source: string,
+  patches: ReadonlyArray<DocumentSourcePatch>,
+): string {
+  const ordered = validateDocumentSourcePatches(source, patches);
 
   let cursor = 0;
   let output = "";

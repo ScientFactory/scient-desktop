@@ -6,6 +6,12 @@ import { isMacPlatform } from "~/lib/utils";
 import { commandKeys } from "../keyboard/preferences";
 import { surfaceCommands } from "../keyboard/catalog";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
+import {
+  ariaShortcut,
+  compactMacKeyLabel,
+  presentCommandKeys,
+  runtimePlatform,
+} from "../keyboard/presentation";
 
 export {
   SCIENT_MARKDOWN_FOCUS_SHORTCUT_IDS,
@@ -22,10 +28,6 @@ import {
   type ScientMarkdownShortcutPresentation,
 } from "./shortcutDefinitions";
 
-function runtimePlatform(): string {
-  return typeof navigator === "undefined" ? "" : navigator.platform;
-}
-
 function primaryBinding(definition: ShortcutDefinition, platform: string): KeybindingShortcut {
   const index = isMacPlatform(platform) ? (definition.macPrimary ?? 0) : 0;
   return definition.bindings[index] ?? definition.bindings[0]!;
@@ -39,55 +41,6 @@ function orderedBindings(
   return [primary, ...definition.bindings.filter((binding) => binding !== primary)];
 }
 
-function compactMacKeyLabel(label: string, key: string): string {
-  const replacement =
-    key === "enter"
-      ? "↩"
-      : key === "arrowup"
-        ? "↑"
-        : key === "arrowdown"
-          ? "↓"
-          : key === "arrowleft"
-            ? "←"
-            : key === "arrowright"
-              ? "→"
-              : null;
-  if (replacement === null) return label;
-  const longLabel =
-    key === "enter"
-      ? "Enter"
-      : key === "arrowup"
-        ? "Up"
-        : key === "arrowdown"
-          ? "Down"
-          : key === "arrowleft"
-            ? "Left"
-            : "Right";
-  return label.endsWith(longLabel) ? `${label.slice(0, -longLabel.length)}${replacement}` : label;
-}
-
-function ariaKeyLabel(key: string): string {
-  if (key.length === 1) return key.toUpperCase();
-  if (key === "escape") return "Escape";
-  if (key === "enter") return "Enter";
-  if (key === "arrowup") return "ArrowUp";
-  if (key === "arrowdown") return "ArrowDown";
-  if (key === "arrowleft") return "ArrowLeft";
-  if (key === "arrowright") return "ArrowRight";
-  return key.slice(0, 1).toUpperCase() + key.slice(1);
-}
-
-function ariaShortcut(binding: KeybindingShortcut, platform: string): string {
-  const mac = isMacPlatform(platform);
-  const parts: string[] = [];
-  if (binding.ctrlKey || (binding.modKey && !mac)) parts.push("Control");
-  if (binding.metaKey || (binding.modKey && mac)) parts.push("Meta");
-  if (binding.altKey) parts.push("Alt");
-  if (binding.shiftKey) parts.push("Shift");
-  parts.push(ariaKeyLabel(binding.key));
-  return parts.join("+");
-}
-
 /** One source of truth for tooltip text and assistive shortcut metadata. */
 export function scientMarkdownShortcut(
   id: ScientMarkdownShortcutId,
@@ -96,31 +49,7 @@ export function scientMarkdownShortcut(
   const configurable = surfaceCommands(isMacPlatform(platform)).some(
     (command) => command.id === "markdown." + id,
   );
-  if (configurable) {
-    const keys = commandKeys("markdown." + id, isMacPlatform(platform));
-    return {
-      display: keys
-        .map((key) =>
-          key
-            .split(" ")
-            .map((stroke) => {
-              const binding = parseKeybindingShortcut(stroke.replaceAll("plus", "+"));
-              if (!binding) return stroke;
-              const label = formatShortcutLabel(binding, platform);
-              return isMacPlatform(platform) ? compactMacKeyLabel(label, binding.key) : label;
-            })
-            .join(" → "),
-        )
-        .join(" / "),
-      ariaKeyShortcuts: keys
-        .filter((key) => !key.includes(" "))
-        .flatMap((key) => {
-          const binding = parseKeybindingShortcut(key.replaceAll("plus", "+"));
-          return binding ? [ariaShortcut(binding, platform)] : [];
-        })
-        .join(" "),
-    };
-  }
+  if (configurable) return presentCommandKeys("markdown." + id, platform);
   const definition = SHORTCUTS[id];
   const bindings = orderedBindings(definition, platform);
   const primary = bindings[0]!;

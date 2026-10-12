@@ -4,9 +4,9 @@ import {
   clearProjectFileQueryData,
   projectReadFailure,
   refreshProjectEntriesQuery,
-  setProjectFileQueryData,
 } from "~/components/files/projectFilesQueryState";
 import { Button } from "~/components/ui/button";
+import { templateEdits } from "~/scient/documents/newDocuments";
 import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import type { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceLease";
 
@@ -55,34 +55,26 @@ export function scientDocumentSessionFile(
   return { markdownRefreshFailure, markdownRefreshCopy, file };
 }
 
-/** Moves the viewer and its caches to a renamed rich Markdown document. */
-export function applyScientMarkdownRename(input: {
+/** Moves the existing file tab to its new path, then reads the new path from disk. */
+export function applyScientFileRename(input: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
-  readonly fileData: { readonly contents: string } | null;
+  readonly usesDocumentSession: boolean;
   readonly destinationRelativePath: string;
-  readonly revision: string;
-  readonly onOpenFile: (relativePath: string) => void;
+  readonly onFileRenamed: (fromPath: string, toPath: string) => void;
 }) {
-  const { environmentId, cwd, relativePath, destinationRelativePath, revision } = input;
-  markdownPersistenceRegistry.forgetClean({
-    environmentId,
-    cwd,
-    relativePath,
-  });
-  if (input.fileData) {
-    setProjectFileQueryData(
-      environmentId,
-      cwd,
-      destinationRelativePath,
-      input.fileData.contents,
-      revision,
-    );
+  const { environmentId, cwd, relativePath, destinationRelativePath } = input;
+  if (input.usesDocumentSession) {
+    markdownPersistenceRegistry.forgetClean({ environmentId, cwd, relativePath });
   }
+  templateEdits.move(
+    { environmentId, cwd, relativePath },
+    { environmentId, cwd, relativePath: destinationRelativePath },
+  );
   clearProjectFileQueryData(environmentId, cwd, relativePath);
   refreshProjectEntriesQuery(environmentId, cwd);
-  input.onOpenFile(destinationRelativePath);
+  input.onFileRenamed(relativePath, destinationRelativePath);
 }
 
 /**

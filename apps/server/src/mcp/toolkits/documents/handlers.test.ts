@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
@@ -42,7 +43,12 @@ import {
   WorkspaceBindingResolver,
   type WorkspaceBindingDiagnosticResolution,
 } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import { filePublicationTestHelper } from "../../../scient/workspace/fileExchange.testkit.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
+import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceEntries from "../../../workspace/WorkspaceEntries.ts";
+import * as VcsDriverRegistry from "../../../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import { buildScientPdfForInvocation } from "./handlers.ts";
@@ -56,11 +62,28 @@ const defaultBuildInput = {
   outputPath: "outputs/report.pdf",
 } as const;
 
-const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
-  prefix: "scient-html-pdf-handler-test-",
-});
+const publicationHelper = await filePublicationTestHelper();
+const configLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({
+      prefix: "scient-html-pdf-handler-test-",
+    });
+    return ServerConfig.layerTest(
+      process.cwd(),
+      yield* fs.realPath(directory),
+      publicationHelper === undefined ? {} : { filePublicationHelperPath: publicationHelper },
+    );
+  }),
+);
 const assetLayer = Layer.mergeAll(
   configLayer,
+  WorkspaceFileSystem.layer.pipe(
+    Layer.provide(configLayer),
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+    Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
+  ),
   WorkspacePaths.layer,
   ProjectFaviconResolver.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
@@ -70,7 +93,9 @@ const assetLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 async function fixture(prefix: string): Promise<string> {
-  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), prefix));
+  const root = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), prefix)),
+  );
   fixtures.push(root);
   return root;
 }
@@ -177,13 +202,22 @@ function makeBroker(options?: {
   readonly onRender?: () => Promise<void>;
   readonly renderResult?: unknown;
   readonly failPresentation?: boolean;
+  readonly duringRender?: Effect.Effect<
+    void,
+    WorkspaceFileSystem.WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError,
+    WorkspaceFileSystem.WorkspaceFileSystem
+  >;
 }) {
   const invoke = vi.fn((request: DocumentHostBroker.DocumentHostInvokeInput) =>
     request.operation === "documentPdfRender"
-      ? Effect.promise(async () => {
-          await options?.onRender?.();
-          return options?.renderResult ?? renderResult;
-        })
+      ? (options?.duringRender ?? Effect.void).pipe(
+          Effect.andThen(
+            Effect.promise(async () => {
+              await options?.onRender?.();
+              return options?.renderResult ?? renderResult;
+            }),
+          ),
+        )
       : options?.failPresentation === true
         ? Effect.fail({ _tag: "PreviewAutomationNoAvailableHostError" } as never)
         : Effect.succeed({}),
@@ -420,12 +454,6 @@ describe("Scient PDF build handler", () => {
       });
       const store = makeStore();
       const broker = makeBroker();
-      yield* Effect.promise(() =>
-        NodeFSP.mkdir(NodePath.join(worktreeRoot, "outputs"), { recursive: true }),
-      );
-      yield* Effect.promise(() =>
-        NodeFSP.writeFile(NodePath.join(worktreeRoot, defaultBuildInput.outputPath), "old PDF"),
-      );
 
       const result = yield* runBuild(buildScientPdfForInvocation(defaultBuildInput), {
         invocation: makeInvocation(threadId),
@@ -475,6 +503,55 @@ describe("Scient PDF build handler", () => {
       );
       expect(writtenPdf).toEqual(Buffer.from(minimalPdf("controlled-render")));
     }),
+  );
+
+  it.effect.each([false, true])(
+    "publishes an observed existing PDF and preserves a competing edit during render, changed=%s",
+    (changedDuringRender) =>
+      Effect.gen(function* () {
+        const root = yield* Effect.promise(() => fixture("scient-pdf-native-refusal-"));
+        yield* Effect.promise(() => writeHtml(root));
+        const outputPath = NodePath.join(root, defaultBuildInput.outputPath);
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(NodePath.dirname(outputPath), { recursive: true });
+          await NodeFSP.writeFile(outputPath, "original PDF");
+        });
+        const projectId = ProjectId.make("project-pdf-native-refusal");
+        const threadId = ThreadId.make("thread-pdf-native-refusal");
+        const store = makeStore();
+        const result = yield* runBuild(buildScientPdfForInvocation(defaultBuildInput), {
+          invocation: makeInvocation(threadId),
+          query: makeQuery({
+            project: makeProject(projectId, root),
+            thread: makeThread({ threadId, projectId }),
+          }),
+          store: store.store,
+          broker: makeBroker(
+            changedDuringRender
+              ? { onRender: () => NodeFSP.writeFile(outputPath, "outside D") }
+              : {},
+          ).broker,
+        }).pipe(Effect.result);
+        if (!changedDuringRender) {
+          expect(result._tag).toBe("Success");
+          expect(yield* Effect.promise(() => NodeFSP.readFile(outputPath))).toEqual(
+            Buffer.from(minimalPdf("controlled-render")),
+          );
+          return;
+        }
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: {
+            code: "partial-publication",
+            publicationOutcome: "unchanged",
+            publishedSource: source,
+            outputPath: defaultBuildInput.outputPath,
+            mutationId: expect.any(String),
+          },
+        });
+        const current = yield* Effect.promise(() => NodeFSP.readFile(outputPath, "utf8"));
+        expect(current).toBe("outside D");
+      }),
   );
 
   it.effect("rejects missing authority and projectless invocations before rendering", () =>
@@ -662,6 +739,79 @@ describe("Scient PDF build handler", () => {
     }),
   );
 
+  for (const relativePath of ["documents/report.html", "documents/figure.png"]) {
+    it.effect(`refuses a PDF after first-party A→B→A mutations of ${relativePath}`, () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.promise(() => fixture("scient-pdf-epoch-aba-"));
+        yield* Effect.promise(() => writeHtml(root));
+        if (relativePath !== defaultBuildInput.sourcePath) {
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(NodePath.join(root, relativePath), "asset A"),
+          );
+        }
+        const original = yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(root, relativePath)),
+        );
+        const projectId = ProjectId.make("project-pdf-epoch-aba");
+        const threadId = ThreadId.make("thread-pdf-epoch-aba");
+        const store = makeStore();
+        const broker = makeBroker({
+          duringRender: Effect.gen(function* () {
+            const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+            const before = yield* workspace.readFile({ cwd: root, relativePath });
+            yield* workspace.deleteFile({
+              cwd: root,
+              relativePath,
+              expectedRevision: before.revision,
+              mutationId: "aba-remove-A",
+            });
+            const changed = yield* workspace.createBinaryFile({
+              cwd: root,
+              relativePath,
+              bytes: new TextEncoder().encode("B"),
+              mutationId: "aba-create-B",
+            });
+            yield* workspace.deleteFile({
+              cwd: root,
+              relativePath,
+              expectedRevision: changed.revision,
+              mutationId: "aba-remove-B",
+            });
+            yield* workspace.createBinaryFile({
+              cwd: root,
+              relativePath,
+              bytes: original,
+              mutationId: "aba-restore-A",
+            });
+          }),
+        });
+        const result = yield* runBuild(buildScientPdfForInvocation(defaultBuildInput), {
+          invocation: makeInvocation(threadId),
+          query: makeQuery({
+            project: makeProject(projectId, root),
+            thread: makeThread({ threadId, projectId }),
+          }),
+          store: store.store,
+          broker: broker.broker,
+        }).pipe(Effect.result);
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: { code: "source-changed" },
+        });
+        expect(store.publishPdf).not.toHaveBeenCalled();
+        const restored = yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(root, relativePath)),
+        );
+        expect(restored).toEqual(original);
+        yield* Effect.promise(async () => {
+          await expect(
+            NodeFSP.access(NodePath.join(root, defaultBuildInput.outputPath)),
+          ).rejects.toBeDefined();
+        });
+      }),
+    );
+  }
+
   it.effect("abandons malformed renderer output and marks publication failures", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-pdf-failures-"));
@@ -749,7 +899,7 @@ describe("Scient PDF build handler", () => {
     }),
   );
 
-  it.effect("returns a partial-publication receipt if the staged output cannot be committed", () =>
+  it.effect("returns a partial-publication receipt if the project output cannot be accepted", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-pdf-output-race-"));
       yield* Effect.promise(() => writeHtml(root));
@@ -799,13 +949,14 @@ describe("Scient PDF build handler", () => {
     }),
   );
 
-  it.effect("refuses to follow an output-directory symlink introduced after staging", () =>
+  it.effect("refuses to follow an output-directory symlink introduced after output planning", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-pdf-output-symlink-root-"));
       const outside = yield* Effect.promise(() => fixture("scient-pdf-output-symlink-outside-"));
       yield* Effect.promise(() => writeHtml(root));
       const outputDirectory = NodePath.join(root, "outputs");
       const displacedDirectory = NodePath.join(root, "outputs-displaced");
+      yield* Effect.promise(() => NodeFSP.mkdir(outputDirectory, { recursive: true }));
       const projectId = ProjectId.make("project-pdf-output-symlink-race");
       const threadId = ThreadId.make("thread-pdf-output-symlink-race");
       const query = makeQuery({

@@ -99,8 +99,10 @@ const FAILURE_KINDS: readonly DocumentPersistenceFailureKind[] = [
   "disconnected",
 ];
 
-const classifyFailure = (error: unknown): DocumentPersistenceFailureKind =>
-  FAILURE_KINDS.find((kind) => kind === error) ?? "terminal";
+const classifyFailure = (error: unknown): DocumentPersistenceFailureKind => {
+  const kind = typeof error === "object" && error !== null && "kind" in error ? error.kind : error;
+  return FAILURE_KINDS.find((candidate) => candidate === kind) ?? "terminal";
+};
 
 export function seededRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -123,6 +125,10 @@ export async function runStressScenario<R extends DocumentReconciliation>(
   let counter = 0;
   let disk = { source: format.initial, revision: "r0" };
   const pending: Pending[] = [];
+  const receipts = new Map<
+    string,
+    { readonly intent: DocumentSaveIntent; readonly revision: string }
+  >();
   // Values each side set that must survive unless that side's changes were
   // explicitly discarded through a conflict choice.
   let localExpectations = new Map<string, string | undefined>();
@@ -157,6 +163,13 @@ export async function runStressScenario<R extends DocumentReconciliation>(
       source,
       revision,
       classifyFailure,
+      describeOutcome: (error) =>
+        typeof error === "object" &&
+        error !== null &&
+        "publicationOutcome" in error &&
+        error.publicationOutcome === "unchanged"
+          ? "unchanged"
+          : null,
       debounceMs: DEBOUNCE_MS,
       maxWaitMs: MAX_WAIT_MS,
       retryDelaysMs: [10, 20, 40],
@@ -253,15 +266,28 @@ export async function runStressScenario<R extends DocumentReconciliation>(
       return;
     }
     const { intent } = operation;
-    if (intent.expectedRevision !== disk.revision) {
-      operation.reject("conflict");
+    const receipt = receipts.get(intent.mutationId);
+    if (receipt !== undefined) {
+      if (
+        receipt.intent.source !== intent.source ||
+        receipt.intent.expectedRevision !== intent.expectedRevision ||
+        receipt.intent.createOnly !== intent.createOnly
+      ) {
+        violation("a mutation identity was reused for a different publication");
+        operation.reject("mutation_intent_conflict");
+      } else operation.resolve({ revision: receipt.revision });
+      return;
+    }
+    if (intent.createOnly === true || intent.expectedRevision !== disk.revision) {
+      operation.reject({ kind: "conflict", publicationOutcome: "unchanged" });
       return;
     }
     const before = failures ? next() : 1;
     // The request never reached the file.
     if (before < 0.05) return operation.reject("transient");
     if (before < 0.07) return operation.reject("disconnected");
-    if (before < 0.08) return operation.reject("operation");
+    if (before < 0.08)
+      return operation.reject({ kind: "operation", publicationOutcome: "unchanged" });
     const previous = format.values(disk.source);
     const written = format.values(intent.source);
     for (const [key, value] of agentExpectations) {
@@ -275,6 +301,7 @@ export async function runStressScenario<R extends DocumentReconciliation>(
     checkPublished(intent.source, "write");
     counter += 1;
     disk = { source: intent.source, revision: `w${counter}` };
+    receipts.set(intent.mutationId, { intent, revision: disk.revision });
     const after = failures ? next() : 1;
     // Published, but the acknowledgement was lost.
     if (after < 0.06) return operation.reject("transient");
@@ -419,6 +446,8 @@ export async function runStressScenario<R extends DocumentReconciliation>(
     else if (roll < 0.87) await toggleConnection();
     else if (roll < 0.9) toggleComposition();
     else if (snapshot().conflict !== null) choose();
+    else if (snapshot().attention !== null && snapshot().publicationOutcome === "unchanged")
+      void current.coordinator.reviewUnchangedRefusal(disk.revision);
     else if (snapshot().error !== null) void current.coordinator.retry();
     else if (roll < 0.95) current.coordinator.setConnected(true);
     await settle();
@@ -435,6 +464,8 @@ export async function runStressScenario<R extends DocumentReconciliation>(
     if (composing) toggleComposition();
     // The watcher eventually reports the last agent write, even if no hint did.
     if (round === 0) current.coordinator.noteFreshnessHint();
+    if (snapshot().attention !== null && snapshot().publicationOutcome === "unchanged")
+      void current.coordinator.reviewUnchangedRefusal(disk.revision);
     while (pending.length > 0) {
       completeOldest(false);
       await settle();

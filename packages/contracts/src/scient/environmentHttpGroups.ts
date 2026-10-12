@@ -60,6 +60,8 @@ import {
 } from "../scientSources.ts";
 import {
   ScientLatexBuildRequest,
+  ScientLatexArtworkRequest,
+  ScientLatexArtworkResult,
   ScientLatexBuildSnapshot,
   ScientLatexCancelRequest,
   ScientLatexForwardSyncRequest,
@@ -374,6 +376,24 @@ export function makeScientEnvironmentHttpGroups({
 
   class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLatex")
     .add(
+      HttpApiEndpoint.post("imageUpload", "/api/scient/latex/images/upload", {
+        headers: OptionalBearerHeaders,
+        payload: ScientMarkdownImageUploadRequest,
+        success: ScientMarkdownImageUploadResult,
+        error: [
+          EnvironmentRequestInvalidError,
+          EnvironmentAuthInvalidError,
+          EnvironmentScopeRequiredError,
+          EnvironmentOperationForbiddenError,
+          EnvironmentResourceNotFoundError,
+          EnvironmentInternalError,
+          ScientMarkdownImageInvalidError,
+          ScientMarkdownImageTooLargeError,
+          ScientMarkdownImageConflictError,
+        ],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
       HttpApiEndpoint.post("resolve", "/api/scient/latex/resolve", {
         headers: OptionalBearerHeaders,
         payload: ScientLatexResolveRequest,
@@ -386,6 +406,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientLatexBuildRequest,
         success: ScientLatexBuildSnapshot,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("artwork", "/api/scient/latex/artwork", {
+        headers: OptionalBearerHeaders,
+        payload: ScientLatexArtworkRequest,
+        success: ScientLatexArtworkResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

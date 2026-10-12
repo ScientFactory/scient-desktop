@@ -1,0 +1,117 @@
+% Synthetic layout and editing checks; independent of the thesis.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=22mm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,multicol,booktabs,tabularx,graphicx}
+\usepackage[most]{tcolorbox}
+\usepackage[colorlinks=true]{hyperref}
+\setlength{\columnsep}{18pt}
+\setlength{\columnseprule}{0.4pt}
+\newtheorem{lemma}{Lemma}
+\begin{document}
+\section{Two-column article}
+Full-width introduction before two columns. These are synthetic editing examples.
+\begin{multicols}{2}
+\subsection{Explanation}
+The left column combines prose, an inline expression \(a+b\), and a short list.
+The text should wrap within its own column and remain directly editable.
+\begin{itemize}
+\item A first observation with \(x^2\).
+\item A second observation with \textbf{bold text}.
+\end{itemize}
+\begin{lemma}For real \(x\), \(x^2\geq0\).\end{lemma}
+\begin{proof}The product of equal signs is nonnegative.\end{proof}
+\par\columnbreak
+\subsection{Calculation}
+The right column contains an aligned calculation and a small nonfloating table.
+\begin{align*}
+S_n&=1+\cdots+n\\
+&=\frac{n(n+1)}{2}
+\end{align*}
+\begin{center}
+\begin{tabular}{lr}\toprule Item & Value\\\midrule Alpha & 1\\Beta & 2\\\bottomrule\end{tabular}
+\end{center}
+An annotation \(\underbrace{1+\cdots+1}_{n\text{ terms}}\) is editable here.
+\end{multicols}
+Full-width conclusion after the columns.
+\clearpage
+\section{Three-column reference sheet}
+\begin{multicols}{3}
+\subsection{Definition}
+Three narrow columns should share the available text width with the configured gap.
+\begin{description}\item[Input] A list of values.\item[Output] Their sum.\end{description}
+\par\columnbreak
+\subsection{Formula}
+\[\frac{a+b}{c+d}\]
+Edit the fraction and the text below without affecting another column.
+\begin{enumerate}\item Read.\item Compute.\item Check.\end{enumerate}
+\par\columnbreak
+\subsection{Summary}
+\begin{tcolorbox}[title=Key point,colback=blue!5,colframe=blue!50!black]
+This box stays inside a column. It contains \(x=1\) and editable text.
+\end{tcolorbox}
+All three headings belong to this section.
+\end{multicols}
+Full-width text resumes again.
+\clearpage
+\section{Side-by-side panels}
+\noindent
+\begin{minipage}[t]{0.46\linewidth}
+\textbf{Left comparison}\par
+This independent block is wider than a narrow column.
+\begin{itemize}\item First item.\item Second item with \(u+v\).\end{itemize}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.46\linewidth}
+\textbf{Right comparison}\par
+\begin{tabularx}{\linewidth}{Xr}\toprule Description & Value\\\midrule A cell that can wrap & 4\\Another cell & 5\\\bottomrule\end{tabularx}
+\end{minipage}
+\par\bigskip\noindent
+\begin{minipage}[t]{0.30\linewidth}
+\textbf{First card}\par Text and \(a=1\).
+\end{minipage}\hspace{0.05\linewidth}%
+\begin{minipage}[t]{0.30\linewidth}
+\textbf{Second card}\par A longer middle card that wraps onto several lines.
+\end{minipage}\hspace{0.05\linewidth}%
+\begin{minipage}[t]{0.30\linewidth}
+\textbf{Third card}\par Text and \(c=3\).
+\end{minipage}
+\par\bigskip
+Full-width paragraph after both panel rows.
+\clearpage
+\section{Nested local widths}
+\noindent
+\begin{minipage}[t]{0.62\linewidth}
+\textbf{Nested panels}\par
+\noindent\begin{minipage}[t]{0.46\linewidth}Inner left text with \(p=q\).\end{minipage}\hfill
+\begin{minipage}[t]{0.46\linewidth}Inner right text with \textit{emphasis}.\end{minipage}
+\par\medskip
+\begin{multicols}{2}
+Local columns use this panel's width. The gap stays the configured size.
+
+A second paragraph balances the local column layout.
+\end{multicols}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.32\linewidth}
+\textbf{Sidebar}\par
+\begin{tcolorbox}[colback=green!5,colframe=green!40!black]
+Editable note with \(z^2\).
+\end{tcolorbox}
+\end{minipage}
+\par\bigskip
+Full-width text remains below the nested layout.
+\clearpage
+\section{Fixed-height panels}
+\noindent
+\begin{minipage}[t][36mm][t]{0.46\linewidth}
+\textbf{Top-aligned content}\par This is at the top of its panel.
+\end{minipage}\hfill
+\begin{minipage}[t][36mm][b]{0.46\linewidth}
+\textbf{Bottom-aligned content}\par This is at the bottom of its panel.
+\end{minipage}
+\par
+The panels reserve the same height before this full-width paragraph.
+\begin{figure}[htbp]\centering
+\fbox{\rule{0pt}{15mm} Figure placeholder}
+\caption{A figure after the panels.}\label{fig:layout}
+\end{figure}
+See Figure~\ref{fig:layout}.
+\end{document}

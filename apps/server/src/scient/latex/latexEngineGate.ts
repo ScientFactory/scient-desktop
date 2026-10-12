@@ -1,20 +1,15 @@
 /**
- * Whether a LaTeX document can compile under the engine Scient currently
- * drives, or asks for one it does not.
+ * Select a declared compiler and check whether the default pdfLaTeX lane can
+ * process the document. Only fixed engine names become invocation flags.
  *
- * `latexCommand.ts` invokes `latexmk` with `-pdf`, which drives `pdflatex`
- * underneath — Scient does not run XeLaTeX or LuaLaTeX yet. A document that
- * asks for one of those, through the `% !TEX program = …` magic comment
- * editors like TeXShop and TeXstudio read and write, or by loading
- * `fontspec`/`unicode-math` — packages pdfLaTeX cannot process at all — would
- * either compile with the wrong fonts silently accepted and ignored, or fail
- * deep inside a TeX error a reader has no way to map back to "wrong engine".
- * Reading the document before a build starts and saying plainly what it
- * found and what engine it wants is the honest alternative to either.
+ * Without a directive, `latexCommand.ts` uses `latexmk -pdf` unless an
+ * unconditional Unicode-font package requires XeLaTeX. Explicit
+ * `% !TEX program = …` declarations select the compiler through latexmk.
+ * Explicit pdfLaTeX still reports incompatible `fontspec`/`unicode-math` loads.
  *
  * Two kinds of finding, and they are not equally strong. The magic comment is
  * an author's declaration — they wrote down which engine this document is for
- * — so it refuses unconditionally. A package load is an inference, and the
+ * — so selection honors it. A package load is an inference, and the
  * inference is wrong for every document that guards the load behind an engine
  * test. Pandoc's default template is exactly that document: it loads `iftex`
  * and then `\ifPDFTeX … \else \usepackage{unicode-math} \usepackage{fontspec}
@@ -25,15 +20,15 @@
  * text, not TeX; it cannot evaluate the branch, and refusing a document it
  * merely failed to understand is worse than letting the engine answer.
  *
- * Pure and read-only: everything here is a function of source text a caller
- * already has in memory, and it decides nothing about what happens next.
- * `LatexBuildService.ts` runs it on the root document's head, once per build,
- * before the engine starts and only on the `latexmk` path.
+ * Pure and read-only: selection uses source text already held by the caller.
+ * `LatexBuildService.ts` selects the compiler from the bounded preamble heads
+ * before running the existing build and publication pipeline.
  */
 
 import { stripLatexComments } from "./latexPreamble.ts";
+import type { LatexEngine, LatexToolchainKind } from "./latexCommand.ts";
 
-/** The two engines a document can ask for that Scient does not run. */
+/** Engines incompatible with the default pdfLaTeX lane. */
 export type LatexRequiredEngine = "xelatex" | "lualatex";
 
 export interface LatexEngineSupported {
@@ -43,7 +38,7 @@ export interface LatexEngineSupported {
 export interface LatexEngineUnsupported {
   readonly supported: false;
   readonly requiredEngine: LatexRequiredEngine;
-  /** The exact source line that gave it away, trimmed but otherwise verbatim. */
+  /** The directive or package declaration that identified the requirement. */
   readonly evidence: string;
   /** User-facing: names what Scient found and what engine it asks for. */
   readonly message: string;
@@ -70,7 +65,8 @@ const SUPPORTED_VERDICT: LatexEngineSupported = { supported: true };
  * every editor that writes these is inconsistent about casing and the
  * convention itself never was case-sensitive.
  */
-const MAGIC_COMMENT_PATTERN = /^\s*%+\s*!\s*TEX\s+(?:program|TS-program)\s*=\s*([A-Za-z]+)/iu;
+const MAGIC_COMMENT_PATTERN =
+  /^\s*%+\s*!\s*TEX\s+(?:program|TS-program)\s*=\s*([A-Za-z]+)(?=\s|$)/iu;
 
 /**
  * `\usepackage{fontspec}`, `\RequirePackage[no-math]{unicode-math}`, and a
@@ -123,7 +119,7 @@ function magicCommentVerdict(text: string): LatexEngineUnsupported | null {
       supported: false,
       requiredEngine,
       evidence,
-      message: `Scient currently compiles with pdfLaTeX only. This document's engine-selection comment asks for ${engineDisplayName(requiredEngine)} (found: ${evidence}).`,
+      message: `This document's engine-selection comment asks for ${engineDisplayName(requiredEngine)}, which cannot be compiled by pdfLaTeX (found: ${evidence}).`,
     };
   }
   return null;
@@ -139,41 +135,32 @@ function magicCommentVerdict(text: string): LatexEngineUnsupported | null {
  * note to a co-author cannot switch the refusal off.
  */
 function hasEngineConditional(text: string): boolean {
-  for (const rawLine of text.split(/\r?\n/u)) {
-    const strippedLine = stripLatexComments(rawLine);
-    if (strippedLine.trim().length === 0) continue;
-    if (ENGINE_CONDITIONAL_PATTERN.test(strippedLine)) return true;
-    PACKAGE_LOAD_PATTERN.lastIndex = 0;
-    for (const match of strippedLine.matchAll(PACKAGE_LOAD_PATTERN)) {
-      const names = (match[1] ?? "").split(",").map((name) => name.trim().toLowerCase());
-      if (names.some((name) => ENGINE_GUARD_PACKAGES.has(name))) return true;
-    }
+  const stripped = stripLatexComments(text);
+  if (ENGINE_CONDITIONAL_PATTERN.test(stripped)) return true;
+  PACKAGE_LOAD_PATTERN.lastIndex = 0;
+  for (const match of stripped.matchAll(PACKAGE_LOAD_PATTERN)) {
+    const names = (match[1] ?? "").split(",").map((name) => name.trim().toLowerCase());
+    if (names.some((name) => ENGINE_GUARD_PACKAGES.has(name))) return true;
   }
   return false;
 }
 
 function packageLoadVerdict(text: string): LatexEngineUnsupported | null {
-  for (const rawLine of text.split(/\r?\n/u)) {
-    const strippedLine = stripLatexComments(rawLine);
-    if (strippedLine.trim().length === 0) continue;
-    PACKAGE_LOAD_PATTERN.lastIndex = 0;
-    for (const match of strippedLine.matchAll(PACKAGE_LOAD_PATTERN)) {
-      const names = (match[1] ?? "").split(",").map((name) => name.trim());
-      const hit = names.find((name) => ENGINE_ONLY_PACKAGES.has(name));
-      if (hit === undefined) continue;
-      const evidence = rawLine.trim();
-      // fontspec and unicode-math both run under either non-pdfLaTeX engine;
-      // nothing in the package load names which one the author meant, so
-      // xelatex — the more common choice for either package — is reported as
-      // the representative answer while the message names both by name.
-      const requiredEngine: LatexRequiredEngine = "xelatex";
-      return {
-        supported: false,
-        requiredEngine,
-        evidence,
-        message: `Scient currently compiles with pdfLaTeX only. This document loads "${hit}" (found: ${evidence}), which needs XeLaTeX or LuaLaTeX; pdfLaTeX cannot process it.`,
-      };
-    }
+  PACKAGE_LOAD_PATTERN.lastIndex = 0;
+  for (const match of stripLatexComments(text).matchAll(PACKAGE_LOAD_PATTERN)) {
+    const names = (match[1] ?? "").split(",").map((name) => name.trim());
+    const hit = names.find((name) => ENGINE_ONLY_PACKAGES.has(name));
+    if (hit === undefined) continue;
+    const evidence = match[0].trim();
+    // These packages support either Unicode engine; the load itself does not
+    // declare one, so report XeLaTeX as the representative choice.
+    const requiredEngine: LatexRequiredEngine = "xelatex";
+    return {
+      supported: false,
+      requiredEngine,
+      evidence,
+      message: `This document loads "${hit}" (found: ${evidence}), which needs XeLaTeX or LuaLaTeX; pdfLaTeX cannot process it. Add % !TEX program = lualatex or % !TEX program = xelatex to select the compiler.`,
+    };
   }
   return null;
 }
@@ -196,6 +183,10 @@ export function evaluateLatexEngineGate(input: LatexEngineGateInput): LatexEngin
     const verdict = magicCommentVerdict(text);
     if (verdict !== null) return verdict;
   }
+  return evaluatePdfLatexPackages(texts);
+}
+
+function evaluatePdfLatexPackages(texts: readonly string[]): LatexEngineVerdict {
   // The document tests the engine itself, so whatever it loads it loads in a
   // branch this scan cannot evaluate. Let the compile answer.
   if (texts.some(hasEngineConditional)) return SUPPORTED_VERDICT;
@@ -204,4 +195,50 @@ export function evaluateLatexEngineGate(input: LatexEngineGateInput): LatexEngin
     if (verdict !== null) return verdict;
   }
   return SUPPORTED_VERDICT;
+}
+
+/** Root declarations take precedence over declarations in included preambles. */
+export function selectLatexBuildEngine(input: LatexEngineGateInput, toolchain: LatexToolchainKind) {
+  let declared: LatexEngine | null = null;
+  let declaredDriver: "tectonic" | undefined;
+  for (const text of [input.rootText, ...(input.includedTexts ?? [])]) {
+    for (const line of text.split(/\r?\n/u)) {
+      const token = MAGIC_COMMENT_PATTERN.exec(line)?.[1]?.toLowerCase();
+      if (!token) continue;
+      if (token === "tectonic") {
+        declaredDriver = "tectonic";
+        declared = "xelatex";
+        break;
+      }
+      declared =
+        token === "pdflatex" || token === "pdftex" ? "pdflatex" : requiredEngineForToken(token);
+      if (declared) break;
+    }
+    if (declared) break;
+  }
+  const engine = declared ?? (toolchain === "tectonic" ? "xelatex" : "pdflatex");
+  if (declaredDriver === "tectonic") {
+    return {
+      engine: "xelatex" as const,
+      driver: declaredDriver,
+      error:
+        toolchain === "tectonic"
+          ? null
+          : "This document requests Tectonic. Install Tectonic in this environment, then rebuild.",
+    };
+  }
+  if (toolchain === "tectonic") {
+    return {
+      engine,
+      error:
+        engine === "xelatex"
+          ? null
+          : `This document requests ${engine === "lualatex" ? "LuaLaTeX" : "pdfLaTeX"}, but the available toolchain is Tectonic. Install a TeX distribution with latexmk and the requested compiler, then refresh the LaTeX toolchain.`,
+    };
+  }
+  if (engine !== "pdflatex") return { engine, error: null };
+  const verdict = evaluatePdfLatexPackages([input.rootText, ...(input.includedTexts ?? [])]);
+  if (declared === null && !verdict.supported)
+    return { engine: verdict.requiredEngine, error: null };
+  return { engine, error: verdict.supported ? null : verdict.message };
 }

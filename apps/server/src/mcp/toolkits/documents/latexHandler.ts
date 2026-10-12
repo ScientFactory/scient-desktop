@@ -6,6 +6,7 @@ import type {
   ScientLatexPdfBuildInput,
   ScientLatexPdfBuildResult,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,15 +17,16 @@ import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/Gener
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
 import type { AgentInvocationScope } from "../../../scient/operations/AgentInvocationContext.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
+import { WorkspaceFileSystem } from "../../../workspace/WorkspaceFileSystem.ts";
 import {
   assertCurrentDocumentBuildProject,
-  commitStagedProjectPdfOutput,
+  publishProjectPdfOutput,
   isInsideRoot,
   isWindowsAbsolutePath,
   type ProjectDocumentBuildBoundaryError,
   resolveDocumentBuildProject,
   resolveProjectPdfOutput,
-  stageProjectPdfOutput,
+  prepareProjectPdfOutputIntent,
 } from "./projectDocumentBuild.ts";
 import { ScientLatexBuildToolError } from "./tools.ts";
 
@@ -243,6 +245,7 @@ const failFromSnapshot = (
 
 const presentLatexDocument = Effect.fn("ScientLatexBuild.present")(function* (
   invocation: AgentInvocationScope,
+  sourcePath: string,
   rootSourcePath: string,
 ) {
   const broker = yield* DocumentHostBroker.DocumentHostBroker;
@@ -250,7 +253,7 @@ const presentLatexDocument = Effect.fn("ScientLatexBuild.present")(function* (
     .invoke({
       scope: invocation,
       operation: "documentLatexPresent",
-      input: { rootSourcePath },
+      input: { sourcePath, rootSourcePath },
       timeoutMs: 10_000,
     })
     .pipe(
@@ -272,11 +275,43 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
   const retryAfterMs = Math.max(250, options.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS);
   const authority = yield* resolveDocumentBuildProject().pipe(Effect.mapError(boundaryToolError));
   const { invocation, root } = authority;
-  const latexSource = yield* resolveLatexSource(root, input.sourcePath);
-  const selectedRoot =
-    input.rootSourcePath === undefined
-      ? undefined
-      : yield* resolveLatexSource(root, input.rootSourcePath);
+  const workspaceFiles = yield* WorkspaceFileSystem;
+  const mutationEpoch = yield* workspaceFiles
+    .getMutationEpoch({ cwd: root })
+    .pipe(
+      Effect.mapError(() =>
+        toolError(
+          "build-failed",
+          "Workspace file publication must settle before LaTeX build admission.",
+        ),
+      ),
+    );
+  const { latexSource, selectedRoot } = yield* workspaceFiles
+    .withSettledWorkspaceRead({ cwd: root }, (attention) =>
+      attention === null
+        ? Effect.gen(function* () {
+            const latexSource = yield* resolveLatexSource(root, input.sourcePath);
+            const selectedRoot =
+              input.rootSourcePath === undefined
+                ? undefined
+                : yield* resolveLatexSource(root, input.rootSourcePath);
+            return { latexSource, selectedRoot };
+          })
+        : toolError(
+            "build-failed",
+            "Workspace file publication requires review before LaTeX build admission.",
+          ),
+    )
+    .pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "ScientLatexBuildToolError"
+          ? cause
+          : toolError(
+              "build-failed",
+              "Workspace file publication must settle before LaTeX build admission.",
+            ),
+      ),
+    );
   const output = yield* resolveProjectPdfOutput(latexSource.canonicalRoot, input.outputPath).pipe(
     Effect.mapError(boundaryToolError),
   );
@@ -304,6 +339,27 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
       },
     );
   }
+  const observedMutationEpoch = yield* workspaceFiles
+    .getMutationEpoch({ cwd: latexSource.canonicalRoot })
+    .pipe(
+      Effect.mapError(() =>
+        toolError(
+          "build-failed",
+          "Workspace file publication must settle before LaTeX build admission.",
+        ),
+      ),
+    );
+  if (observedMutationEpoch !== mutationEpoch) {
+    return yield* toolError(
+      "build-failed",
+      "Source publication changed during LaTeX build admission. Retry the build.",
+      {
+        sourcePath: latexSource.sourcePath,
+        rootSourcePath: resolution.rootRelativePath,
+        outputPath: output.outputPath,
+      },
+    );
+  }
   const buildInput = {
     workspaceRoot: latexSource.canonicalRoot,
     relativePath: resolution.rootRelativePath,
@@ -315,7 +371,7 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
   if (!isBuildActive(snapshot) && snapshot.state !== "succeeded") {
     yield* assertCurrentDocumentBuildProject(authority).pipe(Effect.mapError(boundaryToolError));
     snapshot = yield* builds
-      .requestBuild(buildInput)
+      .requestBuild(buildInput, { expectedMutationEpoch: mutationEpoch })
       .pipe(Effect.mapError((cause) => buildServiceToolError(cause, input)));
   }
 
@@ -440,20 +496,10 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
             ),
           ),
         );
-        const staged = yield* stageProjectPdfOutput(output, bytes).pipe(
-          Effect.mapError(() =>
-            toolError(
-              "partial-publication",
-              "Scient retained the immutable LaTeX PDF, but could not stage the requested project file.",
-              {
-                sourcePath: latexSource.sourcePath,
-                rootSourcePath: successfulSnapshot.rootRelativePath,
-                outputPath: output.outputPath,
-                publishedSource: source,
-              },
-            ),
-          ),
-        );
+        const publication = prepareProjectPdfOutputIntent(output, bytes, {
+          mutationId: NodeCrypto.randomUUID(),
+          expectedMutationEpoch: mutationEpoch,
+        });
         const latest = yield* builds
           .status(buildInput)
           .pipe(Effect.mapError((cause) => buildServiceToolError(cause, input)));
@@ -465,20 +511,49 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
           return { _tag: "changed" as const, snapshot: latest };
         }
         yield* assertMaterializationAuthority();
-        yield* commitStagedProjectPdfOutput(staged).pipe(
-          Effect.mapError(() =>
+        const receipt = yield* publishProjectPdfOutput(publication).pipe(
+          Effect.mapError((cause) =>
             toolError(
               "partial-publication",
-              "Scient retained the immutable LaTeX PDF, but could not write the requested project file.",
+              `Scient retained the immutable LaTeX PDF, but the requested project file publication failed: ${cause.message}`,
               {
                 sourcePath: latexSource.sourcePath,
                 rootSourcePath: successfulSnapshot.rootRelativePath,
                 outputPath: output.outputPath,
                 publishedSource: source,
+                ...(cause.publicationOutcome === undefined
+                  ? {}
+                  : { publicationOutcome: cause.publicationOutcome }),
+                ...(cause.recoveryId === undefined ? {} : { recoveryId: cause.recoveryId }),
+                ...(cause.retainedPaths === undefined
+                  ? {}
+                  : { retainedPaths: cause.retainedPaths }),
+                ...(cause.mutationId === undefined ? {} : { mutationId: cause.mutationId }),
               },
             ),
           ),
         );
+        if (
+          receipt.publicationEpoch === undefined ||
+          !(yield* builds.acknowledgeOutputPublication({
+            logicalDocumentKey: source.logicalDocumentKey,
+            artifactId: source.artifactId,
+            revisionId: source.revisionId,
+            expectedMutationEpoch: mutationEpoch,
+            publicationEpoch: receipt.publicationEpoch,
+          }))
+        )
+          return yield* toolError(
+            "partial-publication",
+            "The project PDF was published, but its original build evidence could not be bound to the exact retained publication receipt.",
+            {
+              sourcePath: latexSource.sourcePath,
+              rootSourcePath: successfulSnapshot.rootRelativePath,
+              outputPath: output.outputPath,
+              publishedSource: source,
+              ...(receipt.mutationId === undefined ? {} : { mutationId: receipt.mutationId }),
+            },
+          );
         return {
           _tag: "written" as const,
           source,
@@ -520,7 +595,11 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
         ),
       ),
     );
-    const presented = yield* presentLatexDocument(invocation, successfulSnapshot.rootRelativePath);
+    const presented = yield* presentLatexDocument(
+      invocation,
+      latexSource.sourcePath,
+      successfulSnapshot.rootRelativePath,
+    );
     return {
       status: "completed",
       sourcePath: latexSource.sourcePath,
