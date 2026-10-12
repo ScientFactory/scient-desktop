@@ -152,10 +152,10 @@ describe("visual LaTeX page layout", () => {
       expect(parseFloat(getComputedStyle(section).fontSize)).toBeGreaterThan(
         parseFloat(getComputedStyle(document).fontSize),
       );
-      expect(getComputedStyle(section, "::before").content).toContain("counter(scient-section)");
+      expect(getComputedStyle(section, "::before").content).toBe('"1"');
       editor.commands.updateAttributes("heading", { unnumbered: true });
       await expect.poll(() => current).toContain("\\section*{test}");
-      expect(getComputedStyle(section, "::before").content).toBe("none");
+      expect(["none", '""', ""]).toContain(getComputedStyle(section, "::before").content);
 
       // A parsed heading still carries its original command after setNode.
       selectText("Existing");
@@ -163,9 +163,7 @@ describe("visual LaTeX page layout", () => {
       await expect.poll(() => current).toContain("\\subsection{Existing}");
       const subsection = document.querySelector("h2")!;
       expect(subsection.getAttribute("data-latex-command")).toBe("subsection");
-      expect(getComputedStyle(subsection, "::before").content).toContain(
-        "counter(scient-subsection)",
-      );
+      expect(getComputedStyle(subsection, "::before").content).toBe('"0.1"');
       editor.commands.setNode("paragraph");
       await expect.poll(() => current).not.toContain("\\subsection{Existing}");
       expect(

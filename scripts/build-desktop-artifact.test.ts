@@ -2292,8 +2292,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
-        // Fixture has nine core files, plus the 39 approved component files.
-        for (let index = 0; index < 71; index += 1) {
+        // Fixture has ten core files, plus the 39 approved component files.
+        for (let index = 0; index < 70; index += 1) {
           yield* fs.writeFileString(
             path.join(fixture.packagedAppDir, `padding-${index}.txt`),
             "core",

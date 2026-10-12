@@ -167,18 +167,46 @@ describe("MarkdownPersistenceCoordinator", () => {
   it("does not resurrect an undone ambiguous write underneath an external appendix", async () => {
     vi.useFakeTimers();
     const h = fixture({ source: mergeBase, retryDelaysMs: [1] });
+    const attempted = mergeBase.replace("First", "First!");
     h.write.mockImplementationOnce(async (intent) => {
       h.setDisk(intent.source + "\nAgent\n", "external");
       throw "transient";
     });
-    h.coordinator.change(mergeBase.replace("First", "First!"));
+    h.coordinator.change(attempted);
     const flushed = h.coordinator.flushNow();
     await settleMicrotasks();
     h.coordinator.change(mergeBase);
     await vi.runAllTimersAsync();
     expect(await flushed).toBe(false);
-    expect(h.coordinator.getSnapshot().draftSource).toBe(mergeBase);
-    expect(h.coordinator.getSnapshot().conflict).not.toBeNull();
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      baselineSource: mergeBase,
+      draftSource: mergeBase,
+      pending: true,
+      attention: "outcome_unknown",
+      conflict: null,
+      publicationSource: attempted,
+    });
+    expect(h.write).toHaveBeenCalledTimes(2);
+    const intent = h.write.mock.calls[0]?.[0];
+    expect(h.write.mock.calls[1]?.[0]).toBe(intent);
+    expect(h.coordinator.getSnapshot().publicationIntent).toBe(intent);
+    expect(h.read).not.toHaveBeenCalled();
+    expect(h.disk()).toEqual({ source: attempted + "\nAgent\n", revision: "external" });
+
+    h.coordinator.noteFreshnessHint();
+    h.coordinator.setConnected(false);
+    h.coordinator.setConnected(true);
+    expect(await h.coordinator.retry()).toBe(false);
+    await vi.runAllTimersAsync();
+    expect(h.write).toHaveBeenCalledTimes(2);
+    expect(h.read).not.toHaveBeenCalled();
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      draftSource: mergeBase,
+      pending: true,
+      attention: "outcome_unknown",
+      publicationIntent: intent,
+    });
+    expect(h.disk()).toEqual({ source: attempted + "\nAgent\n", revision: "external" });
   });
   it("defers a merge during composition and resumes with current text", async () => {
     let composing = true;

@@ -16,7 +16,14 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => "local",
+  usePrimaryEnvironment: () => ({ environmentId: "local", label: "local" }),
   useEnvironment: (id: string) => ({ environmentId: id, label: id }),
+}));
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
+  useEnvironmentScope: () => true,
+  useEnvironmentsWithScope: (targets: { environmentId: string }[]) =>
+    new Set(targets.map((target) => target.environmentId)),
 }));
 vi.mock("~/components/settings/settingsLayout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/components/settings/settingsLayout")>()),
