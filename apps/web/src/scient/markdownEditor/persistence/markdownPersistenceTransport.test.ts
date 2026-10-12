@@ -1,7 +1,7 @@
 import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
-import { EnvironmentId, ProjectWriteFileError } from "@t3tools/contracts";
+import { EnvironmentId, ProjectRenameFileError, ProjectWriteFileError } from "@t3tools/contracts";
 import { MarkdownPersistenceCoordinator } from "@scientfactory/scient-markdown";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -66,7 +66,12 @@ describe("Markdown persistence transport", () => {
     mocks.run.mockResolvedValue(AsyncResult.failure(cause));
     const transport = createMarkdownPersistenceTransport(target);
     await expect(
-      transport.write({ source: "B", expectedRevision: "rA", editVersion: 1 }),
+      transport.write({
+        mutationId: "intent-B",
+        source: "B",
+        expectedRevision: "rA",
+        editVersion: 1,
+      }),
     ).rejects.toBe(cause);
     await expect(transport.read()).rejects.toBe(cause);
     expect(mocks.run.mock.calls.map((call) => call[1])).toEqual([mocks.write, mocks.read]);
@@ -165,6 +170,63 @@ describe("Markdown persistence transport", () => {
     expect(classifyMarkdownPersistenceFailure(Cause.fail(operation))).toBe("operation");
   });
 
+  it.each([
+    "target_changed",
+    "recovery_required",
+    "mutation_unavailable",
+    "mutation_intent_conflict",
+  ] as const)("keeps the typed %s outcome out of retryable failure categories", (failure) => {
+    const error = new ProjectWriteFileError({
+      cwd: target.cwd,
+      relativePath: target.relativePath,
+      failure,
+      ...(failure === "recovery_required"
+        ? { recoveryId: "retained-1", retainedPaths: ["/retained/old.md"] }
+        : {}),
+    });
+    expect(classifyMarkdownPersistenceFailure(Cause.fail(error))).toBe(failure);
+    expect(
+      classifyMarkdownPersistenceFailure(Cause.combine(Cause.fail(error), Cause.interrupt())),
+    ).toBe(failure);
+    expect(
+      classifyMarkdownPersistenceFailure(
+        Cause.combine(Cause.fail(error), Cause.die(new Error("secondary defect"))),
+      ),
+    ).toBe(failure);
+  });
+
+  it("does not confirm equal local bytes as saved after a retained publication outcome", async () => {
+    const error = new ProjectWriteFileError({
+      cwd: target.cwd,
+      relativePath: target.relativePath,
+      failure: "recovery_required",
+      recoveryId: "retained-1",
+      retainedPaths: ["/retained/old.md"],
+    });
+    mocks.run.mockResolvedValue(AsyncResult.failure(Cause.fail(error)));
+    const transport = createMarkdownPersistenceTransport(target);
+    const coordinator = new MarkdownPersistenceCoordinator({
+      source: "A",
+      revision: "rA",
+      write: transport.write,
+      read: transport.read,
+      classifyFailure: transport.classifyFailure,
+    });
+    coordinator.change("B");
+    expect(await coordinator.flushNow()).toBe(false);
+    coordinator.change("A");
+    transport.project(coordinator.getSnapshot());
+    coordinator.noteFreshnessHint();
+    expect(await coordinator.refresh()).toBe(false);
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    expect(coordinator.getSnapshot()).toMatchObject({
+      pending: true,
+      attention: "recovery_required",
+      publicationSource: "B",
+      draftSource: "A",
+    });
+  });
+
   it("reconfirms the cache after undo returns to the same baseline revision without writing", () => {
     const transport = createMarkdownPersistenceTransport(target);
     const coordinator = new MarkdownPersistenceCoordinator({
@@ -190,4 +252,33 @@ describe("Markdown persistence transport", () => {
     expect(mocks.run).not.toHaveBeenCalled();
     expect(coordinator.dispose()).toBe(true);
   });
+});
+
+it("retains typed rename recovery attention in the format-neutral publication owner", () => {
+  const transport = createMarkdownPersistenceTransport(target);
+  const coordinator = new MarkdownPersistenceCoordinator({
+    source: "A",
+    revision: "rA",
+    write: transport.write,
+    read: transport.read,
+    classifyFailure: transport.classifyFailure,
+  });
+  const release = coordinator.holdForRename()!;
+  const error = new ProjectRenameFileError({
+    cwd: target.cwd,
+    relativePath: target.relativePath,
+    destinationRelativePath: "renamed.md",
+    failure: "recovery_required",
+    recoveryId: "rename-retained",
+    retainedPaths: ["/retained/source.md"],
+  });
+  coordinator.noteMutationFailure(Cause.fail(error));
+  release();
+  expect(coordinator.getSnapshot()).toMatchObject({
+    attention: "recovery_required",
+    pending: true,
+    draftSource: "A",
+    baselineRevision: "rA",
+  });
+  expect(coordinator.dispose()).toBe(false);
 });

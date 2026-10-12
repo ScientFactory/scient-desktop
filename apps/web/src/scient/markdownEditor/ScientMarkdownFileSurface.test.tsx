@@ -165,6 +165,7 @@ describe("ScientMarkdownFileSurface", () => {
       beginMove: () => null,
       getSnapshot: coordinator.getSnapshot,
       getPendingInput: () => null,
+      getRenameIntent: () => null,
       canEditPendingInput: () => true,
       claimPendingInput: () => true,
       releasePendingInputClaim: () => {},
@@ -179,6 +180,14 @@ describe("ScientMarkdownFileSurface", () => {
       resolveWithLocal: (revision: string) => coordinator.resolveWithLocal(revision),
       resolveWithDisk: () => coordinator.resolveWithDisk(),
       restoreRecovery: () => coordinator.restoreRecovery(),
+      recreateMissingCurrent: () => coordinator.recreateMissingCurrent(),
+      noteMutationFailure: (error: unknown, mutationId?: string) =>
+        coordinator.noteMutationFailure(error, mutationId),
+      resolveRetainedAttention: (recoveryId: string, currentRevision: string | null) =>
+        coordinator.resolveRetainedAttention(recoveryId, currentRevision),
+      reviewRetainedCurrent: (recoveryId: string) => coordinator.reviewRetainedCurrent(recoveryId),
+      reviewUnchangedRefusal: (currentRevision: string | null) =>
+        coordinator.reviewUnchangedRefusal(currentRevision),
       holdForRename: () => coordinator.holdForRename(),
       registerExternalProjection: () => () => {},
       resumeExternalUpdates: () => coordinator.resumeExternalUpdates(),

@@ -128,6 +128,7 @@ vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
 
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
 import { MarkdownPersistenceRegistry } from "./markdownPersistenceRegistry";
+import { createTestCheckpointStore } from "./markdownDraftCheckpointTestkit";
 import { ScientMarkdownWorkspaceSurface } from "../ScientMarkdownWorkspaceSurface";
 import { ScientMarkdownEditorView } from "../prosemirror/view";
 import { ScientMarkdownPersistenceNotice } from "../ui/ScientMarkdownPersistenceNotice";
@@ -137,6 +138,7 @@ describe("Markdown source persistence integration", () => {
     const source = "# Result [@smith]\n\nTail\n";
     const write = vi.fn(async () => ({ revision: "r1" }));
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write,
         read: async () => ({ source, revision: "r0" }),
@@ -220,6 +222,7 @@ describe("Markdown source persistence integration", () => {
       const base = "First paragraph.\n\nSecond paragraph.\n";
       let disk = { source: base, revision: "r0" };
       const registry = new MarkdownPersistenceRegistry({
+        checkpointStore: createTestCheckpointStore(),
         createTransport: () => ({
           write: async (intent) => {
             if (intent.expectedRevision !== disk.revision) throw "conflict";
@@ -379,6 +382,7 @@ describe("Markdown source persistence integration", () => {
       revision: `revision:${intent.source}`,
     }));
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write,
         read: async () => ({ source: "A", revision: "rA" }),
@@ -443,6 +447,7 @@ describe("Markdown source persistence integration", () => {
 
   async function attachNativeHistoryFixture(source: string) {
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write: async (intent) => ({ revision: `revision:${intent.source}` }),
         read: async () => ({ source, revision: "r0" }),
@@ -744,6 +749,7 @@ describe("Markdown source persistence integration", () => {
     }));
     write.mockImplementationOnce(() => held);
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write,
         read: async () => ({ source: "A", revision: "rA" }),
@@ -862,6 +868,7 @@ describe("Markdown source persistence integration", () => {
         revision: `revision:${intent.source}`,
       }));
       const registry = new MarkdownPersistenceRegistry({
+        checkpointStore: createTestCheckpointStore(),
         createTransport: () => ({
           write,
           read: async () => ({ source: "A", revision: "r0" }),
@@ -973,6 +980,7 @@ describe("Markdown source persistence integration", () => {
       revision: `revision:${intent.source}`,
     }));
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write,
         read: async () => ({ source: initial, revision: "r0" }),
@@ -1052,6 +1060,7 @@ describe("Markdown source persistence integration", () => {
   it("accepts the first source keystroke after an incremental external clean read", async () => {
     const write = vi.fn(async () => ({ revision: "rBC" }));
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write,
         read: async () => ({ source: "B", revision: "rB" }),
@@ -1115,6 +1124,7 @@ describe("Markdown source persistence integration", () => {
   it("keeps the caret on live source rows after replacing and regrowing a document", async () => {
     const source = "first\nsecond\nthird\nfourth";
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write: async () => ({ revision: "saved" }),
         read: async () => ({ source, revision: "initial" }),
@@ -1198,6 +1208,7 @@ describe("Markdown source persistence integration", () => {
 
   it("does not dismiss a detached source editor during a rename hold", async () => {
     const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: createTestCheckpointStore(),
       createTransport: () => ({
         write: async () => ({ revision: "rA" }),
         read: async () => ({ source: "A", revision: "rA" }),

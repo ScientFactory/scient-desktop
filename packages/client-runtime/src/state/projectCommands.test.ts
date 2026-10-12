@@ -2,18 +2,23 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   WS_METHODS,
-  type ProjectReadFileInput,
-  type ProjectReadFileResult,
+  ProjectWriteFileError,
+  ProjectReadFileError,
   type ProjectWriteFileInput,
   type ProjectWriteFileResult,
+  type ProjectRenameFileResult,
+  type ProjectDeleteFileResult,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -26,21 +31,29 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
-import { createProjectEnvironmentAtoms, projectFileOperationKey } from "./projectCommands.ts";
+import { createProjectEnvironmentAtoms } from "./projectCommands.ts";
 
 const target = {
   environmentId: EnvironmentId.make("test-environment"),
   input: { cwd: "/workspace", relativePath: "notes.md" },
 };
 
-const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (methods: {
-  [WS_METHODS.projectsReadFile]: (
-    input: ProjectReadFileInput,
-  ) => Effect.Effect<ProjectReadFileResult>;
-  [WS_METHODS.projectsWriteFile]: (
-    input: ProjectWriteFileInput,
-  ) => Effect.Effect<ProjectWriteFileResult>;
-}) {
+const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (
+  methods: Pick<
+    WsRpcProtocolClient,
+    typeof WS_METHODS.projectsReadFile | typeof WS_METHODS.projectsWriteFile
+  > &
+    Partial<
+      Pick<
+        WsRpcProtocolClient,
+        | typeof WS_METHODS.projectsRenameFile
+        | typeof WS_METHODS.projectsDeleteFile
+        | typeof WS_METHODS.projectsListFileVersions
+        | typeof WS_METHODS.projectsDiscardFileVersion
+        | typeof WS_METHODS.projectsResolveFileMutation
+      >
+    >,
+) {
   const client = methods as unknown as WsRpcProtocolClient;
   const session: RpcSession = {
     client,
@@ -91,13 +104,14 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (meth
     runStream: followStream,
     followStream,
   });
+  let randomSequence = 0;
   const runtime = Atom.runtime(
     Layer.mergeAll(
       Layer.succeed(EnvironmentRegistry, environmentRegistry),
       Layer.succeed(
         Crypto.Crypto,
         Crypto.make({
-          randomBytes: (size) => new Uint8Array(size),
+          randomBytes: (size) => new Uint8Array(size).fill(++randomSequence),
           digest: (_algorithm, data) => Effect.succeed(data),
         }),
       ),
@@ -110,24 +124,210 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (meth
 });
 
 describe("ordered project file commands", () => {
+  it.effect("retries committed rename and delete intents without repeating namespace changes", () =>
+    Effect.gen(function* () {
+      const disconnected = new RpcClientError.RpcClientError({
+        reason: new Socket.SocketCloseError({ code: 1006 }),
+      });
+      const files = new Set(["notes.md", "other.md"]);
+      const renames = new Map<string, ProjectRenameFileResult>();
+      const deletes = new Map<string, ProjectDeleteFileResult>();
+      let renamePublications = 0;
+      let deletePublications = 0;
+      const { commands, registry } = yield* makeHarness({
+        [WS_METHODS.projectsReadFile]: () => Effect.die("unused"),
+        [WS_METHODS.projectsWriteFile]: () => Effect.die("unused"),
+        [WS_METHODS.projectsRenameFile]: Effect.fn(function* (input) {
+          const receipt = renames.get(input.mutationId!);
+          if (receipt) return receipt;
+          if (!files.delete(input.relativePath)) return yield* Effect.die("Source is gone");
+          files.add(input.destinationRelativePath);
+          const result = {
+            relativePath: input.relativePath,
+            destinationRelativePath: input.destinationRelativePath,
+            revision: `rename-${++renamePublications}`,
+            mutationId: input.mutationId,
+          };
+          renames.set(input.mutationId!, result);
+          if (renamePublications === 1) return yield* disconnected;
+          return result;
+        }),
+        [WS_METHODS.projectsDeleteFile]: Effect.fn(function* (input) {
+          const receipt = deletes.get(input.mutationId!);
+          if (receipt) return receipt;
+          if (!files.delete(input.relativePath)) return yield* Effect.die("File is gone");
+          const result = { relativePath: input.relativePath, mutationId: input.mutationId };
+          deletes.set(input.mutationId!, result);
+          if (++deletePublications === 1) return yield* disconnected;
+          return result;
+        }),
+      });
+      try {
+        const rename = {
+          ...target,
+          input: {
+            ...target.input,
+            destinationRelativePath: "renamed.md",
+            mutationId: "owned-rename",
+          },
+        };
+        const lostRename = yield* Effect.promise(() => commands.renameFile.run(registry, rename));
+        expect(lostRename._tag).toBe("Failure");
+        expect(files).toEqual(new Set(["other.md", "renamed.md"]));
+        expect(
+          yield* Effect.promise(() => commands.renameFile.run(registry, rename)),
+        ).toMatchObject({
+          _tag: "Success",
+          value: { revision: "rename-1", mutationId: "owned-rename" },
+        });
+        expect(renamePublications).toBe(1);
+
+        const remove = {
+          ...target,
+          input: {
+            ...target.input,
+            relativePath: "renamed.md",
+            expectedRevision: "rename-1",
+            mutationId: "owned-delete",
+          },
+        };
+        const lostDelete = yield* Effect.promise(() => commands.deleteFile.run(registry, remove));
+        expect(lostDelete._tag).toBe("Failure");
+        expect(files).toEqual(new Set(["other.md"]));
+        expect(
+          yield* Effect.promise(() => commands.deleteFile.run(registry, remove)),
+        ).toMatchObject({
+          _tag: "Success",
+          value: { relativePath: "renamed.md", mutationId: "owned-delete" },
+        });
+        expect(deletePublications).toBe(1);
+
+        const generatedRename = yield* Effect.promise(() =>
+          commands.renameFile.run(registry, {
+            ...target,
+            input: {
+              ...target.input,
+              relativePath: "other.md",
+              destinationRelativePath: "final.md",
+            },
+          }),
+        );
+        const generatedDelete = yield* Effect.promise(() =>
+          commands.deleteFile.run(registry, {
+            ...target,
+            input: { ...target.input, relativePath: "final.md", expectedRevision: "rename-2" },
+          }),
+        );
+        expect(generatedRename).toMatchObject({ _tag: "Success", value: { revision: "rename-2" } });
+        expect(generatedDelete._tag).toBe("Success");
+        if (generatedRename._tag === "Success" && generatedDelete._tag === "Success") {
+          expect(generatedRename.value.mutationId).toMatch(/^[0-9a-f-]{36}$/u);
+          expect(generatedDelete.value.mutationId).toMatch(/^[0-9a-f-]{36}$/u);
+          expect(generatedDelete.value.mutationId).not.toBe(generatedRename.value.mutationId);
+        }
+        expect(files).toEqual(new Set());
+      } finally {
+        registry.dispose();
+      }
+    }),
+  );
+
+  it.effect("retries a lost write receipt by owned identity, not by matching text", () =>
+    Effect.gen(function* () {
+      const disconnected = new RpcClientError.RpcClientError({
+        reason: new Socket.SocketCloseError({ code: 1006 }),
+      });
+      const receipts = new Map<string, ProjectWriteFileResult>();
+      let publications = 0;
+      let diskContents = "";
+      const { commands, registry } = yield* makeHarness({
+        [WS_METHODS.projectsReadFile]: () => Effect.die("unused"),
+        [WS_METHODS.projectsWriteFile]: Effect.fn(function* (input) {
+          const receipt = receipts.get(input.mutationId!);
+          if (receipt) return receipt;
+          diskContents = input.contents;
+          const result = {
+            relativePath: input.relativePath,
+            revision: `revision-${++publications}`,
+            mutationId: input.mutationId,
+          };
+          receipts.set(input.mutationId!, result);
+          if (publications === 1) return yield* disconnected;
+          return result;
+        }),
+      });
+      try {
+        const owned = {
+          ...target,
+          input: { ...target.input, contents: "saved", mutationId: "owned-write" },
+        };
+        const lost = yield* Effect.promise(() => commands.writeFile.run(registry, owned));
+        expect(lost._tag).toBe("Failure");
+        if (lost._tag === "Failure") expect(Cause.squash(lost.cause)).toBe(disconnected);
+        expect(diskContents).toBe("saved");
+        expect(publications).toBe(1);
+        expect(yield* Effect.promise(() => commands.writeFile.run(registry, owned))).toMatchObject({
+          _tag: "Success",
+          value: { revision: "revision-1", mutationId: "owned-write" },
+        });
+        expect(publications).toBe(1);
+
+        const input: ProjectWriteFileInput = { ...target.input, contents: "saved" };
+        const first = yield* Effect.promise(() =>
+          commands.writeFile.run(registry, { ...target, input }),
+        );
+        const second = yield* Effect.promise(() =>
+          commands.writeFile.run(registry, { ...target, input }),
+        );
+        expect(first).toMatchObject({ _tag: "Success", value: { revision: "revision-2" } });
+        expect(second).toMatchObject({ _tag: "Success", value: { revision: "revision-3" } });
+        if (first._tag === "Success" && second._tag === "Success") {
+          expect(first.value.mutationId).toMatch(/^[0-9a-f-]{36}$/u);
+          expect(second.value.mutationId).not.toBe(first.value.mutationId);
+        }
+        expect(publications).toBe(3);
+        expect(input).not.toHaveProperty("mutationId");
+      } finally {
+        registry.dispose();
+      }
+    }),
+  );
   it.effect.each(
-    (["success", "failure"] as const).map((outcome) => ({
-      caseTitle: `starts a same-file read only after a held write settles with ${outcome}`,
-      outcome,
-    })),
-  )("$caseTitle", ({ outcome }) =>
+    (["write", "rename", "delete"] as const).flatMap((mutation) =>
+      (["success", "failure"] as const).map((outcome) => ({
+        caseTitle: `starts a same-file read only after a held ${mutation} settles with ${outcome}`,
+        mutation,
+        outcome,
+      })),
+    ),
+  )("$caseTitle", ({ mutation, outcome }) =>
     Effect.gen(function* () {
       const entered = Promise.withResolvers<void>();
       const release = Promise.withResolvers<void>();
       const events: string[] = [];
+      const settle = Effect.fn(function* (relativePath: string) {
+        events.push(`${mutation}:${relativePath}`);
+        entered.resolve();
+        yield* Effect.promise(() => release.promise);
+        events.push(`settled:${outcome}`);
+        if (outcome === "failure") return yield* Effect.interrupt;
+      });
       const { commands, registry } = yield* makeHarness({
         [WS_METHODS.projectsWriteFile]: Effect.fn(function* (input) {
-          events.push(`write:${input.relativePath}`);
-          entered.resolve();
-          yield* Effect.promise(() => release.promise);
-          events.push(`settled:${outcome}`);
-          if (outcome === "failure") return yield* Effect.interrupt;
+          yield* settle(input.relativePath);
           return { relativePath: input.relativePath, revision: "revision-written" };
+        }),
+        [WS_METHODS.projectsRenameFile]: Effect.fn(function* (input) {
+          yield* settle(input.relativePath);
+          return {
+            relativePath: input.relativePath,
+            destinationRelativePath: input.destinationRelativePath,
+            revision: "revision-renamed",
+          };
+        }),
+        [WS_METHODS.projectsDeleteFile]: Effect.fn(function* (input) {
+          yield* settle(input.relativePath);
+          return { relativePath: input.relativePath };
         }),
         [WS_METHODS.projectsReadFile]: (input) =>
           Effect.sync(() => {
@@ -142,10 +342,21 @@ describe("ordered project file commands", () => {
           }),
       });
       try {
-        const write = commands.writeFile.run(registry, {
-          ...target,
-          input: { ...target.input, contents: "saved" },
-        });
+        const pendingMutation =
+          mutation === "write"
+            ? commands.writeFile.run(registry, {
+                ...target,
+                input: { ...target.input, contents: "saved" },
+              })
+            : mutation === "rename"
+              ? commands.renameFile.run(registry, {
+                  ...target,
+                  input: { ...target.input, destinationRelativePath: "renamed.md" },
+                })
+              : commands.deleteFile.run(registry, {
+                  ...target,
+                  input: { ...target.input, expectedRevision: "revision-original" },
+                });
         yield* Effect.promise(() => entered.promise);
         const read = commands.readFileOrdered.run(registry, target);
         // A different path makes progress while the same-file read stays queued.
@@ -155,10 +366,10 @@ describe("ordered project file commands", () => {
             input: { ...target.input, relativePath: "other.md" },
           }),
         );
-        expect(events).toEqual(["write:notes.md", "read:other.md"]);
+        expect(events).toEqual([`${mutation}:notes.md`, "read:other.md"]);
 
         release.resolve();
-        expect((yield* Effect.promise(() => write))._tag).toBe(
+        expect((yield* Effect.promise(() => pendingMutation))._tag).toBe(
           outcome === "success" ? "Success" : "Failure",
         );
         expect(yield* Effect.promise(() => read)).toMatchObject({
@@ -166,7 +377,7 @@ describe("ordered project file commands", () => {
           value: { contents: "saved" },
         });
         expect(events).toEqual([
-          "write:notes.md",
+          `${mutation}:notes.md`,
           "read:other.md",
           `settled:${outcome}`,
           "read:notes.md",
@@ -223,49 +434,219 @@ describe("ordered project file commands", () => {
     }),
   );
 
-  it.effect("executes every ordered read rather than returning a cached snapshot", () =>
-    Effect.gen(function* () {
-      let revision = 0;
-      const { commands, registry } = yield* makeHarness({
-        [WS_METHODS.projectsWriteFile]: () => Effect.die("unused"),
-        [WS_METHODS.projectsReadFile]: (input) =>
-          Effect.sync(() => ({
-            ...input,
-            contents: "",
-            revision: String(++revision),
-            byteLength: 0,
-            truncated: false,
-          })),
-      });
-      try {
-        expect(
-          yield* Effect.promise(() => commands.readFileOrdered.run(registry, target)),
-        ).toMatchObject({
-          _tag: "Success",
-          value: { revision: "1" },
+  it.effect.each(["revision-current", null])(
+    "keeps attention after discard and orders confirmation behind resolution of %s",
+    (currentRevision) =>
+      Effect.gen(function* () {
+        const attention = {
+          recoveryId: "recovery-1",
+          mutationId: "owned-write",
+          retainedPaths: ["/workspace/.scient/retained/one"],
+          message: "Review the retained publication.",
+        };
+        let unresolved = true;
+        let retained = true;
+        let attemptedWrites = 0;
+        const entered = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const events: string[] = [];
+        const { commands, registry } = yield* makeHarness({
+          [WS_METHODS.projectsWriteFile]: (input) => {
+            attemptedWrites++;
+            return Effect.fail(
+              new ProjectWriteFileError({
+                ...input,
+                failure: "recovery_required",
+                mutationId: attention.mutationId,
+                publicationOutcome: "retained-attention",
+                recoveryId: attention.recoveryId,
+                retainedPaths: attention.retainedPaths,
+              }),
+            );
+          },
+          [WS_METHODS.projectsListFileVersions]: () =>
+            Effect.sync(() => ({
+              versions: retained
+                ? [
+                    {
+                      versionId: "version-1",
+                      mutationId: attention.mutationId,
+                      retainedPath: attention.retainedPaths[0]!,
+                      revision: "revision-retained",
+                      byteLength: 5,
+                      retainedAt: 123,
+                    },
+                  ]
+                : [],
+              retainedBytes: retained ? 5 : 0,
+              limitBytes: null,
+              attention: unresolved ? attention : null,
+            })),
+          [WS_METHODS.projectsDiscardFileVersion]: (input) =>
+            Effect.sync(() => {
+              retained = false;
+              return { versionId: input.versionId };
+            }),
+          [WS_METHODS.projectsResolveFileMutation]: Effect.fn(function* (input) {
+            events.push("resolve-start");
+            entered.resolve();
+            yield* Effect.promise(() => release.promise);
+            if (
+              input.recoveryId !== attention.recoveryId ||
+              input.currentRevision !== currentRevision
+            ) {
+              return yield* new ProjectWriteFileError({
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                failure: "target_changed",
+              });
+            }
+            unresolved = false;
+            events.push("resolve-settled");
+            return { recoveryId: input.recoveryId, revision: currentRevision };
+          }),
+          [WS_METHODS.projectsReadFile]: (input) =>
+            Effect.suspend(() => {
+              events.push(`read:${input.relativePath}`);
+              if (currentRevision === null && input.relativePath === target.input.relativePath) {
+                return Effect.fail(
+                  new ProjectReadFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    failure: "operation_failed",
+                    reason: "not_found",
+                    currentMissing: true,
+                    ...(unresolved
+                      ? {
+                          recoveryId: attention.recoveryId,
+                          retainedPaths: attention.retainedPaths,
+                        }
+                      : {}),
+                  }),
+                );
+              }
+              return Effect.succeed({
+                ...input,
+                contents: "current",
+                revision: "revision-current",
+                byteLength: 7,
+                truncated: false,
+                ...(unresolved && input.relativePath === target.input.relativePath
+                  ? { publicationAttention: attention }
+                  : {}),
+              });
+            }),
         });
-        expect(
-          yield* Effect.promise(() => commands.readFileOrdered.run(registry, target)),
-        ).toMatchObject({
-          _tag: "Success",
-          value: { revision: "2" },
-        });
-      } finally {
-        registry.dispose();
-      }
-    }),
-  );
+        try {
+          const failed = yield* Effect.promise(() =>
+            commands.writeFile.run(registry, {
+              ...target,
+              input: { ...target.input, contents: "draft", mutationId: "owned-write" },
+            }),
+          );
+          expect(failed._tag).toBe("Failure");
+          if (failed._tag === "Failure") {
+            expect(Cause.squash(failed.cause)).toMatchObject({
+              _tag: "ProjectWriteFileError",
+              failure: "recovery_required",
+              mutationId: "owned-write",
+              publicationOutcome: "retained-attention",
+              recoveryId: attention.recoveryId,
+              retainedPaths: attention.retainedPaths,
+            });
+          }
+          yield* Effect.promise(() =>
+            commands.discardFileVersion.run(registry, {
+              ...target,
+              input: { ...target.input, versionId: "version-1" },
+            }),
+          );
+          expect(
+            yield* Effect.promise(() => commands.listFileVersions.run(registry, target)),
+          ).toMatchObject({
+            _tag: "Success",
+            value: { versions: [], attention },
+          });
+          const reviewed = yield* Effect.promise(() =>
+            commands.readFileOrdered.run(registry, target),
+          );
+          if (currentRevision === null) {
+            expect(reviewed._tag).toBe("Failure");
+            if (reviewed._tag === "Failure")
+              expect(Cause.squash(reviewed.cause)).toMatchObject({
+                _tag: "ProjectReadFileError",
+                reason: "not_found",
+                currentMissing: true,
+                cwd: target.input.cwd,
+                relativePath: target.input.relativePath,
+                recoveryId: attention.recoveryId,
+              });
+          } else {
+            expect(reviewed).toMatchObject({
+              _tag: "Success",
+              value: { publicationAttention: attention },
+            });
+          }
+          expect(attemptedWrites).toBe(1);
+          events.length = 0;
 
-  it("shares an exact tuple key without adding an independent path normalization", () => {
-    const input = { environmentId: target.environmentId, ...target.input };
-    expect(projectFileOperationKey(input)).toBe(
-      JSON.stringify([target.environmentId, target.input.cwd, target.input.relativePath]),
-    );
-    expect(projectFileOperationKey({ ...input, relativePath: "./notes.md" })).not.toBe(
-      projectFileOperationKey(input),
-    );
-    expect(projectFileOperationKey({ ...input, cwd: "/workspace/" })).not.toBe(
-      projectFileOperationKey(input),
-    );
-  });
+          const resolution = commands.resolveFileMutation.run(registry, {
+            ...target,
+            input: {
+              ...target.input,
+              recoveryId: "recovery-1",
+              currentRevision,
+              choice: "accept-current",
+            },
+          });
+          yield* Effect.promise(() => entered.promise);
+          const confirmation = commands.readFileOrdered.run(registry, target);
+          yield* Effect.promise(() =>
+            commands.readFileOrdered.run(registry, {
+              ...target,
+              input: { ...target.input, relativePath: "other.md" },
+            }),
+          );
+          expect(events).toEqual(["resolve-start", "read:other.md"]);
+          release.resolve();
+          expect(yield* Effect.promise(() => resolution)).toMatchObject({
+            _tag: "Success",
+            value: { recoveryId: "recovery-1", revision: currentRevision },
+          });
+          const confirmed = yield* Effect.promise(() => confirmation);
+          if (currentRevision === null) {
+            expect(confirmed._tag).toBe("Failure");
+            if (confirmed._tag === "Failure") {
+              const failure = Cause.squash(confirmed.cause);
+              expect(failure).toMatchObject({
+                _tag: "ProjectReadFileError",
+                failure: "operation_failed",
+                reason: "not_found",
+                currentMissing: true,
+                cwd: target.input.cwd,
+                relativePath: target.input.relativePath,
+              });
+              expect(failure).not.toHaveProperty("recoveryId");
+            }
+          } else {
+            expect(confirmed).toMatchObject({
+              _tag: "Success",
+              value: { contents: "current", revision: currentRevision },
+            });
+            if (confirmed._tag === "Success")
+              expect(confirmed.value).not.toHaveProperty("publicationAttention");
+          }
+          expect(events).toEqual([
+            "resolve-start",
+            "read:other.md",
+            "resolve-settled",
+            "read:notes.md",
+          ]);
+          expect(attemptedWrites).toBe(1);
+        } finally {
+          release.resolve();
+          registry.dispose();
+        }
+      }),
+  );
 });

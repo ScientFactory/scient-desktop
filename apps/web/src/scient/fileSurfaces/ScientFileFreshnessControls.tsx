@@ -1,7 +1,7 @@
 import type { ProjectFileErrorReason } from "@t3tools/contracts";
 import { AlertTriangle, Check, RefreshCw } from "lucide-react";
 import { useState } from "react";
-
+import * as Cause from "effect/Cause";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Popover, PopoverTrigger, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
@@ -9,6 +9,74 @@ import { cn } from "~/lib/utils";
 
 import { staleCopyNotice } from "./fileFailureCopy";
 import type { FileReloadNotice, FileSaveErrorNotice } from "./useWorkspaceFileRefresh";
+
+export type RetainedFileAttention =
+  | "recovery_required"
+  | "target_changed"
+  | "mutation_unavailable"
+  | "mutation_intent_conflict"
+  | "outcome_unknown";
+
+/** Terminal mutation notices never imply that retrying an old intent is safe. */
+export function retainedAttentionCopy(attention: RetainedFileAttention) {
+  switch (attention) {
+    case "recovery_required":
+      return {
+        title: "Review retained file versions",
+        description:
+          "The file operation’s outcome needs review. Your draft is still open. Review the current file and retained versions, and save a separate copy if needed. Accepting the reviewed current disk version requires backend confirmation and keeps your local draft; it does not confirm the old operation succeeded. Reviewing or discarding versions alone does not unblock the retained mutation.",
+      };
+    case "target_changed":
+      return {
+        title: "The file target changed",
+        description:
+          "Scient stopped this operation because the file or its containing path changed. Your draft is still open. Review the actual file and retained versions before starting a new operation.",
+      };
+    case "mutation_unavailable":
+      return {
+        title: "Safe file mutation is unavailable",
+        description:
+          "This environment cannot perform the requested safe file operation. Your draft is still open. Review or save a separate copy; retrying this operation will not make it safe.",
+      };
+    case "mutation_intent_conflict":
+      return {
+        title: "This file operation conflicts with an earlier intent",
+        description:
+          "Scient refused to reuse this operation’s identity for different input. Your draft is still open. Review the current file and retained versions before starting a new operation.",
+      };
+    case "outcome_unknown":
+      return {
+        title: "The file operation’s outcome is unknown",
+        description:
+          "Scient could not confirm whether the file operation completed. Your source draft and open path were kept. Inspect the source, destination, and retained versions before reopening the actual file. Do not repeat the old operation blindly.",
+      };
+  }
+}
+
+/** Recovery evidence may arrive inside an Effect cause or as a wire error. */
+export function retainedFileEvidence(error: unknown): {
+  readonly recoveryId: string | null;
+  readonly retainedPaths: ReadonlyArray<string>;
+} {
+  if (Cause.isCause(error)) {
+    for (const reason of error.reasons) {
+      if (reason._tag !== "Fail") continue;
+      const evidence = retainedFileEvidence(reason.error);
+      if (evidence.recoveryId !== null || evidence.retainedPaths.length > 0) return evidence;
+    }
+  }
+  if (typeof error === "object" && error !== null) {
+    return {
+      recoveryId:
+        "recoveryId" in error && typeof error.recoveryId === "string" ? error.recoveryId : null,
+      retainedPaths:
+        "retainedPaths" in error && Array.isArray(error.retainedPaths)
+          ? error.retainedPaths.filter((path): path is string => typeof path === "string")
+          : [],
+    };
+  }
+  return { recoveryId: null, retainedPaths: [] };
+}
 
 /** The notice is one line; more candidates than this stay behind Try again. */
 const MAX_STALE_COPY_CHOICES = 2;
@@ -86,10 +154,14 @@ export function ScientFileFreshnessNotices(props: {
   const visibleSaveError =
     props.saveError?.relativePath === props.relativePath ? props.saveError : null;
   const resolutionReady = visibleNotice?.contents !== null;
+  const retainedCopy = visibleSaveError?.attention
+    ? retainedAttentionCopy(visibleSaveError.attention)
+    : null;
+  const evidence = retainedFileEvidence(visibleSaveError?.error);
 
   return (
     <>
-      {visibleNotice ? (
+      {visibleNotice && !retainedCopy ? (
         <div
           className="flex shrink-0 items-center gap-2 border-b border-warning/24 bg-warning-surface px-3 py-2 scient-reading-micro text-warning-foreground"
           role="status"
@@ -128,29 +200,55 @@ export function ScientFileFreshnessNotices(props: {
           </Button>
         </div>
       ) : null}
-      {visibleSaveError && !visibleNotice ? (
+      {visibleSaveError && (!visibleNotice || retainedCopy) ? (
         <div
           className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 scient-reading-micro text-destructive"
           role="alert"
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">
-            Changes are still local and have not been saved. {visibleSaveError.message}
-          </span>
-          <Button size="xs" variant="ghost" onClick={props.onReload}>
-            Reload…
-          </Button>
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!props.saveRetryReady}
-            onClick={props.onRetrySave}
-          >
-            Retry save
-          </Button>
+          {retainedCopy ? (
+            <>
+              <div className="min-w-0 flex-1 leading-relaxed">
+                <p className="font-medium">{retainedCopy.title}</p>
+                <p>{retainedCopy.description}</p>
+                {evidence.recoveryId ? (
+                  <p className="break-all">Recovery reference: {evidence.recoveryId}</p>
+                ) : null}
+              </div>
+              {evidence.retainedPaths.map((path) => (
+                <Button
+                  key={path}
+                  size="xs"
+                  variant="outline"
+                  disabled={!openFile}
+                  title={path}
+                  onClick={() => openFile?.(path)}
+                >
+                  Open retained version read-only
+                </Button>
+              ))}
+            </>
+          ) : (
+            <>
+              <span className="min-w-0 flex-1 truncate">
+                Changes are still local and have not been saved. {visibleSaveError.message}
+              </span>
+              <Button size="xs" variant="ghost" onClick={props.onReload}>
+                Reload…
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={!props.saveRetryReady}
+                onClick={props.onRetrySave}
+              >
+                Retry save
+              </Button>
+            </>
+          )}
         </div>
       ) : null}
-      {props.relativePath && props.readError && props.hasFallbackData ? (
+      {!retainedCopy && props.relativePath && props.readError && props.hasFallbackData ? (
         // The last good copy is still on screen, so this is a caution, not a failure.
         <div
           className="flex shrink-0 items-center gap-2 border-b border-warning/20 bg-warning-surface px-3 py-2 scient-reading-micro text-warning-foreground"
@@ -197,7 +295,7 @@ export function ScientFileFreshnessStatus(
      * What a file's document session is asking about. Its own notice, above
      * the document, carries the choices; this only keeps the status truthful.
      */
-    readonly sessionAttention?: "conflict" | "failure" | "refresh" | null;
+    readonly sessionAttention?: "conflict" | "failure" | "refresh" | RetainedFileAttention | null;
   },
 ) {
   const conflict =
@@ -209,16 +307,30 @@ export function ScientFileFreshnessStatus(
   const readFailed =
     props.sessionAttention === "refresh" ||
     Boolean(props.relativePath && props.readError && props.hasFallbackData);
-  const needsAttention = conflict || failed || readFailed;
-  const status = conflict
-    ? "File changed: review your save options"
-    : failed
-      ? "Changes have not been saved"
-      : readFailed
-        ? "The latest file could not be loaded"
-        : props.pending
-          ? "Saving changes"
-          : "No file warnings";
+  const attention =
+    props.saveError?.relativePath === props.relativePath
+      ? (props.saveError?.attention ?? props.sessionAttention)
+      : props.sessionAttention;
+  const retainedAttention =
+    attention === "recovery_required" ||
+    attention === "target_changed" ||
+    attention === "mutation_unavailable" ||
+    attention === "mutation_intent_conflict" ||
+    attention === "outcome_unknown"
+      ? retainedAttentionCopy(attention)
+      : null;
+  const needsAttention = retainedAttention !== null || conflict || failed || readFailed;
+  const status =
+    retainedAttention?.title ??
+    (conflict
+      ? "File changed: review your save options"
+      : failed
+        ? "Changes have not been saved"
+        : readFailed
+          ? "The latest file could not be loaded"
+          : props.pending
+            ? "Saving changes"
+            : "No file warnings");
   return (
     <Popover>
       <PopoverTrigger

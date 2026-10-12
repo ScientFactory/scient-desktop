@@ -1,385 +1,317 @@
-import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import * as Cause from "effect/Cause";
+import "fake-indexeddb/auto";
+import { EnvironmentId } from "@t3tools/contracts";
+import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import { AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { indexedDbMarkdownDrafts } from "~/scient/markdownEditor/persistence/markdownDraftCheckpoint";
+import {
+  WorkspaceFileSessionRegistry,
+  type WorkspaceFileSessionLeaseOptions,
+} from "./workspaceFileSessionRegistry";
 
-import { WorkspaceFileSessionRegistry } from "./workspaceFileSessionRegistry";
-
-interface WriteResult {
-  readonly revision: string;
+type Result = { revision: string };
+const registries: WorkspaceFileSessionRegistry<Result, Error>[] = [];
+const keys = new Set<string>();
+let sequence = 0;
+function registry() {
+  const owner = new WorkspaceFileSessionRegistry<Result, Error>();
+  registries.push(owner);
+  return owner;
 }
-
-function success(revision: string): AtomCommandResult<WriteResult, Error> {
-  return AsyncResult.success({ revision });
-}
-
-function failure(message: string): AtomCommandResult<WriteResult, Error> {
-  return AsyncResult.failure(Cause.fail(new Error(message)));
-}
-
-function deferred<A>() {
-  let resolve!: (value: A) => void;
-  const promise = new Promise<A>((yes) => {
-    resolve = yes;
-  });
-  return { promise, resolve };
-}
-
-function options(input: {
-  readonly key?: string;
-  readonly debounceMs?: number;
-  readonly initialRevision?: string;
-  readonly persist: (
-    contents: string,
-    expectedRevision: string,
-  ) => Promise<AtomCommandResult<WriteResult, Error>>;
-  readonly onPendingChange?: (pending: boolean) => void;
-  readonly onConfirmed?: (contents: string, value: WriteResult) => void;
-  readonly onFailure?: (
-    contents: string,
-    result: Extract<AtomCommandResult<WriteResult, Error>, { readonly _tag: "Failure" }>,
-  ) => void;
-  readonly onResolutionApplied?: (action: "discard" | "retry") => void;
-  readonly onPersisted?: (contents: string, value: WriteResult) => void;
-}) {
+function options(
+  extra: Partial<WorkspaceFileSessionLeaseOptions<Result, Error>> &
+    Pick<WorkspaceFileSessionLeaseOptions<Result, Error>, "persist">,
+): WorkspaceFileSessionLeaseOptions<Result, Error> {
+  const key = extra.key ?? `generic-lease-${++sequence}`;
+  keys.add(key);
   return {
-    key: input.key ?? "environment\0/workspace\0file.txt",
-    debounceMs: input.debounceMs ?? 500,
-    initialRevision: input.initialRevision ?? "revision-1",
-    persist: input.persist,
-    revisionFromResult: (value: WriteResult) => value.revision,
-    ...(input.onPersisted === undefined ? {} : { onPersisted: input.onPersisted }),
-    callbacks: {
-      ...(input.onPendingChange === undefined ? {} : { onPendingChange: input.onPendingChange }),
-      ...(input.onConfirmed === undefined ? {} : { onConfirmed: input.onConfirmed }),
-      ...(input.onFailure === undefined ? {} : { onFailure: input.onFailure }),
-      ...(input.onResolutionApplied === undefined
-        ? {}
-        : { onResolutionApplied: input.onResolutionApplied }),
-    },
+    key,
+    initialSource: "A",
+    initialRevision: "rA",
+    journalStore: indexedDbMarkdownDrafts,
+    debounceMs: 500,
+    revisionFromResult: (result) => result.revision,
+    classifyFailure: () => "conflict",
+    ...extra,
   };
 }
+beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }));
+afterEach(async () => {
+  for (const owner of registries) owner.clear();
+  registries.length = 0;
+  for (const key of keys) {
+    const copy = await indexedDbMarkdownDrafts.read(key);
+    if (copy) await indexedDbMarkdownDrafts.replace(key, copy.token, undefined);
+  }
+  keys.clear();
+  vi.useRealTimers();
+});
 
-describe("WorkspaceFileSessionRegistry", () => {
-  let registry: WorkspaceFileSessionRegistry<WriteResult, Error>;
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-    registry = new WorkspaceFileSessionRegistry();
+describe("WorkspaceFileSessionRegistry durable leases", () => {
+  it("serializes shared views and keeps every pending guard until newer input also lands", async () => {
+    let disk = { source: "A", revision: "rA" };
+    const admitted = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let hold = true;
+    const persist = async (source: string, expected: string | undefined) => {
+      if (hold) {
+        hold = false;
+        admitted.resolve();
+        await release.promise;
+      }
+      if (expected !== disk.revision)
+        return AsyncResult.failure<Result, Error>(Cause.fail(new Error("Revision changed")));
+      disk = { source, revision: `r${source}` };
+      return AsyncResult.success({ revision: disk.revision });
+    };
+    const owner = registry();
+    const input = options({ persist });
+    let firstPending = false;
+    let secondPending = false;
+    const first = owner.acquire({
+      ...input,
+      callbacks: {
+        onPendingChange: (value) => {
+          firstPending = value;
+        },
+      },
+    });
+    const second = owner.acquire({
+      ...input,
+      callbacks: {
+        onPendingChange: (value) => {
+          secondPending = value;
+        },
+      },
+    });
+    await first.ready();
+    first.change("B");
+    const saving = second.flush();
+    await admitted.promise;
+    second.change("C");
+    expect([firstPending, secondPending]).toEqual([true, true]);
+    expect(disk.source).toBe("A");
+    release.resolve();
+    await expect(saving).resolves.toBe(true);
+    expect(disk).toEqual({ source: "C", revision: "rC" });
+    expect([firstPending, secondPending]).toEqual([false, false]);
+    expect(await indexedDbMarkdownDrafts.read(input.key)).toMatchObject({
+      baselineSource: "C",
+      draftSource: "C",
+      publicationIntent: null,
+    });
   });
 
-  afterEach(() => {
-    registry.clear();
-    vi.useRealTimers();
+  it("does not let a stale joining view regress the authoritative baseline", async () => {
+    let disk = { source: "A", revision: "rA" };
+    const persist = async (source: string, expected: string | undefined) => {
+      if (expected !== disk.revision)
+        return AsyncResult.failure<Result, Error>(Cause.fail(new Error("Revision changed")));
+      disk = { source, revision: `r${source}` };
+      return AsyncResult.success({ revision: disk.revision });
+    };
+    const owner = registry();
+    const input = options({ persist });
+    const first = owner.acquire(input);
+    await first.ready();
+    first.change("B");
+    await first.flush();
+    const stale = owner.acquire(input);
+    stale.syncConfirmedFileRevision("rA", "A");
+    stale.change("C");
+    await expect(stale.flush()).resolves.toBe(true);
+    expect(disk).toEqual({ source: "C", revision: "rC" });
+    disk = { source: "D", revision: "rD" };
+    stale.syncConfirmedFileRevision("rD", "D");
+    stale.change("E");
+    await expect(stale.flush()).resolves.toBe(true);
+    expect(disk).toEqual({ source: "E", revision: "rE" });
   });
 
-  it("flushes the latest shared edit before the debounce expires", async () => {
-    const persistResult = deferred<AtomCommandResult<WriteResult, Error>>();
-    const persist = vi.fn().mockReturnValue(persistResult.promise);
-    const first = registry.acquire(options({ persist }));
-    const second = registry.acquire(options({ persist }));
-    first.change("pending Visual edit");
-    const flushed = second.flush();
-    expect(persist).toHaveBeenCalledExactlyOnceWith("pending Visual edit", "revision-1");
-    persistResult.resolve(success("revision-2"));
-    await expect(flushed).resolves.toBe(true);
-    first.release();
-    second.release();
-  });
-
-  it("reports a failed save to the caller waiting to build", async () => {
-    const persist = vi.fn().mockResolvedValue(failure("revision conflict"));
-    const lease = registry.acquire(options({ persist }));
-    lease.change("pending Visual edit");
-    await expect(lease.flush()).resolves.toBe(false);
-    lease.release();
-  });
-
-  it("does not report a released save lease as ready to build", async () => {
-    const lease = registry.acquire(options({ persist: vi.fn() }));
-    lease.release();
-    await expect(lease.flush()).resolves.toBe(false);
-  });
-
-  it("serializes multiple views of one file through one debounced writer", async () => {
-    const persist = vi.fn().mockResolvedValue(success("revision-2"));
-    const firstPending = vi.fn();
-    const secondPending = vi.fn();
-    const first = registry.acquire(options({ persist, onPendingChange: firstPending }));
-    const second = registry.acquire(options({ persist, onPendingChange: secondPending }));
-
-    first.change("first view");
-    await vi.advanceTimersByTimeAsync(300);
-    second.change("latest shared buffer");
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(persist).toHaveBeenCalledExactlyOnceWith("latest shared buffer", "revision-1");
-    expect(firstPending.mock.calls).toEqual([[true], [false]]);
-    expect(secondPending.mock.calls).toEqual([[true], [false]]);
-    first.release();
-    second.release();
-    await vi.runAllTimersAsync();
-    await Promise.resolve();
-    expect(registry.entryCount).toBe(0);
-  });
-
-  it("uses the debounce requested by the view that produced the latest edit", async () => {
-    const persist = vi.fn().mockResolvedValue(success("revision-2"));
-    const slower = registry.acquire(options({ persist, debounceMs: 500 }));
-    const faster = registry.acquire(options({ persist, debounceMs: 150 }));
-
-    slower.change("slow checkpoint");
-    await vi.advanceTimersByTimeAsync(100);
-    faster.change("visual checkpoint");
-    await vi.advanceTimersByTimeAsync(149);
-    expect(persist).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(persist).toHaveBeenCalledExactlyOnceWith("visual checkpoint", "revision-1");
-
-    slower.release();
-    faster.release();
-  });
-
-  it("publishes a successful write once while notifying every active view", async () => {
-    const persist = vi.fn().mockResolvedValue(success("revision-2"));
-    const onPersisted = vi.fn();
-    const firstConfirmed = vi.fn();
-    const secondConfirmed = vi.fn();
-    const first = registry.acquire(options({ persist, onPersisted, onConfirmed: firstConfirmed }));
-    const second = registry.acquire(
-      options({ persist, onPersisted, onConfirmed: secondConfirmed }),
-    );
-
-    first.change("shared");
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(onPersisted).toHaveBeenCalledOnce();
-    expect(firstConfirmed).toHaveBeenCalledOnce();
-    expect(secondConfirmed).toHaveBeenCalledOnce();
-    first.release();
-    second.release();
-  });
-
-  it("keeps every acquired pending guard until the shared write settles", async () => {
-    const persistResult = deferred<AtomCommandResult<WriteResult, Error>>();
-    const persist = vi.fn().mockReturnValue(persistResult.promise);
-    const firstPending = vi.fn();
-    const secondPending = vi.fn();
-    const first = registry.acquire(options({ persist, onPendingChange: firstPending }));
-    const second = registry.acquire(options({ persist, onPendingChange: secondPending }));
-
-    first.change("pending");
-    first.release();
-    expect(firstPending.mock.calls.at(-1)).toEqual([true]);
-    expect(secondPending.mock.calls.at(-1)).toEqual([true]);
-
-    await vi.advanceTimersByTimeAsync(500);
-    persistResult.resolve(success("revision-2"));
-    await Promise.resolve();
-    expect(firstPending.mock.calls.at(-1)).toEqual([false]);
-    expect(secondPending.mock.calls.at(-1)).toEqual([false]);
-    second.release();
-  });
-
-  it("reuses a session reacquired while its final flush is in flight", async () => {
-    const firstWrite = deferred<AtomCommandResult<WriteResult, Error>>();
-    const persist = vi
-      .fn()
-      .mockReturnValueOnce(firstWrite.promise)
-      .mockResolvedValueOnce(success("revision-3"));
-    const first = registry.acquire(options({ persist }));
-    first.change("first checkpoint");
-    first.release();
-    await Promise.resolve();
-    expect(persist).toHaveBeenCalledExactlyOnceWith("first checkpoint", "revision-1");
-
-    const second = registry.acquire(options({ persist }));
-    second.change("second checkpoint");
-    firstWrite.resolve(success("revision-2"));
-    await vi.runAllTimersAsync();
-
-    expect(persist.mock.calls).toEqual([
-      ["first checkpoint", "revision-1"],
-      ["second checkpoint", "revision-2"],
-    ]);
-    second.release();
-  });
-
-  it("does not let a stale joining view regress the shared confirmed revision", async () => {
-    const persist = vi
-      .fn()
-      .mockResolvedValueOnce(success("revision-2"))
-      .mockResolvedValueOnce(success("revision-3"));
-    const current = registry.acquire(options({ persist }));
-    current.change("first checkpoint");
-    await vi.advanceTimersByTimeAsync(500);
-
-    const stale = registry.acquire(options({ persist, initialRevision: "revision-1" }));
-    stale.syncConfirmedFileRevision("revision-1");
-    stale.change("second checkpoint");
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(persist.mock.calls).toEqual([
-      ["first checkpoint", "revision-1"],
-      ["second checkpoint", "revision-2"],
-    ]);
-    current.release();
-    stale.release();
-  });
-
-  it("adopts an authoritative revision change observed after a lease joins", async () => {
-    const persist = vi.fn().mockResolvedValue(success("revision-4"));
-    const lease = registry.acquire(options({ persist }));
-    lease.syncConfirmedFileRevision("revision-3");
-    lease.change("after external refresh");
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(persist).toHaveBeenCalledExactlyOnceWith("after external refresh", "revision-3");
-    lease.release();
-  });
-
-  it("ignores callbacks retained by a released view", async () => {
-    const persist = vi.fn().mockResolvedValue(success("revision-2"));
-    const first = registry.acquire(options({ persist }));
-    first.release();
-    first.change("retired contents");
-    const second = registry.acquire(options({ persist }));
-    second.change("current contents");
-    await vi.runAllTimersAsync();
-
-    expect(persist).toHaveBeenCalledOnce();
-    expect(persist.mock.calls[0]?.[0]).toBe("current contents");
-    second.release();
-  });
-
-  it("does not resume a shared transaction until every suspending view releases it", async () => {
-    const persist = vi.fn().mockResolvedValue(success("revision-2"));
-    const first = registry.acquire(options({ persist }));
-    const second = registry.acquire(options({ persist }));
+  it("keeps the shared writer suspended until every suspending view releases it", async () => {
+    let disk = "A";
+    const owner = registry();
+    const input = options({
+      persist: async (source) => {
+        disk = source;
+        return AsyncResult.success({ revision: "rB" });
+      },
+    });
+    const first = owner.acquire(input);
+    const second = owner.acquire(input);
+    await first.ready();
     first.setSuspended(true);
     second.setSuspended(true);
-    first.change("held buffer");
-
+    first.change("B");
     first.setSuspended(false);
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(persist).not.toHaveBeenCalled();
-
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(disk).toBe("A");
     second.release();
-    await vi.runAllTimersAsync();
-    expect(persist).toHaveBeenCalledExactlyOnceWith("held buffer", "revision-1");
-    first.release();
-  });
-
-  it("retains a failed buffer without consumers and replays the failure on reacquire", async () => {
-    const persist = vi
-      .fn()
-      .mockResolvedValueOnce(failure("revision conflict"))
-      .mockResolvedValueOnce(success("revision-remote-next"));
-    const firstFailure = vi.fn();
-    const first = registry.acquire(options({ persist, onFailure: firstFailure }));
-    first.change("local buffer");
-    first.release();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(firstFailure).not.toHaveBeenCalled();
-    expect(registry.entryCount).toBe(1);
-    const secondFailure = vi.fn();
-    const second = registry.acquire(options({ persist, onFailure: secondFailure }));
-    expect(secondFailure).toHaveBeenCalledOnce();
-
-    second.retryPending("revision-remote");
-    await vi.runAllTimersAsync();
-    expect(persist.mock.calls).toEqual([
-      ["local buffer", "revision-1"],
-      ["local buffer", "revision-remote"],
-    ]);
-    second.release();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(registry.entryCount).toBe(0);
-  });
-
-  it("keeps pending guards active across an unmounted failure until retry succeeds", async () => {
-    const persist = vi
-      .fn()
-      .mockResolvedValueOnce(failure("revision conflict"))
-      .mockResolvedValueOnce(success("revision-3"));
-    const firstPending = vi.fn();
-    const first = registry.acquire(options({ persist, onPendingChange: firstPending }));
-    first.change("recoverable buffer");
-    first.release();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(firstPending.mock.calls).toEqual([[true]]);
-    const secondPending = vi.fn();
-    const second = registry.acquire(options({ persist, onPendingChange: secondPending }));
-    expect(secondPending.mock.calls).toEqual([[true]]);
-    second.retryPending("revision-2");
-    await vi.runAllTimersAsync();
-
-    expect(firstPending.mock.calls).toEqual([[true], [false]]);
-    expect(secondPending.mock.calls).toEqual([[true], [false]]);
-    second.release();
-  });
-
-  it("can discard a retained failed buffer without writing it again", async () => {
-    const persist = vi.fn().mockResolvedValue(failure("revision conflict"));
-    const first = registry.acquire(options({ persist }));
-    first.change("discard me");
-    first.release();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const resolutionApplied = vi.fn();
-    const second = registry.acquire(options({ persist, onResolutionApplied: resolutionApplied }));
-    second.discardPending("revision-remote");
-    second.release();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(persist).toHaveBeenCalledOnce();
-    expect(resolutionApplied).toHaveBeenCalledExactlyOnceWith("discard");
-    expect(registry.entryCount).toBe(0);
-  });
-
-  it("applies the same conflict resolution only once across views", async () => {
-    const persist = vi
-      .fn()
-      .mockResolvedValueOnce(failure("revision conflict"))
-      .mockResolvedValueOnce(success("revision-3"));
-    const firstResolution = vi.fn();
-    const secondResolution = vi.fn();
-    const first = registry.acquire(options({ persist, onResolutionApplied: firstResolution }));
-    const second = registry.acquire(options({ persist, onResolutionApplied: secondResolution }));
-    first.change("local buffer");
     await vi.advanceTimersByTimeAsync(500);
-
-    first.retryPending("revision-2");
-    second.retryPending("revision-2");
-    await vi.runAllTimersAsync();
-    expect(persist).toHaveBeenCalledTimes(2);
-    expect(firstResolution).toHaveBeenCalledExactlyOnceWith("retry");
-    expect(secondResolution).toHaveBeenCalledExactlyOnceWith("retry");
-    first.release();
-    second.release();
+    await first.flush();
+    expect(disk).toBe("B");
   });
 
-  it("keeps independent workspace file identities fully isolated", async () => {
-    const persist = vi.fn().mockResolvedValue(success("revision-2"));
-    const first = registry.acquire(options({ key: "workspace-a\0file.txt", persist }));
-    const second = registry.acquire(options({ key: "workspace-b\0file.txt", persist }));
-    first.change("workspace a");
-    second.change("workspace b");
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(persist.mock.calls.map(([contents]) => contents).toSorted()).toEqual([
-      "workspace a",
-      "workspace b",
-    ]);
-    expect(registry.entryCount).toBe(2);
+  it("flushes final release but keeps stale callbacks inert when another view remounts", async () => {
+    let disk = "A";
+    const landed = Promise.withResolvers<void>();
+    const owner = registry();
+    const input = options({
+      persist: async (source) => {
+        disk = source;
+        landed.resolve();
+        return AsyncResult.success({ revision: `r${source}` });
+      },
+    });
+    const first = owner.acquire(input);
+    await first.ready();
+    first.change("B");
     first.release();
-    second.release();
+    await landed.promise;
+    expect(disk).toBe("B");
+    const successor = owner.acquire({ ...input, initialSource: "B", initialRevision: "rB" });
+    await successor.ready();
+    first.change("retired callback");
+    await expect(first.flush()).resolves.toBe(false);
+    successor.change("C");
+    await expect(successor.flush()).resolves.toBe(true);
+    expect(disk).toBe("C");
+  });
+
+  it("restores an unmounted conflicted draft from the store in a new registry, not the old map", async () => {
+    let disk = { source: "D", revision: "rD" };
+    const persist = async (source: string, expected: string | undefined) => {
+      if (expected !== disk.revision)
+        return AsyncResult.failure<Result, Error>(Cause.fail(new Error("Conflict")));
+      disk = { source, revision: `r${source}` };
+      return AsyncResult.success({ revision: disk.revision });
+    };
+    const original = registry();
+    const input = options({ persist });
+    const first = original.acquire(input);
+    await first.ready();
+    first.change("B");
+    await expect(first.flush()).resolves.toBe(false);
+    original.clear();
+    let shown = "D";
+    const successor = registry().acquire({
+      ...input,
+      initialSource: "D",
+      initialRevision: "rD",
+      callbacks: {
+        onRestoredSource: (source) => {
+          shown = source;
+        },
+      },
+    });
+    await successor.ready();
+    expect(shown).toBe("B");
+    await expect(successor.flush()).resolves.toBe(false);
+    expect(disk.source).toBe("D");
+    successor.retryPending("rD");
+    await expect(successor.flush()).resolves.toBe(true);
+    expect(disk).toEqual({ source: "B", revision: "rB" });
+  });
+
+  it("preserves independent workspace identities while one journal refuses admission", async () => {
+    let diskA = "A";
+    let diskB = "A";
+    const owner = registry();
+    const first = owner.acquire(
+      options({
+        journalStore: { read: async () => undefined, replace: async () => false },
+        persist: async (source) => {
+          diskA = source;
+          return AsyncResult.success({ revision: "rB" });
+        },
+      }),
+    );
+    const second = owner.acquire(
+      options({
+        persist: async (source) => {
+          diskB = source;
+          return AsyncResult.success({ revision: "rC" });
+        },
+      }),
+    );
+    first.change("B");
+    second.change("C");
+    await expect(first.flush()).resolves.toBe(false);
+    await expect(second.flush()).resolves.toBe(true);
+    expect([diskA, diskB]).toEqual(["A", "C"]);
+  });
+
+  it("releases a genuinely clean journal after retirement and waits cleanup before reacquiring the same key", async () => {
+    const released = Promise.withResolvers<void>();
+    let disk = { source: "A", revision: "rA" };
+    const input = options({
+      journalStore: {
+        read: (key) => indexedDbMarkdownDrafts.read(key),
+        replace: async (key, expected, next) => {
+          const accepted = await indexedDbMarkdownDrafts.replace(key, expected, next);
+          if (accepted && next === undefined) released.resolve();
+          return accepted;
+        },
+      },
+      persist: async (source, expected) => {
+        if (expected !== disk.revision)
+          return AsyncResult.failure<Result, Error>(Cause.fail(new Error("Revision changed")));
+        disk = { source, revision: `r${source}` };
+        return AsyncResult.success({ revision: disk.revision });
+      },
+    });
+    const owner = registry();
+    const first = owner.acquire(input);
+    await first.ready();
+    first.release();
+    await released.promise;
+    expect(await indexedDbMarkdownDrafts.read(input.key)).toBeUndefined();
+    disk = { source: "D", revision: "rD" };
+    const fresh = owner.acquire({ ...input, initialSource: "D", initialRevision: "rD" });
+    await fresh.ready();
+    first.change("stale retired input");
+    fresh.change("E");
+    await expect(fresh.flush()).resolves.toBe(true);
+    expect(disk).toEqual({ source: "E", revision: "rE" });
+  });
+
+  it("retires a settled old pathname without trapping a subsequently recreated file in the retired registry entry", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("generic-lease-rename"),
+      cwd: "/repo",
+      relativePath: "a.txt",
+    };
+    const destination = { ...from, relativePath: "b.txt" };
+    const key = projectFileOperationKey(from);
+    keys.add(projectFileOperationKey(destination));
+    let disk = { source: "A", revision: "rA" };
+    const input = options({
+      key,
+      persist: async (source, expected) => {
+        if (expected !== disk.revision)
+          return AsyncResult.failure<Result, Error>(Cause.fail(new Error("Revision changed")));
+        disk = { source, revision: `r${source}` };
+        return AsyncResult.success({ revision: disk.revision });
+      },
+    });
+    const owner = registry();
+    const source = owner.acquire(input);
+    await source.ready();
+    const intent = (await source.beginRename(from, destination))!;
+    await expect(
+      source.acknowledgeRename(intent, { destinationRelativePath: "b.txt", revision: "rA" }),
+    ).resolves.toBe(true);
+    disk = { source: "D", revision: "rD" };
+    const recreated = owner.acquire({ ...input, initialSource: "D", initialRevision: "rD" });
+    await recreated.ready();
+    source.change("stale original source");
+    recreated.change("E");
+    await expect(recreated.flush()).resolves.toBe(true);
+    expect(disk).toEqual({ source: "E", revision: "rE" });
+    expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
+      baselineSource: "E",
+      draftSource: "E",
+    });
   });
 });

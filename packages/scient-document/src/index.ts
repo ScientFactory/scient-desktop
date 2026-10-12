@@ -24,11 +24,16 @@ export {
 } from "./sourcePatch.ts";
 export {
   DocumentPersistenceCoordinator,
+  type DocumentAuthorizedCurrentReview,
+  type DocumentFilePublicationAttention,
   type DocumentExternalUpdate,
   type DocumentPatchReconciliation,
+  type DocumentPersistenceAttention,
   type DocumentPersistenceFailureKind,
   type DocumentPersistenceOptions,
   type DocumentPersistenceReadResult,
+  type DocumentPersistenceCurrentReview,
+  type DocumentPublicationOutcome,
   type DocumentPersistenceSnapshot,
   type DocumentReconciliation,
   type PrepareDocumentExternalUpdate,

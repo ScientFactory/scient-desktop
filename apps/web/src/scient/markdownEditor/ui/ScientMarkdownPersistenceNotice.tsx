@@ -1,6 +1,11 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { AlertTriangle } from "lucide-react";
+import type { DocumentPersistenceCurrentReview } from "@scientfactory/scient-document";
 
+import {
+  retainedAttentionCopy,
+  retainedFileEvidence,
+} from "~/scient/fileSurfaces/ScientFileFreshnessControls";
 import { Button } from "~/components/ui/button";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 import { documentFailureReason } from "../persistence/documentFailureReason";
@@ -49,36 +54,57 @@ export function ScientMarkdownPersistenceNotice({
     revision: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [review, setReview] = useState<
+    (DocumentPersistenceCurrentReview & { readonly recoveryId: string | null }) | null
+  >(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const previousIssue = useRef<string | null>(null);
-  const issue = pendingInput
-    ? "input"
-    : snapshot.conflict
-      ? "conflict"
-      : snapshot.error
-        ? snapshot.pending
-          ? "failure"
-          : "refresh"
-        : null;
+  const issue = snapshot.attention
+    ? snapshot.attention
+    : pendingInput
+      ? "input"
+      : snapshot.currentMissing
+        ? "missing-current"
+        : snapshot.conflict
+          ? "conflict"
+          : snapshot.error
+            ? snapshot.pending
+              ? "failure"
+              : "refresh"
+            : null;
+  const attentionCopy = snapshot.attention ? retainedAttentionCopy(snapshot.attention) : null;
   const title =
-    issue === "input"
+    attentionCopy?.title ??
+    (issue === "input"
       ? "Finish the pending edit in Rich"
-      : issue === "conflict"
-        ? "This file was changed by another writer"
-        : issue === "refresh"
-          ? refreshCopy.title
-          : "Changes haven’t been saved";
+      : issue === "missing-current"
+        ? "The reviewed current pathname is missing"
+        : issue === "conflict"
+          ? "This file was changed by another writer"
+          : issue === "refresh"
+            ? refreshCopy.title
+            : "Changes haven’t been saved");
   const choices =
     issue === "refresh" && onOpenFile ? missingFileChoices.slice(0, MAX_MISSING_FILE_CHOICES) : [];
+  const evidence = snapshot.publicationAttention ?? retainedFileEvidence(snapshot.error);
+  const reviewRecoveryId = evidence.recoveryId;
+  const reviewUnchanged = reviewRecoveryId === null && snapshot.publicationOutcome === "unchanged";
+  const canReview = reviewRecoveryId !== null || reviewUnchanged;
+  const reviewMatches = review !== null && review.recoveryId === reviewRecoveryId;
 
   const reason =
-    issue === "failure" || issue === "refresh" ? documentFailureReason(snapshot.error) : null;
+    snapshot.attention !== null || issue === "failure" || issue === "refresh"
+      ? documentFailureReason(snapshot.error)
+      : null;
 
   useEffect(() => {
     if (issue === previousIssue.current) return;
     previousIssue.current = issue;
     setAnnouncement(issue ? title : "");
     setConfirmation(null);
+    setReview(null);
+    setReviewError(null);
   }, [issue, title]);
 
   const run = async (operation: () => Promise<boolean>) => {
@@ -125,17 +151,23 @@ export function ScientMarkdownPersistenceNotice({
               {title}
             </p>
             <p>
-              {issue === "input"
-                ? "Your input remains in its rich editor. Correct or undo it there before editing Source, saving, or replacing this document."
-                : confirmation?.action === "local"
-                  ? "Replace the version on disk with your current edits? Scient will check for another change before writing."
-                  : confirmation?.action === "disk"
-                    ? "Use the latest disk version? Your current edits will remain recoverable while this document is open."
-                    : issue === "conflict"
-                      ? "Your edits are still open and have not overwritten the newer file on disk."
-                      : issue === "refresh"
-                        ? refreshCopy.description
-                        : "Your edits are still open, but saving or checking the disk version could not finish. Keep this document open and retry."}
+              {attentionCopy
+                ? snapshot.publicationOutcome === "unchanged"
+                  ? "Scient confirmed this attempt did not publish a change. Your local draft remains open. Review the current disk version before acknowledging this refusal. This does not confirm a save or repair an unavailable mutation capability."
+                  : attentionCopy.description
+                : issue === "input"
+                  ? "Your input remains in its rich editor. Correct or undo it there before editing Source, saving, or replacing this document."
+                  : issue === "missing-current"
+                    ? "Your local draft and its historical baseline are still open, not saved at the missing path. Accepting absence did not create a file. A new edit or explicit recreation uses a new exclusive create-only intent and cannot replace a file that appears."
+                    : confirmation?.action === "local"
+                      ? "Replace the version on disk with your current edits? Scient will check for another change before writing."
+                      : confirmation?.action === "disk"
+                        ? "Use the latest disk version? Your current edits will remain recoverable while this document is open."
+                        : issue === "conflict"
+                          ? "Your edits are still open and have not overwritten the newer file on disk."
+                          : issue === "refresh"
+                            ? refreshCopy.description
+                            : "Your edits are still open, but saving or checking the disk version could not finish. Keep this document open and retry."}
             </p>
             {reason !== null && confirmation === null ? (
               <p className="opacity-80" data-persistence-reason>
@@ -143,13 +175,116 @@ export function ScientMarkdownPersistenceNotice({
               </p>
             ) : null}
           </div>
+          {snapshot.attention && evidence.recoveryId ? (
+            <p className="basis-full break-all opacity-80">
+              Recovery reference: {evidence.recoveryId}
+            </p>
+          ) : null}
+          {snapshot.attention && !evidence.recoveryId && snapshot.attentionMutationId ? (
+            <p className="basis-full break-all opacity-80">
+              Original mutation reference: {snapshot.attentionMutationId}
+            </p>
+          ) : null}
           <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
-            {issue === "input" ? (
+            {snapshot.attention ? (
+              <>
+                {evidence.retainedPaths.map((path) => (
+                  <Button
+                    key={path}
+                    size="xs"
+                    variant="outline"
+                    disabled={onOpenFile === undefined}
+                    title={path}
+                    onClick={() => onOpenFile?.(path)}
+                  >
+                    Open retained version read-only
+                  </Button>
+                ))}
+                {canReview ? (
+                  <>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={busy || pendingInput !== null}
+                      onClick={() =>
+                        void run(async () => {
+                          // The refusal-only reference is never a backend recovery authorization.
+                          const disk = await persistence.reviewRetainedCurrent(
+                            reviewRecoveryId ?? "unchanged",
+                          );
+                          setReview(disk ? { ...disk, recoveryId: reviewRecoveryId } : null);
+                          setReviewError(
+                            disk
+                              ? null
+                              : "The current disk version could not be reviewed. Local input is preserved.",
+                          );
+                          return disk !== null;
+                        })
+                      }
+                    >
+                      Review current disk version read-only
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={busy || pendingInput !== null || !reviewMatches}
+                      onClick={() =>
+                        void run(async () => {
+                          const accepted = reviewUnchanged
+                            ? await persistence.reviewUnchangedRefusal(review!.revision)
+                            : await persistence.resolveRetainedAttention(
+                                reviewRecoveryId!,
+                                review!.revision,
+                              );
+                          if (!accepted)
+                            setReviewError(
+                              "The reviewed disk version could not be accepted. Review it again; your local draft is preserved.",
+                            );
+                          return accepted;
+                        })
+                      }
+                    >
+                      {reviewUnchanged
+                        ? "Acknowledge unchanged refusal"
+                        : "Accept current disk version after review"}
+                    </Button>
+                  </>
+                ) : null}
+                {pendingInput && onReturnToRich ? (
+                  <Button size="xs" variant="outline" onClick={onReturnToRich}>
+                    Return to Rich
+                  </Button>
+                ) : null}
+              </>
+            ) : issue === "input" ? (
               onReturnToRich ? (
                 <Button size="xs" variant="outline" onClick={onReturnToRich}>
                   Return to Rich
                 </Button>
               ) : null
+            ) : issue === "missing-current" ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={
+                  busy ||
+                  snapshot.inFlight ||
+                  snapshot.reading ||
+                  snapshot.publicationIntent !== null
+                }
+                onClick={() =>
+                  void run(async () => {
+                    const created = await persistence.recreateMissingCurrent();
+                    if (!created)
+                      setReviewError(
+                        "Recreation could not be confirmed. Your local draft is still open; review the current file before trying another intent.",
+                      );
+                    return created;
+                  })
+                }
+              >
+                Recreate current file exclusively
+              </Button>
             ) : confirmation ? (
               <>
                 <Button
@@ -229,6 +364,31 @@ export function ScientMarkdownPersistenceNotice({
               </>
             )}
           </div>
+          {snapshot.attention && canReview && reviewMatches ? (
+            <div className="basis-full" role="group" aria-label="Reviewed current disk version">
+              {review.missing ? (
+                <p role="status">
+                  The current pathname was confirmed absent. Acceptance applies only to absence,
+                  does not create a file, and preserves your local draft.
+                </p>
+              ) : (
+                <>
+                  <p>
+                    Current disk revision: {review.revision}. Acceptance applies only to these bytes
+                    and keeps your local draft.
+                  </p>
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border p-2">
+                    {review.source}
+                  </pre>
+                </>
+              )}
+            </div>
+          ) : null}
+          {reviewError ? (
+            <p className="basis-full" role="alert">
+              {reviewError}
+            </p>
+          ) : null}
         </div>
       ) : null}
       {snapshot.recoverySource !== null ? (

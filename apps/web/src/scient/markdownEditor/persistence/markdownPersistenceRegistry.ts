@@ -1,6 +1,8 @@
 import {
   DocumentPersistenceCoordinator,
   type DocumentPatchReconciliation,
+  type DocumentPersistenceCurrentReview,
+  type DocumentPersistenceOptions,
   type DocumentSourceEdit,
   type DocumentSourceEditOutcome,
   type ReconcileDocument,
@@ -14,6 +16,7 @@ import {
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 
+import { randomUUID } from "~/lib/utils";
 import { isScientMarkdownDocumentPath } from "../markdownDocumentPaths";
 
 import {
@@ -28,6 +31,7 @@ import {
   MarkdownDraftCheckpointWriter,
   type MarkdownDraftCheckpoint,
   type MarkdownDraftCheckpointStore,
+  type DocumentRenameIntent,
 } from "./markdownDraftCheckpoint";
 
 export type { MarkdownPersistenceTarget } from "./markdownPersistenceTransport";
@@ -45,12 +49,7 @@ export type DocumentReconcileStrategy = ReconcileDocument<DocumentPatchReconcili
  */
 export const keepBothVersions: DocumentReconcileStrategy = () => null;
 
-/**
- * The strategy for each kind of file the registry owns. Only Markdown merges.
- * LaTeX has no merge yet: two changes that are far apart in the text can still
- * depend on each other (a macro and its uses, a label and its references). A
- * file of any other kind is here only as part of a LaTeX document.
- */
+/** Markdown retains its existing reconciliation; native documents keep both versions. */
 export function documentReconcileStrategy(
   target: MarkdownPersistenceTarget,
 ): DocumentReconcileStrategy | undefined {
@@ -58,12 +57,10 @@ export function documentReconcileStrategy(
 }
 
 /**
- * Whether a file's unsaved draft is kept in the session's checkpoint store.
- * A LaTeX document's files are not: their recovery belongs to the Visual
- * editor, which offers recovered work for comparison and never applies it
- * unasked. Two recovery copies of one file would answer that question twice.
- * Bibliographies have no startup recovery UI, so .bib sessions keep unsaved
- * source in memory only; References retains its form until a save is confirmed.
+ * Whether ordinary unsaved draft copies are kept in the session's store.
+ * Native editors own their draft recovery. Every format still journals the
+ * exact publication intent here before transport admission, and clears that
+ * journal only after the coordinator has a known acknowledgement.
  */
 export function documentKeepsCheckpoint(target: MarkdownPersistenceTarget): boolean {
   return isScientMarkdownDocumentPath(target.relativePath);
@@ -102,17 +99,24 @@ export interface MarkdownPersistenceLease {
   readonly applyEdit: (edit: DocumentSourceEdit) => DocumentSourceEditOutcome;
   readonly noteFreshnessHint: (reason?: string) => void;
   readonly flushNow: () => Promise<boolean>;
+  readonly recreateMissingCurrent: () => Promise<boolean>;
   readonly retry: () => Promise<boolean>;
   readonly refresh: () => Promise<boolean>;
+  readonly noteMutationFailure: (error: unknown, mutationId?: string) => void;
+  readonly getRenameIntent: () => DocumentRenameIntent | null;
+  readonly resolveRetainedAttention: (
+    recoveryId: string,
+    currentRevision: string | null,
+  ) => Promise<boolean>;
+  readonly reviewRetainedCurrent: (
+    recoveryId: string,
+  ) => Promise<DocumentPersistenceCurrentReview | null>;
+  readonly reviewUnchangedRefusal: (currentRevision: string | null) => Promise<boolean>;
   readonly resolveWithLocal: (revision: string) => Promise<boolean>;
   readonly resolveWithDisk: () => Promise<boolean>;
   readonly restoreRecovery: () => boolean;
   readonly holdForRename: () => (() => void) | null;
-  /**
-   * Before any rename: removes this document's recovery copy, which must not
-   * outlive its name. False if a copy with unsaved work is due or removal
-   * failed; the rename must then wait. Absent in leases from older code.
-   */
+  /** Removes only a clean ordinary recovery copy; never a pending namespace intent. */
   readonly settleRecoveryCopy?: () => Promise<boolean>;
   /**
    * Starts an in-place rename to `destination`, or null when this document
@@ -138,6 +142,8 @@ interface RegistryEntry {
   readonly projections: Map<object, PrepareMarkdownExternalUpdate>;
   readonly unsubscribe: () => void;
   checkpoint: MarkdownDraftCheckpointWriter | undefined;
+  renameIntent: DocumentRenameIntent | null;
+  settlingRename: boolean;
   pendingInput: DocumentPendingInput | null;
   pendingInputOwner: object | null;
   pendingInputOwnerLease: object | null;
@@ -167,12 +173,21 @@ export interface MarkdownPersistenceMoveTransaction {
    * be read) counts as not empty.
    */
   readonly preflight: () => Promise<"empty" | "occupied" | "unknown">;
-  /**
-   * After the server renamed the file: moves the open document to the new path.
-   * False only if nothing was changed, so the caller can reopen the destination
-   * the ordinary way.
-   */
-  readonly commit: () => boolean;
+  /** Strict durable admission; returns the original identity when replaying. */
+  readonly admitRename: (options?: {
+    readonly removeEmptyFolders?: true;
+  }) => Promise<DocumentRenameIntent>;
+  /** Rechecked synchronously at dispatch after strict storage admission resolves. */
+  readonly isCurrent: () => boolean;
+  /** Journals an exact authoritative receipt before any local path changes. */
+  readonly acknowledgeRename: (acknowledgement: {
+    readonly destinationRelativePath: string;
+    readonly revision: string;
+  }) => Promise<boolean>;
+  /** Clears only an authoritative definitive refusal, preserving ordinary input. */
+  readonly rejectRename: () => Promise<void>;
+  /** Moves the acknowledged journal and document together; CAS failure leaves input held. */
+  readonly commit: () => Promise<boolean>;
   /** Ends the transaction: releases the hold and reservations. Idempotent. */
   readonly finish: () => void;
 }
@@ -199,7 +214,9 @@ export function canMoveInPlace(lease: MarkdownPersistenceLease): boolean {
  * Raised whenever a registry built from older code could not serve this code:
  * a new lease method, a new rule for which strategy or checkpoint a file gets.
  */
-const REGISTRY_GENERATION = 8;
+const REGISTRY_GENERATION = 15;
+
+class CheckpointAdmissionError extends Error {}
 
 export class MarkdownPersistenceRegistry {
   readonly generation = REGISTRY_GENERATION;
@@ -210,6 +227,7 @@ export class MarkdownPersistenceRegistry {
       initial: ProjectReadFileResult;
       transport: MarkdownPersistenceTransport;
       checkpoint: MarkdownDraftCheckpoint | undefined;
+      currentMissing: boolean;
     }>
   >();
   /**
@@ -235,7 +253,7 @@ export class MarkdownPersistenceRegistry {
         target: MarkdownPersistenceTarget,
       ) => MarkdownPersistenceTransport;
       readonly checkpointStore?: MarkdownDraftCheckpointStore;
-      /** Files whose unsaved draft is not kept in the checkpoint store. All are kept by default. */
+      /** Files whose ordinary drafts use this store; exact publication intents always do. */
       readonly keepsCheckpoint?: (target: MarkdownPersistenceTarget) => boolean;
       /** The merge strategy for a file; Markdown's block merge where it names none. */
       readonly reconcile?: (
@@ -253,12 +271,118 @@ export class MarkdownPersistenceRegistry {
     return () => this.listeners.delete(listener);
   };
 
-  private checkpointStoreFor(
-    target: MarkdownPersistenceTarget,
-  ): MarkdownDraftCheckpointStore | undefined {
-    return this.options.keepsCheckpoint?.(target) === false
-      ? undefined
-      : this.options.checkpointStore;
+  private checkpointSnapshot(entry: RegistryEntry): MarkdownPersistenceSnapshot {
+    const snapshot = entry.coordinator.getSnapshot();
+    if (
+      entry.renameIntent ||
+      snapshot.authorizedCurrentReview !== null ||
+      snapshot.attention !== null ||
+      snapshot.currentMissing ||
+      this.options.keepsCheckpoint?.(entry.target) !== false
+    )
+      return snapshot;
+    // The native editor owns any newer draft. This journal recovers only the
+    // source associated with the exact publication identity.
+    return {
+      ...snapshot,
+      draftSource: snapshot.publicationIntent?.source ?? snapshot.baselineSource,
+      pending: snapshot.publicationIntent !== null,
+    };
+  }
+
+  private publicationIo(
+    getEntry: () => RegistryEntry,
+    transport: MarkdownPersistenceTransport,
+  ): Pick<
+    DocumentPersistenceOptions,
+    "write" | "classifyFailure" | "persistAuthorizedCurrentReview"
+  > {
+    return {
+      persistAuthorizedCurrentReview: async (snapshot) => {
+        const entry = getEntry();
+        const writer = entry.checkpoint;
+        if (
+          !writer ||
+          entry.transport !== transport ||
+          this.entries.get(projectFileOperationKey(entry.target)) !== entry
+        )
+          throw new CheckpointAdmissionError(
+            "This reviewed current no longer owns its recovery journal.",
+          );
+        await writer.flushAuthorizedCurrentReview(snapshot);
+        if (
+          entry.checkpoint !== writer ||
+          entry.transport !== transport ||
+          this.entries.get(projectFileOperationKey(entry.target)) !== entry
+        )
+          throw new CheckpointAdmissionError(
+            "This reviewed current moved during durable admission.",
+          );
+      },
+      write: async (intent) => {
+        const entry = getEntry();
+        const writer = entry.checkpoint;
+        try {
+          if (!writer)
+            throw new Error("Durable file publication requires available recovery storage.");
+          if (
+            entry.renameIntent &&
+            (!entry.renameIntent.acknowledgement ||
+              projectFileOperationKey(entry.renameIntent.destination) !==
+                projectFileOperationKey(entry.target))
+          )
+            throw new Error(
+              "A pending rename must be acknowledged or reviewed before publishing source.",
+            );
+          if (
+            entry.transport !== transport ||
+            this.entries.get(projectFileOperationKey(entry.target)) !== entry
+          )
+            throw new Error("This file publication no longer belongs to the current document.");
+          const snapshot = this.checkpointSnapshot(entry);
+          if (snapshot.publicationIntent !== intent)
+            throw new Error("The file publication identity changed before admission.");
+          await writer.flushPublication(snapshot);
+          if (
+            entry.checkpoint !== writer ||
+            entry.transport !== transport ||
+            this.entries.get(projectFileOperationKey(entry.target)) !== entry
+          )
+            throw new Error("This file publication moved before durable admission.");
+        } catch (cause) {
+          throw new CheckpointAdmissionError(
+            cause instanceof Error
+              ? cause.message
+              : "The publication checkpoint could not be committed.",
+            { cause },
+          );
+        }
+        return transport.write(intent);
+      },
+      classifyFailure: (error) =>
+        error instanceof CheckpointAdmissionError ? "terminal" : transport.classifyFailure(error),
+    };
+  }
+
+  private async finishRenameReview(entry: RegistryEntry, accepted: boolean): Promise<boolean> {
+    if (!accepted || !entry.renameIntent) return accepted;
+    const intent = entry.renameIntent;
+    if (
+      intent.acknowledgement &&
+      projectFileOperationKey(intent.destination) === projectFileOperationKey(entry.target)
+    )
+      return accepted;
+    try {
+      if (!entry.checkpoint) return false;
+      await entry.checkpoint.clearRename(this.checkpointSnapshot(entry), intent.mutationId);
+      if (entry.renameIntent !== intent) return false;
+      entry.renameIntent = null;
+      this.changed(entry);
+      return true;
+    } catch (cause) {
+      entry.coordinator.noteMutationFailure(cause, intent.mutationId);
+      return false;
+    }
   }
 
   private strategyFor(target: MarkdownPersistenceTarget): DocumentReconcileStrategy {
@@ -295,9 +419,9 @@ export class MarkdownPersistenceRegistry {
         const transport = (this.options.createTransport ?? createMarkdownPersistenceTransport)(
           target,
         );
-        const store = this.checkpointStoreFor(target);
+        const store = this.options.checkpointStore;
         opening = Promise.all([
-          transport.read(),
+          transport.readForReview?.() ?? transport.read(),
           (this.retiring.get(key) ?? Promise.resolve())
             .then(() => store?.read(key))
             .then(async (checkpoint) => {
@@ -315,6 +439,27 @@ export class MarkdownPersistenceRegistry {
               return undefined;
             }),
         ]).then(([disk, checkpoint]) => {
+          if (disk.missing) {
+            if (!checkpoint)
+              throw new Error(
+                "The current file is missing. Open a retained version or supply a local draft before editing.",
+              );
+            const publicationAttention =
+              disk.publicationAttention ?? checkpoint.publicationAttention;
+            return {
+              initial: {
+                relativePath: target.relativePath,
+                contents: checkpoint.baselineSource,
+                revision: checkpoint.baselineRevision,
+                byteLength: new TextEncoder().encode(checkpoint.baselineSource).byteLength,
+                truncated: false,
+                ...(publicationAttention ? { publicationAttention } : {}),
+              },
+              transport,
+              checkpoint,
+              currentMissing: true,
+            };
+          }
           if (disk.truncated || disk.readOnly) {
             throw new Error(
               disk.truncated
@@ -329,24 +474,54 @@ export class MarkdownPersistenceRegistry {
               revision: disk.revision,
               byteLength: new TextEncoder().encode(disk.source).byteLength,
               truncated: false,
+              ...(disk.publicationAttention
+                ? { publicationAttention: disk.publicationAttention }
+                : {}),
             },
             transport,
             checkpoint,
+            currentMissing: false,
           };
         });
         this.initializing.set(key, opening);
       }
       try {
-        const { initial, transport, checkpoint } = await opening;
+        const { initial, transport, checkpoint, currentMissing } = await opening;
         // Creating the entry and acquiring its first lease are synchronous.
         // No clean-limit sweep can observe an unleased bootstrap entry.
         if (!this.entries.has(key)) {
           let baseline = initial;
           let draft: string | undefined;
           let conflict: MarkdownExternalConflict | undefined;
+          const renameAtDestination =
+            checkpoint?.renameIntent?.acknowledgement &&
+            projectFileOperationKey(checkpoint.renameIntent.destination) === key;
+          const checkpointAttention =
+            checkpoint?.attention &&
+            (!renameAtDestination ||
+              checkpoint.publicationIntent ||
+              checkpoint.attentionMutationId !== checkpoint.renameIntent?.mutationId);
           if (
             checkpoint &&
+            (checkpointAttention ||
+              checkpoint.publicationIntent ||
+              (checkpoint.renameIntent && !renameAtDestination) ||
+              currentMissing)
+          ) {
+            baseline = {
+              ...initial,
+              contents: checkpoint.baselineSource,
+              revision: checkpoint.baselineRevision,
+            };
+            draft = checkpoint.draftSource;
+          }
+          if (
+            checkpoint &&
+            !currentMissing &&
             !checkpointHoldsNothing(checkpoint) &&
+            !checkpoint.publicationIntent &&
+            (!checkpoint.renameIntent || renameAtDestination) &&
+            !checkpointAttention &&
             checkpoint.draftSource !== initial.contents
           ) {
             const combined =
@@ -372,7 +547,15 @@ export class MarkdownPersistenceRegistry {
               conflict = { externalSource: initial.contents, externalRevision: initial.revision };
             }
           }
-          this.createEntry(target, baseline, draft, transport, checkpoint, conflict);
+          this.createEntry(
+            target,
+            baseline,
+            draft,
+            transport,
+            checkpoint,
+            conflict,
+            currentMissing,
+          );
         }
         return this.acquire(target, null, undefined, owner)!;
       } finally {
@@ -381,6 +564,7 @@ export class MarkdownPersistenceRegistry {
     }
     const lease = this.acquire(target, null, undefined, owner);
     if (lease === null) throw new Error("The Markdown document could not be opened for editing.");
+    lease.noteFreshnessHint("reopen");
     return lease;
   }
 
@@ -391,18 +575,60 @@ export class MarkdownPersistenceRegistry {
     transport = (this.options.createTransport ?? createMarkdownPersistenceTransport)(target),
     checkpoint?: MarkdownDraftCheckpoint,
     initialConflict?: MarkdownExternalConflict,
+    initialCurrentMissing = false,
   ): RegistryEntry {
     const projections = new Map<object, PrepareMarkdownExternalUpdate>();
     const reconcile = this.strategyFor(target);
+    const renamePending =
+      checkpoint?.renameIntent &&
+      (!checkpoint.renameIntent.acknowledgement ||
+        projectFileOperationKey(checkpoint.renameIntent.destination) !==
+          projectFileOperationKey(target))
+        ? checkpoint.renameIntent
+        : null;
+    const namespaceAttention =
+      checkpoint?.renameIntent?.acknowledgement &&
+      !renamePending &&
+      !checkpoint.publicationIntent &&
+      checkpoint.attentionMutationId === checkpoint.renameIntent.mutationId;
     const coordinator = new DocumentPersistenceCoordinator<DocumentPatchReconciliation>({
       ...(initialConflict === undefined ? {} : { initialConflict }),
+      ...(initialCurrentMissing ? { initialCurrentMissing: true } : {}),
+      ...(renamePending
+        ? {
+            initialAttention: checkpoint?.attention ?? "outcome_unknown",
+            initialAttentionMutationId: renamePending.mutationId,
+          }
+        : checkpoint?.attention && !namespaceAttention
+          ? { initialAttention: checkpoint.attention }
+          : {}),
+      ...(checkpoint?.publicationOutcome && !namespaceAttention
+        ? { initialPublicationOutcome: checkpoint.publicationOutcome }
+        : {}),
+      ...(!renamePending && !namespaceAttention && checkpoint?.attentionMutationId
+        ? { initialAttentionMutationId: checkpoint.attentionMutationId }
+        : {}),
+      ...(initial.publicationAttention
+        ? { initialPublicationAttention: initial.publicationAttention }
+        : checkpoint?.publicationAttention && !namespaceAttention
+          ? { initialPublicationAttention: checkpoint.publicationAttention }
+          : {}),
+      ...(checkpoint?.publicationIntent
+        ? { initialPublication: checkpoint.publicationIntent }
+        : {}),
+      ...(checkpoint?.authorizedCurrentReview && !renamePending && !namespaceAttention
+        ? { initialAuthorizedCurrentReview: checkpoint.authorizedCurrentReview }
+        : {}),
       reconcile,
       source: initial.contents,
       revision: initial.revision,
       ...(draftSource === undefined ? {} : { draftSource }),
-      write: transport.write,
+      ...this.publicationIo(() => entry, transport),
       read: transport.read,
-      classifyFailure: transport.classifyFailure,
+      ...(transport.readForReview ? { readForReview: transport.readForReview } : {}),
+      ...(transport.resolve ? { resolve: transport.resolve } : {}),
+      ...(transport.describeAttention ? { describeAttention: transport.describeAttention } : {}),
+      ...(transport.describeOutcome ? { describeOutcome: transport.describeOutcome } : {}),
       prepareExternalUpdate: (update) => {
         if (entry.pendingInput !== null) return "defer";
         const prepared = [...projections.values()].map((prepare) => prepare(update));
@@ -414,7 +640,7 @@ export class MarkdownPersistenceRegistry {
       },
       ...(this.options.debounceMs === undefined ? {} : { debounceMs: this.options.debounceMs }),
     });
-    const checkpointStore = this.checkpointStoreFor(target);
+    const checkpointStore = this.options.checkpointStore;
     const entryKey = projectFileOperationKey(target);
     let id = this.documentIds.get(entryKey);
     if (id === undefined) this.documentIds.set(entryKey, (id = `document-${nextDocumentId++}`));
@@ -434,6 +660,8 @@ export class MarkdownPersistenceRegistry {
             checkpoint,
           )
         : undefined,
+      renameIntent: checkpoint?.renameIntent ?? null,
+      settlingRename: false,
       pendingInput: null,
       pendingInputOwner: null,
       pendingInputOwnerLease: null,
@@ -501,6 +729,12 @@ export class MarkdownPersistenceRegistry {
         };
       },
       getPendingInput: () => ownedEntry.pendingInput,
+      getRenameIntent: () =>
+        ownedEntry.renameIntent?.acknowledgement &&
+        projectFileOperationKey(ownedEntry.renameIntent.destination) ===
+          projectFileOperationKey(ownedEntry.target)
+          ? null
+          : ownedEntry.renameIntent,
       canEditPendingInput: (editorOwner = token) =>
         isActive() &&
         (ownedEntry.pendingInput === null ||
@@ -604,6 +838,35 @@ export class MarkdownPersistenceRegistry {
             : Promise.resolve(false),
         ),
       refresh: () => guarded(() => ownedEntry.coordinator.refresh()),
+      noteMutationFailure: (error, mutationId) => {
+        if (isActive()) ownedEntry.coordinator.noteMutationFailure(error, mutationId);
+      },
+      recreateMissingCurrent: () =>
+        guarded(() =>
+          ownedEntry.pendingInput === null
+            ? ownedEntry.coordinator.recreateMissingCurrent()
+            : Promise.resolve(false),
+        ),
+      reviewUnchangedRefusal: (currentRevision) =>
+        guarded(async () =>
+          this.finishRenameReview(
+            ownedEntry,
+            ownedEntry.pendingInput === null &&
+              (await ownedEntry.coordinator.reviewUnchangedRefusal(currentRevision)),
+          ),
+        ),
+      reviewRetainedCurrent: (recoveryId) =>
+        isActive() && ownedEntry.pendingInput === null
+          ? ownedEntry.coordinator.reviewRetainedCurrent(recoveryId)
+          : Promise.resolve(null),
+      resolveRetainedAttention: (recoveryId, currentRevision) =>
+        guarded(async () =>
+          this.finishRenameReview(
+            ownedEntry,
+            ownedEntry.pendingInput === null &&
+              (await ownedEntry.coordinator.resolveRetainedAttention(recoveryId, currentRevision)),
+          ),
+        ),
       resolveWithLocal: (revision) =>
         guarded(() =>
           ownedEntry.pendingInput === null
@@ -625,7 +888,7 @@ export class MarkdownPersistenceRegistry {
       settleRecoveryCopy: () =>
         guarded(() => ownedEntry.checkpoint?.settle() ?? Promise.resolve(true)),
       beginMove: (destination) =>
-        isActive() ? this.beginMove(ownedEntry, owner, destination) : null,
+        isActive() ? this.beginMove(ownedEntry, owner, destination, isActive) : null,
       registerExternalProjection: (prepare) => {
         const registration = {};
         if (isActive()) {
@@ -669,6 +932,7 @@ export class MarkdownPersistenceRegistry {
     entry: RegistryEntry,
     owner: object | undefined,
     destination: MarkdownPersistenceTarget,
+    leaseActive: () => boolean,
   ): MarkdownPersistenceMoveTransaction | null {
     const from = entry.target;
     const fromKey = projectFileOperationKey(from);
@@ -684,7 +948,7 @@ export class MarkdownPersistenceRegistry {
       entry.pendingInput !== null ||
       // Same kind of document: same merge rule at both paths.
       this.strategyFor(destination) !== entry.reconcile ||
-      this.checkpointStoreFor(destination) !== this.checkpointStoreFor(from) ||
+      this.options.keepsCheckpoint?.(destination) !== this.options.keepsCheckpoint?.(from) ||
       this.entries.has(toKey) ||
       this.initializing.has(toKey) ||
       this.reserved.has(fromKey) ||
@@ -692,7 +956,12 @@ export class MarkdownPersistenceRegistry {
       this.retiring.has(toKey)
     )
       return null;
-    const release = entry.coordinator.holdForRename();
+    const release = entry.renameIntent
+      ? entry.coordinator.holdForRecoveredRename(
+          entry.renameIntent.mutationId,
+          entry.renameIntent.expectedRevision,
+        )
+      : entry.coordinator.holdForRename();
     if (release === null) return null;
     let finishReservation!: () => void;
     const reservation = new Promise<void>((done) => (finishReservation = done));
@@ -700,22 +969,84 @@ export class MarkdownPersistenceRegistry {
     this.reserved.set(toKey, reservation);
     let committed = false;
     let finished = false;
-    const store = this.checkpointStoreFor(from);
+    const store = this.options.checkpointStore;
+    let destinationCheckpoint: MarkdownDraftCheckpoint | undefined;
+    let admitted: DocumentRenameIntent | null = null;
+    const stillOwned = () =>
+      !finished &&
+      leaseActive() &&
+      this.entries.get(fromKey) === entry &&
+      this.reserved.get(fromKey) === reservation &&
+      this.reserved.get(toKey) === reservation;
     return {
       documentId: entry.id,
+      isCurrent: stillOwned,
       preflight: async () => {
-        // The old name's copy goes first: if it cannot, a file later created
-        // under the old name could take its text.
-        if (entry.checkpoint !== undefined && !(await entry.checkpoint.settle())) return "unknown";
-        if (store === undefined) return "empty";
+        if (!stillOwned() || !store || !entry.checkpoint) return "unknown";
         try {
-          return (await store.read(toKey)) === undefined ? "empty" : "occupied";
+          destinationCheckpoint = await store.read(toKey);
+          if (!stillOwned()) return "unknown";
+          if (!destinationCheckpoint) return "empty";
+          return entry.renameIntent?.acknowledgement &&
+            destinationCheckpoint.renameIntent?.mutationId === entry.renameIntent.mutationId &&
+            projectFileOperationKey(destinationCheckpoint.renameIntent.from) === fromKey &&
+            projectFileOperationKey(destinationCheckpoint.renameIntent.destination) === toKey
+            ? "empty"
+            : "occupied";
         } catch {
           return "unknown";
         }
       },
-      commit: () => {
-        if (committed || finished || this.entries.get(fromKey) !== entry) return false;
+      admitRename: async (options) => {
+        if (!stillOwned() || !entry.checkpoint)
+          throw new Error("This rename no longer owns its document or recovery storage.");
+        const snapshot = entry.coordinator.getSnapshot();
+        const intent = entry.renameIntent ?? {
+          mutationId: randomUUID(),
+          from: { ...from },
+          destination: { ...destination },
+          expectedRevision: snapshot.baselineRevision,
+          baselineSource: snapshot.baselineSource,
+          source: snapshot.baselineSource,
+          draftSource: snapshot.draftSource,
+          ...(options?.removeEmptyFolders ? { removeEmptyFolders: true as const } : {}),
+        };
+        if (
+          projectFileOperationKey(intent.from) !== fromKey ||
+          projectFileOperationKey(intent.destination) !== toKey
+        )
+          throw new Error("A pending rename must replay its original source and destination.");
+        await entry.checkpoint.flushRename(this.checkpointSnapshot(entry), intent);
+        entry.renameIntent = intent;
+        if (!stillOwned()) throw new Error("This rename lease retired during durable admission.");
+        admitted = intent;
+        return intent;
+      },
+      acknowledgeRename: async (acknowledgement) => {
+        if (
+          !stillOwned() ||
+          !admitted ||
+          !entry.checkpoint ||
+          acknowledgement.destinationRelativePath !== admitted.destination.relativePath ||
+          acknowledgement.revision !== admitted.expectedRevision
+        )
+          return false;
+        const intent = { ...admitted, acknowledgement: { ...acknowledgement } };
+        await entry.checkpoint.flushRename(this.checkpointSnapshot(entry), intent);
+        entry.renameIntent = intent;
+        admitted = intent;
+        return stillOwned();
+      },
+      rejectRename: async () => {
+        if (!stillOwned() || !admitted || !entry.checkpoint)
+          throw new Error("This rename no longer owns its durable intent.");
+        await entry.checkpoint.clearRename(this.checkpointSnapshot(entry), admitted.mutationId);
+        entry.renameIntent = null;
+        admitted = null;
+      },
+      commit: async () => {
+        if (committed || !stillOwned() || !admitted?.acknowledgement || !store || !entry.checkpoint)
+          return false;
         if (this.entries.has(toKey) || this.initializing.has(toKey)) return false;
         let transport: MarkdownPersistenceTransport;
         try {
@@ -726,27 +1057,58 @@ export class MarkdownPersistenceRegistry {
           console.error("The renamed document could not be moved in place:", error);
           return false;
         }
+        const destinationWriter = new MarkdownDraftCheckpointWriter(
+          toKey,
+          store,
+          destinationCheckpoint,
+        );
+        // Keep the old authoritative identity until the destination owns the
+        // exact receipt and every newer working byte in its durable journal.
+        await destinationWriter.flushRename(this.checkpointSnapshot(entry), admitted);
+        if (!stillOwned()) return false;
+        if (!entry.coordinator.acknowledgeRecoveredRename(release, admitted.mutationId))
+          return false;
         if (
           !entry.coordinator.replaceIo(release, {
-            write: transport.write,
+            ...this.publicationIo(() => entry, transport),
             read: transport.read,
-            classifyFailure: transport.classifyFailure,
+            ...(transport.readForReview ? { readForReview: transport.readForReview } : {}),
+            ...(transport.resolve ? { resolve: transport.resolve } : {}),
+            ...(transport.describeAttention
+              ? { describeAttention: transport.describeAttention }
+              : {}),
+            ...(transport.describeOutcome ? { describeOutcome: transport.describeOutcome } : {}),
           })
         )
           return false;
-        // From here only assignments: the document now lives at the new path.
         committed = true;
         this.stopWatching(entry);
         this.entries.delete(fromKey);
         this.entries.set(toKey, entry);
-        // The old path's next file is another document.
         this.documentIds.delete(fromKey);
         this.documentIds.set(toKey, entry.id);
         entry.target = destination;
         entry.transport = transport;
         const previousCheckpoint = entry.checkpoint;
-        entry.checkpoint = store ? new MarkdownDraftCheckpointWriter(toKey, store) : undefined;
-        if (previousCheckpoint !== undefined) this.retireCheckpoint(fromKey, previousCheckpoint);
+        entry.checkpoint = destinationWriter;
+        const retired = previousCheckpoint
+          .clearRename(this.checkpointSnapshot(entry), admitted.mutationId)
+          .then(() => previousCheckpoint.retire())
+          .catch((cause: unknown) => {
+            console.error("The acknowledged rename's source journal was preserved:", cause);
+          })
+          .finally(() => {
+            if (this.retiring.get(fromKey) === retired) this.retiring.delete(fromKey);
+          });
+        this.retiring.set(fromKey, retired);
+        // Newer native working bytes retain the acknowledged namespace receipt
+        // until source publication confirms them; ordinary native checkpoints
+        // must not discard that transfer recovery during a disconnected follow.
+        const snapshot = entry.coordinator.getSnapshot();
+        if (snapshot.draftSource === snapshot.baselineSource) {
+          await destinationWriter.clearRename(this.checkpointSnapshot(entry), admitted.mutationId);
+          entry.renameIntent = null;
+        }
         const move = { documentId: entry.id, from, to: destination };
         for (const listener of this.moveListeners) {
           try {
@@ -755,8 +1117,6 @@ export class MarkdownPersistenceRegistry {
             console.error("Document move observer failed:", error);
           }
         }
-        // Presentation and the watcher at the new path; failures here are
-        // isolated and never touch the old path.
         this.changed(entry);
         return true;
       },
@@ -779,7 +1139,14 @@ export class MarkdownPersistenceRegistry {
       this.documentIds.delete(key);
       return true;
     }
-    if (entry.pendingInput !== null) return false;
+    const snapshot = entry.coordinator.getSnapshot();
+    if (
+      entry.pendingInput !== null ||
+      entry.renameIntent !== null ||
+      snapshot.currentMissing ||
+      (snapshot.pending && !entry.coordinator.pendingOnlyForRename())
+    )
+      return false;
     if (!entry.coordinator.retireClean()) return false;
     if (entry.evictionTimer !== undefined) clearTimeout(entry.evictionTimer);
     this.stopWatching(entry);
@@ -814,7 +1181,40 @@ export class MarkdownPersistenceRegistry {
   private changed(entry: RegistryEntry): void {
     if (this.entries.get(projectFileOperationKey(entry.target)) !== entry) return;
     const snapshot = entry.coordinator.getSnapshot();
-    entry.checkpoint?.update(snapshot, entry.coordinator.pendingOnlyForRename());
+    entry.checkpoint?.update(
+      this.checkpointSnapshot(entry),
+      entry.coordinator.pendingOnlyForRename(),
+    );
+    if (
+      entry.renameIntent?.acknowledgement &&
+      !entry.settlingRename &&
+      entry.checkpoint &&
+      projectFileOperationKey(entry.renameIntent.destination) ===
+        projectFileOperationKey(entry.target) &&
+      !snapshot.pending &&
+      !snapshot.reading &&
+      snapshot.error === null
+    ) {
+      const intent = entry.renameIntent;
+      entry.settlingRename = true;
+      const release = entry.coordinator.holdForRename();
+      if (release === null) entry.settlingRename = false;
+      else {
+        void entry.checkpoint
+          .clearRename(this.checkpointSnapshot(entry), intent.mutationId)
+          .then(
+            () => {
+              if (entry.renameIntent === intent) entry.renameIntent = null;
+            },
+            (cause: unknown) => entry.coordinator.noteMutationFailure(cause, intent.mutationId),
+          )
+          .finally(() => {
+            entry.settlingRename = false;
+            release();
+            this.changed(entry);
+          });
+      }
+    }
     try {
       entry.transport.project(snapshot);
     } catch (error) {
@@ -825,7 +1225,9 @@ export class MarkdownPersistenceRegistry {
     const retain =
       entry.leases.size > 0 ||
       entry.pendingInput !== null ||
+      entry.renameIntent !== null ||
       snapshot.pending ||
+      snapshot.currentMissing ||
       snapshot.reading ||
       snapshot.retrying ||
       snapshot.error !== null ||
@@ -866,6 +1268,7 @@ export class MarkdownPersistenceRegistry {
           candidate.leases.size === 0 &&
           candidate.pendingInput === null &&
           !value.pending &&
+          !value.currentMissing &&
           !value.reading &&
           !value.retrying &&
           value.error === null &&
@@ -882,7 +1285,14 @@ export class MarkdownPersistenceRegistry {
   }
 
   private evict(entry: RegistryEntry): void {
-    if (entry.leases.size !== 0 || entry.pendingInput !== null || !entry.coordinator.dispose())
+    const snapshot = entry.coordinator.getSnapshot();
+    if (
+      entry.leases.size !== 0 ||
+      entry.pendingInput !== null ||
+      snapshot.pending ||
+      snapshot.currentMissing ||
+      !entry.coordinator.dispose()
+    )
       return;
     if (entry.evictionTimer !== undefined) clearTimeout(entry.evictionTimer);
     this.stopWatching(entry);
@@ -966,7 +1376,7 @@ const adopted = adoptRendererRegistry(
     new MarkdownPersistenceRegistry({
       reconcile: documentReconcileStrategy,
       keepsCheckpoint: documentKeepsCheckpoint,
-      ...(typeof indexedDB === "undefined" ? {} : { checkpointStore: indexedDbMarkdownDrafts }),
+      checkpointStore: indexedDbMarkdownDrafts,
     }),
 );
 renderer[registryKey] = adopted.registry;
