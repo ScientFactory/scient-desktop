@@ -102,7 +102,6 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
-// SCIENT-FORK:START
 function antigravityModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {
@@ -130,7 +129,6 @@ function resolveAntigravityModel(input: {
     ? input.defaultModel
     : current;
 }
-// SCIENT-FORK:END
 
 /** Never replace a saved selection with the default returned by a cold resume. */
 export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpModelSelection")(

@@ -136,6 +136,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   settings: AntigravitySettings,
   options: AntigravityProviderOptions,
 ) {
+  // SCIENT-FORK:START — method-specific setup guidance without changing native authentication.
   const usesBrowser = antigravityAuthUsesBrowser(settings.authMethod);
   const signInMessage = usesBrowser
     ? "Sign in with Google to use Antigravity."
@@ -145,6 +146,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     (usesBrowser
       ? "Antigravity is installed. Google account access is not checked yet."
       : "Antigravity is installed. Configured credentials have not been checked yet.");
+  // SCIENT-FORK:END
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const initialDraft = {
     ...buildServerProvider({

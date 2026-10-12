@@ -847,6 +847,18 @@ grouping or collapsible shelves, reconcile against these seams instead of layeri
 second grouping. Decisions, invariants and the full seam list are in
 [sidebar sections](docs/internals/scient-sidebar-sections.md).
 
+Antigravity's native runtime, profiles, callback handling, and auth controller remain
+upstream-owned. Scient composes its qualified release source through
+`scient/providerLifecycle/ScientAntigravityInstallation.ts` and its compact setup
+through `AntigravityAcpLifecycleActions.ts`, retaining T3's installation service
+identity and controller. Keep the bounded authorization-link handoff, safe failure
+presentation/diagnostics, process teardown and publication guards. Scient plugin
+projection lives under `scient/skills`; voice correction shares the existing guarded
+generation runner. Retain these narrow mounts without forking the native engine.
+Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
+and targets outside the qualified native set; removing a fallback requires native
+replacement qualification, not merely an available Google archive.
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.

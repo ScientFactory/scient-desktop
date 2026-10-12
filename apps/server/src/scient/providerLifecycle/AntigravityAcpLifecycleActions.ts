@@ -13,18 +13,18 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { isManagedRuntimeUpdate } from "@scientfactory/provider-runtime";
 
-import { ProviderConnectionActionError } from "../scient/providerLifecycle/ProviderConnectionActions.ts";
+import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import type {
   ProviderConnectionActions,
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
-} from "./ScientProviderInstanceSeams.ts";
-import type { AntigravityInstallation } from "./AntigravityInstallation.ts";
-import { resolveAntigravityReleaseAsset } from "./antigravityRelease.ts";
-import type { AntigravityReleaseAsset } from "./antigravityRelease.ts";
-import { ANTIGRAVITY_ACP_REGISTRY_VERSION } from "../scient/providerLifecycle/antigravityAcpCatalog.ts";
-import { antigravityAuthUsesBrowser } from "./antigravityAuthSupport.ts";
-import type { ProviderAuthController } from "./ProviderAuthService.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
+import type { AntigravityInstallation } from "../../provider/AntigravityInstallation.ts";
+import { resolveAntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
+import type { AntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
+import { ANTIGRAVITY_ACP_REGISTRY_VERSION } from "./antigravityAcpCatalog.ts";
+import { antigravityAuthUsesBrowser } from "../../provider/antigravityAuthSupport.ts";
+import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";
 
 function isTerminalAuthPhase(
   phase: ProviderAuthState["phase"],
