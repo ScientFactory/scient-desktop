@@ -1,0 +1,11 @@
+/* Scient form controls use one focused border. Keep this outside Tailwind's
+   layers so upstream ring utilities cannot restore a second outline. Upstream
+   already clears ordinary shadows in these states; retain its border colors.
+   Ghost selects keep their ring because it is their only focus indicator. */
+[data-slot="input-control"]:has(input:focus-visible),
+[data-slot="input-group"]:has(input:focus-visible, textarea:focus-visible),
+[data-slot="textarea-control"]:has(textarea:focus-visible),
+[data-slot="number-field-group"]:focus-within,
+[data-slot="select-trigger"].border-input:focus-visible {
+  box-shadow: none;
+}
