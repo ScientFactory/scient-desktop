@@ -24,6 +24,7 @@ test("provider composition checks untouched guidance, native lifetime and instan
   NodeAssert.ok(
     provider.checks.native.includes("src/orchestration-v2/Adapters/PiNativeRuntime.live.test.ts"),
   );
+  NodeAssert.ok(provider.checks.server.includes("src/provider/ProviderRegistry.test.ts"));
   NodeAssert.ok(
     provider.checks.server.includes(
       "src/orchestration-v2/FullScientSkillInput.native.integration.test.ts",
@@ -38,6 +39,7 @@ test("shared contracts and unknown consumers conservatively select all boundarie
   const settings = selectBoundaries(["packages/shared/src/scientModel.ts"]).boundaries.find(
     (row) => row.id === "settings",
   );
+  NodeAssert.ok(settings.checks.server.includes("src/provider/ProviderRegistry.test.ts"));
   NodeAssert.ok(settings.checks.shared.includes("src/modelVisibility.test.ts"));
   NodeAssert.ok(settings.checks.shared.includes("src/projectSettings.test.ts"));
   NodeAssert.deepEqual(

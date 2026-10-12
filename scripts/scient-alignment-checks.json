@@ -62,12 +62,14 @@
       ],
       "consumers": [
         "builtInDrivers -> PiDriver -> shared Scient adapter options -> native MCP extension before_agent_start -> model system messages",
-        "ProviderTurnStartService -> ScientV2SkillTurn -> scoped MCP publication -> Codex turn/start; native user prompt and attachments remain unchanged"
+        "ProviderTurnStartService -> ScientV2SkillTurn -> scoped MCP publication -> Codex turn/start; native user prompt and attachments remain unchanged",
+        "Atomic provider-instance settings -> synchronously acquired settings subscription -> hydration reconciliation -> rebuilt native driver -> ProviderRegistry aggregate snapshots"
       ],
       "decidingAssertions": [
         "Pi factory preserves instance-scoped custom models and native error receipt; guidance includes only granted capability blocks and canonical names.",
         "Selected skills use real Orchestrator/EventSink/ProjectionStore. FullScientSkillInput asserts selected release list/load authority at actual controlled Codex turn/start, rejects unselected release, replaces scope with complete-empty without replacing token.",
-        "Real Pi loopback asserts complete Scient orchestration instructions and capability-scoped guidance in system input, preserves user input; actual MCP invocation retains Unicode/structured failure results."
+        "Real Pi loopback asserts complete Scient orchestration instructions and capability-scoped guidance in system input, preserves user input; actual MCP invocation retains Unicode/structured failure results.",
+        "Canonical ProviderRegistry suite holds discovery until the rebuilt instance pending snapshot is published, then releases it to publish the replacement error snapshot; exact first/replacement executable and app-server arguments, two replacement probes and no unrelated extra probes. Publishing before the lazy settings stream is released decides synchronous subscription acquisition."
       ],
       "checks": {
         "server": [
@@ -77,7 +79,8 @@
           "src/orchestration-v2/OmpNativeConjunctions.integration.test.ts",
           "src/mcp/McpToolAccess.test.ts",
           "src/mcp/toolkits/skills/handlers.test.ts",
-          "src/orchestration-v2/FullScientSkillInput.native.integration.test.ts"
+          "src/orchestration-v2/FullScientSkillInput.native.integration.test.ts",
+          "src/provider/ProviderRegistry.test.ts"
         ],
         "native": ["src/orchestration-v2/Adapters/PiNativeRuntime.live.test.ts"]
       },
@@ -177,20 +180,23 @@
       "consumers": [
         "ServerSettings schema/persistence -> ProviderInstanceRegistry reconciliation -> modelSelection.instanceId -> ProviderSessionManager exact session/MCP reuse",
         "Selected environment useSettings merge/write -> ProviderSettingsPanel scoped mutation; project settings upgrade",
-        "Shared resolveProviderModelPreferences, resolveProjectSettings and applyServerSettingsPatch -> native model curation and project/environment precedence across clients"
+        "Shared resolveProviderModelPreferences, resolveProjectSettings and applyServerSettingsPatch -> native model curation and project/environment precedence across clients",
+        "Atomic provider-instance settings -> synchronously acquired settings subscription -> hydration reconciliation -> rebuilt native driver -> ProviderRegistry aggregate snapshots"
       ],
       "decidingAssertions": [
         "Server settings retain malformed/legacy configuration handling; registry projects assigned models by instance and reconciles exact scope.",
         "useSettings asserts server precedence over legacy client settlement values and selected-environment provider instances; real sync hook checks primary/remote exact writes, cold/revoked grants and partial saves.",
         "ProviderSettingsPanel.environment asserts selected environment/exact instance and atomic upsert. ManagerLifetime rejects reuse in another workspace/instance while preserving original owner/credential.",
-        "Shared modelVisibility preserves supplied saved visibility/order, including authoritative empty visibility, account-group ordering and curated defaults without inventing catalog entries. Project/settings reducers distinguish inherited/overridden keys, pre-fold aggregate authority, explicit null values and enabled provider-instance eligibility."
+        "Shared modelVisibility preserves supplied saved visibility/order, including authoritative empty visibility, account-group ordering and curated defaults without inventing catalog entries. Project/settings reducers distinguish inherited/overridden keys, pre-fold aggregate authority, explicit null values and enabled provider-instance eligibility.",
+        "Canonical ProviderRegistry suite holds discovery until the rebuilt instance pending snapshot is published, then releases it to publish the replacement error snapshot; exact first/replacement executable and app-server arguments, two replacement probes and no unrelated extra probes. Publishing before the lazy settings stream is released decides synchronous subscription acquisition."
       ],
       "checks": {
         "server": [
           "src/serverSettings.test.ts",
           "src/provider/ProviderInstanceRegistry.test.ts",
           "src/orchestration-v2/ProjectSettingsUpgrade.integration.test.ts",
-          "src/provider/ProviderInstanceRegistryLive.managerLifetime.test.ts"
+          "src/provider/ProviderInstanceRegistryLive.managerLifetime.test.ts",
+          "src/provider/ProviderRegistry.test.ts"
         ],
         "web-unit": [
           "src/components/settings/scopedSettings.test.ts",
