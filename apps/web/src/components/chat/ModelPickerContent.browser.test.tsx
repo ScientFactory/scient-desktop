@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderConnectionMethod,
+  type CustomModelSaveInput,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -16,6 +17,7 @@ import { useState, type ReactNode } from "react";
 import { Button } from "../ui/button";
 import { ConnectModelsButton } from "../../scient/providerConnection/ConnectModelsButton";
 import { CustomModelRowActions } from "../settings/CustomModelRowActions";
+import { ModelConnectionEditor } from "../settings/ModelConnectionEditor";
 import { CustomModelConnectionDialog } from "../settings/CustomModelConnectionDialog";
 import { createPortal } from "react-dom";
 import { isInsideRestingComposerControlScope } from "./composerEventScope";
@@ -396,8 +398,15 @@ describe("actual picker provider setup", () => {
   });
 });
 
-const saveCustomModel = vi.fn(async () => {});
-function NestedCustomSetup() {
+const saveCustomModel = vi.fn(async (_input: CustomModelSaveInput) => {});
+function NestedCustomSetup({
+  adding = false,
+  removeOpenerOnSave = false,
+}: {
+  adding?: boolean;
+  removeOpenerOnSave?: boolean;
+}) {
+  const [showOpener, setShowOpener] = useState(true);
   const [managing, setManaging] = useState(false);
   return (
     <ConnectModelsButton
@@ -405,8 +414,30 @@ function NestedCustomSetup() {
       instanceId={ProviderInstanceId.make("pi_work")}
       accountContent={
         <>
-          <Button onClick={() => setManaging(true)}>Manage synthetic connection</Button>
-          {managing ? (
+          {showOpener ? (
+            <Button onClick={() => setManaging(true)}>
+              {adding ? "Add synthetic model" : "Manage synthetic connection"}
+            </Button>
+          ) : null}
+          {managing && adding ? (
+            <ModelConnectionEditor
+              settings={{ revision: 1, connections: [] }}
+              target={{}}
+              agents={[
+                {
+                  id: ProviderInstanceId.make("pi_work"),
+                  name: "Pi",
+                  driver: ProviderDriverKind.make("pi"),
+                },
+              ]}
+              defaultInstanceIds={[ProviderInstanceId.make("pi_work")]}
+              onSave={async (input) => {
+                await saveCustomModel(input);
+                if (removeOpenerOnSave) setShowOpener(false);
+              }}
+              onClose={() => setManaging(false)}
+            />
+          ) : managing ? (
             <CustomModelConnectionDialog
               connection={{
                 id: "synthetic-connection",
@@ -592,10 +623,56 @@ describe("composed picker Connect models overlay", () => {
     await expect.poll(() => viewport.scrollTop).toBeGreaterThan(0);
     await userEvent.keyboard("{Escape}");
     await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(1);
+    await expect
+      .poll(() => document.activeElement?.textContent)
+      .toContain("Manage synthetic connection");
     expect(saveCustomModel).not.toHaveBeenCalled();
     await userEvent.keyboard("{Escape}");
     await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(0);
     await page.viewport(1280, 720);
+  });
+  it("returns focus to the opener after nested production model editor Escape", async () => {
+    const provider = snapshot("pi", true);
+    render(
+      provider,
+      [],
+      false,
+      [provider],
+      true,
+      EnvironmentId.make("synthetic"),
+      <NestedCustomSetup adding />,
+    );
+    await page.getByRole("button", { name: "Choose test model", exact: true }).click();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    await page.getByRole("button", { name: "Add synthetic model", exact: true }).click();
+    await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(2);
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(1);
+    await expect.poll(() => document.activeElement?.textContent).toContain("Add synthetic model");
+    expect(saveCustomModel).not.toHaveBeenCalled();
+  });
+  it("restores focus to the retained dialog when nested production model save removes its opener", async () => {
+    const provider = snapshot("pi", true);
+    render(
+      provider,
+      [],
+      false,
+      [provider],
+      true,
+      EnvironmentId.make("synthetic"),
+      <NestedCustomSetup adding removeOpenerOnSave />,
+    );
+    await page.getByRole("button", { name: "Choose test model", exact: true }).click();
+    await page.getByRole("button", { name: "Connect models", exact: true }).click();
+    const outer = document.querySelector<HTMLElement>("[data-slot=dialog-popup]")!;
+    await page.getByRole("button", { name: "Add synthetic model", exact: true }).click();
+    await page.getByPlaceholder("Model identifier").fill("synthetic-model");
+    await page.getByPlaceholder("API key", { exact: true }).fill("synthetic-answer");
+    await page.getByRole("button", { name: "Save model", exact: true }).click();
+    await expect.poll(() => document.querySelectorAll("[data-slot=dialog-popup]").length).toBe(1);
+    await expect.poll(() => outer.contains(document.activeElement)).toBe(true);
+    expect(saveCustomModel).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).not.toContain("Add synthetic model");
   });
   it("retains an operation draft and search across ready snapshot updates", async () => {
     const base = longAccounts();

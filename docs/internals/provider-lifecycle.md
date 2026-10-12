@@ -49,7 +49,8 @@ the composer floating-layer identity, and their forms do not submit the surround
 connection dialog is open, its picker card stays mounted but hidden and inert. Only the owned
 dialog accepts scrolling; background scrolling and picker shortcuts remain blocked. Provider
 rechecks and newly ready catalogs retain that dialog and its operation-scoped draft until it
-closes. Closing returns to the current setup or catalog without cancelling sign-in. Environment
+closes. Nested model editors return keyboard focus to their opener or the retained connection dialog. Closing
+the connection dialog returns to the current setup or catalog without cancelling sign-in. Environment
 and instance changes reset local dialog state instead of carrying a draft to another runtime.
 
 ## Ownership boundaries
