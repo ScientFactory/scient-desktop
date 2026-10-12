@@ -20,7 +20,7 @@ import {
   type AntigravityAuthRuntime,
 } from "./AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import { makeAntigravityConnectionActionsFromController } from "./AntigravityLifecycleBridge.ts";
+import { makeAntigravityConnectionActionsFromController } from "../scient/providerLifecycle/AntigravityAcpLifecycleActions.ts";
 import {
   ANTIGRAVITY_AUTH_BROWSER_MARKER,
   ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE,

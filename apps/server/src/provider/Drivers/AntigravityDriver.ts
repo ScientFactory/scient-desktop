@@ -20,7 +20,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { AcpError } from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import {
   isAntigravityTextGenerationAvailable,
@@ -79,9 +78,11 @@ import {
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
+// SCIENT-FORK:START — native effort variants share manifest family metadata.
 export const antigravityCatalogMatching: ModelCatalog.CatalogMatching = {
   family: (slug) => slug.replace(/-(low|medium|high)$/, ""),
 };
+// SCIENT-FORK:END
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
@@ -94,7 +95,6 @@ export type AntigravityDriverEnv =
   | ModelCatalog.ModelCatalog
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
-  | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
   | LegacyAntigravityDriverEnv;
 
@@ -216,13 +216,12 @@ export const AntigravityDriver: ScientProviderDriver<
 
       const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
         input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
-        options?: { readonly initializeOnly: true },
       ): Effect.fn.Return<
         AcpSessionRuntime.AcpSessionRuntime["Service"],
         AcpError | ProviderSetupError,
         Scope.Scope
       > {
-        if (authConfigIssue !== null && !options?.initializeOnly) {
+        if (authConfigIssue !== null) {
           return yield* new ProviderSetupError({
             instanceId,
             operation: "configure",
@@ -497,9 +496,11 @@ export const AntigravityDriver: ScientProviderDriver<
             mcpServers: [],
           }),
       });
+      // SCIENT-FORK:START — voice correction reuses the existing guarded generator.
       const voiceTranscriptCorrection = makeAntigravityAcpVoiceTranscriptCorrection(
         generation.generateStructured,
       );
+      // SCIENT-FORK:END
       // SCIENT-FORK:START — assisted account actions over the official auth controller.
       const connectionActions = makeAntigravityInstanceConnectionActions({
         instanceId,

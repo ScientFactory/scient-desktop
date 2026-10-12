@@ -109,6 +109,7 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
   };
 }
 
+// SCIENT-FORK:START — safe failure presentation; native OAuth and account checks stay upstream.
 function safeAuthFailure(
   cause: Cause.Cause<unknown>,
   usesBrowser: boolean,
@@ -138,6 +139,7 @@ function safeAuthFailure(
     : "Antigravity could not authenticate with the configured credentials.";
 }
 
+// SCIENT-FORK:END
 /** Owns one instance's explicit sign-in and all process admission around sign-out. */
 export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   Runtime extends AntigravityAuthRuntime,

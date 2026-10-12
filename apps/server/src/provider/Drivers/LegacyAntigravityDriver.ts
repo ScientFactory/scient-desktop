@@ -60,8 +60,8 @@ import {
   makeAntigravityLocalCredentialStore,
   officialAntigravityAccountEnvironment,
   withAntigravitySessionShutdown,
-} from "../../scient/providerLifecycle/AntigravityConnectionActions.ts";
-import { makeAntigravityManagedRuntimeResolution } from "../../scient/providerLifecycle/AntigravityManagedRuntimeActions.ts";
+} from "../../scient/providerLifecycle/LegacyAntigravityConnectionActions.ts";
+import { makeAntigravityManagedRuntimeResolution } from "../../scient/providerLifecycle/LegacyAntigravityManagedRuntimeActions.ts";
 import { makeAntigravityVoiceTranscriptCorrection } from "../../scient/voice/AntigravityVoiceTranscriptCorrection.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 import { PtyAdapter } from "@t3tools/shared/PtyAdapter";

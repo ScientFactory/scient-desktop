@@ -1,3 +1,4 @@
+import { scientAntigravityInstallationLayer } from "../scient/providerLifecycle/ScientAntigravityInstallation.ts";
 import * as OmpExecutableGate from "./omp/OmpExecutableGate.ts";
 import { PtyAdapter } from "@t3tools/shared/PtyAdapter";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -2814,7 +2815,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
-          Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
+          Layer.provideMerge(scientAntigravityInstallationLayer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
           ),
@@ -2946,7 +2947,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
-          Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
+          Layer.provideMerge(scientAntigravityInstallationLayer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
           ),
@@ -3094,7 +3095,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
-          Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
+          Layer.provideMerge(scientAntigravityInstallationLayer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
           ),
@@ -3154,7 +3155,7 @@ it.layer(
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const layerProviderRegistry = ProviderRegistry.layer.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
-            Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
+            Layer.provideMerge(scientAntigravityInstallationLayer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
