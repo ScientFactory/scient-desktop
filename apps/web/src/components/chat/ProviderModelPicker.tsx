@@ -5,17 +5,11 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  memo,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { ModelPickerOverlayContext } from "../../scient/providerConnection/ModelPickerOverlayContext";
+  ModelPickerOverlayContext,
+  useModelPickerOverlay,
+} from "../../scient/providerConnection/ModelPickerOverlayContext";
 import { OverlayScrollScope } from "../ui/overlay-scroll-scope";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -81,22 +75,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
   const size = props.size ?? "sm";
-  const [overlayInstanceId, setOverlayInstanceId] = useState<ProviderInstanceId | null>(null);
-  const overlayInstanceRef = useRef<ProviderInstanceId | null>(null);
-  const pickerTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const scrollScope = useId();
-  const setOverlayInstance = useCallback((instanceId: ProviderInstanceId | null) => {
-    overlayInstanceRef.current = instanceId;
-    setOverlayInstanceId(instanceId);
-  }, []);
-  const overlay = useMemo(
-    () => ({
-      instanceId: overlayInstanceId,
-      pickerTriggerRef,
-      setInstanceId: setOverlayInstance,
-    }),
-    [overlayInstanceId, setOverlayInstance],
-  );
+  const {
+    context: overlay,
+    instanceRef: overlayInstanceRef,
+    pickerTriggerRef,
+    scrollScope,
+  } = useModelPickerOverlay(props.isComposerOwned ?? false);
 
   // Resolve the active instance entry by exact routing key. The composer
   // resolves fallbacks before rendering this component; if the selected
@@ -173,7 +157,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         target instanceof Element &&
         (target
           .closest("[data-overlay-scroll-scope]")
-          ?.getAttribute("data-overlay-scroll-scope") === scrollScope ||
+          ?.getAttribute("data-overlay-scroll-scope") === scrollScope.id ||
           (overlayInstanceRef.current === null && target.closest("[data-model-picker-content]")))
       );
     };
@@ -203,7 +187,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       body.style.overflow = previousBodyOverflow;
       body.style.paddingRight = previousBodyPaddingRight;
     };
-  }, [isMenuOpen, scrollScope]);
+  }, [isMenuOpen, scrollScope, overlayInstanceRef]);
 
   const handleInstanceModelChange = (instanceId: ProviderInstanceId, model: string) => {
     if (props.disabled) return;
@@ -379,7 +363,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             align="start"
             className="before:hidden"
             padding="none"
-            suspended={overlayInstanceId !== null}
+            suspended={overlay.instanceId !== null}
           >
             <ModelPickerContent
               activeInstanceId={activeInstanceId}

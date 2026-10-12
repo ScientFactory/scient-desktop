@@ -121,7 +121,8 @@ function PopoverPopup({
               "w-full overflow-visible rounded-none border-0 bg-transparent shadow-none before:hidden [backdrop-filter:none] [-webkit-backdrop-filter:none]",
             className,
           )}
-          data-overlay-scroll-scope={scrollScope ?? undefined}
+          {...scrollScope?.portalProps}
+          data-overlay-scroll-scope={scrollScope?.id}
           data-slot="popover-popup"
           {...props}
         >

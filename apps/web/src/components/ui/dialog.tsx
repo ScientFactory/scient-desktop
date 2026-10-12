@@ -111,7 +111,8 @@ function DialogPopup({
             bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
             className,
           )}
-          data-overlay-scroll-scope={scrollScope ?? undefined}
+          {...scrollScope?.portalProps}
+          data-overlay-scroll-scope={scrollScope?.id}
           data-slot="dialog-popup"
           data-layout={layout}
           {...props}

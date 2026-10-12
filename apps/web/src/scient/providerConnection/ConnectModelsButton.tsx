@@ -76,6 +76,7 @@ function ConnectModelsDialog({
       <Dialog open={open} onOpenChange={setDialogOpen}>
         <DialogPopup
           className="max-w-xl"
+          onSubmit={(event) => event.stopPropagation()}
           finalFocus={() =>
             triggerRef.current?.isConnected
               ? triggerRef.current
