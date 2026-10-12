@@ -5,7 +5,18 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { ModelPickerOverlayContext } from "../../scient/providerConnection/ModelPickerOverlayContext";
+import { OverlayScrollScope } from "../ui/overlay-scroll-scope";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -70,6 +81,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
   const size = props.size ?? "sm";
+  const [overlayInstanceId, setOverlayInstanceId] = useState<ProviderInstanceId | null>(null);
+  const overlayInstanceRef = useRef<ProviderInstanceId | null>(null);
+  const pickerTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const scrollScope = useId();
+  const setOverlayInstance = useCallback((instanceId: ProviderInstanceId | null) => {
+    overlayInstanceRef.current = instanceId;
+    setOverlayInstanceId(instanceId);
+  }, []);
+  const overlay = useMemo(
+    () => ({
+      instanceId: overlayInstanceId,
+      pickerTriggerRef,
+      setInstanceId: setOverlayInstance,
+    }),
+    [overlayInstanceId, setOverlayInstance],
+  );
 
   // Resolve the active instance entry by exact routing key. The composer
   // resolves fallbacks before rendering this component; if the selected
@@ -142,7 +169,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }
 
     const shouldAllowOverlayScroll = (target: EventTarget | null) => {
-      return target instanceof Element && target.closest("[data-model-picker-content]");
+      return (
+        target instanceof Element &&
+        (target
+          .closest("[data-overlay-scroll-scope]")
+          ?.getAttribute("data-overlay-scroll-scope") === scrollScope ||
+          (overlayInstanceRef.current === null && target.closest("[data-model-picker-content]")))
+      );
     };
     const preventBackgroundWheel = (event: WheelEvent) => {
       if (shouldAllowOverlayScroll(event.target)) {
@@ -170,7 +203,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       body.style.overflow = previousBodyOverflow;
       body.style.paddingRight = previousBodyPaddingRight;
     };
-  }, [isMenuOpen]);
+  }, [isMenuOpen, scrollScope]);
 
   const handleInstanceModelChange = (instanceId: ProviderInstanceId, model: string) => {
     if (props.disabled) return;
@@ -214,166 +247,187 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     : (props.triggerLabel ?? allModelNames ?? triggerLabel);
 
   return (
-    <Popover
-      open={isMenuOpen}
-      onOpenChange={(open) => {
-        if (props.disabled) {
-          setIsMenuOpen(false);
-          return;
-        }
-        setIsMenuOpen(open);
-      }}
-    >
-      <PopoverTrigger
-        render={
-          <ComposerControl
-            aria-label={
-              props.triggerAriaLabel ?? allModelNames ?? (props.iconOnly ? triggerLabel : undefined)
+    <OverlayScrollScope value={scrollScope}>
+      <ModelPickerOverlayContext value={overlay}>
+        <Popover
+          open={isMenuOpen}
+          onOpenChange={(open) => {
+            if (overlayInstanceRef.current !== null) return;
+            if (props.disabled) {
+              setIsMenuOpen(false);
+              return;
             }
-            size={size}
-            data-chat-provider-model-picker="true"
-            className={cn(
-              "min-w-0 shrink justify-between whitespace-nowrap",
-              props.compact
-                ? "max-w-42 shrink-0"
-                : !props.isComposerOwned && "max-w-48 sm:max-w-56",
-              props.triggerClassName,
-            )}
-            disabled={props.disabled}
-          />
-        }
-      >
-        <span
-          className={cn("flex min-w-0 flex-1 items-center", size === "xs" ? "gap-1" : "gap-1.5")}
+            setIsMenuOpen(open);
+          }}
         >
-          {selectedEntries && props.triggerLabel === undefined ? (
-            <span className="flex shrink-0 items-center -space-x-1" aria-hidden="true">
-              {selectedEntries
-                .slice(0, 3)
-                .map((selection) =>
-                  selection.entry ? (
-                    <ProviderInstanceIcon
-                      key={`${selection.instanceId}:${selection.model}`}
-                      driverKind={selection.entry.driverKind}
-                      displayName={selection.entry.displayName}
-                      accentColor={selection.entry.accentColor}
-                      className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
-                      iconClassName="size-4"
-                    />
-                  ) : null,
+          <PopoverTrigger
+            render={
+              <ComposerControl
+                ref={pickerTriggerRef}
+                aria-label={
+                  props.triggerAriaLabel ??
+                  allModelNames ??
+                  (props.iconOnly ? triggerLabel : undefined)
+                }
+                size={size}
+                data-chat-provider-model-picker="true"
+                className={cn(
+                  "min-w-0 shrink justify-between whitespace-nowrap",
+                  props.compact
+                    ? "max-w-42 shrink-0"
+                    : !props.isComposerOwned && "max-w-48 sm:max-w-56",
+                  props.triggerClassName,
                 )}
-              {selectedEntries.length > 3 ? (
-                <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-(--chat-composer-glass-surface,var(--background)) text-3xs ring-2 ring-(--chat-composer-glass-surface,var(--background))">
-                  +{selectedEntries.length - 3}
-                </span>
-              ) : null}
-            </span>
-          ) : activeEntry && props.triggerLabel === undefined ? (
-            <ProviderInstanceIcon
-              driverKind={activeEntry.driverKind}
-              displayName={activeEntry.displayName}
-              accentColor={activeEntry.accentColor}
-              acpRegistryAgentId={activeEntry.acpRegistryAgentId}
-              acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
-              showBadge={showInstanceBadge}
-              className="size-4"
-              iconClassName={cn("size-4", props.activeProviderIconClassName)}
-              indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
-              badgeClassName={cn(
-                "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
-                size === "xs" && "shadow-none",
+                disabled={props.disabled}
+              />
+            }
+          >
+            <span
+              className={cn(
+                "flex min-w-0 flex-1 items-center",
+                size === "xs" ? "gap-1" : "gap-1.5",
               )}
-            />
-          ) : null}
-          {props.iconOnly ? null : (
-            <>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span
-                      className="min-w-0 flex-1 overflow-hidden truncate"
-                      data-chat-provider-model-picker-label="true"
-                    />
+            >
+              {selectedEntries && props.triggerLabel === undefined ? (
+                <span className="flex shrink-0 items-center -space-x-1" aria-hidden="true">
+                  {selectedEntries
+                    .slice(0, 3)
+                    .map((selection) =>
+                      selection.entry ? (
+                        <ProviderInstanceIcon
+                          key={`${selection.instanceId}:${selection.model}`}
+                          driverKind={selection.entry.driverKind}
+                          displayName={selection.entry.displayName}
+                          accentColor={selection.entry.accentColor}
+                          className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
+                          iconClassName="size-4"
+                        />
+                      ) : null,
+                    )}
+                  {selectedEntries.length > 3 ? (
+                    <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-(--chat-composer-glass-surface,var(--background)) text-3xs ring-2 ring-(--chat-composer-glass-surface,var(--background))">
+                      +{selectedEntries.length - 3}
+                    </span>
+                  ) : null}
+                </span>
+              ) : activeEntry && props.triggerLabel === undefined ? (
+                <ProviderInstanceIcon
+                  driverKind={activeEntry.driverKind}
+                  displayName={activeEntry.displayName}
+                  accentColor={activeEntry.accentColor}
+                  acpRegistryAgentId={activeEntry.acpRegistryAgentId}
+                  acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
+                  showBadge={showInstanceBadge}
+                  className="size-4"
+                  iconClassName={cn("size-4", props.activeProviderIconClassName)}
+                  indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
+                  badgeClassName={cn(
+                    "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
+                    size === "xs" && "shadow-none",
+                  )}
+                />
+              ) : null}
+              {props.iconOnly ? null : (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          className="min-w-0 flex-1 overflow-hidden truncate"
+                          data-chat-provider-model-picker-label="true"
+                        />
+                      }
+                    >
+                      {props.triggerLabel ?? multipleLabel ?? triggerTitle}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
+                  </Tooltip>
+                  {!props.statusLabel && selectedModel?.providerCostLabel ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span className="shrink-0 text-3xs font-medium leading-none text-muted-foreground/70" />
+                        }
+                      >
+                        {selectedModel.providerCostLabel}
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">
+                        Costs {selectedModel.providerCostLabel} of the provider&apos;s base token
+                        rate
+                      </TooltipPopup>
+                    </Tooltip>
+                  ) : null}
+                  {!props.statusLabel &&
+                  !selectedEntries &&
+                  props.triggerLabel === undefined &&
+                  selectedModel?.isUnavailable ? (
+                    <Badge variant="outline" size="sm">
+                      Unavailable
+                    </Badge>
+                  ) : null}
+                </>
+              )}
+            </span>
+            {props.iconOnly ? null : (
+              <span aria-hidden="true" className="flex items-center">
+                <ComposerControlChevron size={size} />
+              </span>
+            )}
+          </PopoverTrigger>
+          <PopoverPopup
+            {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
+            align="start"
+            className="before:hidden"
+            padding="none"
+            suspended={overlayInstanceId !== null}
+          >
+            <ModelPickerContent
+              activeInstanceId={activeInstanceId}
+              model={props.model}
+              {...(props.selectedModels !== undefined
+                ? { selectedModels: props.selectedModels }
+                : {})}
+              {...(props.onToggleModel
+                ? {
+                    onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
+                      if (!props.disabled) props.onToggleModel?.(instanceId, model);
+                    },
                   }
-                >
-                  {props.triggerLabel ?? multipleLabel ?? triggerTitle}
-                </TooltipTrigger>
-                <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
-              </Tooltip>
-              {!props.statusLabel && selectedModel?.providerCostLabel ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="shrink-0 text-3xs font-medium leading-none text-muted-foreground/70" />
-                    }
-                  >
-                    {selectedModel.providerCostLabel}
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">
-                    Costs {selectedModel.providerCostLabel} of the provider&apos;s base token rate
-                  </TooltipPopup>
-                </Tooltip>
-              ) : null}
-              {!props.statusLabel &&
-              !selectedEntries &&
-              props.triggerLabel === undefined &&
-              selectedModel?.isUnavailable ? (
-                <Badge variant="outline" size="sm">
-                  Unavailable
-                </Badge>
-              ) : null}
-            </>
-          )}
-        </span>
-        {props.iconOnly ? null : (
-          <span aria-hidden="true" className="flex items-center">
-            <ComposerControlChevron size={size} />
-          </span>
-        )}
-      </PopoverTrigger>
-      <PopoverPopup
-        {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
-        align="start"
-        className="before:hidden"
-        padding="none"
-      >
-        <ModelPickerContent
-          activeInstanceId={activeInstanceId}
-          model={props.model}
-          {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
-          {...(props.onToggleModel
-            ? {
-                onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
-                  if (!props.disabled) props.onToggleModel?.(instanceId, model);
-                },
-              }
-            : {})}
-          lockedProvider={props.lockedProvider}
-          lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
-          instanceEntries={props.instanceEntries}
-          {...(props.keybindings ? { keybindings: props.keybindings } : {})}
-          modelOptionsByInstance={props.modelOptionsByInstance}
-          terminalOpen={props.terminalOpen ?? false}
-          onRequestClose={() => setIsMenuOpen(false)}
-          {...(props.onOpenProviderSetup ? { onOpenProviderSetup: props.onOpenProviderSetup } : {})}
-          {...(props.getModelDisabledReason
-            ? { getModelDisabledReason: props.getModelDisabledReason }
-            : {})}
-          {...(props.isProviderSetupAvailable
-            ? { isProviderSetupAvailable: props.isProviderSetupAvailable }
-            : {})}
-          {...(props.renderProviderSetup ? { renderProviderSetup: props.renderProviderSetup } : {})}
-          {...(props.renderProviderFooter
-            ? { renderProviderFooter: props.renderProviderFooter }
-            : {})}
-          {...(props.onContinueInNewChat ? { onContinueInNewChat: props.onContinueInNewChat } : {})}
-          continueInNewChatDisabled={props.continueInNewChatDisabled ?? false}
-          onInstanceModelChange={handleInstanceModelChange}
-        />
-        {props.selectedModels === undefined ? (
-          <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
-        ) : null}
-      </PopoverPopup>
-    </Popover>
+                : {})}
+              lockedProvider={props.lockedProvider}
+              lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
+              instanceEntries={props.instanceEntries}
+              {...(props.keybindings ? { keybindings: props.keybindings } : {})}
+              modelOptionsByInstance={props.modelOptionsByInstance}
+              terminalOpen={props.terminalOpen ?? false}
+              onRequestClose={() => setIsMenuOpen(false)}
+              {...(props.onOpenProviderSetup
+                ? { onOpenProviderSetup: props.onOpenProviderSetup }
+                : {})}
+              {...(props.getModelDisabledReason
+                ? { getModelDisabledReason: props.getModelDisabledReason }
+                : {})}
+              {...(props.isProviderSetupAvailable
+                ? { isProviderSetupAvailable: props.isProviderSetupAvailable }
+                : {})}
+              {...(props.renderProviderSetup
+                ? { renderProviderSetup: props.renderProviderSetup }
+                : {})}
+              {...(props.renderProviderFooter
+                ? { renderProviderFooter: props.renderProviderFooter }
+                : {})}
+              {...(props.onContinueInNewChat
+                ? { onContinueInNewChat: props.onContinueInNewChat }
+                : {})}
+              continueInNewChatDisabled={props.continueInNewChatDisabled ?? false}
+              onInstanceModelChange={handleInstanceModelChange}
+            />
+            {props.selectedModels === undefined ? (
+              <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
+            ) : null}
+          </PopoverPopup>
+        </Popover>
+      </ModelPickerOverlayContext>
+    </OverlayScrollScope>
   );
 });

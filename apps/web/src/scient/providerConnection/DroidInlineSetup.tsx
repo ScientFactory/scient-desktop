@@ -8,8 +8,9 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useContext, useEffect, useState, type ReactNode } from "react";
 
+import { ModelPickerOverlayContext } from "./ModelPickerOverlayContext";
 import { Button } from "../../components/ui/button";
 import {
   AssistedSetupActions,
@@ -104,10 +105,14 @@ export function DroidInlineSetup(props: {
     pendingAction === "external-update",
   );
   // Custom models need Droid itself, not a Factory account.
+  const overlay = useContext(ModelPickerOverlayContext);
+  const ownsOverlay = overlay?.instanceId === props.provider.instanceId;
   const modelsActions =
-    props.provider.installed && !props.provider.probePending ? props.modelsActions : undefined;
+    (props.provider.installed && !props.provider.probePending) || ownsOverlay
+      ? props.modelsActions
+      : undefined;
   const secondaryActions = modelsActions ? (
-    <AssistedSetupActions>{modelsActions.secondary}</AssistedSetupActions>
+    <AssistedSetupActions key="connect-models">{modelsActions.secondary}</AssistedSetupActions>
   ) : null;
 
   useEffect(() => {
@@ -239,6 +244,14 @@ export function DroidInlineSetup(props: {
       provider={props.provider}
     />
   );
+  if (ownsOverlay && modelsActions) {
+    return (
+      <AssistedSetupFrame>
+        <AssistedSetupStatus icon={null} title="Custom models" body="Connect models to Droid." />
+        <AssistedSetupActions key="connect-models">{modelsActions.primary}</AssistedSetupActions>
+      </AssistedSetupFrame>
+    );
+  }
   if (
     activeRuntimeOperation ||
     pendingAction === "install" ||
@@ -452,7 +465,7 @@ export function DroidInlineSetup(props: {
           trailing={props.accountAction}
         />
         {modelsActions ? (
-          <AssistedSetupActions>{modelsActions.primary}</AssistedSetupActions>
+          <AssistedSetupActions key="connect-models">{modelsActions.primary}</AssistedSetupActions>
         ) : null}
         {isReady ? null : runtimeDiagnostics}
       </AssistedSetupFrame>
