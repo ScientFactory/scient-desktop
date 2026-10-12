@@ -88,6 +88,25 @@ describe("scient SyncTeX build adapter", () => {
             );
             assert.equal(staged.mode & 0o111, 0);
           }
+          if (platform !== "win") {
+            const target = path.join(root, "source-executable");
+            yield* Effect.promise(async () => {
+              await NodeFSP.rename(path.join(source, executable), target);
+              await NodeFSP.symlink(target, path.join(source, executable));
+              await stageScientSyncTexRuntimeForDesktopBuild({
+                repoRoot: root,
+                stageResourcesDir: resources,
+                platform,
+                arch: "arm64",
+                sourceDirectory: source,
+                verbose: false,
+              });
+              assert.isTrue(
+                (await NodeFSP.lstat(path.join(resources, "synctex-runtime", executable))).isFile(),
+              );
+              assert.equal((await NodeFSP.stat(target)).mode & 0o777, 0o644);
+            });
+          }
         }
         // A corrupt download must fail before replacing the verified staging
         // destination or repairing permissions on the source.

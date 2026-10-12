@@ -93,7 +93,11 @@ export async function stageScientSyncTexRuntimeForDesktopBuild(
   if (input.sourceDirectory !== undefined) {
     await verifyRuntimeDirectory(input.sourceDirectory, input.platform, input.arch);
     await NodeFSP.rm(outputDirectory, { recursive: true, force: true });
-    await NodeFSP.cp(input.sourceDirectory, outputDirectory, { recursive: true });
+    // Materialize links so restoring a staged mode cannot chmod the source.
+    await NodeFSP.cp(input.sourceDirectory, outputDirectory, {
+      recursive: true,
+      dereference: true,
+    });
   } else {
     const stageScript = NodePath.join(input.repoRoot, "scripts/stage-synctex-runtime.ts");
     await run(
