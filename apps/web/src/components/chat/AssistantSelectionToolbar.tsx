@@ -8,6 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
+  assistantCitationSourceRects,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import {
@@ -22,11 +23,17 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
   capture,
   onCite,
   allowPreventedSelectionStart,
+  subscribeSelection,
+  selectionOwnerId,
+  preserveSelection = false,
 }: {
   viewport: HTMLElement | null;
   capture: () => { citation: T; sourceAnchor: AssistantCitationSourceAnchor } | null;
   onCite: (citation: T, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
   allowPreventedSelectionStart?: (target: EventTarget | null) => boolean;
+  subscribeSelection?: (changed: () => void) => () => void;
+  selectionOwnerId?: string;
+  preserveSelection?: boolean;
 }) {
   const [selection, setSelection] = useState<{
     citation: T;
@@ -53,19 +60,25 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
         clear();
         return;
       }
-      const rect = captured.sourceAnchor.range.getBoundingClientRect();
+      const rects = assistantCitationSourceRects(captured.sourceAnchor);
+      const rect = captured.sourceAnchor.resolveRects
+        ? rects.at(-1)
+        : captured.sourceAnchor.range.getBoundingClientRect();
+      if (!rect) {
+        clear();
+        return;
+      }
       const viewportRect = viewport.getBoundingClientRect();
       if (rect.bottom < viewportRect.top || rect.top > viewportRect.bottom || rect.width === 0) {
         clear();
         return;
       }
-      const rects = captured.sourceAnchor.range.getClientRects();
       setSelection({
         sourceAnchor: captured.sourceAnchor,
         citation: captured.citation,
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
-          selectionRect: rects.item(rects.length - 1) ?? rect,
+          selectionRect: rects.at(-1) ?? rect,
           pointer,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),
@@ -79,6 +92,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       onDismiss: clear,
     });
     actionsRef.current = actions;
+    const unsubscribe = subscribeSelection?.(actions.selectionChanged);
     const focusActions = (event: KeyboardEvent) => {
       const toolbar = toolbarRef.current;
       if (
@@ -105,9 +119,10 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       document.removeEventListener("keydown", focusActions, true);
       document.removeEventListener("selectionchange", actions.selectionChanged);
       actions.dispose();
+      unsubscribe?.();
       actionsRef.current = null;
     };
-  }, [allowPreventedSelectionStart, capture, viewport]);
+  }, [allowPreventedSelectionStart, capture, viewport, subscribeSelection]);
 
   if (!selection) return null;
   const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
@@ -117,7 +132,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
   };
   const cite = () => {
     if (tooLong || !onCite(selection.citation, selection.sourceAnchor)) return false;
-    window.getSelection()?.removeAllRanges();
+    if (!preserveSelection) window.getSelection()?.removeAllRanges();
     dismiss();
     return true;
   };
@@ -128,6 +143,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       size="xs"
       variant="glass"
       disabled={tooLong}
+      data-writing-menu-owner={selectionOwnerId}
       aria-label={tooLong ? "Selection is too long to cite" : "Ask in chat"}
       className="fixed z-50 max-w-[calc(100vw-1rem)]"
       style={{ left: selection.position.x, top: selection.position.y }}
