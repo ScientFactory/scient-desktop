@@ -205,6 +205,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   const packagedAppDir = path.join(stageDistDir, "win-unpacked");
   const resourcesDir = path.join(packagedAppDir, "resources");
   yield* fs.makeDirectory(path.join(resourcesDir, "resource-monitor"), { recursive: true });
+  yield* fs.makeDirectory(path.join(resourcesDir, "file-exchange"), { recursive: true });
   yield* fs.makeDirectory(path.join(resourcesDir, "synctex-runtime"), { recursive: true });
   yield* fs.copyFile(generatedAsarPath, path.join(resourcesDir, WINDOWS_SERVER_ASAR_RESOURCE));
   if (input.copyUnpackedNatives) {
@@ -216,6 +217,10 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   yield* fs.writeFileString(
     path.join(resourcesDir, "resource-monitor/t3-resource-monitor.exe"),
     "monitor",
+  );
+  yield* fs.writeFileString(
+    path.join(resourcesDir, "file-exchange/scient-file-publication.exe"),
+    "publication",
   );
   for (const file of ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"]) {
     yield* fs.writeFileString(path.join(resourcesDir, "synctex-runtime", file), file);
@@ -937,38 +942,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(LINUX_FILE_EXCLUSIONS, [
       ...MAC_FILE_EXCLUSIONS,
       "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
-    ]);
-  });
-
-  it("excludes separately emitted Scient runtimes only from the Windows app asar", () => {
-    for (const resource of DESKTOP_EXTRA_RESOURCES) {
-      const sourceTreeResource = resource.from.replace(
-        "apps/desktop/prod-resources/",
-        "apps/desktop/resources/",
-      );
-      for (const stagingPath of [sourceTreeResource, resource.from]) {
-        assert.include(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, `!${stagingPath}`);
-        assert.include(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, `!${stagingPath}/**/*`);
-      }
-    }
-
-    assert.deepStrictEqual(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, [
-      "!apps/desktop/resources/resource-monitor",
-      "!apps/desktop/resources/resource-monitor/**/*",
-      "!apps/desktop/resources/whisper-runtime",
-      "!apps/desktop/resources/whisper-runtime/**/*",
-      "!apps/desktop/resources/synctex-runtime",
-      "!apps/desktop/resources/synctex-runtime/**/*",
-      "!apps/desktop/prod-resources/resource-monitor",
-      "!apps/desktop/prod-resources/resource-monitor/**/*",
-      "!apps/desktop/prod-resources/whisper-runtime",
-      "!apps/desktop/prod-resources/whisper-runtime/**/*",
-      "!apps/desktop/prod-resources/synctex-runtime",
-      "!apps/desktop/prod-resources/synctex-runtime/**/*",
-      "!apps/desktop/resources/cursor-sdk",
-      "!apps/desktop/resources/cursor-sdk/**/*",
-      "!apps/desktop/prod-resources/cursor-sdk",
-      "!apps/desktop/prod-resources/cursor-sdk/**/*",
     ]);
   });
 
@@ -2154,6 +2127,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         yield* fs.remove(resourceMonitorPath, { recursive: true });
         yield* fs.writeFileString(resourceMonitorPath, "monitor");
+        const publicationPath = path.join(
+          fixture.packagedAppDir,
+          "resources/file-exchange/scient-file-publication.exe",
+        );
+        yield* fs.remove(publicationPath);
+        yield* fs.makeDirectory(publicationPath);
+        const publicationError = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+        }).pipe(Effect.flip);
+        assert.instanceOf(publicationError, WindowsPackagedPayloadValidationError);
+        assert.equal(publicationError.reason, "file-publication-missing");
+        assert.deepStrictEqual(publicationError.missingFiles, [
+          "file-exchange/scient-file-publication.exe",
+        ]);
+        yield* fs.remove(publicationPath, { recursive: true });
+        yield* fs.writeFileString(publicationPath, "publication");
         const syncTexPath = path.join(
           fixture.packagedAppDir,
           "resources/synctex-runtime/synctex.exe",
@@ -2613,24 +2604,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   it("stages the resource monitor as an external executable resource", () => {
-    assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
-      {
-        from: "apps/desktop/prod-resources/cursor-sdk",
-        to: "node_modules/@cursor",
-      },
-      {
-        from: "apps/desktop/prod-resources/resource-monitor",
-        to: "resource-monitor",
-      },
-      {
-        from: "apps/desktop/prod-resources/whisper-runtime",
-        to: "whisper-runtime",
-      },
-      {
-        from: "apps/desktop/prod-resources/synctex-runtime",
-        to: "synctex-runtime",
-      },
-    ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",

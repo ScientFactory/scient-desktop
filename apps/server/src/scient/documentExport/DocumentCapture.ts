@@ -55,13 +55,14 @@ export const documentLogicalKey = (kind: "markdown-pdf" | "conversation-pdf", id
 /** What publication re-checks before accepting a render of this capture. */
 export const CapturedDocumentSource = Schema.Union([
   /**
-   * A project file. Publication resolves the requested path again and requires
-   * the same canonical file with the captured digest.
+   * A project file. Publication requires its settled mutation epoch as well as
+   * the same canonical file and digest. Legacy captures must be captured again.
    */
   Schema.TaggedStruct("workspace-file", {
     workspaceRoot: Schema.String,
     relativePath: Schema.String,
     canonicalPath: Schema.String,
+    mutationEpoch: Schema.optional(Schema.String),
   }),
   /** A conversation snapshot is immutable; its digest already identifies it. */
   Schema.TaggedStruct("conversation", {}),

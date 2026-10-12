@@ -200,10 +200,16 @@ function evaluatePdfLatexPackages(texts: readonly string[]): LatexEngineVerdict 
 /** Root declarations take precedence over declarations in included preambles. */
 export function selectLatexBuildEngine(input: LatexEngineGateInput, toolchain: LatexToolchainKind) {
   let declared: LatexEngine | null = null;
+  let declaredDriver: "tectonic" | undefined;
   for (const text of [input.rootText, ...(input.includedTexts ?? [])]) {
     for (const line of text.split(/\r?\n/u)) {
       const token = MAGIC_COMMENT_PATTERN.exec(line)?.[1]?.toLowerCase();
       if (!token) continue;
+      if (token === "tectonic") {
+        declaredDriver = "tectonic";
+        declared = "xelatex";
+        break;
+      }
       declared =
         token === "pdflatex" || token === "pdftex" ? "pdflatex" : requiredEngineForToken(token);
       if (declared) break;
@@ -211,6 +217,16 @@ export function selectLatexBuildEngine(input: LatexEngineGateInput, toolchain: L
     if (declared) break;
   }
   const engine = declared ?? (toolchain === "tectonic" ? "xelatex" : "pdflatex");
+  if (declaredDriver === "tectonic") {
+    return {
+      engine: "xelatex" as const,
+      driver: declaredDriver,
+      error:
+        toolchain === "tectonic"
+          ? null
+          : "This document requests Tectonic. Install Tectonic in this environment, then rebuild.",
+    };
+  }
   if (toolchain === "tectonic") {
     return {
       engine,

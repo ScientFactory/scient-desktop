@@ -9045,6 +9045,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const outsideFile = path.join(outsideDir, "outside.txt");
       yield* fs.writeFileString(outsideFile, "outside\n");
       yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
+      yield* fs.symlink(
+        path.join(workspaceDir, "missing-referent.txt"),
+        path.join(workspaceDir, "dangling.txt"),
+      );
 
       yield* buildAppUnderTest();
 
@@ -9072,9 +9076,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               cwd: workspaceDir,
               relativePath: "missing.txt",
             }).pipe(Effect.result),
+            missingRootRead: client[WS_METHODS.projectsReadFile]({
+              cwd: invalidWorkspace,
+              relativePath: "missing.txt",
+            }).pipe(Effect.result),
+            nonDirectoryRootRead: client[WS_METHODS.projectsReadFile]({
+              cwd: outsideFile,
+              relativePath: "missing.txt",
+            }).pipe(Effect.result),
             linkedRead: client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
               relativePath: "linked-outside.txt",
+            }).pipe(Effect.result),
+            danglingRead: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "dangling.txt",
             }).pipe(Effect.result),
             browse: client[WS_METHODS.filesystemBrowse]({
               cwd: workspaceDir,
@@ -9145,7 +9161,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(readError.relativePath, "missing.txt");
       assert.equal(readError.failure, "operation_failed");
       assert.equal(readError.reason, "not_found");
+      assert.equal(readError.currentMissing, true);
       assert.isDefined(readError.cause);
+
+      if (
+        results.danglingRead._tag !== "Failure" ||
+        results.danglingRead.failure._tag !== "ProjectReadFileError"
+      ) {
+        assert.fail("Expected a typed dangling-referent read failure");
+      }
+      assert.equal(results.danglingRead.failure.cwd, workspaceDir);
+      assert.equal(results.danglingRead.failure.relativePath, "dangling.txt");
+      assert.equal(results.danglingRead.failure.reason, "not_found");
+      assert.isUndefined(results.danglingRead.failure.currentMissing);
+
+      if (
+        results.missingRootRead._tag !== "Failure" ||
+        results.missingRootRead.failure._tag !== "ProjectReadFileError"
+      ) {
+        assert.fail("Expected a typed missing-root read failure");
+      }
+      assert.equal(results.missingRootRead.failure.failure, "operation_failed");
+      assert.equal(results.missingRootRead.failure.operation, "realpath-workspace-root");
+      assert.equal(results.missingRootRead.failure.operationPath, invalidWorkspace);
+      assert.equal(results.missingRootRead.failure.reason, "not_found");
+      assert.equal(results.missingRootRead.failure.osErrorCode, "ENOENT");
+      assert.isUndefined(results.missingRootRead.failure.currentMissing);
+      assert.isDefined(results.missingRootRead.failure.cause);
+
+      if (
+        results.nonDirectoryRootRead._tag !== "Failure" ||
+        results.nonDirectoryRootRead.failure._tag !== "ProjectReadFileError"
+      ) {
+        assert.fail("Expected a typed non-directory-root read failure");
+      }
+      assert.equal(results.nonDirectoryRootRead.failure.failure, "operation_failed");
+      assert.equal(results.nonDirectoryRootRead.failure.operation, "stat");
+      assert.equal(results.nonDirectoryRootRead.failure.operationPath, outsideFile);
+      assert.equal(results.nonDirectoryRootRead.failure.osErrorCode, "ENOTDIR");
+      assert.isUndefined(results.nonDirectoryRootRead.failure.currentMissing);
+      assert.isDefined(results.nonDirectoryRootRead.failure.cause);
 
       // A symlink leading out of the project is viewable, never editable.
       if (results.linkedRead._tag !== "Success") {
@@ -9292,6 +9347,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         }
         assert.equal(result.failure.failure, "operation_failed");
         assert.equal(result.failure.reason, "permission_denied");
+        assert.isUndefined(result.failure.currentMissing);
         // The system's own code travels too: a file mode refuses with EACCES,
         // which the client tells apart from the system itself declining.
         assert.equal(result.failure.osErrorCode, "EACCES");
@@ -9331,29 +9387,135 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes websocket rpc projects.writeFile", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
+  it.effect(
+    "preserves websocket file mutation ownership, retained history, and recovery refusal",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
 
-      yield* buildAppUnderTest();
+        yield* buildAppUnderTest();
 
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.projectsWriteFile]({
-            cwd: workspaceDir,
-            relativePath: "nested/created.txt",
-            contents: "written-by-rpc",
-          }),
-        ),
-      );
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const input = {
+                cwd: workspaceDir,
+                relativePath: "nested/created.txt",
+                contents: "written-by-rpc",
+                createOnly: true as const,
+                mutationId: "rpc-create",
+              };
+              const created = yield* client[WS_METHODS.projectsWriteFile](input);
+              assert.equal(created.mutationId, input.mutationId);
+              assert.deepEqual(yield* client[WS_METHODS.projectsWriteFile](input), created);
+              const conflict = yield* client[WS_METHODS.projectsWriteFile]({
+                ...input,
+                contents: "must-not-publish",
+              }).pipe(Effect.flip);
+              assert.equal(conflict._tag, "ProjectWriteFileError");
+              if (conflict._tag !== "ProjectWriteFileError")
+                return assert.fail("Expected mutation intent failure");
+              assert.equal(conflict.failure, "mutation_intent_conflict");
+              assert.equal(conflict.mutationId, input.mutationId);
+              assert.equal(
+                yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
+                input.contents,
+              );
 
-      assert.equal(response.relativePath, "nested/created.txt");
-      const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
-      assert.equal(persisted, "written-by-rpc");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+              const updated = yield* client[WS_METHODS.projectsWriteFile]({
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                contents: "updated-by-rpc",
+                expectedRevision: created.revision,
+                mutationId: "rpc-update",
+              });
+              const history = yield* client[WS_METHODS.projectsListFileVersions](input);
+              const retained = history.versions.find(
+                (version) => version.revision === created.revision,
+              );
+              assert.isDefined(retained);
+              if (!retained) return assert.fail("Expected retained pre-publication revision");
+              assert.equal(retained.mutationId, "rpc-update");
+              assert.isNull(history.attention);
+              const discarded = yield* client[WS_METHODS.projectsDiscardFileVersion]({
+                ...input,
+                versionId: retained.versionId,
+              });
+              assert.equal(discarded.versionId, retained.versionId);
+              const afterDiscard = yield* client[WS_METHODS.projectsListFileVersions](input);
+              assert.isFalse(
+                afterDiscard.versions.some((version) => version.versionId === retained.versionId),
+              );
+              assert.isNull(afterDiscard.attention);
+
+              for (const currentRevision of [updated.revision, null]) {
+                const refused = yield* client[WS_METHODS.projectsResolveFileMutation]({
+                  ...input,
+                  recoveryId: "no-durable-attention",
+                  currentRevision,
+                  choice: "accept-current",
+                }).pipe(Effect.flip);
+                assert.equal(refused._tag, "ProjectWriteFileError");
+                if (refused._tag !== "ProjectWriteFileError")
+                  return assert.fail("Expected typed recovery refusal");
+                assert.equal(refused.failure, "mutation_intent_conflict");
+                assert.equal(refused.cwd, input.cwd);
+                assert.equal(refused.relativePath, input.relativePath);
+                assert.equal(refused.recoveryId, "no-durable-attention");
+                assert.isUndefined(refused.currentRevision);
+              }
+              assert.equal(
+                yield* fs.readFileString(path.join(workspaceDir, input.relativePath)),
+                "updated-by-rpc",
+              );
+
+              const renameInput = {
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                destinationRelativePath: "nested/renamed.txt",
+                expectedRevision: updated.revision,
+                mutationId: "rpc-rename",
+              };
+              const renamed = yield* client[WS_METHODS.projectsRenameFile](renameInput);
+              assert.equal(renamed.mutationId, renameInput.mutationId);
+              assert.deepEqual(yield* client[WS_METHODS.projectsRenameFile](renameInput), renamed);
+              assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
+              const absentRefused = yield* client[WS_METHODS.projectsResolveFileMutation]({
+                cwd: input.cwd,
+                relativePath: input.relativePath,
+                recoveryId: "no-durable-attention",
+                currentRevision: null,
+                choice: "accept-current",
+              }).pipe(Effect.flip);
+              assert.equal(absentRefused._tag, "ProjectWriteFileError");
+              if (absentRefused._tag !== "ProjectWriteFileError")
+                return assert.fail("Expected typed absent-path refusal");
+              assert.equal(absentRefused.failure, "mutation_intent_conflict");
+              assert.isUndefined(absentRefused.currentRevision);
+              assert.isFalse(yield* fs.exists(path.join(workspaceDir, input.relativePath)));
+              assert.equal(
+                yield* fs.readFileString(
+                  path.join(workspaceDir, renameInput.destinationRelativePath),
+                ),
+                "updated-by-rpc",
+              );
+              const deleteInput = {
+                cwd: input.cwd,
+                relativePath: renameInput.destinationRelativePath,
+                expectedRevision: renamed.revision,
+                mutationId: "rpc-delete",
+              };
+              const deleted = yield* client[WS_METHODS.projectsDeleteFile](deleteInput);
+              assert.equal(deleted.mutationId, deleteInput.mutationId);
+              assert.deepEqual(yield* client[WS_METHODS.projectsDeleteFile](deleteInput), deleted);
+              assert.isFalse(yield* fs.exists(path.join(workspaceDir, deleteInput.relativePath)));
+            }),
+          ),
+        );
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("rejects generic Files writes to owner-managed project paths", () =>
@@ -10277,6 +10439,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             cwd: workspaceDir,
             relativePath: "../escape.txt",
             contents: "nope",
+            mutationId: "rpc-refused-write",
           }),
         ).pipe(Effect.result),
       );
@@ -10292,6 +10455,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(writeError.cwd, workspaceDir);
       assert.equal(writeError.relativePath, "../escape.txt");
       assert.equal(writeError.failure, "workspace_path_outside_root");
+      assert.equal(writeError.mutationId, "rpc-refused-write");
+      assert.isUndefined(writeError.publicationOutcome);
       assert.isDefined(writeError.cause);
       assert.notProperty(writeError, "contents");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),

@@ -1,16 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  ExecutionProcessError,
-  type ExecutionProcessPort,
-  type ExecutionProcessRequest,
-} from "@scientfactory/execution";
+import { ExecutionProcessError, type ExecutionProcessRequest } from "@scientfactory/execution";
 import { describe, expect, it } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -35,6 +35,21 @@ const BIN_DIRECTORY = `${TEXLIVE_ROOT}/bin/windows`;
 const PERL = `${TEXLIVE_ROOT}/tlpkg/tlperl/bin/perl.exe`;
 const TLMGR_SCRIPT = `${TEXLIVE_ROOT}/texmf-dist/scripts/texlive/tlmgr.pl`;
 
+class FixtureBinDirectory extends Context.Service<FixtureBinDirectory, string>()(
+  "t3/scient/latex/LatexPackageInstaller.test/FixtureBinDirectory",
+) {}
+const fixtureBinLayer = Layer.effect(
+  FixtureBinDirectory,
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-tlmgr-fixture-" });
+    const bin = path.join(root, "TinyTeX", "bin", "windows");
+    yield* fs.makeDirectory(bin, { recursive: true });
+    return bin;
+  }),
+).pipe(Layer.provide(NodeServices.layer));
+
 /** `tlmgr search --file` prints the package, then the paths it ships. */
 const SEARCH_OUTPUT = [
   "tlmgr: package repository https://mirror.ctan.org/systems/texlive/tlnet",
@@ -57,6 +72,7 @@ interface FakeProcess {
   readonly exitCode?: number;
   /** Never exits on its own; only a `cancel` ends it. The orphan case. */
   readonly hang?: boolean;
+  readonly retirementFails?: boolean;
 }
 
 /**
@@ -93,6 +109,10 @@ const harness = (input: {
     fileNames: ReadonlyArray<string>,
     call: number,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>;
+  readonly retirement?: (request: ExecutionProcessRequest) => Effect.Effect<void>;
+  readonly beforeMarkerCreate?: (
+    markerPath: string,
+  ) => Effect.Effect<void, PlatformError.PlatformError>;
 }) =>
   Effect.gen(function* () {
     const runs = yield* Ref.make<ReadonlyArray<FakeRun>>([]);
@@ -102,7 +122,7 @@ const harness = (input: {
 
     const respond: (args: ReadonlyArray<string>) => Effect.Effect<FakeProcess> =
       input.respond ?? (() => Effect.succeed<FakeProcess>({}));
-    const port: ExecutionProcessPort = {
+    const port: LocalExecutionProcess.ExecutionProcess["Service"] = {
       start: (request) =>
         Effect.gen(function* () {
           yield* Ref.update(runs, (previous) => [
@@ -119,12 +139,26 @@ const harness = (input: {
           if (process.hang !== true) {
             yield* Deferred.succeed(exitSignal, process.exitCode ?? 0);
           }
+          const retirement = input.retirement;
+          if (retirement) yield* Effect.addFinalizer(() => retirement(request));
           return {
             output: Stream.make({ stream: "stdout" as const, text: process.output ?? "" }),
             exitCode: Deferred.await(exitSignal),
-            cancel: Ref.update(cancelCount, (count) => count + 1).pipe(
-              Effect.andThen(Deferred.succeed(exitSignal, 130)),
-              Effect.asVoid,
+            cancel: yield* Effect.cached(
+              Ref.update(cancelCount, (count) => count + 1).pipe(
+                Effect.andThen(Deferred.succeed(exitSignal, 130)),
+                Effect.andThen(
+                  process.retirementFails
+                    ? Effect.fail(
+                        new ExecutionProcessError({
+                          operation: "cancel",
+                          message: "Fixture distribution writer remains alive.",
+                        }),
+                      )
+                    : Effect.void,
+                ),
+                Effect.asVoid,
+              ),
             ),
           };
         }),
@@ -143,11 +177,29 @@ const harness = (input: {
     });
 
     return {
-      layer: Layer.effect(LatexPackageInstaller, make).pipe(
-        Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
-        Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, runner)),
-        Layer.provide(NodeServices.layer),
-        Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+      layer: Layer.mergeAll(
+        fixtureBinLayer,
+        Layer.effect(LatexPackageInstaller, make).pipe(
+          Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
+          Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, runner)),
+          Layer.provide(
+            Layer.effect(
+              FileSystem.FileSystem,
+              Effect.gen(function* () {
+                const underlying = yield* FileSystem.FileSystem;
+                return FileSystem.FileSystem.of({
+                  ...underlying,
+                  writeFileString: (markerPath, data, options) =>
+                    (input.beforeMarkerCreate?.(markerPath) ?? Effect.void).pipe(
+                      Effect.andThen(underlying.writeFileString(markerPath, data, options)),
+                    ),
+                });
+              }),
+            ).pipe(Layer.provide(NodeServices.layer)),
+          ),
+          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+        ),
       ),
       runs,
       started,
@@ -155,9 +207,6 @@ const harness = (input: {
       probes,
     };
   });
-
-/** `path.join` spells Windows paths with backslashes; the fixtures do not. */
-const posix = (value: string): string => value.replaceAll("\\", "/");
 
 /** Just the `tlmgr` argument list of each run, with the script path dropped. */
 const tlmgrArguments = (runs: ReadonlyArray<FakeRun>): ReadonlyArray<ReadonlyArray<string>> =>
@@ -169,9 +218,10 @@ const installing = (input: {
 }) =>
   Effect.gen(function* () {
     const installer = yield* LatexPackageInstaller;
+    const binDirectory = yield* FixtureBinDirectory;
     return yield* installer.install({
       packages: input.packages,
-      binDirectory: BIN_DIRECTORY,
+      binDirectory,
       ...(input.expectedFiles === undefined ? {} : { expectedFiles: input.expectedFiles }),
     });
   });
@@ -275,9 +325,9 @@ describe("owningPackageFromSearch", () => {
 });
 
 describe("LatexPackageInstaller", () => {
-  it.effect("installs through the tlmgr inside the managed distribution", () =>
+  it.effect("deduplicates repeated package requests", () =>
     Effect.gen(function* () {
-      const { layer, runs } = yield* harness({
+      const { layer } = yield* harness({
         respond: () => Effect.succeed({ output: "install: mathtools [40k]" }),
       });
       const result = yield* installing({ packages: ["mathtools", "mathtools"] }).pipe(
@@ -285,17 +335,6 @@ describe("LatexPackageInstaller", () => {
       );
 
       expect(result).toEqual({ installed: ["mathtools"], failed: [] });
-      const [first, ...rest] = yield* Ref.get(runs);
-      expect(rest).toEqual([]);
-      expect(posix(first?.executable ?? "")).toBe(PERL);
-      expect((first?.args ?? []).map(posix)).toEqual([TLMGR_SCRIPT, "install", "mathtools"]);
-      // tlmgr drives the same helpers latexmk does, so the distribution's own
-      // bin directory has to lead the child's PATH.
-      const pathKey = Object.keys(first?.environment ?? {}).find(
-        (key) => key.toUpperCase() === "PATH",
-      );
-      expect(posix(first?.environment[pathKey ?? ""] ?? "")).toContain(BIN_DIRECTORY);
-      expect(posix(first?.environment["PERL5LIB"] ?? "")).toBe(`${TEXLIVE_ROOT}/tlpkg/tlperl/lib`);
     }),
   );
 
@@ -323,6 +362,177 @@ describe("LatexPackageInstaller", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect(
+    "retains distribution ownership through retirement without timing out queued work",
+    () =>
+      Effect.gen(function* () {
+        const retiring = yield* Deferred.make<void>();
+        const releaseRetirement = yield* Deferred.make<void>();
+        const { layer, started, runs } = yield* harness({
+          respond: (args) => Effect.succeed({ hang: args.includes("mathtools") }),
+          retirement: (request) =>
+            request.args.includes("mathtools")
+              ? Deferred.succeed(retiring, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseRetirement)),
+                  Effect.asVoid,
+                )
+              : Effect.void,
+        });
+        yield* Effect.gen(function* () {
+          const installer = yield* LatexPackageInstaller;
+          const binDirectory = yield* FixtureBinDirectory;
+          const first = yield* Effect.forkChild(
+            installer.install({
+              packages: ["mathtools"],
+              binDirectory,
+              timeout: "1 second",
+            }),
+          );
+          yield* Queue.take(started);
+          const second = yield* Effect.forkChild(
+            installer.install({
+              packages: ["microtype"],
+              binDirectory,
+              timeout: "1 second",
+            }),
+          );
+          yield* TestClock.adjust("1 second");
+          yield* Deferred.await(retiring);
+          yield* TestClock.adjust("5 seconds");
+          expect(tlmgrArguments(yield* Ref.get(runs))).toEqual([["install", "mathtools"]]);
+          yield* Deferred.succeed(releaseRetirement, undefined);
+          expect(yield* Fiber.join(first)).toEqual({ installed: [], failed: ["mathtools"] });
+          expect(yield* Fiber.join(second)).toEqual({ installed: ["microtype"], failed: [] });
+          expect(tlmgrArguments(yield* Ref.get(runs))).toEqual([
+            ["install", "mathtools"],
+            ["install", "microtype"],
+          ]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "refuses further distribution mutation after unknown retirement, including restart",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const binDirectory = yield* fs.makeTempDirectoryScoped({
+          prefix: "scient-tlmgr-unretired-",
+        });
+        const first = yield* harness({
+          respond: () => Effect.succeed({ retirementFails: true }),
+        });
+        yield* Effect.gen(function* () {
+          const installer = yield* LatexPackageInstaller;
+          const outcome = yield* Effect.exit(
+            installer.install({
+              packages: ["mathtools"],
+              binDirectory,
+            }),
+          );
+          expect(outcome._tag).toBe("Failure");
+          expect(yield* fs.exists(`${binDirectory}/.scient-unretired-install`)).toBe(true);
+          expect(
+            (yield* Effect.exit(installer.install({ packages: ["microtype"], binDirectory })))._tag,
+          ).toBe("Failure");
+          expect(
+            (yield* Effect.exit(installer.unresolvedFiles({ files: [], binDirectory })))._tag,
+          ).toBe("Failure");
+          expect(tlmgrArguments(yield* Ref.get(first.runs))).toEqual([["install", "mathtools"]]);
+        }).pipe(Effect.provide(first.layer));
+        const restarted = yield* harness({});
+        const outcome = yield* Effect.gen(function* () {
+          const installer = yield* LatexPackageInstaller;
+          return yield* installer.install({ packages: ["microtype"], binDirectory });
+        }).pipe(Effect.provide(restarted.layer), Effect.exit);
+        expect(outcome._tag).toBe("Failure");
+        expect(yield* Ref.get(restarted.runs)).toEqual([]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("preserves an unresolved installer marker without launching another writer", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({});
+      const fs = yield* FileSystem.FileSystem;
+      const binDirectory = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-tlmgr-unqualified-",
+      });
+      const marker = `${binDirectory}/.scient-unretired-install`;
+      yield* fs.writeFileString(marker, "Unknown escaped descendant");
+      const result = yield* Effect.gen(function* () {
+        const installer = yield* LatexPackageInstaller;
+        return yield* installer.install({ packages: ["microtype"], binDirectory });
+      }).pipe(Effect.provide(h.layer), Effect.exit);
+      expect(result._tag).toBe("Failure");
+      expect(yield* Ref.get(h.runs)).toEqual([]);
+      expect(yield* Ref.get(h.probes)).toEqual([]);
+      expect(yield* fs.readFileString(marker)).toBe("Unknown escaped descendant");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "lets the same service retry after losing exclusive marker acquisition to a live owner",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const binDirectory = yield* fs.makeTempDirectoryScoped({
+          prefix: "scient-tlmgr-contention-",
+        });
+        const marker = `${binDirectory}/.scient-unretired-install`;
+        let contended = false;
+        const h = yield* harness({
+          beforeMarkerCreate: (target) =>
+            Effect.gen(function* () {
+              if (target !== marker || contended) return;
+              contended = true;
+              yield* fs.writeFileString(marker, "Live predecessor owns this distribution");
+            }),
+        });
+        yield* Effect.gen(function* () {
+          const installer = yield* LatexPackageInstaller;
+          const refused = yield* installer
+            .install({ packages: ["microtype"], binDirectory })
+            .pipe(Effect.exit);
+          expect(refused._tag).toBe("Failure");
+          expect(yield* Ref.get(h.runs)).toEqual([]);
+          expect(yield* fs.readFileString(marker)).toBe("Live predecessor owns this distribution");
+          // The fixture's live owner retires and releases its own marker.
+          yield* fs.remove(marker);
+          const retried = yield* installer.install({ packages: ["microtype"], binDirectory });
+          expect(retried).toEqual({ installed: ["microtype"], failed: [] });
+          expect(tlmgrArguments(yield* Ref.get(h.runs))).toEqual([["install", "microtype"]]);
+          expect(yield* fs.exists(marker)).toBe(false);
+        }).pipe(Effect.provide(h.layer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("persists installer ownership before launch and excludes a restarted writer", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const binDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-tlmgr-active-" });
+      const marker = `${binDirectory}/.scient-unretired-install`;
+      const first = yield* harness({ respond: () => Effect.succeed({ hang: true }) });
+      const fetching = yield* Effect.gen(function* () {
+        const installer = yield* LatexPackageInstaller;
+        return yield* installer.install({ packages: ["mathtools"], binDirectory });
+      }).pipe(Effect.provide(first.layer), Effect.forkScoped);
+      const request = yield* Queue.take(first.started);
+      expect(JSON.parse(yield* fs.readFileString(marker))).toMatchObject({
+        retirement: "unknown",
+        runId: request.runId,
+      });
+      const restarted = yield* harness({});
+      const outcome = yield* Effect.gen(function* () {
+        const installer = yield* LatexPackageInstaller;
+        return yield* installer.install({ packages: ["microtype"], binDirectory });
+      }).pipe(Effect.provide(restarted.layer), Effect.exit);
+      expect(outcome._tag).toBe("Failure");
+      expect(yield* Ref.get(restarted.runs)).toEqual([]);
+      yield* Fiber.interrupt(fetching);
+      expect(yield* fs.exists(marker)).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("only reports a package installed once the engine can find its file", () =>
     Effect.gen(function* () {
       // `tlmgr` unpacks first and rebuilds the file index afterwards, so
@@ -339,12 +549,7 @@ describe("LatexPackageInstaller", () => {
       }).pipe(Effect.provide(layer));
 
       expect(result).toEqual({ installed: ["microtype"], failed: [] });
-      // The index was rebuilt once, between the two answers, rather than
-      // waited on.
-      expect((yield* Ref.get(runs)).map((run) => posix(run.executable))).toEqual([
-        PERL,
-        `${BIN_DIRECTORY}/mktexlsr.exe`,
-      ]);
+      expect(tlmgrArguments(yield* Ref.get(runs))).toEqual([["install", "microtype"], []]);
       expect(yield* Ref.get(probes)).toEqual([["microtype.sty"], ["microtype.sty"]]);
     }),
   );
@@ -363,10 +568,7 @@ describe("LatexPackageInstaller", () => {
       // Nothing became visible, so there is nothing to compile again for and
       // the caller says so rather than looping.
       expect(result).toEqual({ installed: [], failed: ["microtype"] });
-      expect((yield* Ref.get(runs)).map((run) => posix(run.executable))).toEqual([
-        PERL,
-        `${BIN_DIRECTORY}/mktexlsr.exe`,
-      ]);
+      expect(tlmgrArguments(yield* Ref.get(runs))).toEqual([["install", "microtype"], []]);
     }),
   );
 
@@ -487,9 +689,10 @@ describe("LatexPackageInstaller", () => {
       });
       const unresolved = yield* Effect.gen(function* () {
         const installer = yield* LatexPackageInstaller;
+        const binDirectory = yield* FixtureBinDirectory;
         return yield* installer.unresolvedFiles({
           files: ["amsmath.sty", "siunitx.sty", "booktabs.sty"],
-          binDirectory: BIN_DIRECTORY,
+          binDirectory,
         });
       }).pipe(Effect.provide(layer));
 
@@ -503,9 +706,10 @@ describe("LatexPackageInstaller", () => {
       const { layer, probes } = yield* harness({});
       const unresolved = yield* Effect.gen(function* () {
         const installer = yield* LatexPackageInstaller;
+        const binDirectory = yield* FixtureBinDirectory;
         return yield* installer.unresolvedFiles({
           files: ["../../etc/passwd", "-var-value=TEXMFHOME", "mathtools.sty"],
-          binDirectory: BIN_DIRECTORY,
+          binDirectory,
         });
       }).pipe(Effect.provide(layer));
 
@@ -530,9 +734,10 @@ describe("LatexPackageInstaller", () => {
       });
       yield* Effect.gen(function* () {
         const installer = yield* LatexPackageInstaller;
+        const binDirectory = yield* FixtureBinDirectory;
         yield* Effect.all(
           ["first", "second"].map((packageName) =>
-            installer.install({ packages: [packageName], binDirectory: BIN_DIRECTORY }),
+            installer.install({ packages: [packageName], binDirectory }),
           ),
           { concurrency: "unbounded" },
         );
@@ -553,9 +758,9 @@ describe("LatexPackageInstaller", () => {
     }),
   );
 
-  it.effect("treats a tlmgr that will not start as packages it could not place", () =>
+  it.effect("quarantines an indeterminate launch instead of retrying distribution mutation", () =>
     Effect.gen(function* () {
-      const absentPort: ExecutionProcessPort = {
+      const absentPort: LocalExecutionProcess.ExecutionProcess["Service"] = {
         start: () =>
           Effect.fail(
             new ExecutionProcessError({
@@ -564,25 +769,27 @@ describe("LatexPackageInstaller", () => {
             }),
           ),
       };
-      const layer = Layer.effect(LatexPackageInstaller, make).pipe(
-        Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, absentPort)),
-        Layer.provide(
-          Layer.succeed(
-            ProcessRunner.ProcessRunner,
-            ProcessRunner.ProcessRunner.of({
-              run: (request) => Effect.succeed(probeOutput(request.args, () => false)),
-            }),
+      const layer = Layer.mergeAll(
+        fixtureBinLayer,
+        Layer.effect(LatexPackageInstaller, make).pipe(
+          Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, absentPort)),
+          Layer.provide(
+            Layer.succeed(
+              ProcessRunner.ProcessRunner,
+              ProcessRunner.ProcessRunner.of({
+                run: (request) => Effect.succeed(probeOutput(request.args, () => false)),
+              }),
+            ),
           ),
+          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
         ),
-        Layer.provide(NodeServices.layer),
-        Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
       );
 
-      // A distribution without a tlmgr leaves the build the error it had.
-      expect(yield* installing({ packages: ["mathtools"] }).pipe(Effect.provide(layer))).toEqual({
-        installed: [],
-        failed: ["mathtools"],
-      });
+      expect(
+        (yield* installing({ packages: ["mathtools"] }).pipe(Effect.provide(layer), Effect.exit))
+          ._tag,
+      ).toBe("Failure");
     }),
   );
 

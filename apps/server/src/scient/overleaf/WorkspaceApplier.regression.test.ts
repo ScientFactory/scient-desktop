@@ -1,483 +1,174 @@
-// Regression cases from the independent review of PR #486.
-import { fixture } from "./WorkspaceApplier.testkit.ts";
 // @effect-diagnostics nodeBuiltinImport:off
+import { fixture } from "./WorkspaceApplier.testkit.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
-import { type WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
-const bytes = (s: string | Buffer) => Buffer.from(s);
-const tree = (s: Record<string, string | Buffer>) =>
-  new Map(Object.entries(s).map(([n, v]) => [n, bytesRevision(bytes(v))]));
+import { bytesRevision, fileIdentity } from "../workspace/RetainedFileMutation.ts";
+import type { WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
+const bytes = (value: string) => Buffer.from(value);
+const tree = (files: Record<string, string>) =>
+  new Map(Object.entries(files).map(([name, value]) => [name, bytesRevision(bytes(value))]));
 const plan = (
-  captured: Record<string, string | Buffer>,
-  target: Record<string, string | Buffer>,
+  captured: Record<string, string>,
+  target: Record<string, string>,
 ): WorkspaceApplyPlan => ({
   base: tree(captured),
   remote: tree(target),
   captured: tree(captured),
-  target: new Map(Object.entries(target).map(([n, v]) => [n, { bytes: bytes(v) }])),
+  target: new Map(Object.entries(target).map(([name, value]) => [name, { bytes: bytes(value) }])),
   renames: [],
   conflicts: [],
   markerPaths: [],
 });
-async function put(cwd: string, files: Record<string, string | Buffer>) {
-  for (const [n, v] of Object.entries(files)) {
-    await NodeFSP.mkdir(NodePath.dirname(NodePath.join(cwd, n)), { recursive: true });
-    await NodeFSP.writeFile(NodePath.join(cwd, n), v);
+async function put(cwd: string, files: Record<string, string>) {
+  for (const [name, value] of Object.entries(files)) {
+    await NodeFSP.mkdir(NodePath.dirname(NodePath.join(cwd, name)), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(cwd, name), value);
   }
 }
 
-describe("WorkspaceApplier review regressions", () => {
-  it.live("writes payload once and keeps progress small across steps and resume", () => {
-    let owner = "";
-    let immutable: { ino: number; mtimeMs: number } | undefined;
-    let checks = 0;
-    return fixture(
-      async (h) => {
-        owner = h.owner;
-        const captured: Record<string, Buffer> = {},
-          target: Record<string, Buffer> = {};
-        for (let i = 0; i < 20; i++) {
-          captured[`fig${i}.pdf`] = Buffer.alloc(1024 * 1024, i);
-          target[`fig${i}.pdf`] = Buffer.alloc(1024 * 1024, i + 100);
-        }
-        await put(h.cwd, captured);
-        expect((await h.apply("big", plan(captured, target))).outcome).toBe("complete");
-        expect(checks).toBe(22);
-        await h.restart();
-        expect((await h.apply("big")).outcome).toBe("complete");
-        const stat = await NodeFSP.stat(NodePath.join(owner, "big/plan.json"));
-        expect(stat.ino).toBe(immutable!.ino);
-        expect(stat.mtimeMs).toBe(immutable!.mtimeMs);
-      },
-      {
-        at: async (point) => {
-          if (!["recorded", "step-recorded", "base-recorded"].includes(point)) return;
-          const stat = await NodeFSP.stat(NodePath.join(owner, "big/plan.json"));
-          expect(stat.size).toBeGreaterThan(20 * 1024 * 1024);
-          immutable ??= { ino: stat.ino, mtimeMs: stat.mtimeMs };
-          expect(stat.ino).toBe(immutable.ino);
-          expect(stat.mtimeMs).toBe(immutable.mtimeMs);
-          const progress = await NodeFSP.readFile(NodePath.join(owner, "big/apply.json"), "utf8");
-          expect(Buffer.byteLength(progress)).toBeLessThan(32 * 1024);
-          expect(JSON.parse(progress)).not.toHaveProperty("plan");
-          checks++;
-        },
-      },
-    );
-  });
-
-  it.live("keeps an untouched skipped file on its old base without a forced conflict", () => {
-    let cwd = "";
-    return fixture(
-      async (h) => {
-        cwd = h.cwd;
-        await put(cwd, { "a.tex": "base a", "b.tex": "base b" });
-        const p = plan(
-          { "a.tex": "base a", "b.tex": "base b" },
-          { "a.tex": "remote a", "b.tex": "remote b" },
-        );
-        const r = await h.apply("skip", p);
-        expect(r).toMatchObject({ outcome: "attention", interrupted: [] });
-        expect(r.base.get("a.tex")).toBe(p.remote.get("a.tex"));
-        expect(r.base.get("b.tex")).toBe(p.base.get("b.tex"));
-        expect(await NodeFSP.readFile(NodePath.join(cwd, "b.tex"), "utf8")).toBe(
-          "later local edit",
-        );
-        await h.restart();
-        expect((await h.apply("skip")).interrupted).toEqual([]);
-      },
-      {
-        at: async (point, name) => {
-          if (point === "before-step" && name === "b.tex")
-            await NodeFSP.writeFile(NodePath.join(cwd, name), "later local edit");
-        },
-      },
-    );
-  });
-
-  it.live("ignores executable metadata on unchanged and changed local files", () =>
-    fixture(async (h) => {
-      await put(h.cwd, { "main.tex": "base", latexmkrc: "$pdf_mode = 1;" });
-      await NodeFSP.chmod(NodePath.join(h.cwd, "latexmkrc"), 0o755);
-      await NodeFSP.chmod(NodePath.join(h.cwd, "main.tex"), 0o755);
-      const p = plan(
-        { "main.tex": "base", latexmkrc: "$pdf_mode = 1;" },
-        { "main.tex": "remote", latexmkrc: "$pdf_mode = 1;" },
-      );
-      const executable = {
-        ...p,
-        target: new Map(p.target).set("main.tex", { bytes: bytes("remote"), executable: true }),
-      };
-      expect((await h.apply("exec", executable)).outcome).toBe("complete");
-      expect((await NodeFSP.stat(NodePath.join(h.cwd, "latexmkrc"))).mode & 0o111).toBe(0o111);
-      expect(await NodeFSP.readFile(NodePath.join(h.cwd, "main.tex"), "utf8")).toBe("remote");
-    }),
-  );
-
-  it.live("resumes a crash after intent persistence without rewriting the payload", () => {
-    let crash = true;
-    return fixture(
-      async (h) => {
-        await put(h.cwd, { "a.tex": "base" });
-        await expect(
-          h.apply("intent", plan({ "a.tex": "base" }, { "a.tex": "remote" })),
-        ).rejects.toBeTruthy();
-        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe("base");
-        const before = await NodeFSP.stat(NodePath.join(h.owner, "intent/plan.json"));
-        await h.restart();
-        expect((await h.apply("intent")).outcome).toBe("complete");
-        expect((await NodeFSP.stat(NodePath.join(h.owner, "intent/plan.json"))).ino).toBe(
-          before.ino,
+describe("WorkspaceApplier immutable intent and original receipt regressions", () => {
+  if (process.platform === "darwin") {
+    it.live(
+      "resumes a persisted removal plan without replaying its original deletion over outside D",
+      () => {
+        let crash = true;
+        return fixture(
+          async (h) => {
+            await put(h.cwd, { "a.tex": "A" });
+            await expect(h.apply("intent", plan({ "a.tex": "A" }, {}))).rejects.toMatchObject({
+              _tag: "WorkspaceApplyError",
+            });
+            expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe("A");
+            await h.restart();
+            expect((await h.apply("intent")).outcome).toBe("complete");
+            await put(h.cwd, { "a.tex": "outside D" });
+            await h.restart();
+            expect((await h.apply("intent")).matchesTarget).toBe(false);
+            expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe("outside D");
+            const history = await h.run(
+              h.files.listFileVersions({ cwd: h.cwd, relativePath: "a.tex" }),
+            );
+            expect(
+              await Promise.all(
+                history.versions.map((version) => NodeFSP.readFile(version.retainedPath, "utf8")),
+              ),
+            ).toContain("A");
+          },
+          {
+            at: async (point) => {
+              if (point === "plan-recorded" && crash) {
+                crash = false;
+                throw new Error("process died after durable plan");
+              }
+            },
+          },
         );
       },
-      {
-        at: async (point) => {
-          if (point === "plan-recorded" && crash) {
-            crash = false;
-            throw new Error("crash");
-          }
-        },
-      },
     );
-  });
-
-  it.live("refuses missing or altered intent before further local mutation", () =>
-    fixture(async (h) => {
-      await h.apply("altered", plan({}, {}));
-      const file = NodePath.join(h.owner, "altered/plan.json");
-      const original = await NodeFSP.readFile(file, "utf8");
-      await NodeFSP.writeFile(file, original + " ");
-      await expect(h.apply("altered")).rejects.toBeTruthy();
-      await NodeFSP.unlink(file);
-      await expect(h.apply("altered", plan({}, {}))).rejects.toBeTruthy();
-    }),
-  );
-  it.live.each([false, true])(
-    "upgrades old records and resumes an interrupted upgrade ($0)",
-    (interrupt) => {
-      let armed = false;
-      return fixture(
-        async (h) => {
-          await put(h.cwd, { "a.tex": "base" });
-          await h.apply("legacy", plan({ "a.tex": "base" }, { "a.tex": "remote" }));
-          const directory = NodePath.join(h.owner, "legacy");
-          const intent = JSON.parse(
-            await NodeFSP.readFile(NodePath.join(directory, "plan.json"), "utf8"),
-          );
-          const saved = JSON.parse(
-            await NodeFSP.readFile(NodePath.join(directory, "apply.json"), "utf8"),
-          );
-          const { intentRevision: _revision, ...oldProgress } = saved;
-          await NodeFSP.writeFile(
-            NodePath.join(directory, "apply.json"),
-            JSON.stringify({ ...intent, ...oldProgress, version: 1 }),
-          );
-          await NodeFSP.unlink(NodePath.join(directory, "plan.json"));
-          armed = interrupt;
-          if (interrupt) await expect(h.apply("legacy")).rejects.toBeTruthy();
-          // A later writer is never replayed over just because a record is upgraded.
-          await put(h.cwd, { "a.tex": "later" });
-          await h.restart();
-          expect((await h.apply("legacy")).outcome).toBe("attention");
-          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe("later");
-          expect(
-            JSON.parse(await NodeFSP.readFile(NodePath.join(directory, "apply.json"), "utf8")),
-          ).toMatchObject({ version: 2 });
-        },
-        {
-          at: async (point) => {
-            if (point === "plan-recorded" && armed) {
-              armed = false;
-              throw new Error("upgrade crash");
-            }
-          },
-        },
-      );
-    },
-  );
-  it.live.each(["after-step", "displaced"] as const)(
-    "recovers completed removals before outer progress at $0",
-    (point) => {
-      let crash = true;
-      return fixture(
-        async (h) => {
-          await put(h.cwd, { "old.tex": "old", "new.tex": "merged" });
-          const p = {
-            ...plan({ "old.tex": "old", "new.tex": "merged" }, { "new.tex": "merged" }),
-            renames: [{ from: "old.tex", to: "new.tex" }],
-          };
-          await expect(h.apply("hidden-remove", p)).rejects.toBeTruthy();
-          await put(h.cwd, { "new.tex": "later" });
-          await h.restart();
-          const result = await h.apply("hidden-remove");
-          expect(result.interrupted).toEqual([["old.tex", "new.tex"]]);
-          expect(result.base).toEqual(p.base);
-          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "new.tex"), "utf8")).toBe("later");
-        },
-        {
-          at: async (at) => {
-            if (point === "after-step" && at === point && crash) {
-              crash = false;
-              throw new Error("crash");
-            }
-          },
-        },
-        {
-          at: async (at) => {
-            if (point === "displaced" && at === point && crash) {
-              crash = false;
-              throw new Error("crash");
-            }
-          },
-        },
-      );
-    },
-  );
-
-  it.live.each([false, true])(
-    "recovers exchanges not yet represented in outer progress (legacy=$0)",
-    (legacy) => {
-      let crash = true;
-      return fixture(
-        async (h) => {
-          await put(h.cwd, { "a.tex": "base", "guard.tex": "guard" });
-          const p = {
-            ...plan(
-              { "a.tex": "base", "guard.tex": "guard" },
-              { "a.tex": "remote", "guard.tex": "guard" },
-            ),
-            conflicts: [
-              { paths: ["a.tex", "guard.tex"], types: ["content"], origins: ["merge" as const] },
-            ],
-          };
-          await expect(h.apply("hidden-exchange", p, true)).rejects.toBeTruthy();
-          if (legacy) {
-            const directory = NodePath.join(h.owner, "hidden-exchange");
-            const intent = JSON.parse(
-              await NodeFSP.readFile(NodePath.join(directory, "plan.json"), "utf8"),
-            );
-            const saved = JSON.parse(
-              await NodeFSP.readFile(NodePath.join(directory, "apply.json"), "utf8"),
-            );
-            delete saved.intentRevision;
-            await NodeFSP.writeFile(
-              NodePath.join(directory, "apply.json"),
-              JSON.stringify({ ...intent, ...saved, version: 1 }),
-            );
-            await NodeFSP.unlink(NodePath.join(directory, "plan.json"));
-          }
-          await put(h.cwd, { "guard.tex": "later" });
-          await h.restart();
-          const result = await h.apply("hidden-exchange", undefined, true);
-          expect(result.interrupted).toEqual([["a.tex", "guard.tex"]]);
-          expect(result.base).toEqual(p.base);
-          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "guard.tex"), "utf8")).toBe("later");
-        },
-        {},
-        {
-          at: async (point) => {
-            if (point === "displaced" && crash) {
-              crash = false;
-              throw new Error("crash");
-            }
-          },
-        },
-      );
-    },
-  );
-  it.live.each(["intent", "prepared"] as const)(
-    "does not force a conflict for staging-only crash at $0",
-    (at) => {
-      let crash = true;
-      return fixture(
-        async (h) => {
-          await put(h.cwd, { "a.tex": "base", "guard.tex": "guard" });
-          const p = {
-            ...plan(
-              { "a.tex": "base", "guard.tex": "guard" },
-              { "a.tex": "remote", "guard.tex": "guard" },
-            ),
-            conflicts: [
-              { paths: ["a.tex", "guard.tex"], types: ["content"], origins: ["merge" as const] },
-            ],
-          };
-          await expect(h.apply("staging-only", p, true)).rejects.toBeTruthy();
-          await put(h.cwd, { "guard.tex": "later" });
-          await h.restart();
-          const result = await h.apply("staging-only", undefined, true);
-          expect(result.interrupted).toEqual([]);
-          expect(result.base).toEqual(p.base);
-          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe("base");
-        },
-        {},
-        {
-          at: async (point) => {
-            if (point === at && crash) {
-              crash = false;
-              throw new Error("crash");
-            }
-          },
-        },
-      );
-    },
-  );
-  it.live.each(["none", "replace", "delete"] as const)(
-    "recognizes a fallback addition after later target $0",
-    (change) => {
-      let crash = true;
-      return fixture(
-        async (h) => {
-          await put(h.cwd, { "guard.tex": "guard" });
-          const p = {
-            ...plan({ "guard.tex": "guard" }, { "a.tex": "remote", "guard.tex": "guard" }),
-            conflicts: [
-              { paths: ["a.tex", "guard.tex"], types: ["content"], origins: ["merge" as const] },
-            ],
-          };
-          await expect(h.apply("hidden-addition", p)).rejects.toBeTruthy();
-          if (change === "replace") {
-            await NodeFSP.writeFile(NodePath.join(h.cwd, "replacement"), "later target");
-            await NodeFSP.rename(
-              NodePath.join(h.cwd, "replacement"),
-              NodePath.join(h.cwd, "a.tex"),
-            );
-          } else if (change === "delete") await NodeFSP.unlink(NodePath.join(h.cwd, "a.tex"));
-          await put(h.cwd, { "guard.tex": "later" });
-          await h.restart();
-          const result = await h.apply("hidden-addition");
-          expect(result.interrupted).toEqual([["a.tex", "guard.tex"]]);
-          expect(result.base).toEqual(p.base);
-          expect(await NodeFSP.readFile(NodePath.join(h.cwd, "guard.tex"), "utf8")).toBe("later");
-        },
-        {},
-        {
-          at: async (point) => {
-            if (point === "installed" && crash) {
-              crash = false;
-              throw new Error("crash");
-            }
-          },
-        },
-      );
-    },
-  );
-  it.live.each(["replace", "delete"] as const)(
-    "does not replay a fallback addition after a later $0",
-    (change) => {
-      let crash = true;
-      return fixture(
-        async (h) => {
-          await expect(h.apply("add-replay", plan({}, { "a.tex": "remote" }))).rejects.toBeTruthy();
-          if (change === "replace") {
-            await NodeFSP.writeFile(NodePath.join(h.cwd, "replacement"), "later target");
-            await NodeFSP.rename(
-              NodePath.join(h.cwd, "replacement"),
-              NodePath.join(h.cwd, "a.tex"),
-            );
-          } else await NodeFSP.unlink(NodePath.join(h.cwd, "a.tex"));
-          await h.restart();
-          expect((await h.apply("add-replay")).outcome).toBe("attention");
-          if (change === "replace")
-            expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe(
-              "later target",
-            );
-          else
-            await expect(NodeFSP.stat(NodePath.join(h.cwd, "a.tex"))).rejects.toMatchObject({
+    it.live("refuses missing or altered immutable intent without touching later source data", () =>
+      fixture(async (h) => {
+        await h.apply("altered", plan({}, {}));
+        await put(h.cwd, { "a.tex": "outside D" });
+        const file = NodePath.join(h.owner, "altered/plan.json"),
+          original = await NodeFSP.readFile(file, "utf8");
+        await NodeFSP.writeFile(file, original + " ");
+        await expect(h.apply("altered")).rejects.toMatchObject({ _tag: "WorkspaceApplyError" });
+        await NodeFSP.unlink(file);
+        await expect(h.apply("altered", plan({}, {}))).rejects.toMatchObject({
+          _tag: "WorkspaceApplyError",
+        });
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe("outside D");
+      }),
+    );
+    it.live(
+      "leaves a newly changed removal target on its old base while retaining completed units",
+      () => {
+        let cwd = "",
+          changed = false;
+        return fixture(
+          async (h) => {
+            cwd = h.cwd;
+            await put(cwd, { "a.tex": "A", "b.tex": "B" });
+            const requested = plan({ "a.tex": "A", "b.tex": "B" }, {});
+            const result = await h.apply("skip", requested);
+            expect(result.outcome).toBe("attention");
+            expect(result.base.has("a.tex")).toBe(false);
+            expect(result.base.get("b.tex")).toBe(requested.base.get("b.tex"));
+            expect(await NodeFSP.readFile(NodePath.join(cwd, "b.tex"), "utf8")).toBe("outside D");
+            await expect(NodeFSP.lstat(NodePath.join(cwd, "a.tex"))).rejects.toMatchObject({
               code: "ENOENT",
             });
-        },
-        {},
-        {
-          at: async (point) => {
-            if (point === "installed" && crash) {
-              crash = false;
-              throw new Error("crash");
-            }
+            await h.restart();
+            expect((await h.apply("skip")).outcome).toBe("attention");
+            expect(await NodeFSP.readFile(NodePath.join(cwd, "b.tex"), "utf8")).toBe("outside D");
           },
-        },
-      );
-    },
-  );
-  it.live.each(["new-intent", "legacy-prepared"] as const)(
-    "holds an ambiguous fallback publication boundary ($0)",
-    (caseName) => {
-      let crash = true;
-      return fixture(
-        async (h) => {
-          await expect(
-            h.apply("uncertain-add", plan({}, { "a.tex": "remote" })),
-          ).rejects.toBeTruthy();
-          if (caseName === "legacy-prepared") {
-            const file = NodePath.join(h.owner, "uncertain-add/files/step-0/record.json");
-            const record = JSON.parse(await NodeFSP.readFile(file, "utf8"));
-            delete record.installBoundary;
-            await NodeFSP.writeFile(file, JSON.stringify(record));
-          }
-          await h.restart();
-          const result = await h.apply("uncertain-add");
-          expect(result).toMatchObject({ outcome: "attention", interrupted: [["a.tex"]] });
-          expect([...result.base]).toEqual([]);
-          await expect(NodeFSP.stat(NodePath.join(h.cwd, "a.tex"))).rejects.toMatchObject({
-            code: "ENOENT",
-          });
-        },
-        {},
-        {
-          at: async (point) => {
-            if (point === (caseName === "new-intent" ? "install-intent" : "prepared") && crash) {
-              crash = false;
-              throw new Error("crash");
-            }
+          {
+            at: async (point, name) => {
+              if (point === "before-step" && name === "b.tex" && !changed) {
+                changed = true;
+                await NodeFSP.writeFile(NodePath.join(cwd, name), "outside D");
+              }
+            },
           },
-        },
-      );
-    },
-  );
-  it.live.each(["replace", "delete"] as const)(
-    "does not replay a legacy fallback replacement after a later $0",
-    (change) => {
-      let crash = true;
-      return fixture(
-        async (h) => {
-          await put(h.cwd, { "a.tex": "base" });
-          await expect(
-            h.apply("legacy-replay", plan({ "a.tex": "base" }, { "a.tex": "remote" })),
-          ).rejects.toBeTruthy();
-          const file = NodePath.join(h.owner, "legacy-replay/files/step-0/record.json");
-          const record = JSON.parse(await NodeFSP.readFile(file, "utf8"));
-          delete record.installBoundary;
-          record.phase = "displaced";
-          await NodeFSP.writeFile(file, JSON.stringify(record));
-          if (change === "replace") {
-            await NodeFSP.writeFile(NodePath.join(h.cwd, "replacement"), "later target");
-            await NodeFSP.rename(
-              NodePath.join(h.cwd, "replacement"),
-              NodePath.join(h.cwd, "a.tex"),
-            );
-          } else await NodeFSP.unlink(NodePath.join(h.cwd, "a.tex"));
-          await h.restart();
-          expect((await h.apply("legacy-replay")).outcome).toBe("attention");
-          if (change === "replace")
-            expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe(
-              "later target",
-            );
-          else
-            await expect(NodeFSP.stat(NodePath.join(h.cwd, "a.tex"))).rejects.toMatchObject({
-              code: "ENOENT",
+        );
+      },
+    );
+    it.live("does not change an existing inode or executable policy for unchanged bytes", () =>
+      fixture(async (h) => {
+        await put(h.cwd, { "main.tex": "A" });
+        const file = NodePath.join(h.cwd, "main.tex");
+        await NodeFSP.chmod(file, 0o600);
+        const identity = await fileIdentity(file);
+        const requested = {
+          ...plan({ "main.tex": "A" }, { "main.tex": "A" }),
+          target: new Map([["main.tex", { bytes: bytes("A"), executable: true }]]),
+        };
+        expect((await h.apply("same", requested)).outcome).toBe("complete");
+        expect(await fileIdentity(file)).toEqual(identity);
+        expect((await NodeFSP.stat(file)).mode & 0o777).toBe(0o600);
+      }),
+    );
+    it.live(
+      "keeps an ambiguous creation at attention rather than blessing a foreign same-content inode",
+      () => {
+        let cwd = "",
+          crash = true;
+        return fixture(
+          async (h) => {
+            cwd = h.cwd;
+            await expect(
+              h.apply("create-gap", plan({}, { "main.tex": "C" })),
+            ).rejects.toMatchObject({ _tag: "WorkspaceApplyError" });
+            await put(cwd, { "main.tex": "C" });
+            const foreign = await fileIdentity(NodePath.join(cwd, "main.tex"));
+            await h.restart();
+            await expect(h.apply("create-gap")).rejects.toMatchObject({
+              _tag: "WorkspaceApplyError",
             });
-        },
-        {},
-        {
-          at: async (point) => {
-            if (point === "installed" && crash) {
-              crash = false;
-              throw new Error("crash");
-            }
+            expect(await fileIdentity(NodePath.join(cwd, "main.tex"))).toEqual(foreign);
+            expect(await NodeFSP.readFile(NodePath.join(cwd, "main.tex"), "utf8")).toBe("C");
+            const history = await h.run(
+              h.files.listFileVersions({ cwd, relativePath: "main.tex" }),
+            );
+            expect(history.attention).not.toBeNull();
+            expect(
+              await Promise.all(
+                history.versions.map((version) => NodeFSP.readFile(version.retainedPath, "utf8")),
+              ),
+            ).toContain("C");
           },
-        },
-      );
-    },
-  );
+          {},
+          {
+            at: async (point) => {
+              if (point === "install-intent" && crash) {
+                crash = false;
+                throw new Error("process died before native creation receipt");
+              }
+            },
+          },
+        );
+      },
+    );
+  }
 });

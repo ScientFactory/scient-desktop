@@ -22,6 +22,7 @@ import { resolveAsset } from "../../assets/AssetAccess.ts";
 import * as NativeAppIconResolver from "../../assets/NativeAppIconResolver.ts";
 import { GeneratedDocumentStore } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import {
   documentCaptureStartupSweepLayer,
   readDocumentCapture,
@@ -40,6 +41,7 @@ import {
 import {
   DOCUMENT_PDF_TOO_LARGE_DETAIL,
   documentPdfWarnings,
+  beginDocumentPdfProduction,
   publishCapturedDocumentPdf,
 } from "./DocumentPdfPublication.ts";
 import { captureProjectMarkdownFile, prepareMarkdownPdf } from "./MarkdownPdfPreparation.ts";
@@ -656,6 +658,42 @@ describe("document PDF publication", () => {
     });
     return { root, prepared };
   });
+
+  it.effect("requires recapture for legacy workspace captures without a mutation epoch", () =>
+    Effect.gen(function* () {
+      const { prepared } = yield* prepare;
+      const record = yield* readDocumentCapture(prepared.expected.captureId);
+      if (record.source._tag !== "workspace-file")
+        return yield* Effect.die("Expected file capture");
+      const { mutationEpoch: _mutationEpoch, ...legacySource } = record.source;
+      const store = makeGeneratedDocumentStore();
+      const error = yield* beginDocumentPdfProduction({ ...record, source: legacySource }).pipe(
+        Effect.provideService(GeneratedDocumentStore, store.store),
+        Effect.flip,
+      );
+      expect(error.reason).toBe("source-changed");
+      expect(store.beginProduction).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("rejects a first-party image publication after the workspace capture", () =>
+    Effect.gen(function* () {
+      const { root, prepared } = yield* prepare;
+      const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      yield* workspaceFiles.createBinaryFile({
+        cwd: root,
+        relativePath: "notes/figures/missing.png",
+        bytes: PNG,
+      });
+      const store = makeGeneratedDocumentStore();
+      const error = yield* publishCapturedDocumentPdf({
+        captureId: prepared.expected.captureId,
+        render: renderResultFor(prepared.expected),
+      }).pipe(Effect.provideService(GeneratedDocumentStore, store.store), Effect.flip);
+      expect(error.reason).toBe("source-changed");
+      expect(store.publishPdf).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer)),
+  );
 
   it.effect("publishes a matching render as a controlled revision and clears the capture", () =>
     Effect.gen(function* () {

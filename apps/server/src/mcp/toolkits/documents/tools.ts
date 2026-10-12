@@ -9,6 +9,7 @@ import {
   ScientDocumentExportResult,
   ScientPdfBuildInput,
   ScientPdfBuildResult,
+  ProjectFilePublicationOutcome,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Crypto from "effect/Crypto";
@@ -24,6 +25,7 @@ import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/Gener
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
 import * as WorkspaceBindingResolver from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
+import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 
@@ -53,6 +55,10 @@ export class ScientPdfBuildToolError extends Schema.TaggedError<ScientPdfBuildTo
     message: NonEmptyMessage,
     publishedSource: Schema.optional(PdfSourceDescriptor),
     outputPath: Schema.optional(ScientPdfBuildInput.fields.outputPath),
+    publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
+    recoveryId: Schema.optional(Schema.String),
+    retainedPaths: Schema.optional(Schema.Array(Schema.String)),
+    mutationId: Schema.optional(Schema.String),
   },
 ) {}
 
@@ -78,6 +84,10 @@ export class ScientDocumentExportToolError extends Schema.TaggedError<ScientDocu
     message: NonEmptyMessage,
     publishedSource: Schema.optional(PdfSourceDescriptor),
     outputPath: Schema.optional(ScientDocumentExportInput.fields.outputPath),
+    publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
+    recoveryId: Schema.optional(Schema.String),
+    retainedPaths: Schema.optional(Schema.Array(Schema.String)),
+    mutationId: Schema.optional(Schema.String),
   },
 ) {}
 
@@ -107,6 +117,10 @@ export class ScientLatexBuildToolError extends Schema.TaggedError<ScientLatexBui
     ),
     toolchain: Schema.optional(Schema.NullOr(ScientLatexToolchainStatus)),
     publishedSource: Schema.optional(PdfSourceDescriptor),
+    publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
+    recoveryId: Schema.optional(Schema.String),
+    retainedPaths: Schema.optional(Schema.Array(Schema.String)),
+    mutationId: Schema.optional(Schema.String),
   },
 ) {}
 
@@ -116,6 +130,7 @@ const sharedDocumentDependencies = [
   DocumentHostBroker.DocumentHostBroker,
   GeneratedDocumentStore.GeneratedDocumentStore,
   WorkspaceBindingResolver.WorkspaceBindingResolver,
+  WorkspaceFileSystem.WorkspaceFileSystem,
   FileSystem.FileSystem,
   Path.Path,
 ];

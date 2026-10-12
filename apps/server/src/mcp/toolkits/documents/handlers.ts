@@ -23,16 +23,19 @@ import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
 import { observeAnalyticsEffect } from "../../../telemetry/OperationAnalytics.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
+import * as WorkspaceFileSystem from "../../../workspace/WorkspaceFileSystem.ts";
+import type { WorkspacePathsError } from "../../../workspace/WorkspacePaths.ts";
+import type { WorkspaceMutationError } from "../../../scient/workspace/WorkspaceFileMutations.ts";
 import { exportScientDocumentForInvocation } from "./documentExportHandler.ts";
 import { buildScientLatexForInvocation } from "./latexHandler.ts";
 import {
   assertCurrentDocumentBuildProject,
-  commitStagedProjectPdfOutput,
+  publishProjectPdfOutput,
   isWindowsAbsolutePath,
   type ProjectDocumentBuildBoundaryError,
   resolveDocumentBuildProject,
   resolveProjectPdfOutput,
-  stageProjectPdfOutput,
+  prepareProjectPdfOutputIntent,
 } from "./projectDocumentBuild.ts";
 import { ScientDocumentsToolkit, ScientPdfBuildToolError } from "./tools.ts";
 
@@ -41,13 +44,38 @@ type ErrorCode = ConstructorParameters<typeof ScientPdfBuildToolError>[0]["code"
 interface PartialPublicationReceipt {
   readonly publishedSource: ScientPdfBuildResult["source"];
   readonly outputPath: ScientPdfBuildResult["outputPath"];
+  readonly publicationOutcome: ProjectDocumentBuildBoundaryError["publicationOutcome"];
+  readonly recoveryId: ProjectDocumentBuildBoundaryError["recoveryId"];
+  readonly retainedPaths: ProjectDocumentBuildBoundaryError["retainedPaths"];
+  readonly mutationId: ProjectDocumentBuildBoundaryError["mutationId"];
 }
 
 const toolError = (
   code: ErrorCode,
   message: string,
   receipt?: Partial<PartialPublicationReceipt>,
-) => new ScientPdfBuildToolError({ code, message, ...receipt });
+) =>
+  new ScientPdfBuildToolError({
+    code,
+    message,
+    ...(receipt?.publishedSource === undefined ? {} : { publishedSource: receipt.publishedSource }),
+    ...(receipt?.outputPath === undefined ? {} : { outputPath: receipt.outputPath }),
+    ...(receipt?.publicationOutcome === undefined
+      ? {}
+      : { publicationOutcome: receipt.publicationOutcome }),
+    ...(receipt?.recoveryId === undefined ? {} : { recoveryId: receipt.recoveryId }),
+    ...(receipt?.retainedPaths === undefined ? {} : { retainedPaths: receipt.retainedPaths }),
+    ...(receipt?.mutationId === undefined ? {} : { mutationId: receipt.mutationId }),
+  });
+
+const workspacePublicationReceipt = (
+  cause: WorkspaceMutationError | WorkspacePathsError,
+): Partial<PartialPublicationReceipt> => ({
+  ...("publicationOutcome" in cause ? { publicationOutcome: cause.publicationOutcome } : {}),
+  ...("recoveryId" in cause ? { recoveryId: cause.recoveryId } : {}),
+  ...("retainedPaths" in cause ? { retainedPaths: cause.retainedPaths } : {}),
+  ...("mutationId" in cause ? { mutationId: cause.mutationId } : {}),
+});
 
 const HTML_EXTENSIONS = new Set([".html", ".htm", ".xhtml"]);
 const PRODUCER_ID = ArtifactProducerId.make("scient.html-pdf");
@@ -68,9 +96,9 @@ const sourceLogicalDocumentKey = (canonicalPath: string): LogicalDocumentKey =>
   );
 
 const boundaryToolError = (cause: ProjectDocumentBuildBoundaryError) =>
-  toolError(cause.code, cause.message);
+  toolError(cause.code, cause.message, cause);
 
-const resolveHtmlSource = Effect.fn("ScientPdfBuild.resolveHtmlSource")(function* (
+const resolveHtmlSourceFile = Effect.fn("ScientPdfBuild.resolveHtmlSourceFile")(function* (
   root: string,
   requestedPath: string,
 ) {
@@ -134,18 +162,23 @@ const resolveHtmlSource = Effect.fn("ScientPdfBuild.resolveHtmlSource")(function
   if (info.type !== "File") {
     return yield* toolError("source-not-found", "The HTML source path does not identify a file.");
   }
+  return { canonicalPath, sourcePath: relativePath.split(path.sep).join("/") };
+});
+
+const resolveHtmlSource = Effect.fn("ScientPdfBuild.resolveHtmlSource")(function* (
+  root: string,
+  requestedPath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const source = yield* resolveHtmlSourceFile(root, requestedPath);
   const bytes = yield* fileSystem
-    .readFile(canonicalPath)
+    .readFile(source.canonicalPath)
     .pipe(
       Effect.mapError(() =>
         toolError("source-not-found", "The HTML source file could not be read."),
       ),
     );
-  return {
-    canonicalPath,
-    sourcePath: relativePath.split(path.sep).join("/"),
-    sha256: sourceHash(bytes),
-  } satisfies ResolvedHtmlSource;
+  return { ...source, sha256: sourceHash(bytes) } satisfies ResolvedHtmlSource;
 });
 
 const abandonQuietly = (
@@ -165,7 +198,48 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
 ) {
   const authority = yield* resolveDocumentBuildProject().pipe(Effect.mapError(boundaryToolError));
   const { invocation, root } = authority;
-  const initial = yield* resolveHtmlSource(root, input.sourcePath);
+  const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+  // Path errors precede the publication fence; bytes are still captured only
+  // under the settled read and checked against the original epoch afterwards.
+  yield* resolveHtmlSourceFile(root, input.sourcePath);
+  const mutationEpoch = yield* workspace
+    .getMutationEpoch({ cwd: root })
+    .pipe(
+      Effect.mapError((cause) =>
+        toolError("source-changed", cause.message, workspacePublicationReceipt(cause)),
+      ),
+    );
+  const initial = yield* workspace
+    .withSettledWorkspaceRead({ cwd: root, relativePath: input.sourcePath }, (attention) =>
+      attention === null
+        ? resolveHtmlSource(root, input.sourcePath)
+        : Effect.fail(
+            toolError("source-changed", attention.message, {
+              ...attention,
+              publicationOutcome: "retained-attention",
+            }),
+          ),
+    )
+    .pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "ScientPdfBuildToolError"
+          ? cause
+          : toolError("source-changed", cause.message, workspacePublicationReceipt(cause)),
+      ),
+    );
+  const capturedEpoch = yield* workspace
+    .getMutationEpoch({ cwd: root })
+    .pipe(
+      Effect.mapError((cause) =>
+        toolError("source-changed", cause.message, workspacePublicationReceipt(cause)),
+      ),
+    );
+  if (capturedEpoch !== mutationEpoch) {
+    return yield* toolError(
+      "source-changed",
+      "The workspace changed while the HTML source was captured. Run the build again.",
+    );
+  }
   const output = yield* resolveProjectPdfOutput(root, input.outputPath).pipe(
     Effect.mapError(boundaryToolError),
   );
@@ -277,94 +351,72 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
     .replace(/\.[^.]+$/u, "")
     .slice(0, 512);
   const title = rendered.title.trim() || fallbackTitle || "Document";
-  const { source, projectOutputState } = yield* Effect.scoped(
-    Effect.gen(function* () {
-      yield* assertCurrentDocumentBuildProject(authority).pipe(
-        Effect.mapError(boundaryToolError),
-        Effect.tapError(() =>
-          abandonQuietly(
-            generatedDocuments,
-            handle,
-            "The project workspace changed before the PDF output was staged.",
-          ),
-        ),
-      );
-      const staged = yield* stageProjectPdfOutput(output, bytes).pipe(
-        Effect.mapError(boundaryToolError),
-        Effect.tapError(() =>
-          abandonQuietly(
-            generatedDocuments,
-            handle,
-            "The requested project output could not be staged.",
-          ),
-        ),
-      );
-      yield* assertCurrentDocumentBuildProject(authority).pipe(
-        Effect.mapError(boundaryToolError),
-        Effect.tapError(() =>
-          abandonQuietly(
-            generatedDocuments,
-            handle,
-            "The project workspace changed before the generated PDF was published.",
-          ),
-        ),
-      );
-      const source = yield* generatedDocuments
-        .publishPdf({
-          ...handle,
-          bytes,
-          title,
-          provenanceKind: "controlled-render",
-          validationProfile: "browser-export",
-        })
-        .pipe(
-          Effect.tapError((cause) => failQuietly(generatedDocuments, handle, cause.detail)),
-          Effect.mapError(() =>
-            toolError(
-              "publication-failed",
-              "Scient rejected or could not store the generated PDF.",
-            ),
-          ),
+  const intent = prepareProjectPdfOutputIntent(output, bytes, {
+    mutationId: `html-pdf-output:${handle.operationId}:${output.outputPath}`,
+    expectedMutationEpoch: mutationEpoch,
+  });
+  const source = yield* workspace
+    .withWorkspacePublicationFence({ cwd: root, expectedEpoch: mutationEpoch }, () =>
+      Effect.gen(function* () {
+        yield* assertCurrentDocumentBuildProject(authority).pipe(
+          Effect.mapError(boundaryToolError),
         );
-      if (source._tag !== "generated-pdf") {
-        return yield* toolError("publication-failed", "Scient returned an unsupported PDF source.");
-      }
-
-      const projectOutputState = yield* assertCurrentDocumentBuildProject(authority).pipe(
-        Effect.mapError(boundaryToolError),
-        Effect.andThen(
-          commitStagedProjectPdfOutput(staged).pipe(Effect.mapError(boundaryToolError)),
-        ),
-        Effect.as("written" as const),
-        Effect.catch((cause) =>
-          Effect.logWarning("published HTML PDF could not safely replace its project output", {
-            errorCode: cause.code,
-            outputPath: output.outputPath,
-          }).pipe(
-            Effect.as(
-              cause.code === "project-changed"
-                ? ("authority-stale" as const)
-                : ("write-failed" as const),
+        const current = yield* resolveHtmlSource(root, input.sourcePath);
+        if (current.canonicalPath !== initial.canonicalPath || current.sha256 !== initial.sha256) {
+          return yield* toolError(
+            "source-changed",
+            "The HTML source changed before PDF publication. Run the build again.",
+          );
+        }
+        return yield* generatedDocuments
+          .publishPdf({
+            ...handle,
+            bytes,
+            title,
+            provenanceKind: "controlled-render",
+            validationProfile: "browser-export",
+          })
+          .pipe(
+            Effect.tapError((cause) => failQuietly(generatedDocuments, handle, cause.detail)),
+            Effect.mapError(() =>
+              toolError(
+                "publication-failed",
+                "Scient rejected or could not store the generated PDF.",
+              ),
             ),
-          ),
-        ),
-      );
-      return { source, projectOutputState };
-    }),
+          );
+      }),
+    )
+    .pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "ScientPdfBuildToolError"
+          ? cause
+          : toolError("source-changed", cause.message, workspacePublicationReceipt(cause)),
+      ),
+      Effect.tapError(() =>
+        abandonQuietly(generatedDocuments, handle, "PDF publication admission failed."),
+      ),
+    );
+  if (source._tag !== "generated-pdf") {
+    return yield* toolError("publication-failed", "Scient returned an unsupported PDF source.");
+  }
+  const outputError = yield* assertCurrentDocumentBuildProject(authority).pipe(
+    Effect.andThen(publishProjectPdfOutput(intent)),
+    Effect.as(null),
+    Effect.catch((cause) => Effect.succeed(cause)),
   );
 
   const authorityStillCurrent = yield* assertCurrentDocumentBuildProject(authority).pipe(
     Effect.as(true),
     Effect.orElseSucceed(() => false),
   );
-  if (projectOutputState === "authority-stale" || !authorityStillCurrent) {
-    const outputWasWritten = projectOutputState === "written";
+  if (!authorityStillCurrent || outputError?.code === "project-changed") {
     return yield* toolError(
-      outputWasWritten ? "project-changed" : "partial-publication",
-      outputWasWritten
+      outputError === null ? "project-changed" : "partial-publication",
+      outputError === null
         ? "Scient wrote the PDF to the workspace where the build began, but the active workspace changed before presentation. The PDF was not opened in the new workspace."
-        : "Scient stored an immutable PDF revision, but could not safely write the requested project file. The publishedSource receipt identifies the available revision; outputPath was not written.",
-      { publishedSource: source, outputPath: output.outputPath },
+        : "Scient stored an immutable PDF revision, but could not accept the requested project output. The publishedSource receipt identifies the available revision. Inspect the publication outcome before retrying.",
+      { ...outputError, publishedSource: source, outputPath: output.outputPath },
     );
   }
 
@@ -384,11 +436,13 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
       ),
     );
 
-  if (projectOutputState === "write-failed") {
+  if (outputError !== null) {
     return yield* toolError(
       "partial-publication",
-      "Scient stored an immutable PDF revision, but could not safely write the requested project file. The publishedSource receipt identifies the available revision; outputPath was not written.",
-      { publishedSource: source, outputPath: output.outputPath },
+      outputError.publicationOutcome === "unchanged"
+        ? "Scient stored an immutable PDF revision, but the native publication authority refused the project output unchanged. The publishedSource receipt identifies the available revision."
+        : "Scient stored an immutable PDF revision, but project output acceptance failed. The workspace mutation may have applied; inspect the publication outcome and recovery receipt before retrying.",
+      { ...outputError, publishedSource: source, outputPath: output.outputPath },
     );
   }
 

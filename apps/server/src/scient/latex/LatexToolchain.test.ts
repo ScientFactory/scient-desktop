@@ -209,6 +209,63 @@ describe("LatexToolchain", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect(
+    "selects explicitly requested Tectonic without replacing the system latexmk default",
+    () =>
+      Effect.gen(function* () {
+        const { layer, calls } = yield* harness((command) =>
+          Effect.succeed(
+            output(
+              command === "latexmk"
+                ? LATEXMK_BANNER
+                : command === "tectonic"
+                  ? TECTONIC_BANNER
+                  : command === "pdflatex"
+                    ? PDFLATEX_BANNER
+                    : command === "xelatex"
+                      ? XELATEX_BANNER
+                      : LUALATEX_BANNER,
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const toolchain = yield* LatexToolchain;
+          expect((yield* toolchain.probe(false)).kind).toBe("latexmk");
+          expect((yield* toolchain.probe(false, "tectonic")).kind).toBe("tectonic");
+          yield* toolchain.probe(false, "tectonic");
+          expect((yield* toolchain.probe(false)).kind).toBe("latexmk");
+          expect((yield* Ref.get(calls)).filter((command) => command === "tectonic")).toHaveLength(
+            1,
+          );
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("does not substitute latexmk when an explicit Tectonic driver is absent", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* harness((command) =>
+        command === "tectonic"
+          ? spawnFailure(command)
+          : Effect.succeed(
+              output(
+                command === "latexmk"
+                  ? LATEXMK_BANNER
+                  : command === "pdflatex"
+                    ? PDFLATEX_BANNER
+                    : command === "xelatex"
+                      ? XELATEX_BANNER
+                      : LUALATEX_BANNER,
+              ),
+            ),
+      );
+      yield* Effect.gen(function* () {
+        const toolchain = yield* LatexToolchain;
+        expect((yield* toolchain.probe(false, "tectonic")).kind).toBeNull();
+        expect((yield* toolchain.probe(false)).kind).toBe("latexmk");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("reports no toolchain when neither engine can be spawned", () =>
     Effect.gen(function* () {
       const { layer } = yield* harness((command) => spawnFailure(command));

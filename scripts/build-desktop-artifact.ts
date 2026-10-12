@@ -777,6 +777,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "sidecar-invalid",
   "unpacked-native-missing",
   "resource-monitor-missing",
+  "file-publication-missing",
   "synctex-runtime-missing",
   "wsl-runtime-missing",
   "wsl-runtime-invalid",
@@ -809,6 +810,9 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
     }
     if (this.reason === "resource-monitor-missing") {
       return "Windows packaged payload is missing the resource monitor executable.";
+    }
+    if (this.reason === "file-publication-missing") {
+      return "Windows packaged payload is missing the native file publication executable.";
     }
     if (this.reason === "synctex-runtime-missing") {
       return "Windows packaged payload is missing a verified SyncTeX runtime.";
@@ -1038,6 +1042,13 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!**/node_modules/@cursor/sdk-*/**/*",
   "!apps/desktop/prod-resources/cursor-sdk",
   "!apps/desktop/prod-resources/cursor-sdk/**/*",
+  // Native publication is spawned only from the host resources path.
+  "!apps/server/dist/file-exchange",
+  "!apps/server/dist/file-exchange/**/*",
+  "!apps/desktop/resources/file-exchange",
+  "!apps/desktop/resources/file-exchange/**/*",
+  "!apps/desktop/prod-resources/file-exchange",
+  "!apps/desktop/prod-resources/file-exchange/**/*",
   // Scient always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
@@ -1206,6 +1217,10 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+  {
+    from: "apps/desktop/prod-resources/file-exchange",
+    to: "file-exchange",
   },
   {
     from: "apps/desktop/prod-resources/whisper-runtime",
@@ -3248,6 +3263,10 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   const serverStageDir = path.join(input.stageRoot, "server");
   yield* fs.makeDirectory(path.join(serverStageDir, "apps/server"), { recursive: true });
   yield* fs.copy(input.serverDistDir, path.join(serverStageDir, "apps/server/dist"));
+  yield* fs.remove(path.join(serverStageDir, "apps/server/dist/file-exchange"), {
+    recursive: true,
+    force: true,
+  });
   if (input.wslSyncTexRuntimePath === undefined) {
     return yield* new MissingDesktopBuildInputError({
       artifact: "wsl-synctex-runtime",
@@ -3608,6 +3627,18 @@ export const validateWindowsPackagedPayload = Effect.fn(
       reason: "resource-monitor-missing",
       packagedAppDir,
       missingFiles: ["resource-monitor/t3-resource-monitor.exe"],
+    });
+  }
+  const filePublicationPath = path.join(
+    resourcesDir,
+    "file-exchange",
+    "scient-file-publication.exe",
+  );
+  if (!(yield* isFile(filePublicationPath))) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "file-publication-missing",
+      packagedAppDir,
+      missingFiles: ["file-exchange/scient-file-publication.exe"],
     });
   }
   const syncTexFiles = ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"];
@@ -4007,6 +4038,19 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     arch: options.arch,
     verbose: options.verbose,
   });
+  yield* runCommand(
+    ChildProcess.make(
+      process.execPath,
+      [
+        path.join(repoRoot, "scripts/stage-file-exchange.ts"),
+        `--platform=${options.platform === "mac" ? "darwin" : options.platform === "win" ? "win32" : "linux"}`,
+        `--arch=${options.arch === "universal" && options.platform !== "mac" ? "x64" : options.arch}`,
+        `--destination=${path.join(stageResourcesDir, "file-exchange")}`,
+      ],
+      { cwd: repoRoot },
+    ),
+    { label: "stage native file publication", verbose: options.verbose },
+  );
   yield* Effect.tryPromise({
     try: () =>
       stageScientVoiceRuntimeForDesktopBuild({

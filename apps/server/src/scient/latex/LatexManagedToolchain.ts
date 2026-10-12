@@ -7,8 +7,8 @@
  * one itself: download the pinned TinyTeX bundle, check it against the digest
  * in `tinytexManifest.ts`, expand it into app-owned state, and only then swap
  * it into place. Nothing outside `<latexDir>/managed` is touched, no elevation
- * is asked for, and an existing system TeX keeps precedence — the probe only
- * falls back to this install when PATH has nothing.
+ * is asked for. A fully capable system TeX keeps precedence; this distribution
+ * fills missing compiler capabilities before a partial system fallback.
  *
  * The install runs on a supervised fiber and reports itself through a single
  * state value that clients poll, because the work outlives the request that

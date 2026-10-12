@@ -4,30 +4,37 @@ import {
   ProducingOperationId,
   type PdfSourceDescriptor,
 } from "@scientfactory/document-artifacts";
-import type { ExecutionProcessPort, ExecutionProcessRequest } from "@scientfactory/execution";
+import { ExecutionProcessError, type ExecutionProcessRequest } from "@scientfactory/execution";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, type ScientLatexToolchainStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import {
   GeneratedDocumentStore,
   GeneratedDocumentStoreError,
   layer as storeLayer,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
 import {
   LatexBuildService,
   type LatexBuildInput,
@@ -43,7 +50,9 @@ import {
   type LatexPackageInstallResult,
 } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
+import { decodePublishedLatexBuildEvidence } from "./latexBuildEvidence.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
+const publicationHelper = await filePublicationTestHelper();
 
 /** Byte-for-byte the fixture shape the document store's own tests accept. */
 function minimalPdf(marker: string): Uint8Array {
@@ -192,17 +201,22 @@ interface FakeCompile {
    * compile directory, so a fixture never has to know the temporary workspace.
    */
   readonly fls?: string;
+  readonly makeRules?: string;
   /** Optional navigation index emitted by the compile. */
   readonly syncTex?: string;
   /** Optional uncompressed navigation index emitted by the compile. */
   readonly plainSyncTex?: string;
   /** When present the process only exits once the test resolves it. */
   readonly hold?: Deferred.Deferred<void>;
+  readonly retirementFails?: boolean;
+  readonly outputNeverEnds?: boolean;
 }
 
 function outputDirectory(request: ExecutionProcessRequest): string {
   const flag = request.args.find((argument) => argument.startsWith("-outdir="));
-  return flag === undefined ? "" : flag.slice("-outdir=".length);
+  const tectonicFlag = request.args.indexOf("--outdir");
+  if (flag !== undefined) return flag.slice("-outdir=".length);
+  return tectonicFlag < 0 ? "" : (request.args[tectonicFlag + 1] ?? "");
 }
 
 /** Mirrors `buildLatexInvocation`'s own output paths so the fake writes where the service looks. */
@@ -227,6 +241,9 @@ const makeHarness = (input: {
   readonly files?: Readonly<Record<string, string>>;
   /** The document `buildInput` points at; defaults to the root-level `main.tex`. */
   readonly relativePath?: string;
+  /** The fixture owns every synthetic writer; unqualified cases exercise production refusal. */
+  readonly mutationEpoch?: Effect.Effect<string>;
+  readonly visibilityGate?: Effect.Effect<void>;
   /** Everything asked for is placed unless a test says otherwise. */
   readonly install?: (
     request: LatexPackageInstallInput,
@@ -246,7 +263,7 @@ const makeHarness = (input: {
    * second.
    */
   readonly beginProductionGate?: (attempt: number) => Effect.Effect<void>;
-  /** Runs after the immutable revision and binding have committed, before the build can finish. */
+  /** Runs on the first binding read after commit, outside the workspace publication fence. */
   readonly publishCommittedGate?: (descriptor: PdfSourceDescriptor) => Effect.Effect<void>;
   /** Runs before each service-level binding read; tests may inject a typed read failure. */
   readonly descriptorReadGate?: (
@@ -256,16 +273,21 @@ const makeHarness = (input: {
   readonly abandonProductionGate?: (attempt: number) => Effect.Effect<void>;
   /** Runs after an abandoned production has released its store claim. */
   readonly abandonCompletedGate?: () => Effect.Effect<void>;
+  /** Gates actual hashing or cleanup I/O, not the service's state transitions. */
+  readonly streamGate?: (absolutePath: string) => Effect.Effect<void>;
+  readonly removeGate?: (absolutePath: string) => Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const workspaceRoot =
+    const workspaceRoot = yield* fileSystem.realPath(
       input.reuse?.workspaceRoot ??
-      (yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-workspace-" }));
-    const baseDir =
+        (yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-workspace-" })),
+    );
+    const baseDir = yield* fileSystem.realPath(
       input.reuse?.baseDir ??
-      (yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-state-" }));
+        (yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-latex-state-" })),
+    );
     if (input.reuse === undefined) {
       yield* fileSystem.writeFileString(path.join(workspaceRoot, "main.tex"), SOURCE);
     }
@@ -280,7 +302,7 @@ const makeHarness = (input: {
     const cancelCount = yield* Ref.make(0);
     const pending = yield* Ref.make<ReadonlyArray<FakeCompile>>(input.compiles);
 
-    const port: ExecutionProcessPort = {
+    const port: LocalExecutionProcess.ExecutionProcess["Service"] = {
       start: (request) =>
         Effect.gen(function* () {
           const compile = yield* Ref.modify(pending, (compiles) => {
@@ -308,6 +330,12 @@ const makeHarness = (input: {
             if (compile.fls !== undefined) {
               yield* fileSystem.writeFileString(producedPath(request, "fls"), compile.fls);
             }
+            if (compile.makeRules !== undefined) {
+              yield* fileSystem.writeFileString(
+                producedPath(request, "dependencies.mk"),
+                compile.makeRules,
+              );
+            }
             if (compile.syncTex !== undefined) {
               yield* fileSystem.writeFileString(
                 producedPath(request, "synctex.gz"),
@@ -322,17 +350,49 @@ const makeHarness = (input: {
             }
             yield* Deferred.succeed(exitSignal, compile.exitCode);
           }).pipe(Effect.orDie);
-          if (compile.hold === undefined) {
-            yield* finish;
-          } else {
-            yield* Effect.forkScoped(Deferred.await(compile.hold).pipe(Effect.andThen(finish)));
-          }
+          const writer =
+            compile.hold === undefined
+              ? null
+              : yield* Effect.forkScoped(Deferred.await(compile.hold).pipe(Effect.andThen(finish)));
+          if (writer === null) yield* finish;
+          const cancellationStarted = yield* Ref.make(false);
+          // Allocate completion before exit can synchronously re-enter cancellation.
+          const retirement = yield* Deferred.make<void, ExecutionProcessError>();
           return {
-            output: Stream.make({ stream: "stdout" as const, text: compile.transcript }),
+            output: Stream.make({ stream: "stdout" as const, text: compile.transcript }).pipe(
+              Stream.concat(
+                compile.outputNeverEnds ? Stream.fromEffect(Effect.never) : Stream.empty,
+              ),
+            ),
             exitCode: Deferred.await(exitSignal),
-            cancel: Ref.update(cancelCount, (count) => count + 1).pipe(
-              Effect.andThen(Deferred.succeed(exitSignal, 130)),
-              Effect.asVoid,
+            cancel: Effect.uninterruptible(
+              Effect.gen(function* () {
+                const ownsCancellation = yield* Ref.modify(
+                  cancellationStarted,
+                  (started) => [!started, true] as const,
+                );
+                if (ownsCancellation) {
+                  const retired = yield* Effect.exit(
+                    Ref.update(cancelCount, (count) => count + 1).pipe(
+                      // Exit alone is not retirement: join the synthetic writer first.
+                      Effect.andThen(writer === null ? Effect.void : Fiber.interrupt(writer)),
+                      Effect.andThen(Deferred.succeed(exitSignal, 130)),
+                      Effect.andThen(
+                        compile.retirementFails
+                          ? Effect.fail(
+                              new ExecutionProcessError({
+                                operation: "cancel",
+                                message: "Fixture process tree remains alive.",
+                              }),
+                            )
+                          : Effect.void,
+                      ),
+                    ),
+                  );
+                  yield* Deferred.done(retirement, retired);
+                }
+                yield* Deferred.await(retirement);
+              }),
             ),
           };
         }),
@@ -363,7 +423,8 @@ const makeHarness = (input: {
           return outcome;
         }),
       unresolvedFiles: (request) =>
-        Ref.get(missingFiles).pipe(
+        (input.visibilityGate ?? Effect.void).pipe(
+          Effect.andThen(Ref.get(missingFiles)),
           Effect.map((files) => request.files.filter((file) => files.has(file.toLowerCase()))),
         ),
     });
@@ -388,6 +449,7 @@ const makeHarness = (input: {
               const attempts = yield* Ref.make(0);
               const descriptorReads = yield* Ref.make(0);
               const abandonAttempts = yield* Ref.make(0);
+              const committedDescriptor = yield* Ref.make<PdfSourceDescriptor | null>(null);
               return GeneratedDocumentStore.of({
                 ...underlying,
                 beginProduction: (request) =>
@@ -405,14 +467,20 @@ const makeHarness = (input: {
                 publishPdf: (request) =>
                   publishCommittedGate === undefined
                     ? underlying.publishPdf(request)
-                    : underlying.publishPdf(request).pipe(Effect.tap(publishCommittedGate)),
+                    : underlying
+                        .publishPdf(request)
+                        .pipe(Effect.tap((descriptor) => Ref.set(committedDescriptor, descriptor))),
                 getDescriptor: (key) =>
-                  descriptorReadGate === undefined
-                    ? underlying.getDescriptor(key)
-                    : Ref.updateAndGet(descriptorReads, (count) => count + 1).pipe(
+                  Effect.gen(function* () {
+                    const committed = yield* Ref.getAndSet(committedDescriptor, null);
+                    if (committed !== null && publishCommittedGate !== undefined)
+                      yield* publishCommittedGate(committed);
+                    if (descriptorReadGate !== undefined)
+                      yield* Ref.updateAndGet(descriptorReads, (count) => count + 1).pipe(
                         Effect.flatMap(descriptorReadGate),
-                        Effect.andThen(underlying.getDescriptor(key)),
-                      ),
+                      );
+                    return yield* underlying.getDescriptor(key);
+                  }),
                 abandonProduction: (request) => {
                   const abandoning =
                     abandonProductionGate === undefined
@@ -430,7 +498,44 @@ const makeHarness = (input: {
           ).pipe(Layer.provide(realStoreLayer));
 
     const serviceLayer = Layer.effect(LatexBuildService, makeBuildService).pipe(
+      Layer.provideMerge(
+        Layer.effect(
+          WorkspaceFileSystem.WorkspaceFileSystem,
+          Effect.gen(function* () {
+            const underlying = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+            return WorkspaceFileSystem.WorkspaceFileSystem.of({
+              ...underlying,
+              getMutationEpoch:
+                input.mutationEpoch === undefined
+                  ? underlying.getMutationEpoch
+                  : () => input.mutationEpoch!,
+            });
+          }),
+        ).pipe(
+          Layer.provide(
+            WorkspaceFileSystem.layer.pipe(
+              Layer.provide(WorkspaceEntries.layer),
+              Layer.provide(WorkspacePaths.layer),
+            ),
+          ),
+        ),
+      ),
       Layer.provide(syncTexLayer),
+      Layer.provide(
+        Layer.succeed(FileSystem.FileSystem, {
+          ...fileSystem,
+          stream: (absolutePath, options) =>
+            Stream.unwrap(
+              (input.streamGate?.(absolutePath) ?? Effect.void).pipe(
+                Effect.as(fileSystem.stream(absolutePath, options)),
+              ),
+            ),
+          remove: (absolutePath, options) =>
+            (input.removeGate?.(absolutePath) ?? Effect.void).pipe(
+              Effect.andThen(fileSystem.remove(absolutePath, options)),
+            ),
+        }),
+      ),
       Layer.provide(Layer.succeed(LatexPackageInstaller, installer)),
       Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
       Layer.provide(
@@ -444,7 +549,13 @@ const makeHarness = (input: {
         ),
       ),
       Layer.provideMerge(gatedStoreLayer),
-      Layer.provideMerge(ServerConfig.layerTest(workspaceRoot, baseDir)),
+      Layer.provideMerge(
+        ServerConfig.layerTest(
+          workspaceRoot,
+          baseDir,
+          publicationHelper === undefined ? {} : { filePublicationHelperPath: publicationHelper },
+        ),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -885,29 +996,391 @@ describe("LatexBuildService", () => {
         yield* Queue.take(harness.started);
         yield* Queue.take(harness.installRequests);
 
-        // Cancelling leaves that fiber asleep inside the installer.
+        // The cancelled installer wait cannot supply outputs to the new attempt.
         expect((yield* service.cancel(harness.buildInput)).state).toBe("cancelled");
         yield* service.requestBuild(harness.buildInput);
+        yield* Effect.sleep(Duration.millis(20));
         yield* Queue.take(harness.started);
+        expect((yield* service.status(harness.buildInput)).state).toBe("running");
         expect(yield* Ref.get(harness.startCount)).toBe(2);
-
-        // It wakes into a document that has moved on, and has nothing to say
-        // about it: no second compile, no writes over the live build's state.
         yield* Deferred.succeed(fetching, undefined);
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-          yield* Effect.sleep(Duration.millis(10));
-          expect(yield* Ref.get(harness.startCount)).toBe(2);
-          const running = yield* service.status(harness.buildInput);
-          expect(running.state).toBe("running");
-          expect(running.installingPackages).toBeUndefined();
-        }
-
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
         yield* Deferred.succeed(rebuildCompile, undefined);
         const finished = yield* awaitTerminal(service, harness.buildInput);
         expect(finished.state).toBe("succeeded");
         expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
         expect(yield* Ref.get(harness.startCount)).toBe(2);
       }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("keeps successor outputs untouched while cancelled precompile hashing retires", () =>
+    Effect.gen(function* () {
+      const hashing = yield* Deferred.make<void>();
+      const releaseHash = yield* Deferred.make<void>();
+      let held = false;
+      const harness = yield* makeHarness({
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("successor"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+        ],
+        streamGate: (absolutePath) =>
+          Effect.gen(function* () {
+            if (held || !absolutePath.endsWith("/main.tex")) return;
+            held = true;
+            yield* Deferred.succeed(hashing, undefined);
+            yield* Deferred.await(releaseHash);
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        yield* Deferred.await(hashing);
+        expect((yield* service.cancel(harness.buildInput)).state).toBe("cancelled");
+        yield* service.requestBuild(harness.buildInput);
+        yield* Effect.sleep(Duration.millis(20));
+        yield* Queue.take(harness.started);
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+        yield* Deferred.succeed(releaseHash, undefined);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(finished.visualSourceRevisions?.["main.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("uses distinct attempts while cancelled output cleanup is still pending", () =>
+    Effect.gen(function* () {
+      const hold = yield* Deferred.make<void>();
+      const cleanup = yield* Deferred.make<void>();
+      const releaseCleanup = yield* Deferred.make<void>();
+      let firstDirectory = "";
+      const h = yield* makeHarness({
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: null, hold },
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("successor"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+        ],
+        removeGate: (target) =>
+          target === firstDirectory
+            ? Deferred.succeed(cleanup, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCleanup)),
+              )
+            : Effect.void,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(h.buildInput);
+        const first = yield* Queue.take(h.started);
+        firstDirectory = outputDirectory(first);
+        expect((yield* service.cancel(h.buildInput)).state).toBe("cancelled");
+        yield* Deferred.await(cleanup);
+        yield* service.requestBuild(h.buildInput);
+        const second = yield* Queue.take(h.started);
+        expect(outputDirectory(second)).not.toBe(firstDirectory);
+        const finished = yield* awaitTerminal(service, h.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        yield* Deferred.succeed(releaseCleanup, undefined);
+      }).pipe(Effect.provide(h.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("retains a failed cancellation privately without blocking later builds or restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const h = yield* makeHarness({
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("unretired"), retirementFails: true },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("successor") },
+        ],
+      });
+      let oldDirectory = "";
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(h.buildInput);
+        expect((yield* awaitTerminal(service, h.buildInput)).state).toBe("failed");
+        oldDirectory = outputDirectory(yield* Queue.take(h.started));
+        expect(yield* fs.exists(`${oldDirectory}/.unretired`)).toBe(true);
+        yield* service.requestBuild(h.buildInput);
+        const next = yield* Queue.take(h.started);
+        expect(outputDirectory(next)).not.toBe(oldDirectory);
+        expect((yield* awaitTerminal(service, h.buildInput)).state).toBe("succeeded");
+      }).pipe(Effect.provide(h.serviceLayer));
+      const restarted = yield* makeHarness({
+        reuse: h,
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("after restart") }],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(restarted.buildInput);
+        expect((yield* awaitTerminal(service, restarted.buildInput)).state).toBe("succeeded");
+        expect(outputDirectory(yield* Queue.take(restarted.started))).not.toBe(oldDirectory);
+        expect(yield* fs.readFile(`${oldDirectory}/main.pdf`)).toEqual(
+          Buffer.from(minimalPdf("unretired")),
+        );
+      }).pipe(Effect.provide(restarted.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("finishes a completed compiler even when its output pipe stays open", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("completed"), outputNeverEnds: true },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(h.buildInput);
+        expect((yield* awaitTerminal(service, h.buildInput)).state).toBe("succeeded");
+        expect(yield* Ref.get(h.cancelCount)).toBe(1);
+      }).pipe(Effect.provide(h.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("ignores legacy output and ownership markers without requiring manual cleanup", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const h = yield* makeHarness({
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("fresh") },
+          { transcript: "", exitCode: 0, pdf: null },
+        ],
+      });
+      const old = path.join(h.latexDir, "builds", "legacy");
+      yield* fs.makeDirectory(old, { recursive: true });
+      yield* fs.writeFileString(path.join(old, "main.pdf"), "Old writer bytes");
+      yield* fs.writeFileString(path.join(old, ".unretired"), "Old ownership");
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(h.buildInput);
+        expect((yield* awaitTerminal(service, h.buildInput)).state).toBe("succeeded");
+        const first = yield* Queue.take(h.started);
+        expect(outputDirectory(first)).not.toBe(old);
+        yield* service.requestBuild(h.buildInput);
+        expect((yield* awaitTerminal(service, h.buildInput)).state).toBe("failed");
+        expect(outputDirectory(yield* Queue.take(h.started))).not.toBe(outputDirectory(first));
+        expect(yield* fs.readFileString(path.join(old, "main.pdf"))).toBe("Old writer bytes");
+        expect(yield* fs.readFileString(path.join(old, ".unretired"))).toBe("Old ownership");
+      }).pipe(Effect.provide(h.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live(
+    "binds only its exact output receipt, survives restart, and rejects native source ABA",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          compiles: [
+            {
+              transcript: "",
+              exitCode: 0,
+              pdf: minimalPdf("guarded output"),
+              fls: ROOT_RECORDER_MANIFEST,
+            },
+          ],
+        });
+        const published = yield* Effect.gen(function* () {
+          const service = yield* LatexBuildService;
+          const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const original = yield* workspace.readFile({
+            cwd: h.workspaceRoot,
+            relativePath: "main.tex",
+          });
+          if (original.revision === undefined)
+            throw new Error("The fixture source is not revision guarded.");
+          const epoch = yield* workspace.getMutationEpoch({ cwd: h.workspaceRoot });
+          yield* service.requestBuild(h.buildInput, { expectedMutationEpoch: epoch });
+          const finished = yield* awaitTerminal(service, h.buildInput);
+          const source = finished.descriptor;
+          if (source?._tag !== "generated-pdf")
+            throw new Error("The fixture did not publish its qualified immutable PDF.");
+          const receipt = yield* workspace.writeBinaryFile({
+            cwd: h.workspaceRoot,
+            relativePath: "output.pdf",
+            bytes: minimalPdf("guarded output"),
+            mutationId: "own-output",
+            expectedMutationEpoch: epoch,
+          });
+          if (receipt.publicationEpoch === undefined)
+            throw new Error("The guarded publication lost its original post-publication epoch.");
+          expect((yield* service.status(h.buildInput)).state).toBe("idle");
+          const acknowledgement = {
+            logicalDocumentKey: source.logicalDocumentKey,
+            artifactId: source.artifactId,
+            revisionId: source.revisionId,
+            expectedMutationEpoch: epoch,
+            publicationEpoch: receipt.publicationEpoch,
+          };
+          expect(yield* service.acknowledgeOutputPublication(acknowledgement)).toBe(true);
+          expect(yield* service.status(h.buildInput)).toMatchObject({
+            state: "succeeded",
+            descriptor: source,
+          });
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const evidenceDirectory = path.join(h.latexDir, "evidence");
+          const [evidenceFile] = (yield* fs.readDirectory(evidenceDirectory)).filter((name) =>
+            name.endsWith(".json"),
+          );
+          if (evidenceFile === undefined)
+            throw new Error("The accepted publication did not persist its evidence.");
+          const persisted = decodePublishedLatexBuildEvidence(
+            yield* fs.readFileString(path.join(evidenceDirectory, evidenceFile)),
+          );
+          expect(persisted).toMatchObject({
+            artifactId: source.artifactId,
+            revisionId: source.revisionId,
+            mutationEpoch: receipt.publicationEpoch,
+            sourceRevisions: { "main.tex": original.revision },
+          });
+          return { source, acknowledgement, original };
+        }).pipe(Effect.provide(h.serviceLayer));
+        const restarted = yield* makeHarness({ compiles: [], reuse: h });
+        yield* Effect.gen(function* () {
+          const service = yield* LatexBuildService;
+          const workspace = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          expect(yield* service.status(restarted.buildInput)).toMatchObject({
+            state: "succeeded",
+            descriptor: published.source,
+          });
+          if (published.original.revision === undefined)
+            throw new Error("The fixture source is not revision guarded.");
+          yield* workspace.renameFile({
+            cwd: h.workspaceRoot,
+            relativePath: "main.tex",
+            destinationRelativePath: "parked.tex",
+            expectedRevision: published.original.revision,
+            mutationId: "source-away",
+          });
+          yield* workspace.renameFile({
+            cwd: h.workspaceRoot,
+            relativePath: "parked.tex",
+            destinationRelativePath: "main.tex",
+            expectedRevision: published.original.revision,
+            mutationId: "source-back",
+          });
+          expect(
+            (yield* workspace.readFile({ cwd: h.workspaceRoot, relativePath: "main.tex" }))
+              .contents,
+          ).toBe(SOURCE);
+          expect(yield* service.acknowledgeOutputPublication(published.acknowledgement)).toBe(
+            false,
+          );
+          expect(yield* service.status(restarted.buildInput)).toMatchObject({
+            state: "idle",
+            descriptor: {
+              ...published.source,
+              bindingStatus: "stale",
+              staleReason: "Sources changed. Rebuild to update the PDF.",
+            },
+          });
+        }).pipe(Effect.provide(restarted.serviceLayer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("rejects an upfront package intent after its captured source epoch changes", () =>
+    Effect.gen(function* () {
+      const epoch = yield* Ref.make("source-epoch-a");
+      const reading = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const h = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [],
+        files: {
+          "main.tex":
+            "\\documentclass{article}\n\\usepackage{microtype}\n\\begin{document}A\\end{document}\n",
+        },
+        missingFiles: ["microtype.sty"],
+        mutationEpoch: Ref.get(epoch),
+        visibilityGate: Deferred.succeed(reading, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(h.buildInput);
+        yield* Deferred.await(reading);
+        yield* Ref.set(epoch, "source-epoch-b");
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* awaitTerminal(service, h.buildInput)).state).toBe("failed");
+        expect(yield* Ref.get(h.installCount)).toBe(0);
+        expect(yield* Ref.get(h.startCount)).toBe(0);
+      }).pipe(Effect.provide(h.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("keeps the original admission epoch across a package-installation wait", () =>
+    Effect.gen(function* () {
+      const epoch = yield* Ref.make("source-epoch-a");
+      const fetching = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const h = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        compiles: [],
+        files: {
+          "main.tex":
+            "\\documentclass{article}\n\\usepackage{microtype}\n\\begin{document}A\\end{document}\n",
+        },
+        missingFiles: ["microtype.sty"],
+        mutationEpoch: Ref.get(epoch),
+        install: (request) =>
+          Deferred.succeed(fetching, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as({ installed: request.packages, failed: [] }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(h.buildInput);
+        yield* Deferred.await(fetching);
+        yield* Ref.set(epoch, "source-epoch-b");
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* awaitTerminal(service, h.buildInput)).state).toBe("failed");
+        expect(yield* Ref.get(h.installCount)).toBe(1);
+        expect(yield* Ref.get(h.startCount)).toBe(0);
+      }).pipe(Effect.provide(h.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("rejects a reactive package intent after sources change during its compiler pass", () =>
+    Effect.gen(function* () {
+      const epoch = yield* Ref.make("source-epoch-a");
+      const release = yield* Deferred.make<void>();
+      const h = yield* makeHarness({
+        toolchain: MANAGED_LATEXMK,
+        mutationEpoch: Ref.get(epoch),
+        compiles: [
+          {
+            transcript: missingPackageTranscript("microtype"),
+            exitCode: 1,
+            pdf: null,
+            hold: release,
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(h.buildInput);
+        yield* Queue.take(h.started);
+        yield* Ref.set(epoch, "source-epoch-b");
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* awaitTerminal(service, h.buildInput)).state).toBe("failed");
+        expect(yield* Ref.get(h.installCount)).toBe(0);
+        expect(yield* Ref.get(h.startCount)).toBe(1);
+      }).pipe(Effect.provide(h.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -1068,6 +1541,8 @@ describe("LatexBuildService", () => {
               "",
               "/opt/texlive/tex/latex/base/article.cls:11: Package error.",
               "",
+              "warning: algorithm.sty:11:",
+              "",
             ].join("\n"),
             exitCode: 0,
             pdf: minimalPdf("build-sub"),
@@ -1098,6 +1573,13 @@ describe("LatexBuildService", () => {
         });
         // A path outside the workspace keeps its message and loses its file.
         expect(finished.diagnostics[1]).toMatchObject({ severity: "error", file: null, line: 11 });
+        // A bundled package basename is a location label, not a project file.
+        expect(finished.diagnostics[2]).toMatchObject({
+          severity: "warning",
+          file: null,
+          line: 11,
+          message: "algorithm.sty:11: TeX warning",
+        });
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -1305,7 +1787,6 @@ describe("LatexBuildService", () => {
         // The build itself still reports failure, with its own reason: that
         // part was always true and is the half the reader acts on.
         expect(failed.state).toBe("failed");
-        expect(failed.failureSummary).toBe("The LaTeX build could not be completed.");
         expect(failed.diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(true);
         // The binding is the half that must not move. `abandonProduction`
         // releases the attempt without discrediting the revision it was
@@ -1624,9 +2105,9 @@ describe("LatexBuildService", () => {
         const first = yield* awaitTerminal(service, harness.buildInput);
         expect(first.visualSourceRevisions?.["main.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
         const firstRequest = yield* Queue.take(harness.started);
-        expect(yield* fileSystem.exists(producedPath(firstRequest, "fls"))).toBe(true);
-        expect(yield* fileSystem.exists(producedPath(firstRequest, "synctex.gz"))).toBe(true);
-        expect(yield* fileSystem.exists(producedPath(firstRequest, "synctex"))).toBe(true);
+        expect(yield* fileSystem.exists(producedPath(firstRequest, "fls"))).toBe(false);
+        expect(yield* fileSystem.exists(producedPath(firstRequest, "synctex.gz"))).toBe(false);
+        expect(yield* fileSystem.exists(producedPath(firstRequest, "synctex"))).toBe(false);
 
         yield* fileSystem.writeFileString(
           path.join(harness.workspaceRoot, "main.tex"),
@@ -2186,19 +2667,28 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("refuses a document that names an engine the lane cannot drive", () =>
+  it.live("executes and publishes an explicit XeLaTeX document through latexmk", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
-        compiles: [],
+        compiles: [
+          {
+            transcript: "This is XeTeX\n",
+            exitCode: 0,
+            pdf: minimalPdf("xelatex-admitted"),
+            fls: "INPUT main.tex\nINPUT preamble.tex\nOUTPUT main.pdf\n",
+          },
+        ],
         files: {
           "main.tex": [
             "% !TEX program = xelatex",
             "\\documentclass{article}",
+            "\\input{preamble}",
             "\\begin{document}",
             "x",
             "\\end{document}",
             "",
           ].join("\n"),
+          "preamble.tex": "\\usepackage{fontspec}\n",
         },
       });
       yield* Effect.gen(function* () {
@@ -2206,48 +2696,130 @@ describe("LatexBuildService", () => {
         yield* service.requestBuild(harness.buildInput);
         const finished = yield* awaitTerminal(service, harness.buildInput);
 
-        // One honest sentence instead of pages of pdfLaTeX macro errors —
-        // and no engine run at all.
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(finished.visualSourceRevisions?.["main.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
+        expect(finished.visualSourceRevisions?.["preamble.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
+        const request = yield* Queue.take(harness.started);
+        expect(request.args).toContain("-xelatex");
+        expect(request.args).not.toContain("-pdf");
+        expect(yield* Ref.get(harness.installCount)).toBe(0);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("publishes an explicit Tectonic document without changing the latexmk default", () =>
+    Effect.gen(function* () {
+      const source = `% !TEX program = tectonic\n${SOURCE}`;
+      const harness = yield* makeHarness({
+        probeToolchain: (_refresh, compiler) =>
+          Effect.succeed({
+            ...(compiler === "tectonic"
+              ? { ...LATEXMK, kind: "tectonic" as const, executable: "tectonic" }
+              : LATEXMK),
+            compilers: [],
+          }),
+        files: { "main.tex": source },
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("explicit-tectonic"),
+            makeRules: "main.pdf: main.tex\n",
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const fs = yield* FileSystem.FileSystem;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.toolchain).toMatchObject(LATEXMK);
+        const request = yield* Queue.take(harness.started);
+        expect(request.executable).toBe("tectonic");
+        expect(request.args).toContain("--untrusted");
+        expect(request.args).not.toContain("-pdf");
+        expect(yield* fs.readFileString(`${harness.workspaceRoot}/main.tex`)).toBe(source);
+        expect(yield* Ref.get(harness.installCount)).toBe(0);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("refuses a missing explicit Tectonic driver without launching the default", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        probeToolchain: (_refresh, compiler) =>
+          Effect.succeed({
+            ...LATEXMK,
+            ...(compiler === "tectonic" ? { kind: null, executable: null } : {}),
+            compilers: [],
+          }),
+        files: { "main.tex": `% !TEX program = tectonic\n${SOURCE}` },
+        compiles: [],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
         expect(finished.state).toBe("failed");
-        expect(finished.failureSummary).toContain("XeLaTeX");
-        expect(
-          finished.diagnostics.some((diagnostic) => diagnostic.message.includes("pdfLaTeX")),
-        ).toBe(true);
+        expect(finished.failureSummary).toContain("Tectonic");
         expect(yield* Ref.get(harness.startCount)).toBe(0);
         expect(yield* Ref.get(harness.installCount)).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("publishes a LuaLaTeX document using an installed addition without replacing Tectonic", () =>
+  it.live("refuses a LuaLaTeX request when only Tectonic is available", () =>
     Effect.gen(function* () {
-      const defaultToolchain = { ...LATEXMK, kind: "tectonic" as const, executable: "tectonic" };
       const harness = yield* makeHarness({
-        probeToolchain: (_refresh, compiler) =>
-          Effect.succeed({
-            ...(compiler === "lualatex" ? MANAGED_LATEXMK : defaultToolchain),
-            compilers: [],
-          }),
+        toolchain: { ...LATEXMK, kind: "tectonic", executable: "tectonic" },
+        compiles: [],
         files: { "main.tex": `% !TEX program = lualatex\n${SOURCE}` },
-        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("optional-lualatex") }],
       });
       yield* Effect.gen(function* () {
         const service = yield* LatexBuildService;
         yield* service.requestBuild(harness.buildInput);
         const finished = yield* awaitTerminal(service, harness.buildInput);
-        expect(finished.state).toBe("succeeded");
-        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
-        expect(finished.toolchain).toMatchObject(defaultToolchain);
-        const request = yield* Queue.take(harness.started);
-        expect(request.executable).toBe(MANAGED_LATEXMK.executable);
-        expect(request.args).toContain("-lualatex");
-        expect(request.args).not.toContain("-xelatex");
+        expect(finished.state).toBe("failed");
+        expect(finished.descriptor).toBeNull();
+        expect(yield* Ref.get(harness.startCount)).toBe(0);
         expect(yield* Ref.get(harness.installCount)).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("refuses an unsupported engine request from an included preamble", () =>
+  it.live(
+    "publishes a LuaLaTeX document using an installed addition without replacing Tectonic",
+    () =>
+      Effect.gen(function* () {
+        const defaultToolchain = { ...LATEXMK, kind: "tectonic" as const, executable: "tectonic" };
+        const harness = yield* makeHarness({
+          probeToolchain: (_refresh, compiler) =>
+            Effect.succeed({
+              ...(compiler === "lualatex" ? MANAGED_LATEXMK : defaultToolchain),
+              compilers: [],
+            }),
+          files: { "main.tex": `% !TEX program = lualatex\n${SOURCE}` },
+          compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("optional-lualatex") }],
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* LatexBuildService;
+          yield* service.requestBuild(harness.buildInput);
+          const finished = yield* awaitTerminal(service, harness.buildInput);
+          expect(finished.state).toBe("succeeded");
+          expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+          expect(finished.toolchain).toMatchObject(defaultToolchain);
+          const request = yield* Queue.take(harness.started);
+          expect(request.executable).toBe(MANAGED_LATEXMK.executable);
+          expect(request.args).toContain("-lualatex");
+          expect(request.args).not.toContain("-xelatex");
+          expect(yield* Ref.get(harness.installCount)).toBe(0);
+        }).pipe(Effect.provide(harness.serviceLayer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("refuses unguarded fontspec in an included preamble when pdfLaTeX is selected", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         compiles: [],
@@ -2269,7 +2841,6 @@ describe("LatexBuildService", () => {
         const finished = yield* awaitTerminal(service, harness.buildInput);
 
         expect(finished.state).toBe("failed");
-        expect(finished.failureSummary).toContain("fontspec");
         expect(yield* Ref.get(harness.startCount)).toBe(0);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

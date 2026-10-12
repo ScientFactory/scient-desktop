@@ -224,6 +224,7 @@ export const ScientLatexBuildRequest = Schema.Struct({
 export type ScientLatexBuildRequest = typeof ScientLatexBuildRequest.Type;
 
 export const ScientLatexArtworkRequest = Schema.Struct({
+  authorization: Schema.Literal("execute-host-tex"),
   workspaceRoot: PathString,
   relativePath: PathString,
   preamble: Schema.String.check(Schema.isMaxLength(200_000)),
@@ -279,6 +280,8 @@ const ScientLatexSyncRevision = {
 export const ScientLatexForwardSyncRequest = Schema.Struct({
   ...ScientLatexSyncRevision,
   sourceRelativePath: PathString,
+  /** Exact editor byte identity; coordinates are never applied to another saved revision. */
+  sourceRevision: Schema.NonEmptyString,
   line: PositiveLine,
   column: Schema.optional(NonNegativeColumn),
   pageHint: Schema.optional(PositiveLine),
@@ -297,6 +300,7 @@ export const ScientLatexSyncUnavailableReason = Schema.Literals([
   "revision-unavailable",
   "index-missing",
   "index-invalid",
+  "source-stale",
   "navigator-unavailable",
   "navigator-failed",
   "query-timed-out",
@@ -324,6 +328,7 @@ export type ScientLatexForwardSyncResult = typeof ScientLatexForwardSyncResult.T
 export const ScientLatexInverseSyncResult = Schema.Union([
   Schema.TaggedStruct("found", {
     relativePath: PathString,
+    sourceRevision: Schema.NonEmptyString,
     line: PositiveLine,
     column: Schema.NullOr(NonNegativeColumn),
   }),

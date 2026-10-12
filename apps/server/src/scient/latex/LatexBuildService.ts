@@ -12,7 +12,7 @@
  *   - At most `MAX_CONCURRENT_COMPILES` documents compile at once; the rest
  *     sit in `queued` until a permit frees.
  *   - Aux files never touch the workspace; every engine writes into
- *     `<latexDir>/builds/<digest>/`.
+ *     a fresh directory under `<latexDir>/builds/` for each attempt.
  *   - A build that loses the binding race (`superseded`) reports itself
  *     cancelled and leaves the store alone; only the newest generation may
  *     record a failure.
@@ -61,6 +61,7 @@ import * as Stream from "effect/Stream";
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
 import * as ServerConfig from "../../config.ts";
+import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import {
   GeneratedDocumentStore,
   type GeneratedDocumentProductionHandle,
@@ -90,11 +91,17 @@ import { selectLatexBuildEngine } from "./latexEngineGate.ts";
 import { parseLatexLog, summarizeLatexFailure, transcriptFailureDiagnostic } from "./latexLog.ts";
 import { missingLatexPackageInputs } from "./latexMissingPackages.ts";
 import { latexPreambleIncludes, latexPreamblePackages } from "./latexPreamble.ts";
+import { makeLatexProcessRetirementMarkers } from "./latexProcessRetirement.ts";
 import { isLatexSourcePath, resolveLatexRoot } from "./latexRoot.ts";
 
 export interface LatexBuildInput {
   readonly workspaceRoot: string;
   readonly relativePath: string;
+}
+
+/** Server-local admission carried by callers that already captured a source intent. */
+export interface LatexBuildAdmission {
+  readonly expectedMutationEpoch: string;
 }
 
 function staleSnapshot(snapshot: ScientLatexBuildSnapshot): ScientLatexBuildSnapshot {
@@ -113,7 +120,12 @@ function staleSnapshot(snapshot: ScientLatexBuildSnapshot): ScientLatexBuildSnap
 
 export class LatexBuildError extends Schema.TaggedError<LatexBuildError>()("LatexBuildError", {
   operation: Schema.Literals(["resolve", "build", "status", "cancel"]),
-  reason: Schema.Literals(["invalid-path", "document-key-too-long"]),
+  reason: Schema.Literals([
+    "invalid-path",
+    "document-key-too-long",
+    "workspace-unsettled",
+    "sources-changed",
+  ]),
   detail: Schema.String,
 }) {
   override get message(): string {
@@ -129,10 +141,19 @@ export class LatexBuildService extends Context.Service<
     ) => Effect.Effect<ScientLatexResolveResult, LatexBuildError>;
     readonly requestBuild: (
       input: LatexBuildInput,
+      admission?: LatexBuildAdmission,
     ) => Effect.Effect<ScientLatexBuildSnapshot, LatexBuildError>;
     readonly status: (
       input: LatexBuildInput,
     ) => Effect.Effect<ScientLatexBuildSnapshot, LatexBuildError>;
+    /** Consume only the original guarded output receipt, never a freshly read epoch. */
+    readonly acknowledgeOutputPublication: (input: {
+      readonly logicalDocumentKey: string;
+      readonly artifactId: ArtifactId;
+      readonly revisionId: ArtifactRevisionId;
+      readonly expectedMutationEpoch: string;
+      readonly publicationEpoch: string;
+    }) => Effect.Effect<boolean>;
     readonly cancel: (
       input: LatexBuildInput,
     ) => Effect.Effect<ScientLatexBuildSnapshot, LatexBuildError>;
@@ -283,6 +304,9 @@ interface LatexBuildEntry {
   /** Absolute, resolved workspace root; every path a client sees is relative to it. */
   readonly workspaceRoot: string;
   readonly rootRelativePath: string;
+  /** The settled source-selection epoch of this exact queued intent; never rebased at execution. */
+  readonly mutationEpoch: string;
+  readonly pendingMutationEpoch: string | null;
   readonly state: ScientLatexBuildState;
   readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
   readonly descriptor: PdfSourceDescriptor | null;
@@ -310,6 +334,8 @@ type CancellationClaim =
  */
 interface LatexEvidenceCacheEntry {
   readonly compiledBibliography?: string | undefined;
+  readonly mutationEpoch?: string | undefined;
+  readonly sourceRevisions?: Readonly<Record<string, string>> | undefined;
   /** Exact immutable PDF revision this evidence is allowed to vouch for. */
   readonly revision: {
     readonly artifactId: ArtifactId;
@@ -461,8 +487,10 @@ export const make = Effect.gen(function* () {
   const observeOperation = yield* makeOperationAnalytics;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const acquireProcessRetirementMarker = yield* makeLatexProcessRetirementMarkers;
   const config = yield* ServerConfig.ServerConfig;
   const store = yield* GeneratedDocumentStore;
+  const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const toolchainProbe = yield* LatexToolchain;
   const syncTex = yield* LatexSyncTex;
   const packageInstaller = yield* LatexPackageInstaller;
@@ -471,6 +499,7 @@ export const make = Effect.gen(function* () {
   const pathDelimiter = (yield* HostProcessPlatform) === "win32" ? ";" : ":";
   const entriesRef = yield* Ref.make(new Map<string, LatexBuildEntry>());
   const evidenceRef = yield* Ref.make(new Map<string, LatexEvidenceCacheEntry>());
+  const evidencePersistence = yield* Semaphore.make(1);
   // Monotonic across the process; only `requestBuild` hands one out.
   const generationRef = yield* Ref.make(0);
   // Build fibers outlive the request that started them, so they are supervised
@@ -480,7 +509,7 @@ export const make = Effect.gen(function* () {
   // Admission control for the compile itself. A fiber holds no permit while it
   // waits, which is what keeps the `queued` state honest.
   const admission = yield* Semaphore.make(MAX_CONCURRENT_COMPILES);
-
+  const unretiredDirectories = new Set<string>();
   /** Reads only the head of a source file; never the whole of a large one. */
   const readSourceHead = (absolutePath: string, maxBytes: number) =>
     Effect.scoped(
@@ -553,20 +582,28 @@ export const make = Effect.gen(function* () {
    * TeX resolves `\input` against its working directory, so a build compiles
    * from the root document's folder and every printed path is relative to that
    * folder. Clients only understand workspace-relative paths, so rebase them
-   * here. A path that lands outside the workspace keeps its message and loses
-   * its file, because no client could open it anyway.
+   * here. Only existing project entries become navigation links; a package
+   * basename from the engine bundle remains a noninteractive location label.
    */
   const rebaseDiagnostics = (input: {
     readonly workspaceRoot: string;
     readonly compileDirectory: string;
     readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
-  }): ReadonlyArray<ScientLatexDiagnostic> =>
-    input.diagnostics.map((diagnostic) => {
-      if (diagnostic.file === null) return diagnostic;
-      const relative = toPosixPath(
-        path.relative(input.workspaceRoot, path.resolve(input.compileDirectory, diagnostic.file)),
+  }) =>
+    Effect.forEach(input.diagnostics, (diagnostic) => {
+      if (diagnostic.file === null) return Effect.succeed(diagnostic);
+      const absolute = path.resolve(input.compileDirectory, diagnostic.file);
+      const relative = toPosixPath(path.relative(input.workspaceRoot, absolute));
+      if (escapesWorkspaceRoot(relative)) return Effect.succeed({ ...diagnostic, file: null });
+      const unlinked = {
+        ...diagnostic,
+        file: null,
+        message: `${diagnostic.file}${diagnostic.line === null ? "" : `:${diagnostic.line}`}: ${diagnostic.message}`,
+      };
+      return fileSystem.exists(absolute).pipe(
+        Effect.map((exists) => (exists ? { ...diagnostic, file: relative } : unlinked)),
+        Effect.orElseSucceed(() => unlinked),
       );
-      return { ...diagnostic, file: escapesWorkspaceRoot(relative) ? null : relative };
     });
 
   const getEntry = (key: string) =>
@@ -812,6 +849,7 @@ export const make = Effect.gen(function* () {
   const runProcess = (input: {
     readonly key: string;
     readonly generation: number;
+    readonly workDirectory: string;
     readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly cwd: string;
@@ -819,17 +857,37 @@ export const make = Effect.gen(function* () {
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const handle = yield* processes.start({
-          runId: ExecutionRunId.make(NodeCrypto.randomUUID()),
-          executable: input.command,
-          args: input.args,
-          cwd: input.cwd,
-          environment: input.environment,
-        });
+        const runId = ExecutionRunId.make(NodeCrypto.randomUUID());
+        const quarantine = Effect.sync(() => unretiredDirectories.add(input.workDirectory));
+        const { handle } = yield* Effect.acquireRelease(
+          Effect.gen(function* () {
+            const settleRetirement = yield* acquireProcessRetirementMarker(
+              path.join(input.workDirectory, ".unretired"),
+              runId,
+            );
+            const handle = yield* processes
+              .start({
+                runId,
+                executable: input.command,
+                args: input.args,
+                cwd: input.cwd,
+                environment: input.environment,
+              })
+              .pipe(Effect.onError(() => quarantine));
+            return { handle, settleRetirement };
+          }),
+          ({ handle, settleRetirement }) =>
+            handle.cancel.pipe(
+              Effect.andThen(handle.exitCode),
+              Effect.andThen(settleRetirement),
+              Effect.onError(() => quarantine),
+              Effect.orDie,
+            ),
+        );
         yield* updateOwnEntry(input.key, input.generation, (entry) => ({ ...entry, handle }));
         // A cancel that raced the spawn still has to reach this process tree.
         if (yield* isSuperseded(input.key, input.generation)) {
-          yield* handle.cancel.pipe(Effect.ignoreCause());
+          yield* handle.cancel;
         }
         const transcriptRef = yield* Ref.make<TranscriptState>(emptyTranscript);
         const outputFiber = yield* handle.output.pipe(
@@ -842,9 +900,12 @@ export const make = Effect.gen(function* () {
           Effect.forkScoped,
         );
         const exitCode = yield* handle.exitCode.pipe(Effect.timeoutOption(BUILD_TIMEOUT));
-        // The port's cancel is a tree kill, so a wedged engine cannot outlive us.
-        if (Option.isNone(exitCode)) yield* handle.cancel.pipe(Effect.ignoreCause());
-        yield* Fiber.join(outputFiber).pipe(Effect.ignoreCause());
+        // Cancellation and exit observation finish before this attempt can publish.
+        if (Option.isNone(exitCode)) yield* handle.cancel;
+        yield* Fiber.join(outputFiber).pipe(
+          Effect.timeoutOption("2 seconds"),
+          Effect.ignoreCause(),
+        );
         const transcript = yield* Ref.get(transcriptRef);
         return {
           exitCode: Option.isNone(exitCode) ? null : exitCode.value,
@@ -867,6 +928,7 @@ export const make = Effect.gen(function* () {
     readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
     readonly evidence: LatexBuildEvidence;
     readonly visualSourceRevisions: Readonly<Record<string, string>>;
+    readonly mutationEpoch: string;
   }) =>
     Effect.gen(function* () {
       const bytes = yield* fileSystem.readFile(input.pdfPath);
@@ -897,13 +959,17 @@ export const make = Effect.gen(function* () {
         ...entry,
         state: "publishing",
       }));
-      yield* store
-        .publishPdf({
-          ...input.production,
-          bytes,
-          title: input.title,
-          provenanceKind: "document-build",
-        })
+      yield* workspaceFiles
+        .withWorkspacePublicationFence(
+          { cwd: input.workspaceRoot, expectedEpoch: input.mutationEpoch },
+          () =>
+            store.publishPdf({
+              ...input.production,
+              bytes,
+              title: input.title,
+              provenanceKind: "document-build",
+            }),
+        )
         .pipe(
           Effect.flatMap((descriptor) =>
             Effect.gen(function* () {
@@ -921,6 +987,7 @@ export const make = Effect.gen(function* () {
                   rootRelativePath: input.rootRelativePath,
                   compileDirectory: input.compileDirectory,
                   syncTexPath: input.syncTexPath,
+                  evidenceFileName: `${workDirectoryName(input.key)}.json`,
                 })
                 .pipe(
                   Effect.catchCause((cause) =>
@@ -955,6 +1022,8 @@ export const make = Effect.gen(function* () {
                 artifactId: descriptor.artifactId,
                 revisionId: descriptor.revisionId,
                 evidence: input.evidence,
+                mutationEpoch: input.mutationEpoch,
+                sourceRevisions: input.visualSourceRevisions,
                 compiledBibliography,
               });
               // Evidence persistence is outside the document-store lock. A
@@ -989,6 +1058,15 @@ export const make = Effect.gen(function* () {
             }),
           ),
           Effect.catch((error) => {
+            if (error._tag !== "GeneratedDocumentStoreError") {
+              return recordFailure({
+                key: input.key,
+                generation: input.generation,
+                production: input.production,
+                summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
+                diagnostics: input.diagnostics,
+              });
+            }
             if (error.reason === "superseded") {
               // A newer build owns the binding. Report cancelled and leave the
               // store untouched so the winner's own outcome stands.
@@ -1027,16 +1105,42 @@ export const make = Effect.gen(function* () {
   const installMissingPackages = (input: {
     readonly key: string;
     readonly generation: number;
+    readonly workspaceRoot: string;
+    readonly mutationEpoch: string;
+    readonly production: GeneratedDocumentProductionHandle;
     readonly packages: ReadonlyArray<string>;
     /** What each package was fetched for; the installer holds the fetch to these. */
     readonly files: ReadonlyArray<string>;
     readonly binDirectory: string;
   }) =>
     Effect.gen(function* () {
+      const sourceStillAdmitted = Effect.gen(function* () {
+        if (yield* isSuperseded(input.key, input.generation)) return false;
+        if (
+          (yield* workspaceFiles.getMutationEpoch({ cwd: input.workspaceRoot })) ===
+          input.mutationEpoch
+        )
+          return true;
+        yield* recordFailure({
+          key: input.key,
+          generation: input.generation,
+          production: input.production,
+          summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
+          diagnostics: [],
+        });
+        return false;
+      });
       yield* updateOwnEntry(input.key, input.generation, (entry) => ({
         ...entry,
         installingPackages: input.packages,
       }));
+      if (!(yield* sourceStillAdmitted)) {
+        yield* updateOwnEntry(input.key, input.generation, (entry) => ({
+          ...entry,
+          installingPackages: null,
+        }));
+        return null;
+      }
       const outcome = yield* packageInstaller.install({
         packages: input.packages,
         binDirectory: input.binDirectory,
@@ -1046,6 +1150,7 @@ export const make = Effect.gen(function* () {
         ...entry,
         installingPackages: null,
       }));
+      if (!(yield* sourceStillAdmitted)) return null;
       if (outcome.failed.length > 0) {
         yield* Effect.logDebug("latex packages could not be installed", {
           logicalDocumentKey: input.key,
@@ -1100,7 +1205,6 @@ export const make = Effect.gen(function* () {
       // Nine files' worth of preambles is more names than any real document
       // has; the cap is what stops a generated one becoming a giant argv.
       const requested = [...new Set(names)].slice(0, MAX_PREAMBLE_PACKAGES_PER_BUILD);
-      if (requested.length === 0) return [];
       const unresolved = new Set(
         (yield* packageInstaller.unresolvedFiles({
           files: requested.map((name) => `${name}.sty`),
@@ -1140,11 +1244,17 @@ export const make = Effect.gen(function* () {
             : { artifactId: published.artifactId, revisionId: published.revisionId },
         evidence: published?.evidence ?? null,
         compiledBibliography: published?.compiledBibliography,
+        mutationEpoch: published?.mutationEpoch,
+        sourceRevisions: published?.sourceRevisions,
         marks: EMPTY_EVIDENCE_MARKS,
         reverifiedUnverifiedPaths: new Set(),
       };
-      yield* Ref.update(evidenceRef, (all) => new Map(all).set(key, entry));
-      return entry;
+      return yield* Ref.modify(evidenceRef, (all) => {
+        const current = all.get(key);
+        return current === undefined
+          ? ([entry, new Map(all).set(key, entry)] as const)
+          : ([current, all] as const);
+      });
     });
 
   const restoreCompiledBibliography = (snapshot: ScientLatexBuildSnapshot) =>
@@ -1301,42 +1411,111 @@ export const make = Effect.gen(function* () {
     readonly artifactId: ArtifactId;
     readonly revisionId: ArtifactRevisionId;
     readonly evidence: LatexBuildEvidence;
+    readonly mutationEpoch: string;
     readonly compiledBibliography?: string | undefined;
+    readonly sourceRevisions?: Readonly<Record<string, string>> | undefined;
+    readonly expectedEvidence?: LatexEvidenceCacheEntry;
   }) =>
-    Effect.gen(function* () {
-      const published = {
-        schemaVersion: 1 as const,
+    evidencePersistence.withPermits(1)(
+      Effect.gen(function* () {
+        if (input.expectedEvidence !== undefined) {
+          const current = (yield* Ref.get(evidenceRef)).get(input.key);
+          if (
+            current?.revision?.artifactId !== input.artifactId ||
+            current.revision.revisionId !== input.revisionId ||
+            current.evidence !== input.expectedEvidence.evidence ||
+            current.mutationEpoch !== input.expectedEvidence.mutationEpoch
+          )
+            return false;
+        }
+        const published = {
+          schemaVersion: 1 as const,
+          artifactId: input.artifactId,
+          revisionId: input.revisionId,
+          evidence: input.evidence,
+          mutationEpoch: input.mutationEpoch,
+          compiledBibliography: input.compiledBibliography,
+          ...(input.sourceRevisions === undefined
+            ? {}
+            : { sourceRevisions: input.sourceRevisions }),
+        };
+        const writeEvidence = writeFileStringAtomically({
+          filePath: evidenceFilePath(input.key),
+          contents: `${encodePublishedLatexBuildEvidence(published)}\n`,
+          durable: true,
+        }).pipe(
+          withPlatform,
+          Effect.as(true),
+          Effect.catch((error) =>
+            Effect.logDebug("latex build evidence could not be persisted", {
+              logicalDocumentKey: input.key,
+              error,
+            }).pipe(Effect.as(false)),
+          ),
+        );
+        // Original builds retain verified memory evidence on cache I/O failure.
+        // An output epoch rebind is acknowledged only after its exact durable write.
+        if (input.expectedEvidence !== undefined && !(yield* writeEvidence)) return false;
+        const accepted = yield* Ref.modify(evidenceRef, (all) => {
+          const current = all.get(input.key);
+          if (
+            input.expectedEvidence !== undefined &&
+            (current?.revision?.artifactId !== input.artifactId ||
+              current.revision.revisionId !== input.revisionId ||
+              current.evidence !== input.expectedEvidence.evidence ||
+              current.mutationEpoch !== input.expectedEvidence.mutationEpoch)
+          )
+            return [false, all] as const;
+          return [
+            true,
+            new Map(all).set(input.key, {
+              revision: { artifactId: input.artifactId, revisionId: input.revisionId },
+              evidence: input.evidence,
+              compiledBibliography: input.compiledBibliography,
+              sourceRevisions: input.sourceRevisions,
+              mutationEpoch: input.mutationEpoch,
+              marks: current?.marks ?? EMPTY_EVIDENCE_MARKS,
+              reverifiedUnverifiedPaths: current?.reverifiedUnverifiedPaths ?? new Set<string>(),
+            }),
+          ] as const;
+        });
+        if (!accepted) return false;
+        if (input.expectedEvidence === undefined) yield* writeEvidence;
+        return true;
+      }),
+    );
+
+  const acknowledgeOutputPublication = Effect.fn("LatexBuildService.acknowledgeOutputPublication")(
+    function* (input: Parameters<LatexBuildService["Service"]["acknowledgeOutputPublication"]>[0]) {
+      const cached = yield* loadEvidence(input.logicalDocumentKey);
+      if (
+        cached.evidence === null ||
+        cached.mutationEpoch !== input.expectedMutationEpoch ||
+        cached.revision?.artifactId !== input.artifactId ||
+        cached.revision.revisionId !== input.revisionId
+      )
+        return false;
+      const descriptor = yield* readLiveDescriptor(input.logicalDocumentKey);
+      if (
+        descriptor?._tag !== "generated-pdf" ||
+        descriptor.bindingStatus !== "current" ||
+        descriptor.artifactId !== input.artifactId ||
+        descriptor.revisionId !== input.revisionId
+      )
+        return false;
+      if (input.publicationEpoch === cached.mutationEpoch) return true;
+      return yield* persistBuildEvidence({
+        key: input.logicalDocumentKey,
         artifactId: input.artifactId,
         revisionId: input.revisionId,
-        evidence: input.evidence,
-        compiledBibliography: input.compiledBibliography,
-      };
-      // Publish the in-memory identity first. If the cache write fails, this
-      // process can still verify the revision it just produced; after restart,
-      // the older on-disk identity cannot match and therefore fails closed.
-      yield* Ref.update(evidenceRef, (all) => {
-        const current = all.get(input.key);
-        return new Map(all).set(input.key, {
-          revision: { artifactId: input.artifactId, revisionId: input.revisionId },
-          evidence: input.evidence,
-          compiledBibliography: input.compiledBibliography,
-          marks: current?.marks ?? EMPTY_EVIDENCE_MARKS,
-          reverifiedUnverifiedPaths: current?.reverifiedUnverifiedPaths ?? new Set<string>(),
-        });
+        evidence: cached.evidence,
+        mutationEpoch: input.publicationEpoch,
+        compiledBibliography: cached.compiledBibliography,
+        sourceRevisions: cached.sourceRevisions,
+        expectedEvidence: cached,
       });
-      yield* writeFileStringAtomically({
-        filePath: evidenceFilePath(input.key),
-        contents: `${encodePublishedLatexBuildEvidence(published)}\n`,
-      }).pipe(
-        withPlatform,
-        Effect.catchCause((cause) =>
-          Effect.logDebug("latex build evidence could not be persisted", {
-            logicalDocumentKey: input.key,
-            cause,
-          }),
-        ),
-      );
-    });
+    },
+  );
 
   /**
    * Whether the PDF this document currently shows was built from what is on
@@ -1345,7 +1524,11 @@ export const make = Effect.gen(function* () {
    * PDF anyone can vouch for, so it earns exactly one rebuild — after which
    * there is evidence and this answers on facts.
    */
-  const evidenceIsCurrent = (target: ResolvedLatexTarget, descriptor: PdfSourceDescriptor | null) =>
+  const evidenceIsCurrent = (
+    target: ResolvedLatexTarget,
+    descriptor: PdfSourceDescriptor | null,
+    mutationEpoch: string,
+  ) =>
     Effect.gen(function* () {
       if (descriptor?._tag !== "generated-pdf" || descriptor.bindingStatus !== "current") {
         return false;
@@ -1361,6 +1544,7 @@ export const make = Effect.gen(function* () {
       const cached = yield* loadEvidence(target.logicalDocumentKey);
       if (
         cached.evidence === null ||
+        cached.mutationEpoch !== mutationEpoch ||
         cached.revision?.artifactId !== descriptor.artifactId ||
         cached.revision.revisionId !== descriptor.revisionId
       )
@@ -1374,12 +1558,12 @@ export const make = Effect.gen(function* () {
         }),
       );
       yield* Ref.update(evidenceRef, (all) =>
-        new Map(all).set(target.logicalDocumentKey, {
-          revision: cached.revision,
-          evidence: cached.evidence,
-          marks: probe.marks,
-          reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
-        }),
+        all.get(target.logicalDocumentKey) !== cached
+          ? all
+          : new Map(all).set(target.logicalDocumentKey, {
+              ...cached,
+              marks: probe.marks,
+            }),
       );
       if (!probe.changed) return true;
       // The probe is a fast path — one `stat` per dependency and a hash only
@@ -1408,12 +1592,12 @@ export const make = Effect.gen(function* () {
         // The freshly verified marks, so the next poll is cheap again rather
         // than re-entering this path.
         yield* Ref.update(evidenceRef, (all) =>
-          new Map(all).set(target.logicalDocumentKey, {
-            revision: cached.revision,
-            evidence: cached.evidence,
-            marks: recollected.marks,
-            reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
-          }),
+          all.get(target.logicalDocumentKey) !== cached
+            ? all
+            : new Map(all).set(target.logicalDocumentKey, {
+                ...cached,
+                marks: recollected.marks,
+              }),
         );
         return true;
       }
@@ -1427,7 +1611,7 @@ export const make = Effect.gen(function* () {
     });
 
   const compileAndPublish = (key: string, generation: number) => {
-    let candidatePdfPath: string | null = null;
+    let attemptDirectory: string | null = null;
     return Effect.gen(function* () {
       const entry = yield* getEntry(key);
       if (entry === null || entry.generation !== generation || entry.cancelRequested) return;
@@ -1447,8 +1631,15 @@ export const make = Effect.gen(function* () {
       }
       if (yield* isSuperseded(key, generation)) return;
 
-      const workDirectory = path.join(config.latexDir, "builds", workDirectoryName(key));
-      yield* fileSystem.makeDirectory(workDirectory, { recursive: true });
+      const buildsDirectory = path.join(config.latexDir, "builds");
+      yield* fileSystem.makeDirectory(buildsDirectory, { recursive: true });
+      // Never adopt a previous attempt's aux files, including after cancellation
+      // or service restart. A late writer cannot supply a successor's output.
+      const workDirectory = yield* fileSystem.makeTempDirectory({
+        directory: buildsDirectory,
+        prefix: `${workDirectoryName(key)}-`,
+      });
+      attemptDirectory = workDirectory;
 
       const production = yield* store.beginProduction({
         logicalDocumentKey: LogicalDocumentKey.make(key),
@@ -1468,18 +1659,52 @@ export const make = Effect.gen(function* () {
       }
 
       const rootAbsolutePath = path.join(entry.workspaceRoot, entry.rootRelativePath);
+      // Execute only the epoch admitted during source/root selection, including
+      // time spent queued or coalesced behind another build.
+      const mutationEpoch = entry.mutationEpoch;
+      const admissionEpoch = yield* workspaceFiles
+        .getMutationEpoch({ cwd: entry.workspaceRoot })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              const summary =
+                "Build admission blocked: workspace file operations are unavailable or require recovery.";
+              yield* Effect.logWarning(summary, { error });
+              yield* recordStoreAbandon(production, summary);
+              yield* finishBuild(key, generation, (current) => ({
+                ...current,
+                state: "failed",
+                failureSummary: summary,
+                diagnostics: withFailureReason([], summary),
+              }));
+              return null;
+            }),
+          ),
+        );
+      if (admissionEpoch === null || (yield* isSuperseded(key, generation))) return;
+      if (admissionEpoch !== mutationEpoch) {
+        yield* recordFailure({
+          key,
+          generation,
+          production,
+          summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
+          diagnostics: [],
+        });
+        return;
+      }
       const preamble = yield* readPreambleHeads(rootAbsolutePath);
-      const requiredCompiler = selectLatexBuildEngine(
-        preamble ?? { rootText: "" },
-        defaultToolchain.kind,
-      ).engine;
+      const selection = selectLatexBuildEngine(preamble ?? { rootText: "" }, defaultToolchain.kind);
+      const requiredCompiler = selection.driver ?? selection.engine;
       const toolchain = yield* toolchainProbe.probe(false, requiredCompiler);
       if (toolchain.kind === null || toolchain.executable === null) {
         yield* recordFailure({
           key,
           generation,
           production,
-          summary: NO_TOOLCHAIN_SUMMARY,
+          summary:
+            selection.driver === "tectonic"
+              ? (selection.error ?? NO_TOOLCHAIN_SUMMARY)
+              : NO_TOOLCHAIN_SUMMARY,
           diagnostics: [],
         });
         return;
@@ -1513,14 +1738,8 @@ export const make = Effect.gen(function* () {
         },
         rootFileName: path.basename(rootAbsolutePath),
         workDirectory,
-        // The work directory outlives a build and `latexmk` keeps its own
-        // decision state in it, which is state about a run whose inputs this
-        // service has since changed underneath it. Every build here is a build
-        // that was asked for and whose PDF has just been deleted, so there is
-        // no run this would wrongly force.
         forceReprocess: true,
       });
-      candidatePdfPath = invocation.pdfPath;
 
       // TeX resolves `\input{sections/intro}` against the working directory,
       // not against the root document, so a root under `paper/` only builds
@@ -1530,6 +1749,10 @@ export const make = Effect.gen(function* () {
       // one it may extend: `tlmgr` lives beside the engine in that tree.
       const managedBinDirectory =
         toolchain.source === "scient-managed" ? path.dirname(toolchainExecutable) : null;
+      if (managedBinDirectory !== null && preamble === null) {
+        yield* packageInstaller.unresolvedFiles({ binDirectory: managedBinDirectory, files: [] });
+        if (yield* isSuperseded(key, generation)) return;
+      }
       const environment = latexEngineEnvironment({
         base: TEX_OUTPUT_ENVIRONMENT,
         hostEnvironment,
@@ -1549,13 +1772,17 @@ export const make = Effect.gen(function* () {
           binDirectory: managedBinDirectory,
         });
         if (upfront.length > 0) {
-          yield* installMissingPackages({
+          const placed = yield* installMissingPackages({
             key,
             generation,
+            workspaceRoot: entry.workspaceRoot,
+            mutationEpoch,
+            production,
             packages: upfront,
             files: upfront.map((packageName) => `${packageName}.sty`),
             binDirectory: managedBinDirectory,
           });
+          if (placed === null) return;
           if (yield* isSuperseded(key, generation)) return;
         }
       }
@@ -1582,6 +1809,19 @@ export const make = Effect.gen(function* () {
             nowEpochMs: yield* Clock.currentTimeMillis,
           }),
         );
+        if (yield* isSuperseded(key, generation)) return;
+        if (
+          (yield* workspaceFiles.getMutationEpoch({ cwd: entry.workspaceRoot })) !== mutationEpoch
+        ) {
+          yield* recordFailure({
+            key,
+            generation,
+            production,
+            summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
+            diagnostics: [],
+          });
+          return;
+        }
         // The work directory outlives a single build. Drop every run-owned
         // output before spawning the engine: afterwards a PDF, recorder, or
         // SyncTeX index can only belong to this exact invocation. Otherwise a
@@ -1602,6 +1842,7 @@ export const make = Effect.gen(function* () {
         const outcome = yield* runProcess({
           key,
           generation,
+          workDirectory,
           command: invocation.command,
           args: invocation.args,
           cwd: compileDirectory,
@@ -1611,7 +1852,7 @@ export const make = Effect.gen(function* () {
         // state and told the store; do not overwrite it with the kill's exit code.
         if (yield* isSuperseded(key, generation)) return;
 
-        const parsed = rebaseDiagnostics({
+        const parsed = yield* rebaseDiagnostics({
           workspaceRoot: entry.workspaceRoot,
           compileDirectory,
           diagnostics: parseLatexLog(outcome.transcript),
@@ -1656,6 +1897,9 @@ export const make = Effect.gen(function* () {
           const placed = yield* installMissingPackages({
             key,
             generation,
+            workspaceRoot: entry.workspaceRoot,
+            mutationEpoch,
+            production,
             packages: wanted.map((entryMissing) => entryMissing.packageName),
             // The installer only reports these placed once the engine can find
             // the very files this compile stopped on, so a retry never runs
@@ -1663,6 +1907,7 @@ export const make = Effect.gen(function* () {
             files: wanted.map((entryMissing) => entryMissing.fileName),
             binDirectory: managedBinDirectory,
           });
+          if (placed === null) return;
           // A cancel during the fetch already wrote the terminal state, and a
           // rebuild during it left this fiber with nothing to say.
           if (yield* isSuperseded(key, generation)) return;
@@ -1742,6 +1987,18 @@ export const make = Effect.gen(function* () {
         // fiber qualify another compile or publish after that boundary.
         if (yield* isSuperseded(key, generation)) return;
         if (
+          (yield* workspaceFiles.getMutationEpoch({ cwd: entry.workspaceRoot })) !== mutationEpoch
+        ) {
+          yield* recordFailure({
+            key,
+            generation,
+            production,
+            summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
+            diagnostics,
+          });
+          return;
+        }
+        if (
           !visualQualificationRetried &&
           latexVisualNeedsRequalification(beforeCompile.evidence, evidence)
         ) {
@@ -1781,6 +2038,7 @@ export const make = Effect.gen(function* () {
           title: documentTitle(entry.rootRelativePath),
           diagnostics,
           evidence,
+          mutationEpoch,
           visualSourceRevisions: latexVisualSourceRevisions(beforeCompile.evidence, evidence),
         });
         return;
@@ -1788,12 +2046,11 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.ensuring(
         Effect.suspend(() =>
-          candidatePdfPath === null
+          attemptDirectory === null || unretiredDirectories.has(attemptDirectory)
             ? Effect.void
-            : // The artifact store owns the immutable published bytes. Keeping
-              // the engine output too would leave an unbounded duplicate PDF
-              // per work directory; aux files remain for latexmk's own reuse.
-              fileSystem.remove(candidatePdfPath, { force: true }).pipe(Effect.ignoreCause()),
+            : fileSystem
+                .remove(attemptDirectory, { recursive: true, force: true })
+                .pipe(Effect.ignoreCause()),
         ),
       ),
     );
@@ -1820,6 +2077,7 @@ export const make = Effect.gen(function* () {
             const entry = yield* getEntry(key);
             if (entry === null || entry.generation !== generation) return;
             if (!ACTIVE_STATES.has(entry.state)) return;
+            const summary = UNEXPECTED_FAILURE_SUMMARY;
             if (entry.production !== null) {
               // Everything that reaches here is infrastructure — a full disk, a
               // state directory that vanished, a defect in this service. None
@@ -1828,16 +2086,16 @@ export const make = Effect.gen(function* () {
               // reader is looking at keeps its `current` binding. The entry
               // below still reports `failed` with the reason, which is the part
               // that is actually true.
-              yield* recordStoreAbandon(entry.production, UNEXPECTED_FAILURE_SUMMARY);
+              yield* recordStoreAbandon(entry.production, summary);
             }
             yield* finishBuild(key, generation, (current) => ({
               ...current,
               state: "failed",
-              failureSummary: UNEXPECTED_FAILURE_SUMMARY,
+              failureSummary: summary,
               // Without this the snapshot keeps whatever the last finished
               // build said — nothing, on a first build — and the reader is
               // left with a generic sentence and an empty list.
-              diagnostics: withFailureReason(current.diagnostics, UNEXPECTED_FAILURE_SUMMARY),
+              diagnostics: withFailureReason(current.diagnostics, summary),
             }));
           }),
         ),
@@ -1853,6 +2111,7 @@ export const make = Effect.gen(function* () {
           current === undefined ||
           current.generation !== generation ||
           !current.pendingRerun ||
+          current.pendingMutationEpoch === null ||
           current.cancelRequested
         ) {
           return [false, entries] as const;
@@ -1861,6 +2120,8 @@ export const make = Effect.gen(function* () {
         next.set(key, {
           ...current,
           passId: current.passId + 1,
+          mutationEpoch: current.pendingMutationEpoch,
+          pendingMutationEpoch: null,
           state: "queued",
           startedAtEpochMs,
           finishedAtEpochMs: null,
@@ -1980,6 +2241,56 @@ export const make = Effect.gen(function* () {
       return yield* makeTarget(rootRelativePath, null);
     });
 
+  /** The root lease covers raw source I/O only, never queueing or a process lifetime. */
+  const observeSettledSource = <A>(
+    operation: LatexBuildError["operation"],
+    input: LatexBuildInput,
+    observe: () => Effect.Effect<A, LatexBuildError>,
+    expectedMutationEpoch?: string,
+  ) =>
+    Effect.gen(function* () {
+      const mutationEpoch = yield* workspaceFiles.getMutationEpoch({ cwd: input.workspaceRoot });
+      const changed = () =>
+        new LatexBuildError({
+          operation,
+          reason: "sources-changed",
+          detail: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
+        });
+      if (expectedMutationEpoch !== undefined && mutationEpoch !== expectedMutationEpoch)
+        return yield* Effect.fail(changed());
+      const value = yield* workspaceFiles.withSettledWorkspaceRead(
+        { cwd: input.workspaceRoot, relativePath: input.relativePath },
+        (attention) =>
+          attention === null
+            ? observe()
+            : Effect.fail(
+                new LatexBuildError({
+                  operation,
+                  reason: "workspace-unsettled",
+                  detail: "Source observation requires settled workspace publication authority.",
+                }),
+              ),
+      );
+      if ((yield* workspaceFiles.getMutationEpoch({ cwd: input.workspaceRoot })) !== mutationEpoch)
+        return yield* Effect.fail(changed());
+      return { value, mutationEpoch };
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.fail(
+          Schema.is(LatexBuildError)(error)
+            ? error
+            : new LatexBuildError({
+                operation,
+                reason: "workspace-unsettled",
+                detail:
+                  error instanceof Error
+                    ? error.message
+                    : "Workspace source observation is unavailable or requires recovery.",
+              }),
+        ),
+      ),
+    );
+
   /** The answer for a document this process has never built in memory. */
   const syntheticSnapshot = (target: ResolvedLatexTarget) =>
     Effect.gen(function* () {
@@ -2070,6 +2381,7 @@ export const make = Effect.gen(function* () {
    */
   const startBuild = (
     target: ResolvedLatexTarget,
+    mutationEpoch: string,
     seedDescriptor: PdfSourceDescriptor | null = null,
   ) =>
     Effect.gen(function* () {
@@ -2082,7 +2394,11 @@ export const make = Effect.gen(function* () {
         const next = new Map(entries);
         if (current !== undefined && ACTIVE_STATES.has(current.state) && !current.cancelRequested) {
           // Coalesce: one follow-up run regardless of how many saves land.
-          next.set(target.logicalDocumentKey, { ...current, pendingRerun: true });
+          next.set(target.logicalDocumentKey, {
+            ...current,
+            pendingRerun: true,
+            pendingMutationEpoch: mutationEpoch,
+          });
           return [false, next] as const;
         }
         // Cancellation already owns the active entry. A request arriving after
@@ -2094,6 +2410,8 @@ export const make = Effect.gen(function* () {
           passId: 1,
           workspaceRoot: target.workspaceRoot,
           rootRelativePath: target.rootRelativePath,
+          mutationEpoch,
+          pendingMutationEpoch: null,
           state: "queued",
           // Last finished diagnostics and descriptor stay visible while the new
           // build runs; they are replaced only when it produces its own.
@@ -2116,23 +2434,44 @@ export const make = Effect.gen(function* () {
       return yield* readEntrySnapshot(target.logicalDocumentKey);
     });
 
-  const requestBuild = (input: LatexBuildInput) =>
+  const requestBuild = (input: LatexBuildInput, admission?: LatexBuildAdmission) =>
     Effect.gen(function* () {
-      const target = yield* resolveTarget("build", input);
+      const selection = yield* observeSettledSource(
+        "build",
+        input,
+        () => resolveTarget("build", input),
+        admission?.expectedMutationEpoch,
+      );
+      const target = selection.value;
       if (target.failureSummary !== null) return yield* syntheticSnapshot(target);
-      return yield* startBuild(target);
+      return yield* startBuild(target, selection.mutationEpoch);
     });
 
   const status = (input: LatexBuildInput) =>
     Effect.gen(function* () {
-      const target = yield* resolveTarget("status", input);
+      const selection = yield* observeSettledSource("status", input, () =>
+        resolveTarget("status", input),
+      );
+      const target = selection.value;
+      const currentEvidence = (descriptor: PdfSourceDescriptor | null) =>
+        observeSettledSource(
+          "status",
+          input,
+          () => evidenceIsCurrent(target, descriptor, selection.mutationEpoch),
+          selection.mutationEpoch,
+        ).pipe(
+          Effect.map((observed) => observed.value),
+          Effect.catch((error) =>
+            error.reason === "sources-changed" ? Effect.succeed(false) : Effect.fail(error),
+          ),
+        );
       if (target.failureSummary !== null) return yield* syntheticSnapshot(target);
       const entry = yield* getEntry(target.logicalDocumentKey);
       if (entry === null) {
         const restored = yield* syntheticSnapshot(target);
         // Status is observational: stale evidence never starts a compiler.
         if (restored.state !== "succeeded") return restored;
-        if (yield* evidenceIsCurrent(target, restored.descriptor)) {
+        if (yield* currentEvidence(restored.descriptor)) {
           return yield* restoreVisualSourceRevisions(target, restored);
         }
         return staleSnapshot(restored);
@@ -2140,8 +2479,8 @@ export const make = Effect.gen(function* () {
       // Only a finished, successful entry can be wrong about being current: an
       // active one is already going to answer with its own compile, and a
       // failed one is already telling the reader not to trust what it shows.
-      if (entry.state === "succeeded" && !entry.pendingRerun) {
-        if (!(yield* evidenceIsCurrent(target, entry.descriptor))) {
+      if (entry.state === "succeeded") {
+        if (!(yield* currentEvidence(entry.descriptor))) {
           return staleSnapshot(yield* withToolchain(entry));
         }
       }
@@ -2173,7 +2512,19 @@ export const make = Effect.gen(function* () {
       const entry = cancellation.entry;
       if (entry === null) return yield* syntheticSnapshot(target);
       if (!cancellation.claimed) return yield* withToolchain(entry);
-      if (entry.handle !== null) yield* entry.handle.cancel.pipe(Effect.ignoreCause({ log: true }));
+      let retirementUnknown = false;
+      if (entry.handle !== null)
+        yield* entry.handle.cancel.pipe(
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              retirementUnknown = true;
+              yield* Effect.logWarning("latex cancellation could not prove process retirement", {
+                logicalDocumentKey: target.logicalDocumentKey,
+                cause,
+              });
+            }),
+          ),
+        );
       if (entry.production !== null) {
         // A cancel says nothing about the sources, so the production is
         // abandoned, not failed: a published PDF stays current instead of
@@ -2214,8 +2565,10 @@ export const make = Effect.gen(function* () {
       const descriptor = yield* readLiveDescriptor(target.logicalDocumentKey);
       yield* finishBuild(target.logicalDocumentKey, entry.generation, (current) => ({
         ...current,
-        state: "cancelled",
-        failureSummary: CANCELLED_SUMMARY,
+        state: retirementUnknown ? "failed" : "cancelled",
+        failureSummary: retirementUnknown
+          ? "The compiler could not be stopped. Its private output directory was retained."
+          : CANCELLED_SUMMARY,
         descriptor: descriptor ?? current.descriptor,
       }));
       return yield* readEntrySnapshot(target.logicalDocumentKey);
@@ -2224,22 +2577,31 @@ export const make = Effect.gen(function* () {
   const resolveDocumentRequest = Effect.fn("LatexBuildService.resolveDocument")(function* (
     input: ScientLatexResolveRequest,
   ) {
-    return yield* Effect.tryPromise({
-      try: () => resolveLatexDocument(input),
-      catch: (cause) =>
-        new LatexBuildError({
-          operation: "resolve",
-          reason: "invalid-path",
-          detail:
-            cause instanceof Error ? cause.message : "The LaTeX document could not be resolved.",
+    const observation = yield* observeSettledSource(
+      "resolve",
+      { workspaceRoot: input.workspaceRoot, relativePath: input.sourceRelativePath },
+      () =>
+        Effect.tryPromise({
+          try: () => resolveLatexDocument(input),
+          catch: (cause) =>
+            new LatexBuildError({
+              operation: "resolve",
+              reason: "invalid-path",
+              detail:
+                cause instanceof Error
+                  ? cause.message
+                  : "The LaTeX document could not be resolved.",
+            }),
         }),
-    });
+    );
+    return observation.value;
   });
 
   return LatexBuildService.of({
     resolveDocument: resolveDocumentRequest,
     requestBuild,
     status,
+    acknowledgeOutputPublication,
     cancel,
   });
 });

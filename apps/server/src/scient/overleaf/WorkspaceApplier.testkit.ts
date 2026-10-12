@@ -10,15 +10,20 @@ import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import { makeWorkspaceFileMutations } from "../workspace/WorkspaceFileMutations.ts";
-import { bytesRevision, type RetainedMutationHooks } from "../workspace/RetainedFileMutation.ts";
+import {
+  bytesRevision,
+  directoryIdentity,
+  type RetainedMutationHooks,
+} from "../workspace/RetainedFileMutation.ts";
 import {
   make,
   type ApplierHooks,
   type WorkspaceApplyPlan,
   type WorkspaceApplyResult,
 } from "./WorkspaceApplier.ts";
-import { fileExchangeTestHelper } from "../workspace/fileExchange.testkit.ts";
-const helper = await fileExchangeTestHelper();
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
+import { ensureNativePrivateRetentionDirectory } from "../workspace/NativeFilePublication.ts";
+const helper = await filePublicationTestHelper();
 
 export const fixture = Effect.fnUntraced(
   function* (
@@ -29,11 +34,7 @@ export const fixture = Effect.fnUntraced(
       owner: string;
       files: WorkspaceFileSystem["Service"];
       restart: () => Promise<void>;
-      apply: (
-        id: string,
-        plan?: WorkspaceApplyPlan,
-        native?: boolean,
-      ) => Promise<WorkspaceApplyResult>;
+      apply: (id: string, plan?: WorkspaceApplyPlan) => Promise<WorkspaceApplyResult>;
     }) => Promise<void>,
     hooks: ApplierHooks = {},
     retainedHooks: RetainedMutationHooks = {},
@@ -41,11 +42,11 @@ export const fixture = Effect.fnUntraced(
     const context = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
     const run = Effect.runPromiseWith(context);
     const fileSystem = yield* FileSystem.FileSystem;
-    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-applier-" });
+    const created = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-applier-" });
+    const root = yield* Effect.promise(() => NodeFSP.realpath(created));
     const cwd = NodePath.join(root, "paper"),
       owner = NodePath.join(root, "records");
     yield* Effect.promise(() => NodeFSP.mkdir(cwd));
-    yield* Effect.promise(() => NodeFSP.mkdir(owner));
     const createFiles = () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem,
@@ -77,6 +78,20 @@ export const fixture = Effect.fnUntraced(
           workspaceEntries: entries,
           readFile,
           retainedHooks,
+          ...(helper === undefined ? {} : { nativePublicationHelper: helper }),
+          retentionStorageDirectory: NodePath.join(root, "shared-retention"),
+          retentionDirectoryFor: async (_root, parent) => {
+            if (!helper) throw new Error("This fixture needs a real native publication helper.");
+            const identity = await directoryIdentity(parent);
+            await ensureNativePrivateRetentionDirectory(
+              helper,
+              NodePath.join(root, "shared-retention"),
+            );
+            return ensureNativePrivateRetentionDirectory(
+              helper,
+              NodePath.join(root, "shared-retention", `${identity.dev}-${identity.ino}`),
+            );
+          },
         });
         return WorkspaceFileSystem.of({
           ...methods,
@@ -98,14 +113,13 @@ export const fixture = Effect.fnUntraced(
           files = await run(createFiles());
           applier = await run(make(hooks).pipe(Effect.provideService(WorkspaceFileSystem, files)));
         },
-        apply: (id, p, native = false) =>
+        apply: (id, p) =>
           run(
             applier.apply({
               cwd,
               applicationDirectory: owner,
               id,
               ...(p ? { plan: p } : {}),
-              ...(native && helper ? { exchangeHelper: helper } : {}),
             }),
           ),
       }),

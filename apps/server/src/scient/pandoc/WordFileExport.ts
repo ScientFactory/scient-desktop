@@ -1,11 +1,11 @@
 /**
  * Project Markdown file → Word.
  *
- * An isolated adapter until the shared project-Markdown capture (conversation
- * export PR 2) produces document bundles: it reads the saved file through the
- * workspace file system, refuses when the file on disk is not the revision the
- * editor showed, and builds a `document`-profile bundle with bounded local
- * image bytes captured before conversion. The converter cannot reopen project
+ * Reads the saved file through the workspace file system and refuses when it
+ * is not the editor's revision. Source, local images, bibliographies, and
+ * LaTeX dependencies are captured under settled reads and one fixed workspace
+ * mutation epoch; conversion holds no workspace lease. The same epoch fences
+ * acceptance of the converted output. The converter cannot reopen project
  * images; unmatched Pandoc image URLs become visible placeholders. YAML CSL
  * references and allowlisted local bibliographies travel with the bundle.
  *
@@ -97,6 +97,23 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
 
+  const workspaceChanged = new ScientWordExportError({
+    reason: "file-changed",
+    message: "The workspace changed or has unsettled publication authority. Export it again.",
+  });
+  const withCapturedEpoch = <A, R>(
+    root: string,
+    mutationEpoch: string,
+    accept: () => Effect.Effect<A, ScientWordExportError, R>,
+  ) =>
+    workspaceFiles
+      .withWorkspacePublicationFence({ cwd: root, expectedEpoch: mutationEpoch }, accept)
+      .pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "ScientWordExportError" ? cause : workspaceChanged,
+        ),
+      );
+
   const isInside = (root: string, candidate: string) => {
     const relative = path.relative(root, candidate);
     return (
@@ -159,6 +176,9 @@ const make = Effect.gen(function* () {
     const root = yield* workspacePaths
       .normalizeWorkspaceRoot(request.cwd)
       .pipe(Effect.mapError(unreadable));
+    const mutationEpoch = yield* workspaceFiles
+      .getMutationEpoch({ cwd: root })
+      .pipe(Effect.mapError(() => workspaceChanged));
     const target = yield* workspacePaths
       .resolveRelativePathWithinRoot({
         workspaceRoot: root,
@@ -168,6 +188,7 @@ const make = Effect.gen(function* () {
     const read = yield* workspaceFiles
       .readFile({ cwd: root, relativePath: target.relativePath })
       .pipe(Effect.mapError(unreadable));
+    if (read.publicationAttention !== undefined) return yield* workspaceChanged;
     if (read.truncated)
       return yield* reject("too-large", "This file is too large to export to Word.");
     if (read.revision !== request.revision) {
@@ -176,115 +197,131 @@ const make = Effect.gen(function* () {
         "The file on disk is not the version shown in the editor. Save it, then export again.",
       );
     }
-    return { root, target, read };
+    return { root, target, read, mutationEpoch };
   });
 
   const prepareDiagrams: WordFileExport["Service"]["prepareDiagrams"] = Effect.fn(
     "WordFileExport.prepareDiagrams",
   )(function* (request) {
-    const { read } = yield* readSavedMarkdown(request);
-    return yield* Effect.try({
-      try: () => planWordDiagrams(read.contents, read.revision),
-      catch: () =>
-        new ScientWordExportError({
-          reason: "too-large",
-          message: "This file has too many or oversized Mermaid diagrams for Word export.",
-        }),
-    });
+    const { root, read, mutationEpoch } = yield* readSavedMarkdown(request);
+    return yield* withCapturedEpoch(root, mutationEpoch, () =>
+      Effect.try({
+        try: () => planWordDiagrams(read.contents, read.revision),
+        catch: () =>
+          new ScientWordExportError({
+            reason: "too-large",
+            message: "This file has too many or oversized Mermaid diagrams for Word export.",
+          }),
+      }),
+    );
   });
 
   const exportFile: WordFileExport["Service"]["export"] = Effect.fn("WordFileExport.export")(
     function* (request) {
-      const { root, target, read } = yield* readSavedMarkdown(request);
+      const { root, target, read, mutationEpoch } = yield* readSavedMarkdown(request);
 
       const title = path.basename(target.relativePath).replace(MARKDOWN_FILE, "") || "Document";
-      const declared = markdownReferenceDeclarations(read.contents);
-      const citations = [...declared.citations];
-      const warnings = [...declared.warnings];
-      const bibliographySources: Array<{ format: "bibtex"; contents: string }> = [];
-      for (const name of declared.bibliographyPaths) {
-        if (path.isAbsolute(name) || /^(?:[a-z][a-z\d+.-]*:|\\\\)/iu.test(name)) {
-          warnings.push({
-            code: "resource-unresolved",
-            message:
-              "An absolute or remote bibliography was not used; its citation keys remain as written.",
-          });
-          continue;
-        }
-        const loaded = yield* readBibliography(
-          root,
-          path.resolve(path.dirname(target.absolutePath), name),
-        );
-        if (loaded._tag === "unsupported-platform") {
-          warnings.push({
-            code: "resource-unresolved",
-            message: `Bibliography “${path.basename(name)}” was not used: this platform cannot safely verify workspace file paths during Word export; its citation keys remain as written.`,
-          });
-          continue;
-        }
-        if (loaded._tag !== "contents") {
-          warnings.push({
-            code: "resource-unresolved",
-            message: `Bibliography “${path.basename(name)}” could not be read inside this project; its citation keys remain as written.`,
-          });
-          continue;
-        }
-        if (/\.bib$/iu.test(name)) {
-          bibliographySources.push({ format: "bibtex", contents: loaded.contents });
-          continue;
-        }
-        const entries = citationsFromCslJson(loaded.contents);
-        if (entries === null) {
-          warnings.push({
-            code: "resource-unresolved",
-            message: `Bibliography “${path.basename(name)}” is not valid CSL-JSON; its citation keys remain as written.`,
-          });
-        } else {
-          citations.push(...entries);
-        }
-      }
-      const bundle: DocumentBundle = {
-        markdown: read.contents,
-        profile: "document",
-        metadata: {
-          title,
-          language: null,
-          direction: "auto",
-          createdAt: null,
-          source: {
-            _tag: "workspace-file",
-            cwd: root,
-            relativePath: target.relativePath,
-            revision: read.revision,
-          },
-        },
-        assets: [],
-        citations,
-        warnings,
-      };
-      const diagrams = yield* Effect.try({
-        try: () => capturedWordDiagramAssets(bundle, read.revision, request.diagramCapture),
-        catch: (cause) =>
-          new ScientWordExportError({
-            reason: "conversion-failed",
-            message: cause instanceof Error ? cause.message : "The diagram capture is invalid.",
+      const { bundle, bibliographySources, diagrams, imageSnapshot } = yield* workspaceFiles
+        .withSettledWorkspaceRead({ cwd: root, relativePath: target.relativePath }, (attention) =>
+          Effect.gen(function* () {
+            if (attention !== null) return yield* workspaceChanged;
+            const declared = markdownReferenceDeclarations(read.contents);
+            const citations = [...declared.citations];
+            const warnings = [...declared.warnings];
+            const bibliographySources: Array<{ format: "bibtex"; contents: string }> = [];
+            for (const name of declared.bibliographyPaths) {
+              if (path.isAbsolute(name) || /^(?:[a-z][a-z\d+.-]*:|\\\\)/iu.test(name)) {
+                warnings.push({
+                  code: "resource-unresolved",
+                  message:
+                    "An absolute or remote bibliography was not used; its citation keys remain as written.",
+                });
+                continue;
+              }
+              const loaded = yield* readBibliography(
+                root,
+                path.resolve(path.dirname(target.absolutePath), name),
+              );
+              if (loaded._tag === "unsupported-platform") {
+                warnings.push({
+                  code: "resource-unresolved",
+                  message: `Bibliography “${path.basename(name)}” was not used: this platform cannot safely verify workspace file paths during Word export; its citation keys remain as written.`,
+                });
+                continue;
+              }
+              if (loaded._tag !== "contents") {
+                warnings.push({
+                  code: "resource-unresolved",
+                  message: `Bibliography “${path.basename(name)}” could not be read inside this project; its citation keys remain as written.`,
+                });
+                continue;
+              }
+              if (/\.bib$/iu.test(name)) {
+                bibliographySources.push({ format: "bibtex", contents: loaded.contents });
+                continue;
+              }
+              const entries = citationsFromCslJson(loaded.contents);
+              if (entries === null) {
+                warnings.push({
+                  code: "resource-unresolved",
+                  message: `Bibliography “${path.basename(name)}” is not valid CSL-JSON; its citation keys remain as written.`,
+                });
+              } else {
+                citations.push(...entries);
+              }
+            }
+            const bundle: DocumentBundle = {
+              markdown: read.contents,
+              profile: "document",
+              metadata: {
+                title,
+                language: null,
+                direction: "auto",
+                createdAt: null,
+                source: {
+                  _tag: "workspace-file",
+                  cwd: root,
+                  relativePath: target.relativePath,
+                  revision: read.revision,
+                },
+              },
+              assets: [],
+              citations,
+              warnings,
+            };
+            const diagrams = yield* Effect.try({
+              try: () => capturedWordDiagramAssets(bundle, read.revision, request.diagramCapture),
+              catch: (cause) =>
+                new ScientWordExportError({
+                  reason: "conversion-failed",
+                  message:
+                    cause instanceof Error ? cause.message : "The diagram capture is invalid.",
+                }),
+            });
+            const imageSnapshot = yield* captureWordImages(
+              inspectMarkdownDocument(read.contents).imageReferences,
+              { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },
+            ).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.mapError(
+                () =>
+                  new ScientWordExportError({
+                    reason: "too-large",
+                    message: "This document names too many images for one Word export.",
+                  }),
+              ),
+            );
+            return { bundle, bibliographySources, diagrams, imageSnapshot };
           }),
-      });
-      const imageSnapshot = yield* captureWordImages(
-        inspectMarkdownDocument(read.contents).imageReferences,
-        { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },
-      ).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.mapError(
-          () =>
-            new ScientWordExportError({
-              reason: "too-large",
-              message: "This document names too many images for one Word export.",
-            }),
-        ),
-      );
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "ScientWordExportError" ? cause : workspaceChanged,
+          ),
+        );
       yield* readSavedMarkdown(request);
+      yield* withCapturedEpoch(root, mutationEpoch, () => Effect.void);
       const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const fileName = exportFileName(title, ".docx");
       const reserved = yield* files.reserve({ exportId, fileName });
@@ -302,12 +339,14 @@ const make = Effect.gen(function* () {
               reject(WORD_FAILURE_REASON[error.reason], error.message),
           }),
         );
-      return {
-        path: reserved.path,
-        fileName,
-        byteLength: converted.byteLength,
-        warnings: converted.warnings,
-      };
+      return yield* withCapturedEpoch(root, mutationEpoch, () =>
+        Effect.succeed({
+          path: reserved.path,
+          fileName,
+          byteLength: converted.byteLength,
+          warnings: converted.warnings,
+        }),
+      ).pipe(Effect.tapError(() => fileSystem.remove(reserved.path).pipe(Effect.ignore)));
     },
   );
 
@@ -330,6 +369,9 @@ const make = Effect.gen(function* () {
     const root = yield* workspacePaths
       .normalizeWorkspaceRoot(request.cwd)
       .pipe(Effect.mapError(unreadable));
+    const mutationEpoch = yield* workspaceFiles
+      .getMutationEpoch({ cwd: root })
+      .pipe(Effect.mapError(() => workspaceChanged));
     const source = yield* workspacePaths
       .resolveRelativePathWithinRoot({
         workspaceRoot: root,
@@ -345,6 +387,7 @@ const make = Effect.gen(function* () {
     const shown = yield* workspaceFiles
       .readFile({ cwd: root, relativePath: source.relativePath })
       .pipe(Effect.mapError(unreadable));
+    if (shown.publicationAttention !== undefined) return yield* workspaceChanged;
     if (shown.truncated)
       return yield* reject("too-large", "This source file is too large to export.");
     if (shown.revision !== request.revision) {
@@ -353,45 +396,58 @@ const make = Effect.gen(function* () {
         "The file changed on disk. Save and reopen it before exporting.",
       );
     }
-    const prepared = yield* prepareLatexProject(document.absolutePath, root, {
-      path: source.absolutePath,
-      revision: shown.revision,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.mapError(
-        (error) =>
-          new ScientWordExportError({
-            reason: "file-unreadable",
-            message: isLatexPreparationError(error)
-              ? error.message
-              : "Scient could not prepare the LaTeX project.",
-          }),
-      ),
-    );
-    // Figures resolve from the root file's folder, anywhere inside the project.
-    const imageSnapshot = yield* captureWordImages(prepared.imageReferences, {
-      baseDirectory: prepared.baseDirectory,
-      allowRoots: [root],
-      requireVerifiedReads: true,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.mapError((error) =>
-        error.reason === "unverifiable-platform"
-          ? new ScientWordExportError({
-              reason: "file-unreadable",
-              message: LATEX_UNVERIFIABLE_PLATFORM_MESSAGE,
-            })
-          : new ScientWordExportError({
-              reason: "too-large",
-              message: "This document names too many images for one Word export.",
-            }),
-      ),
-    );
+    const { prepared, imageSnapshot } = yield* workspaceFiles
+      .withSettledWorkspaceRead({ cwd: root, relativePath: source.relativePath }, (attention) =>
+        Effect.gen(function* () {
+          if (attention !== null) return yield* workspaceChanged;
+          const prepared = yield* prepareLatexProject(document.absolutePath, root, {
+            path: source.absolutePath,
+            revision: shown.revision,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.mapError(
+              (error) =>
+                new ScientWordExportError({
+                  reason: "file-unreadable",
+                  message: isLatexPreparationError(error)
+                    ? error.message
+                    : "Scient could not prepare the LaTeX project.",
+                }),
+            ),
+          );
+          // Figures resolve from the root file's folder, anywhere inside the project.
+          const imageSnapshot = yield* captureWordImages(prepared.imageReferences, {
+            baseDirectory: prepared.baseDirectory,
+            allowRoots: [root],
+            requireVerifiedReads: true,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.mapError((error) =>
+              error.reason === "unverifiable-platform"
+                ? new ScientWordExportError({
+                    reason: "file-unreadable",
+                    message: LATEX_UNVERIFIABLE_PLATFORM_MESSAGE,
+                  })
+                : new ScientWordExportError({
+                    reason: "too-large",
+                    message: "This document names too many images for one Word export.",
+                  }),
+            ),
+          );
+          return { prepared, imageSnapshot };
+        }),
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "ScientWordExportError" ? cause : workspaceChanged,
+        ),
+      );
     const current = yield* workspaceFiles
       .readFile({ cwd: root, relativePath: source.relativePath })
       .pipe(Effect.mapError(unreadable));
+    if (current.publicationAttention !== undefined) return yield* workspaceChanged;
     if (current.truncated || current.revision !== shown.revision) {
       return yield* reject(
         "file-changed",
@@ -407,6 +463,7 @@ const make = Effect.gen(function* () {
         "This source file is not part of the selected LaTeX document.",
       );
     }
+    yield* withCapturedEpoch(root, mutationEpoch, () => Effect.void);
     const title = path.basename(document.relativePath).replace(/\.tex$/iu, "") || "Document";
     const bundle: DocumentBundle = {
       markdown: "",
@@ -443,12 +500,14 @@ const make = Effect.gen(function* () {
           WordConversionError: (error) => reject(WORD_FAILURE_REASON[error.reason], error.message),
         }),
       );
-    return {
-      path: reserved.path,
-      fileName,
-      byteLength: converted.byteLength,
-      warnings: converted.warnings,
-    };
+    return yield* withCapturedEpoch(root, mutationEpoch, () =>
+      Effect.succeed({
+        path: reserved.path,
+        fileName,
+        byteLength: converted.byteLength,
+        warnings: converted.warnings,
+      }),
+    ).pipe(Effect.tapError(() => fileSystem.remove(reserved.path).pipe(Effect.ignore)));
   });
 
   return WordFileExport.of({ export: exportFile, prepareDiagrams, exportLatex });

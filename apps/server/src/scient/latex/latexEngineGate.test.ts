@@ -459,6 +459,32 @@ describe("compiler resolution", () => {
     });
   });
 
+  it("recognizes an explicit Tectonic driver instead of using the default latexmk engine", () => {
+    const input = { rootText: `% !TEX program = tectonic\n${PLAIN_PDFLATEX_DOCUMENT}` };
+    expect(selectLatexBuildEngine(input, "latexmk")).toMatchObject({
+      driver: "tectonic",
+      engine: "xelatex",
+      error: expect.stringContaining("requests Tectonic"),
+    });
+    expect(selectLatexBuildEngine(input, "tectonic")).toEqual({
+      driver: "tectonic",
+      engine: "xelatex",
+      error: null,
+    });
+  });
+
+  it("preserves root selection ahead of included Tectonic declarations", () => {
+    expect(
+      selectLatexBuildEngine(
+        {
+          rootText: `% !TEX program = pdflatex\n${PLAIN_PDFLATEX_DOCUMENT}`,
+          includedTexts: ["% !TEX program = tectonic"],
+        },
+        "latexmk",
+      ),
+    ).toEqual({ engine: "pdflatex", error: null });
+  });
+
   it.each(["xelatex", "xetex"])(
     "accepts the compatible explicit %s compiler with Tectonic",
     (declaration) => {

@@ -97,7 +97,11 @@ export const PublishedLatexBuildEvidence = Schema.Struct({
   artifactId: ArtifactId,
   revisionId: ArtifactRevisionId,
   evidence: LatexBuildEvidence,
+  /** Legacy hash-only evidence cannot establish freshness across first-party source ABA. */
+  mutationEpoch: Schema.optional(Schema.NonEmptyString),
   compiledBibliography: Schema.optional(Schema.String.check(Schema.isMaxLength(1_000_000))),
+  /** Pre/post-compile-qualified source identities; absence cannot authorize source navigation. */
+  sourceRevisions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type PublishedLatexBuildEvidence = typeof PublishedLatexBuildEvidence.Type;
 

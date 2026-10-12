@@ -34,6 +34,11 @@ const REFUSED_RERUN_TRANSCRIPT = [
 ].join("\n");
 
 describe("parseLatexLog", () => {
+  it("preserves warning severity when a package location has no message", () => {
+    expect(parseLatexLog("warning: algorithm.sty:11:\n")).toEqual([
+      { severity: "warning", file: "algorithm.sty", line: 11, message: "TeX warning" },
+    ]);
+  });
   it("does not attach the next diagnostic or engine note to a file-line warning", () => {
     expect(
       parseLatexLog(

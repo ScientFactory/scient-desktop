@@ -2,6 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  ScientLatexArtworkRequest,
+  ScientLatexForwardSyncRequest,
+  ScientLatexInverseSyncResult,
   ScientLatexResolveRequest,
   ScientLatexResolveResult,
   ScientLatexToolchainReport,
@@ -49,6 +52,28 @@ describe("Scient LaTeX document-root resolution contract", () => {
   });
 });
 
+describe("Scient LaTeX artwork execution admission contract", () => {
+  const decodeArtwork = Schema.decodeUnknownSync(ScientLatexArtworkRequest);
+  const source = {
+    workspaceRoot: "/workspace/project",
+    relativePath: "main.tex",
+    preamble: "\\usepackage{tikz}",
+    source: "\\begin{tikzpicture}\\draw(0,0)--(1,1);\\end{tikzpicture}",
+    widthInches: 4,
+  };
+
+  it("rejects requests without the explicit host execution declaration", () => {
+    for (const request of [
+      source,
+      { ...source, authorization: false },
+      { ...source, authorization: true },
+      { ...source, authorization: "installed-toolchain" },
+      { ...source, authorization: "no-shell-escape" },
+    ])
+      expect(() => decodeArtwork(request)).toThrow();
+  });
+});
+
 describe("Scient LaTeX toolchain download facts", () => {
   const decodeReport = Schema.decodeUnknownSync(ScientLatexToolchainReport);
   const report = {
@@ -69,5 +94,33 @@ describe("Scient LaTeX toolchain download facts", () => {
     expect(
       decodeReport({ ...report, canInstallManaged: false, downloadBytes: null }).downloadBytes,
     ).toBeNull();
+  });
+});
+
+describe("SyncTeX source revision admission", () => {
+  it("refuses forward coordinates and inverse results that cannot name their source revision", () => {
+    const forward = {
+      workspaceRoot: "/synthetic",
+      rootRelativePath: "main.tex",
+      artifactId: "artifact-navigation",
+      revisionId: "revision-navigation",
+      sourceRelativePath: "chapter.tex",
+      line: 18,
+    };
+    const inverse = { _tag: "found", relativePath: "chapter.tex", line: 18, column: null };
+    expect(() => Schema.decodeUnknownSync(ScientLatexForwardSyncRequest)(forward)).toThrow();
+    expect(() => Schema.decodeUnknownSync(ScientLatexInverseSyncResult)(inverse)).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(ScientLatexForwardSyncRequest)({
+        ...forward,
+        sourceRevision: "",
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(ScientLatexInverseSyncResult)({
+        ...inverse,
+        sourceRevision: "",
+      }),
+    ).toThrow();
   });
 });

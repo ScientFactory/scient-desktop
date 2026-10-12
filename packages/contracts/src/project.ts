@@ -536,6 +536,18 @@ export const ProjectReadFileInput = Schema.Struct({
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
+export const ProjectFilePublicationAttention = Schema.Struct({
+  recoveryId: TrimmedNonEmptyString,
+  mutationId: TrimmedNonEmptyString,
+  retainedPaths: Schema.Array(FilePathString),
+  message: Schema.String,
+});
+export type ProjectFilePublicationAttention = typeof ProjectFilePublicationAttention.Type;
+
+/** Whether a refused publication is proven unchanged or owns durable retained attention. */
+export const ProjectFilePublicationOutcome = Schema.Literals(["unchanged", "retained-attention"]);
+export type ProjectFilePublicationOutcome = typeof ProjectFilePublicationOutcome.Type;
+
 export const ProjectReadFileResult = Schema.Struct({
   relativePath: FilePathString,
   contents: Schema.String,
@@ -549,6 +561,7 @@ export const ProjectReadFileResult = Schema.Struct({
   // outside the workspace, reached by an absolute path, a path that climbs out,
   // or a link that leads out. Optional: older servers do not say.
   outsideWorkspace: Schema.optional(Schema.Boolean),
+  publicationAttention: Schema.optional(ProjectFilePublicationAttention),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -580,6 +593,10 @@ export const ProjectFileFailure = Schema.Literals([
   "path_exists",
   "binary_file",
   "revision_conflict",
+  "target_changed",
+  "recovery_required",
+  "mutation_unavailable",
+  "mutation_intent_conflict",
   "read_only_in_files",
   "operation_failed",
 ]);
@@ -596,6 +613,7 @@ export const ProjectFileOperation = Schema.Literals([
   "make-directory",
   "write-file",
   "atomic-write-file",
+  "retained-publication",
   "link",
   "unlink",
   "watch",
@@ -630,6 +648,10 @@ type ProjectFileFailureContext = {
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
   readonly currentRevision?: string;
+  readonly mutationId?: string;
+  readonly publicationOutcome?: ProjectFilePublicationOutcome;
+  readonly recoveryId?: string;
+  readonly retainedPaths?: ReadonlyArray<string>;
   readonly reason?: ProjectFileErrorReason;
   readonly osErrorCode?: string;
   readonly cause?: unknown;
@@ -645,14 +667,19 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(FilePathString),
+    mutationId: Schema.optional(TrimmedNonEmptyString),
+    publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
+    recoveryId: Schema.optional(TrimmedNonEmptyString),
+    retainedPaths: Schema.optional(Schema.Array(FilePathString)),
     reason: Schema.optional(ProjectFileErrorReason),
     osErrorCode: Schema.optional(ProjectFileOsErrorCode),
+    currentMissing: Schema.optional(Schema.Literal(true)),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   // @effect-diagnostics-next-line overriddenSchemaConstructor:off
-  constructor(props: ProjectFileFailureContext) {
+  constructor(props: ProjectFileFailureContext & { readonly currentMissing?: true }) {
     super({
       ...props,
       message:
@@ -667,6 +694,7 @@ export const ProjectWriteFileInput = Schema.Struct({
   relativePath: FilePathString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
   expectedRevision: Schema.optional(TrimmedNonEmptyString),
+  mutationId: Schema.optional(TrimmedNonEmptyString),
   /** Create a new file atomically and fail if its path already exists. */
   createOnly: Schema.optional(Schema.Literal(true)),
 });
@@ -675,6 +703,7 @@ export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 export const ProjectWriteFileResult = Schema.Struct({
   relativePath: FilePathString,
   revision: TrimmedNonEmptyString,
+  mutationId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
@@ -709,6 +738,10 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(FilePathString),
     currentRevision: Schema.optional(TrimmedNonEmptyString),
+    mutationId: Schema.optional(TrimmedNonEmptyString),
+    publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
+    recoveryId: Schema.optional(TrimmedNonEmptyString),
+    retainedPaths: Schema.optional(Schema.Array(FilePathString)),
     reason: Schema.optional(ProjectFileErrorReason),
     osErrorCode: Schema.optional(ProjectFileOsErrorCode),
     message: TrimmedNonEmptyString,
@@ -739,6 +772,7 @@ export const ProjectRenameFileInput = Schema.Struct({
    * whole (binary or truncated), which is then renamed without a content check.
    */
   expectedRevision: Schema.optional(TrimmedNonEmptyString),
+  mutationId: Schema.optional(TrimmedNonEmptyString),
   /** Also remove the folders the move leaves empty, never the workspace root itself. */
   removeEmptyFolders: Schema.optional(Schema.Literal(true)),
 });
@@ -748,6 +782,7 @@ export const ProjectRenameFileResult = Schema.Struct({
   relativePath: FilePathString,
   destinationRelativePath: FilePathString,
   revision: TrimmedNonEmptyString,
+  mutationId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectRenameFileResult = typeof ProjectRenameFileResult.Type;
 
@@ -763,6 +798,10 @@ export class ProjectRenameFileError extends Schema.TaggedError<ProjectRenameFile
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(FilePathString),
     currentRevision: Schema.optional(TrimmedNonEmptyString),
+    mutationId: Schema.optional(TrimmedNonEmptyString),
+    publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
+    recoveryId: Schema.optional(TrimmedNonEmptyString),
+    retainedPaths: Schema.optional(Schema.Array(FilePathString)),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -783,6 +822,7 @@ export const ProjectDeleteFileInput = Schema.Struct({
   relativePath: FilePathString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   /** The revision the client last read: a file changed since then is never deleted. */
   expectedRevision: TrimmedNonEmptyString,
+  mutationId: Schema.optional(TrimmedNonEmptyString),
   /** Also remove the folders the file leaves empty, never the workspace root itself. */
   removeEmptyFolders: Schema.optional(Schema.Literal(true)),
 });
@@ -790,6 +830,7 @@ export type ProjectDeleteFileInput = typeof ProjectDeleteFileInput.Type;
 
 export const ProjectDeleteFileResult = Schema.Struct({
   relativePath: FilePathString,
+  mutationId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectDeleteFileResult = typeof ProjectDeleteFileResult.Type;
 
@@ -804,6 +845,10 @@ export class ProjectDeleteFileError extends Schema.TaggedError<ProjectDeleteFile
     operation: Schema.optional(ProjectFileOperation),
     operationPath: Schema.optional(FilePathString),
     currentRevision: Schema.optional(TrimmedNonEmptyString),
+    mutationId: Schema.optional(TrimmedNonEmptyString),
+    publicationOutcome: Schema.optional(ProjectFilePublicationOutcome),
+    recoveryId: Schema.optional(TrimmedNonEmptyString),
+    retainedPaths: Schema.optional(Schema.Array(FilePathString)),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -818,3 +863,53 @@ export class ProjectDeleteFileError extends Schema.TaggedError<ProjectDeleteFile
     } as any);
   }
 }
+
+export const ProjectListFileVersionsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: FilePathString,
+});
+export type ProjectListFileVersionsInput = typeof ProjectListFileVersionsInput.Type;
+
+export const ProjectListFileVersionsResult = Schema.Struct({
+  versions: Schema.Array(
+    Schema.Struct({
+      versionId: TrimmedNonEmptyString,
+      mutationId: TrimmedNonEmptyString,
+      retainedPath: FilePathString,
+      revision: Schema.NullOr(Schema.String),
+      byteLength: Schema.Number,
+      retainedAt: Schema.Number,
+    }),
+  ),
+  retainedBytes: Schema.Number,
+  limitBytes: Schema.NullOr(Schema.Number),
+  attention: Schema.NullOr(ProjectFilePublicationAttention),
+});
+export type ProjectListFileVersionsResult = typeof ProjectListFileVersionsResult.Type;
+
+export const ProjectDiscardFileVersionInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: FilePathString,
+  versionId: TrimmedNonEmptyString,
+});
+export type ProjectDiscardFileVersionInput = typeof ProjectDiscardFileVersionInput.Type;
+
+export const ProjectDiscardFileVersionResult = Schema.Struct({
+  versionId: TrimmedNonEmptyString,
+});
+export type ProjectDiscardFileVersionResult = typeof ProjectDiscardFileVersionResult.Type;
+
+export const ProjectResolveFileMutationInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: FilePathString,
+  recoveryId: TrimmedNonEmptyString,
+  currentRevision: Schema.NullOr(TrimmedNonEmptyString),
+  choice: Schema.Literal("accept-current"),
+});
+export type ProjectResolveFileMutationInput = typeof ProjectResolveFileMutationInput.Type;
+
+export const ProjectResolveFileMutationResult = Schema.Struct({
+  recoveryId: TrimmedNonEmptyString,
+  revision: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ProjectResolveFileMutationResult = typeof ProjectResolveFileMutationResult.Type;

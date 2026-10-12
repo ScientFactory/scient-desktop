@@ -40,7 +40,7 @@ export class LatexToolchain extends Context.Service<
     /** Omitting a compiler reports the unchanged default and all verified capabilities. */
     readonly probe: (
       refresh: boolean,
-      requiredCompiler?: ScientLatexCompiler,
+      requiredCompiler?: ScientLatexCompiler | "tectonic",
     ) => Effect.Effect<LatexToolchainProbe>;
   }
 >()("t3/scient/latex/LatexToolchain") {}
@@ -112,6 +112,7 @@ export const make = Effect.gen(function* () {
   >();
   const findManagedInstall = readManagedLatexInstall().pipe(Effect.provideContext(managedContext));
   const cacheRef = yield* Ref.make<ToolchainObservation | null>(null);
+  const tectonicCacheRef = yield* Ref.make<LatexToolchainProbe | null>(null);
   // Every build and every status poll asks for the toolchain, so a lapsed TTL
   // would otherwise let a burst of pollers each shell out. One probe runs; the
   // rest queue here and read the answer it leaves in the cache.
@@ -277,8 +278,24 @@ export const make = Effect.gen(function* () {
 
   const probe = Effect.fnUntraced(function* (
     refresh: boolean,
-    requiredCompiler?: ScientLatexCompiler,
+    requiredCompiler?: ScientLatexCompiler | "tectonic",
   ) {
+    if (requiredCompiler === "tectonic") {
+      return yield* probeGate.withPermits(1)(
+        Effect.gen(function* () {
+          const primary = (yield* Ref.get(cacheRef))?.primary;
+          const cached = primary?.kind === "tectonic" ? primary : yield* Ref.get(tectonicCacheRef);
+          const now = yield* Clock.currentTimeMillis;
+          if (!refresh && cached !== null && now - cached.probedAtEpochMs < PROBE_CACHE_TTL_MS)
+            return cached;
+          const found = (yield* probeCandidate(SYSTEM_TECTONIC, now)) ?? absent(now);
+          const status = { ...found, compilers: yield* probeCompilers(found) };
+          yield* Ref.set(tectonicCacheRef, status);
+          return status;
+        }),
+      );
+    }
+    if (refresh) yield* Ref.set(tectonicCacheRef, null);
     const cached = yield* Ref.get(cacheRef);
     if (!refresh && (yield* isFresh(cached)) && cached !== null)
       return select(cached, requiredCompiler);

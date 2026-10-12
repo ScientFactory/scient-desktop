@@ -187,7 +187,8 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
         severity: labelledSeverity,
         file: normalizeEnginePath(fileLineError[1]),
         line: Number.parseInt(fileLineError[2], 10),
-        message: continued.message || "TeX error",
+        message:
+          continued.message || (labelledSeverity === "warning" ? "TeX warning" : "TeX error"),
       });
       continue;
     }
