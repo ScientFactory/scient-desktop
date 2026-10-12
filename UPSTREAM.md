@@ -847,6 +847,18 @@ grouping or collapsible shelves, reconcile against these seams instead of layeri
 second grouping. Decisions, invariants and the full seam list are in
 [sidebar sections](docs/internals/scient-sidebar-sections.md).
 
+Antigravity's native runtime, profiles, callback handling, and auth controller remain
+upstream-owned. Scient composes its qualified release source through
+`scient/providerLifecycle/ScientAntigravityInstallation.ts` and its compact setup
+through `AntigravityAcpLifecycleActions.ts`, retaining T3's installation service
+identity and controller. Keep the bounded authorization-link handoff, safe failure
+presentation/diagnostics, process teardown and publication guards. Scient plugin
+projection lives under `scient/skills`; voice correction shares the existing guarded
+generation runner. Retain these narrow mounts without forking the native engine.
+Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
+and targets outside the qualified native set; removing a fallback requires native
+replacement qualification, not merely an available Google archive.
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.
@@ -949,6 +961,15 @@ application pipeline. Shared reading sizes and fixed-pixel/shadow-root exception
 are routed through `apps/web/src/scient/typography/profile.css`; do not spread those
 overrides across inherited components during upstream conflict resolution. See
 [Scient typography profile](docs/internals/scient-typography.md).
+
+Scient's bordered form controls indicate focus with a single border, retaining
+upstream focus and validation colors. The owned override lives in
+`apps/web/src/scient/presentation/scient-form-focus.css`, imported by
+`scient-utilities.css` through its existing `SCIENT-FORK` mount in `index.css`.
+Comboboxes reuse the input override; ghost selects and unrelated controls retain
+their focus rings. Preserve this mount during alignment rather than deleting
+ring classes from inherited components. The production-CSS regression in
+`scient-form-focus.browser.test.tsx` runs in the existing web layout CI job.
 
 Composer collapse is opt-in in Scient: `composerCollapseOnScroll` defaults to
 `false`. Upstream removed blur-triggered collapse; do not restore that obsolete

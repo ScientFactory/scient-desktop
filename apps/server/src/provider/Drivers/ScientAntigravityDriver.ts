@@ -21,7 +21,7 @@ import {
   antigravityConnectionMethod,
   makeAntigravityConnectionActionsFromController,
   makeAntigravityManagedRuntimeActions,
-} from "../AntigravityLifecycleBridge.ts";
+} from "../../scient/providerLifecycle/AntigravityAcpLifecycleActions.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import type { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import { ANTIGRAVITY_ACP_TARGETS } from "@scientfactory/provider-runtime";

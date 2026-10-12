@@ -60,6 +60,30 @@ describe("ProviderConnectionSubmitAuthorizationCodeInput", () => {
 });
 
 describe("ProviderConnectionOperation", () => {
+  it("round-trips complete native authorization URLs through the lifecycle handoff", () => {
+    const encode = Schema.encodeSync(ProviderConnectionOperation);
+    for (const length of [8_192, 8_193, 16_384]) {
+      const prefix = "https://accounts.google.com/o/oauth2/v2/auth?state=";
+      const authorizationUrl = `${prefix}${"x".repeat(length - prefix.length)}`;
+      const operation = {
+        operationId: "antigravity-connection-1",
+        method: "antigravity_google",
+        status: "waiting_for_browser",
+        startedAt: "2026-10-12T08:00:00.000Z",
+        finishedAt: null,
+        message: "Finish sign in.",
+        authorizationUrl,
+        authorizationUrlKind: "primary",
+      };
+      expect(
+        decodeConnectionOperation(encode(decodeConnectionOperation(operation))).authorizationUrl,
+      ).toBe(authorizationUrl);
+      expect(() =>
+        decodeConnectionOperation({ ...operation, authorizationUrl: "x".repeat(16_385) }),
+      ).toThrow();
+    }
+  });
+
   it("accepts Droid's provider-opened browser state without an invented URL", () => {
     const decoded = decodeConnectionOperation({
       operationId: "droid-connection-1",

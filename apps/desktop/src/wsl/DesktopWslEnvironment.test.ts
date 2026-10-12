@@ -427,7 +427,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     fixtures.length = 0;
   });
 
-  const createFixture = () => {
+  const createFixture = (includeCursorHelpers = false) => {
     const result = runShell(
       [
         "set -eu",
@@ -438,6 +438,16 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         `printf '%s' '{"name":"node-pty","version":"0.0.0-test"}' > "$stage/node_modules/node-pty/package.json"`,
         `printf '%s' 'pty-native-payload' > "$stage/node_modules/node-pty/prebuilds/linux-x64/pty.node"`,
         `printf '%s' '{"arch":"x64"}' > "$stage/node_modules/node-pty/prebuilds/linux-x64/t3code-wsl-node-pty.json"`,
+        ...(includeCursorHelpers
+          ? [
+              'mkdir -p "$stage/node_modules/@cursor/sdk-linux-x64/bin" "$stage/node_modules/@cursor/sdk-win32-x64/bin"',
+              "for name in rg cursorsandbox; do",
+              `  printf '#!/bin/sh\\nprintf "helper-ok\\\\n"\\n' > "$stage/node_modules/@cursor/sdk-linux-x64/bin/$name"`,
+              '  chmod 644 "$stage/node_modules/@cursor/sdk-linux-x64/bin/$name"',
+              "done",
+              'cp "$stage/node_modules/@cursor/sdk-linux-x64/bin/rg" "$stage/node_modules/@cursor/sdk-win32-x64/bin/rg.exe"',
+            ]
+          : []),
         `tar -czf "$work/wsl-runtime.tar.gz" -C "$stage" apps/server/dist node_modules`,
         `printf 'work:%s\\n' "$work"`,
         `printf 'archiveSha:%s\\n' "$(sha256sum "$work/wsl-runtime.tar.gz" | cut -d ' ' -f 1)"`,
@@ -470,6 +480,23 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };
   };
+
+  it("makes Windows-packed Cursor Linux helpers executable only in the installed cache", () => {
+    const fixture = createFixture(true);
+    expect(fixture.install().status).toBe(0);
+    const checked = runShell(
+      [
+        "set -eu",
+        ...["rg", "cursorsandbox"].map(
+          (name) =>
+            `test "$(${sh(`${fixture.runtimeRoot}/node_modules/@cursor/sdk-linux-x64/bin/${name}`)})" = helper-ok`,
+        ),
+        `test ! -x ${sh(`${fixture.work}/stage/node_modules/@cursor/sdk-linux-x64/bin/rg`)}`,
+        `test ! -x ${sh(`${fixture.runtimeRoot}/node_modules/@cursor/sdk-win32-x64/bin/rg.exe`)}`,
+      ].join("\n"),
+    );
+    expect(checked.status, checked.stderr).toBe(0);
+  });
 
   it("reuses a warm cache without touching the archive", () => {
     const fixture = createFixture();

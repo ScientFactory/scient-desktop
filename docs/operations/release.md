@@ -57,6 +57,15 @@ the stable scheduler and production gate.
   duplicate ASAR trees for a controlled compressed-size comparison; retained
   archive bytes and external resource bytes/modes must match. This measures
   the cleanup on identical inputs, not a download comparison between releases.
+- The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
+  packages; their Linux variants remain, and the Windows sidecar is separate.
+  WSL installation restores execute permissions for Cursor's Linux `rg` and
+  `cursorsandbox` helpers in the verified cache because Windows-created archives
+  lose those permissions. Windows Packaging runs the same install script and
+  executes that exact packaged archive on Linux without installing replacement
+  dependencies, checking native loads, terminals, CLI,
+  HTTP startup, and shutdown. This qualifies the Linux payload; WSL distro and
+  Windows/Linux interoperability acceptance remain separate platform checks.
 - Windows loose-file validation retains an 80-file core budget. Pinned voice
   and Windows/WSL Cursor inventories are admitted separately only after their
   exact file sets pass validation; missing or extra component files fail even
