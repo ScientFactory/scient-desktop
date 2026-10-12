@@ -524,7 +524,7 @@ export function journalAppliedRecovery(
 ): boolean {
   const inSourceSlot = !recovery.parked && recovery.identity.startsWith(LIVE_SOURCE);
   if (inSourceSlot) releasePersistedVisualDraft(key);
-  checkpointVisualDraft(key, recovery.source, replaced.source, recovery.source, replaced.revision);
+  checkpointVisualDraft(key, recovery.source, replaced.revision);
   const written = flushVisualDraft(key);
   // The source slot now holds the applied work as the live draft, or still the
   // same recovered source. Either way it is the journal and must not be removed

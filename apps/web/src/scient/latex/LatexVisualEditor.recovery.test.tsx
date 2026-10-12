@@ -21,7 +21,7 @@ import { AsyncResult } from "effect/reactivity";
 import { FileSaveCoordinator } from "~/components/files/fileSaveCoordinator";
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
-import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
+import { stubLatexReadingFonts, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import {
   checkpointVisualDraft,
   clearVisualDraft,
@@ -73,9 +73,11 @@ describe("recovering unsaved work", () => {
   let singleFileDocument: boolean;
   let coordinator: FileSaveCoordinator<FileView, Error>;
   const writes = vi.fn();
+  let restoreFonts = () => {};
 
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    restoreFonts = stubLatexReadingFonts();
     writes.mockReset();
     singleFileDocument = true;
     save = "completes";
@@ -94,6 +96,7 @@ describe("recovering unsaved work", () => {
     container.remove();
     clearVisualDraft(KEY);
     clearTypingDraft(KEY);
+    restoreFonts();
     vi.unstubAllGlobals();
   });
 
@@ -904,7 +907,7 @@ describe("recovering unsaved work", () => {
 
     it("is not replaced when the read-only editor closes with an older unwritten checkpoint", async () => {
       storeSourceDraft(MONDAY, "r1");
-      checkpointVisualDraft(KEY, "", "", tex("Older, never written"), "r0");
+      checkpointVisualDraft(KEY, tex("Older, never written"), "r0");
       noRoomToPark();
       await mount(AGENT, 2);
       expect(editable()).toBe(false);

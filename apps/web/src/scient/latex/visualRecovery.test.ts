@@ -128,7 +128,7 @@ describe("recovery when a document opens", () => {
   });
 
   it("parks a source copy with its base revision and frees the live slot", () => {
-    checkpointVisualDraft(KEY, "", "", tex("Mine"), "r1");
+    checkpointVisualDraft(KEY, tex("Mine"), "r1");
     flushVisualDraft(KEY);
     const { recovery } = readStartupRecovery(KEY, { source: tex("File") });
     expect(recovery).toMatchObject({ origin: "source", source: tex("Mine"), baseRevision: "r1" });
@@ -138,7 +138,7 @@ describe("recovery when a document opens", () => {
 
   it("offers the newest work first and keeps the rest", () => {
     typing(tex("Base"), "Typed later");
-    checkpointVisualDraft(KEY, "", "", tex("Source copy"), "r1");
+    checkpointVisualDraft(KEY, tex("Source copy"), "r1");
     flushVisualDraft(KEY);
     const { recovery } = readStartupRecovery(KEY, { source: tex("File") });
     expect(parked()).toHaveLength(2);
@@ -151,7 +151,7 @@ describe("recovery when a document opens", () => {
     // This window is mid-session with an unwritten checkpoint; another window
     // stored different work. Only the stored record is recovered work.
     localStorage.setItem(SOURCE, JSON.stringify({ source: tex("Theirs"), baseRevision: "r2" }));
-    checkpointVisualDraft(KEY, "", "", tex("Ours, unwritten"), "r1");
+    checkpointVisualDraft(KEY, tex("Ours, unwritten"), "r1");
     const { recovery } = readStartupRecovery(KEY, { source: tex("File") });
     expect(recovery).toMatchObject({ source: tex("Theirs"), baseRevision: "r2", parked: true });
     expect(parked()).toHaveLength(1);
@@ -169,7 +169,7 @@ describe("recovery when a document opens", () => {
   });
 
   it("offers nothing when the stored copy equals the file, and leaves it stored", () => {
-    checkpointVisualDraft(KEY, "", "", tex("Same"), "r1");
+    checkpointVisualDraft(KEY, tex("Same"), "r1");
     flushVisualDraft(KEY);
     expect(readStartupRecovery(KEY, { source: tex("Same") }).recovery).toBeNull();
     expect(parked()).toHaveLength(0);
@@ -177,20 +177,20 @@ describe("recovery when a document opens", () => {
   });
 
   it("does not park the same work twice", () => {
-    checkpointVisualDraft(KEY, "", "", tex("Mine"), "r1");
+    checkpointVisualDraft(KEY, tex("Mine"), "r1");
     flushVisualDraft(KEY);
     readStartupRecovery(KEY, { source: tex("File") });
-    checkpointVisualDraft(KEY, "", "", tex("Mine"), "r1");
+    checkpointVisualDraft(KEY, tex("Mine"), "r1");
     flushVisualDraft(KEY);
     readStartupRecovery(KEY, { source: tex("File") });
     expect(parked()).toHaveLength(1);
   });
 
   it("offers the same recovered source once, whatever revision each copy was based on", () => {
-    checkpointVisualDraft(KEY, "", "", tex("Mine"), "r1");
+    checkpointVisualDraft(KEY, tex("Mine"), "r1");
     flushVisualDraft(KEY);
     readStartupRecovery(KEY, { source: tex("File") });
-    checkpointVisualDraft(KEY, "", "", tex("Mine"), "r2");
+    checkpointVisualDraft(KEY, tex("Mine"), "r2");
     flushVisualDraft(KEY);
     const { recovery } = readStartupRecovery(KEY, { source: tex("File") });
     expect(parked()).toHaveLength(1);
@@ -392,7 +392,7 @@ describe("readable text of writing that cannot be converted", () => {
 
 describe("another window sharing the same storage", () => {
   it("never removes a source copy another window replaced", () => {
-    checkpointVisualDraft(KEY, "", "", tex("A"), "r1");
+    checkpointVisualDraft(KEY, tex("A"), "r1");
     flushVisualDraft(KEY);
     expect(readVisualDraft(KEY)).toEqual({ source: tex("A"), baseRevision: "r1" });
     // Another window writes a newer copy straight to the shared storage.
@@ -408,7 +408,7 @@ describe("another window sharing the same storage", () => {
   });
 
   it("parks the record that is in storage now, not one read earlier", () => {
-    checkpointVisualDraft(KEY, "", "", tex("A"), "r1");
+    checkpointVisualDraft(KEY, tex("A"), "r1");
     flushVisualDraft(KEY);
     localStorage.setItem(SOURCE, JSON.stringify({ source: tex("B"), baseRevision: "r2" }));
     const { recovery } = readStartupRecovery(KEY, { source: tex("File") });
@@ -417,7 +417,7 @@ describe("another window sharing the same storage", () => {
   });
 
   it("sees parked work removed by another window before acting on it", () => {
-    checkpointVisualDraft(KEY, "", "", tex("A"), "r1");
+    checkpointVisualDraft(KEY, tex("A"), "r1");
     flushVisualDraft(KEY);
     const shown = readStartupRecovery(KEY, { source: tex("File") }).recovery!;
     localStorage.removeItem(PARKED);
@@ -461,7 +461,7 @@ describe("a typing snapshot the editor cannot load", () => {
 
 describe("work that cannot be parked", () => {
   it("is offered from its live slot, which is left untouched", () => {
-    checkpointVisualDraft(KEY, "", "", tex("Mine"), "r1");
+    checkpointVisualDraft(KEY, tex("Mine"), "r1");
     flushVisualDraft(KEY);
     const { recovery, typing: reinstall } = withoutRoomToPark(() =>
       readStartupRecovery(KEY, { source: tex("File") }),
@@ -479,7 +479,7 @@ describe("work that cannot be parked", () => {
     // stored the work that is now offered from the slot.
     const theirs = { source: tex("Theirs"), baseRevision: "r2" };
     localStorage.setItem(SOURCE, JSON.stringify(theirs));
-    checkpointVisualDraft(KEY, "", "", tex("Ours, unwritten"), "r1");
+    checkpointVisualDraft(KEY, tex("Ours, unwritten"), "r1");
     const { recovery } = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
     expect(recovery).toMatchObject({ source: tex("Theirs"), parked: false });
     // Closing the editor flushes; the offered record stays, ours stays unwritten.
@@ -495,7 +495,7 @@ describe("work that cannot be parked", () => {
     // Offered from its slot over F, with an older checkpoint of this window unwritten.
     const record = { source: tex("R"), baseRevision: "r1" };
     localStorage.setItem(SOURCE, JSON.stringify(record));
-    checkpointVisualDraft(KEY, "", "", tex("Older"), "r0");
+    checkpointVisualDraft(KEY, tex("Older"), "r0");
     const first = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
     expect(flushVisualDraft(KEY)).toBe(false);
     // A second editor opens the document showing R, as an unsaved buffer. It
@@ -510,7 +510,7 @@ describe("work that cannot be parked", () => {
 
   it("stops guarding the slot once the record's source is saved", () => {
     localStorage.setItem(SOURCE, JSON.stringify({ source: tex("R"), baseRevision: "r1" }));
-    checkpointVisualDraft(KEY, "", "", tex("Older"), "r0");
+    checkpointVisualDraft(KEY, tex("Older"), "r0");
     withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
     // The file becomes R and is saved; the host confirms that source. The
     // stored record is cleared on its own match, whatever this window still
@@ -518,7 +518,7 @@ describe("work that cannot be parked", () => {
     expect(confirmVisualDraft(KEY, tex("R"))).toBe(true);
     expect(readVisualDraft(KEY)).toBeNull();
     // Checkpoints are stored again.
-    checkpointVisualDraft(KEY, "", "", tex("R, then more"), "r2");
+    checkpointVisualDraft(KEY, tex("R, then more"), "r2");
     expect(flushVisualDraft(KEY)).toBe(true);
     expect(readVisualDraft(KEY)).toEqual({ source: tex("R, then more"), baseRevision: "r2" });
   });
@@ -527,7 +527,7 @@ describe("work that cannot be parked", () => {
     localStorage.setItem(SOURCE, JSON.stringify({ source: tex("Theirs"), baseRevision: "r2" }));
     withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
     localStorage.setItem(SOURCE, JSON.stringify({ source: tex("Newer"), baseRevision: "r3" }));
-    checkpointVisualDraft(KEY, "", "", tex("Ours"), "r3");
+    checkpointVisualDraft(KEY, tex("Ours"), "r3");
     expect(flushVisualDraft(KEY)).toBe(true);
   });
 
@@ -535,7 +535,7 @@ describe("work that cannot be parked", () => {
     // Reinstalled typing is converted and checkpointed into the slot the
     // unparked work still occupies, so it waits until that work is resolved.
     typing(tex("File"), "File and more");
-    checkpointVisualDraft(KEY, "", "", tex("Mine"), "r1");
+    checkpointVisualDraft(KEY, tex("Mine"), "r1");
     flushVisualDraft(KEY);
     const first = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
     expect(first.typing).toBeNull();
@@ -548,7 +548,7 @@ describe("work that cannot be parked", () => {
   });
 
   it("is not removed once another window replaced the record", () => {
-    checkpointVisualDraft(KEY, "", "", tex("Mine"), "r1");
+    checkpointVisualDraft(KEY, tex("Mine"), "r1");
     flushVisualDraft(KEY);
     const { recovery } = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
     localStorage.setItem(SOURCE, JSON.stringify({ source: tex("Newer"), baseRevision: "r2" }));
@@ -561,7 +561,7 @@ describe("work that cannot be parked", () => {
     // Applying recovered work checkpoints into the source slot, so what that
     // slot holds has to be resolved before anything else is applied.
     typing(tex("Base"), "Base and more");
-    checkpointVisualDraft(KEY, "", "", tex("Mine"), "r1");
+    checkpointVisualDraft(KEY, tex("Mine"), "r1");
     flushVisualDraft(KEY);
     const first = withoutRoomToPark(() => readStartupRecovery(KEY, { source: tex("File") }));
     expect(first.recovery).toMatchObject({ origin: "source", source: tex("Mine"), parked: false });
@@ -605,7 +605,7 @@ describe("an edit that was never published", () => {
     expect(readVisualDraft(KEY)).toEqual({ source: edit, baseRevision: "r1" });
     expect(isRecoveryStored(KEY, recovery!)).toBe(true);
     // This window's later checkpoints stay out of the slot until it is resolved.
-    checkpointVisualDraft(KEY, "", "", tex("Typed afterwards"), "r2");
+    checkpointVisualDraft(KEY, tex("Typed afterwards"), "r2");
     expect(flushVisualDraft(KEY)).toBe(false);
     expect(removeRecovery(KEY, recovery!)).toBe(true);
     expect(flushVisualDraft(KEY)).toBe(true);
@@ -645,7 +645,7 @@ describe("an occupied slot while unstored work is offered", () => {
   };
 
   it("is not replaced by an older checkpoint this window still holds", () => {
-    checkpointVisualDraft(KEY, "", "", tex("Older, unwritten"), "r0");
+    checkpointVisualDraft(KEY, tex("Older, unwritten"), "r0");
     offerUnstored();
     expect(flushVisualDraft(KEY)).toBe(false);
     expect(readVisualDraft(KEY)).toEqual(theirs);
@@ -666,10 +666,10 @@ describe("an occupied slot while unstored work is offered", () => {
 
 describe("acting only on the entry that was shown", () => {
   it("removes one parked entry and leaves the others", () => {
-    checkpointVisualDraft(KEY, "", "", tex("A"), "r1");
+    checkpointVisualDraft(KEY, tex("A"), "r1");
     flushVisualDraft(KEY);
     const first = readStartupRecovery(KEY, { source: tex("File") }).recovery!;
-    checkpointVisualDraft(KEY, "", "", tex("B"), "r2");
+    checkpointVisualDraft(KEY, tex("B"), "r2");
     flushVisualDraft(KEY);
     const second = readStartupRecovery(KEY, { source: tex("File") }).recovery!;
     expect(second.source).toBe(tex("B"));

@@ -629,8 +629,9 @@ locally, sounds and the optional compute engine are disabled. No web service
 or TeX process participates in a writing transaction.
 
 `latexSourceEditPlan.ts` carries explicit original-coordinate patch scripts and a
-captured `LatexEditorSourceSnapshot`. `rootSource` is the physical root's exact
-native text; `setupSource` is the assembled declaration context, never a write
+captured `LatexEditorSourceSnapshot`, which also supplies the editor's root and
+setup context rather than duplicate props. `rootSource` is the physical root's
+exact native text; `setupSource` is the assembled declaration context, never a write
 destination. Producers do not infer a whole-file change by diffing serialized
 documents. Source IDs, ranges and list trivia are disposable parser facts.
 Persistence owners authorize scripts through stable document identity and working
@@ -1232,8 +1233,9 @@ record has a stored recovery copy; failed transfers keep the original and pause
 editing until the user resolves it. Round-trip signatures are cached for immutable
 nodes. Recovery storage writes happen after painting or on explicit exit.
 
-Recovery JSON omits native source maps. Rebinding proves surviving list-item
-correspondence from authored content rather than trusting cached numeric offsets;
+Live list transactions retain their known item correspondence, including repeated
+items with identical text. Recovery JSON omits native source maps. Rebinding
+proves surviving list-item correspondence from authored content rather than trusting cached numeric offsets;
 ambiguous origins remain readable recovery instead of being published. New
 ownerless table seeds can rebuild parser metadata from their retained raw source.
 Once a raw-block edit is accepted, Cancel/Escape must finish its recovery

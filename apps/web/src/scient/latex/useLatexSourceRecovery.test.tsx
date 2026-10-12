@@ -99,7 +99,7 @@ describe("Source recovery without a Visual editor", () => {
     expect(write).not.toHaveBeenCalled();
   });
   it("offers a reopened source copy without writing, then applies only the compared version", async () => {
-    checkpointVisualDraft(key, mine, base, mine, "r1");
+    checkpointVisualDraft(key, mine, "r1");
     flushVisualDraft(key);
     await mount();
     expect(recovery.recovery?.source).toBe(mine);
@@ -205,7 +205,7 @@ describe("Source recovery without a Visual editor", () => {
     await act(async () => {
       lease.change(mine, lease.getSnapshot().editVersion);
     });
-    checkpointVisualDraft(key, newer, base, newer, "r1");
+    checkpointVisualDraft(key, newer, "r1");
     flushVisualDraft(key);
     await act(async () => {
       await lease.flushNow();

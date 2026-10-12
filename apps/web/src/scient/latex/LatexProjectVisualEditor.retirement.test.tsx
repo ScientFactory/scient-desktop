@@ -309,6 +309,7 @@ describe("retiring the project's recovery copy", () => {
     for (const container of containers) container.remove();
     for (const lease of leases) lease.release();
     clearVisualDraft(KEY);
+    for (const file of disk.keys()) clearVisualDraft(`${environmentId}\0${cwd}\0${file}`);
     vi.unstubAllGlobals();
   });
 

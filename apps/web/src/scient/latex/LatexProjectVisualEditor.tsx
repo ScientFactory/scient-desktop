@@ -566,8 +566,6 @@ export function LatexProjectVisualEditor(props: Props) {
           checkpointVisualDraft(
             `${props.environmentId}\0${props.cwd}\0${path}`,
             live.contents,
-            file.contents,
-            live.contents,
             file.revision,
           );
       }
@@ -629,8 +627,6 @@ export function LatexProjectVisualEditor(props: Props) {
           key={props.editorInstanceKey ?? files.get(root!)?.owner?.documentId ?? root}
           source={document.source}
           sourceSnapshot={editorSnapshot}
-          rootSource={root ? (files.get(root)?.contents ?? null) : null}
-          setupSource={document.source}
           canEditRoot={!error && !!files.get(root!)?.owner}
           singleFileDocument={paths.length === 1}
           relativePath={root!}

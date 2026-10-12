@@ -3,6 +3,8 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createTestCheckpointStore } from "~/scient/markdownEditor/persistence/markdownDraftCheckpointTestkit";
+import type * as MarkdownCheckpointModule from "~/scient/markdownEditor/persistence/markdownDraftCheckpoint";
 
 const { disk, refresh } = vi.hoisted(() => ({
   disk: { source: "", revision: "r1" },
@@ -32,6 +34,10 @@ vi.mock("~/components/files/projectFilesQueryState", () => ({
 vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceTransport", () => ({
   createMarkdownPersistenceTransport: vi.fn(),
 }));
+vi.mock("~/scient/markdownEditor/persistence/markdownDraftCheckpoint", async (importOriginal) => {
+  const actual = await importOriginal<typeof MarkdownCheckpointModule>();
+  return { ...actual, indexedDbMarkdownDrafts: createTestCheckpointStore() };
+});
 
 import {
   markdownPersistenceRegistry,
