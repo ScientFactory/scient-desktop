@@ -265,6 +265,21 @@ Server paths above are relative to `apps/server/src/`. Extend these live service
 check `runtimeLayer.ts` and callers. Legacy SQL tables and Scient migration IDs remain compatibility
 boundaries; their historical execution machinery is superseded.
 
+Receipt-aware Stop preserves a running start until its native ownership is known: an
+absent provider-turn row does not prove the message was never offered. Ordinary
+message startup can cancel its local checkpoint preparation when a committed Stop
+reaches the captured run and root. The preparation scope observes the existing
+EventSink stream with replay and rechecks the active attempt; cancellation releases
+its Git/process scope and workspace lock before the owned declined-start write.
+The scope ends before native offering. Adopted provider work already runs and retains
+native control. Upstream's effect ordering and transactional cancellation remain the
+shared machinery; do not add an interrupt lane or cancel native receipt ingestion.
+
+The web acknowledgement is owned by `scient/chat/useStopGeneration.ts` and
+`StopGenerationAcknowledgement.tsx`. It follows
+the captured environment/thread/run/attempt and the durable interrupt request,
+clears when that target settles or changes, and keeps Stop available for retry.
+
 ### Extracted owners and host mounts
 
 The separation map below describes the adopted source, not a proposed move or a qualification
@@ -286,7 +301,7 @@ repositories, independent schema/migrator and context-history helpers.
 | `Orchestrator.ts`                                                     | `RunStartDecisions.ts`, `SettingExecutionOwner.ts`, `ProviderWorkAdmission.ts`, `DroidHeldSteer.ts`, `CheckpointRollbackCompletion.ts`, `ConversationForkPlan.ts` | Thread-lock admission, captured queued modes, busy-owner preservation, held-steer and rollback ordering          |
 | `ProviderTurnStartService.ts`                                         | `PortableTurnStart.ts`, `PendingStartOwner.ts`, `NativeModelContextWindow.ts`                                                                                     | Stop-before-offer checks and frozen native-or-portable history delivery                                          |
 | `Orchestrator.ts`, `EffectOutbox.ts`, `ProviderTurnControlService.ts` | `PendingStartInterrupt.ts`                                                                                                                                        | Receipt-aware Stop planning and its private request; native identity comes only from observed receipts           |
-| `RunExecutionService.ts`                                              | `RunExecutionFinalization.ts`, `NativeWorkflowOwnership.ts`, `PendingStartOwner.ts`, `runningForkSource.ts`                                                       | Exact root-attempt finalization, subscription lifetime and transferred workflow ownership                        |
+| `RunExecutionService.ts`                                              | `RunExecutionFinalization.ts`, `NativeWorkflowOwnership.ts`, `PendingStartOwner.ts`, `runningForkSource.ts`                                                       | Cancellable local preparation, exact finalization, subscriptions and transferred workflow ownership              |
 | `ThreadForkService.ts`                                                | `ConversationForkPlan.ts`, `ConversationForkNativeSource.ts`, `ConversationForkBoundaryItem.ts`                                                                   | Destination-owned prefix and exact native boundary proof                                                         |
 | `ThreadManagementService.ts`                                          | `ThreadDispatchCloneGuard.ts`                                                                                                                                     | Reject unavailable clone state before hydration/native dispatch                                                  |
 | `ProjectionStore.ts`, `EffectWorker.ts`                               | `RollbackAttachmentRetention.ts`, `ConversationForkService.ts`                                                                                                    | Retained attachment references and durable provisioning, not a second execution authority                        |
