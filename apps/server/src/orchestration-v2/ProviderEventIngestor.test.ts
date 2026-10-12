@@ -1638,8 +1638,13 @@ layer("ProviderEventIngestorV2", (it) => {
         created.flat().map((stored) => stored.event.type),
         ["thread.created"],
       );
+      const createdChild = created.flat()[0];
+      if (createdChild === undefined) throw new Error("Expected child creation receipt");
+      assert.equal(createdChild.event.threadId, childThreadId);
+      const workspaceAuthorityRevision = createdChild.sequence;
       const saved = {
         ...offered,
+        workspaceAuthorityRevision,
         archivedAt: now,
         deletedAt: now,
         activeProviderThreadId: rootEvent.payload.activeProviderThreadId,
@@ -1666,6 +1671,7 @@ layer("ProviderEventIngestorV2", (it) => {
           ["thread.metadata-updated"],
         );
         const thread = yield* projectionStore.getThread(childThreadId);
+        assert.equal(thread.workspaceAuthorityRevision, workspaceAuthorityRevision);
         assert.deepEqual(thread, { ...saved, ...metadata, updatedAt: thread.updatedAt });
       }
       assert.deepEqual(

@@ -5969,6 +5969,13 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
             instanceId: alternateInstanceId,
             model: "gpt-5.5",
           } satisfies ModelSelection;
+          yield* seedProject({
+            projectId: queueResumeDisabledInstanceProjectId,
+            title: "Queue resume disabled instance",
+            workspaceRoot: process.cwd(),
+            defaultModelSelection: modelSelection,
+            createdAt: DateTime.formatIso(yield* DateTime.now),
+          });
 
           yield* orchestrator.dispatch({
             type: "thread.create",

@@ -304,6 +304,14 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                 })),
               execute: (input) =>
                 Effect.gen(function* () {
+                  if (input.operation === "StorageCleanup.branchChanged") {
+                    assert.deepEqual(
+                      input.args,
+                      input.args[0] === "rev-parse"
+                        ? ["rev-parse", "--git-path", "index"]
+                        : ["symbolic-ref", "--quiet", "HEAD"],
+                    );
+                  }
                   if (input.operation === "StorageCleanup.cleanupGit") {
                     const args = [...input.args];
                     assert.isFalse(args.includes("--force"));
@@ -335,7 +343,12 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
                   }
                   return {
                     exitCode: ChildProcessSpawner.ExitCode(0),
-                    stdout: "",
+                    stdout:
+                      input.operation === "StorageCleanup.branchChanged"
+                        ? input.args[0] === "rev-parse"
+                          ? path.join(config.baseDir, "fixture-index")
+                          : "refs/heads/feature\n"
+                        : "",
                     stderr: "",
                     stdoutTruncated: false,
                     stderrTruncated: false,
