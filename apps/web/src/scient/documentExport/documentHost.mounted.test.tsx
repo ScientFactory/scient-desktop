@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   renderHtmlPdf: vi.fn(),
   openFile: vi.fn(),
   openScient: vi.fn(),
+  byThreadKey: {},
   httpBaseUrl: "http://localhost:3773",
 }));
 vi.mock("~/components/preview/previewBridge", () => ({

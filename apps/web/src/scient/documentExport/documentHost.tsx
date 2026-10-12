@@ -1,4 +1,5 @@
 import { useAtomMount, useAtomSet } from "@effect/atom-react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type ControlledHtmlPdfRenderResult,
   type EnvironmentId,
@@ -70,12 +71,25 @@ export async function executeScientDocumentHostRequest(
         .getState()
         .openScient(threadRef, scientGeneratedPdfSurface(request.input.source));
       return {};
-    case "documentLatexPresent":
+    case "documentLatexPresent": {
+      const panel = useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)];
+      // A rebuild updates the existing editor and reader through their subscriptions.
+      // Reopening it would replace its reveal requests and force a new view.
+      const alreadyOpen = panel?.surfaces.some(
+        (surface) =>
+          surface.kind === "file" &&
+          !surface.attachment &&
+          (surface.relativePath === request.input.sourcePath ||
+            surface.relativePath === request.input.rootSourcePath ||
+            surface.latexRootRelativePath === request.input.rootSourcePath),
+      );
+      if (alreadyOpen) return {};
       useRightPanelStore.getState().openFile(threadRef, request.input.sourcePath, undefined, {
         latexPreviewMode: "split",
         latexRootRelativePath: request.input.rootSourcePath,
       });
       return {};
+    }
   }
 }
 

@@ -284,6 +284,10 @@ right, **double-click** reveals the corresponding current draft in
 the source pane, including an included file, while keeping Visual mounted.
 The source pane has no separate path row; document identity stays in the existing header, as in PDF Split.
 Hovering inside the source pane shows no pane-wide tooltip in Source or either Split preview.
+AI LaTeX build presentation leaves an existing document tab and its current view,
+source reveal, and reading position in place, including known included-file tabs.
+It does not reactivate a background tab or reopen a closed panel. A document not
+already open in that thread is presented in Split.
 Double-clicking a source line in that Split layout centers its mapped block in
 Visual and briefly marks it, preserving editing focus and selection. Both
 directions use the current draft and include ownership; no PDF build is needed.
