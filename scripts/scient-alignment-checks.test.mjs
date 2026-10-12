@@ -74,8 +74,37 @@ test("adapter, session and ChatView changes include their untouched authority co
     NodeAssert.ok(selected.includes("provider"));
     NodeAssert.ok(selected.includes("settings"));
   }
-  NodeAssert.deepEqual(ids(["apps/web/src/components/ChatView.tsx"]), ["stop", "queue", "reader"]);
+  NodeAssert.deepEqual(ids(["apps/web/src/components/ChatView.tsx"]), [
+    "stop",
+    "queue",
+    "settings",
+    "reader",
+  ]);
   NodeAssert.ok(ids(["apps/web/src/components/chat/ModelPickerContent.tsx"]).includes("settings"));
+});
+
+test("composer hosts include settings, Stop and queue consumers and existing client witnesses", () => {
+  for (const host of ["ChatComposer.tsx", "ComposerPrimaryActions.tsx"]) {
+    NodeAssert.deepEqual(ids([`apps/web/src/components/chat/${host}`]), all);
+  }
+  const queue = selectBoundaries(["apps/web/src/components/chat/queuedRunShortcuts.ts"]).boundaries;
+  NodeAssert.deepEqual(
+    queue.map((row) => row.id),
+    ["queue"],
+  );
+  NodeAssert.ok(
+    queue[0].checks["web-unit"].includes("src/components/chat/queuedRunShortcuts.test.tsx"),
+  );
+  NodeAssert.ok(queue[0].checks["web-unit"].includes("src/scient/threadQueue/disposition.test.ts"));
+  const stop = selectBoundaries([
+    "apps/web/src/components/chat/ComposerPrimaryActions.tsx",
+  ]).boundaries.find((row) => row.id === "stop");
+  NodeAssert.ok(
+    stop.checks["web-unit"].includes("src/components/chat/ComposerPrimaryActions.test.tsx"),
+  );
+  const unknown = "apps/web/src/components/chat/NewComposerHost.tsx";
+  NodeAssert.deepEqual(ids([unknown]), all);
+  NodeAssert.deepEqual(selectBoundaries([unknown]).unknown, [unknown]);
 });
 
 test("maintainer prose and reference repositories are explicit exclusions, runtime guidance is not", () => {
@@ -130,6 +159,75 @@ test("external --cwd diff includes deletions, staged renames and untracked consu
   NodeAssert.deepEqual(plan.boundaries, all);
   NodeAssert.equal(plan.commands.find((command) => command.id === "native").included, false);
   NodeAssert.equal(git("status", "--porcelain=v1"), before);
+});
+
+test("staged provider impact survives restoration of working bytes without unstaging", () => {
+  const { cwd, git } = fixture();
+  const path = "apps/server/src/provider/PiDriverComposition.ts";
+  const file = NodePath.join(cwd, path);
+  NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+  NodeFS.writeFileSync(file, "base\n");
+  git("add", path);
+  git(
+    "-c",
+    "user.name=Selector fixture",
+    "-c",
+    "user.email=selector@example.invalid",
+    "commit",
+    "--quiet",
+    "-m",
+    "provider base",
+  );
+  NodeFS.writeFileSync(file, "staged policy\n");
+  git("add", path);
+  NodeFS.writeFileSync(file, "base\n");
+  NodeAssert.equal(git("status", "--porcelain=v1"), `MM ${path}\n`);
+  const index = NodeFS.readFileSync(NodePath.join(cwd, ".git/index"));
+  const result = NodeChildProcess.spawnSync(
+    process.execPath,
+    [cli, "--cwd", cwd, "--base", "HEAD"],
+    { encoding: "utf8" },
+  );
+  NodeAssert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(result.stdout);
+  NodeAssert.deepEqual(plan.paths, [path]);
+  NodeAssert.deepEqual(plan.boundaries, all);
+  NodeAssert.deepEqual(NodeFS.readFileSync(NodePath.join(cwd, ".git/index")), index);
+});
+
+test("committed, index, working and untracked impacts remain unioned across reversals", () => {
+  const { cwd, git } = fixture();
+  const base = git("rev-parse", "HEAD").trim();
+  const committed = "committed consumer.ts";
+  NodeFS.writeFileSync(NodePath.join(cwd, committed), "committed\n");
+  git("add", committed);
+  git(
+    "-c",
+    "user.name=Selector fixture",
+    "-c",
+    "user.email=selector@example.invalid",
+    "commit",
+    "--quiet",
+    "-m",
+    "committed consumer",
+  );
+  git("rm", committed);
+  const original = "apps/web/src/components/chat/deleted file.ts";
+  const renamed = "renamed file.ts";
+  git("mv", original, renamed);
+  NodeFS.renameSync(NodePath.join(cwd, renamed), NodePath.join(cwd, original));
+  NodeFS.writeFileSync(NodePath.join(cwd, "untracked consumer.ts"), "untracked\n");
+  const index = NodeFS.readFileSync(NodePath.join(cwd, ".git/index"));
+  const before = git("status", "--porcelain=v1");
+  const result = NodeChildProcess.spawnSync(process.execPath, [cli, "--cwd", cwd, "--base", base], {
+    encoding: "utf8",
+  });
+  NodeAssert.equal(result.status, 0, result.stderr);
+  const plan = JSON.parse(result.stdout);
+  NodeAssert.deepEqual(plan.paths.sort(), [original, committed, renamed, "untracked consumer.ts"]);
+  NodeAssert.deepEqual(plan.boundaries, all);
+  NodeAssert.equal(git("status", "--porcelain=v1"), before);
+  NodeAssert.deepEqual(NodeFS.readFileSync(NodePath.join(cwd, ".git/index")), index);
 });
 
 test("missing target suite refuses execution before running a substring-filtered empty gate", () => {

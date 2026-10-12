@@ -107,7 +107,19 @@ export function main(argv) {
     ? [
         ...new Set(
           [
-            ...git(cwd, ["diff", "--no-renames", "--name-only", "-z", base, "--"]).split("\0"),
+            ...git(cwd, ["diff", "--no-renames", "--name-only", "-z", base, head, "--"]).split(
+              "\0",
+            ),
+            ...git(cwd, [
+              "diff",
+              "--cached",
+              "--no-renames",
+              "--name-only",
+              "-z",
+              head,
+              "--",
+            ]).split("\0"),
+            ...git(cwd, ["diff", "--no-renames", "--name-only", "-z", "--"]).split("\0"),
             ...git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
           ].filter(Boolean),
         ),

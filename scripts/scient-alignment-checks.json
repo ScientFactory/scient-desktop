@@ -18,7 +18,9 @@
     "apps/server/src/orchestration-v2/",
     "apps/mobile/src/",
     "apps/server/src/provider/",
-    "packages/provider-"
+    "packages/provider-",
+    "apps/web/src/components/chat/ChatComposer",
+    "apps/web/src/components/chat/ComposerPrimaryActions"
   ],
   "excludedPrefixes": [".repos/", "docs/internals/", "docs/operations/"],
   "groups": {
@@ -102,13 +104,15 @@
       ],
       "consumers": [
         "Orchestrator/ThreadManagementService -> EventSink exact-owner transaction -> EffectWorker/ProviderTurnControlService -> ProviderSessionManager/adapter -> ProviderEventIngestor",
-        "PendingStartOwner/NativeWorkflowOwnership, restarted descendants, frozen history and unrelated user roots"
+        "PendingStartOwner/NativeWorkflowOwnership, restarted descendants, frozen history and unrelated user roots",
+        "ChatComposer/ComposerPrimaryActions -> Stop/Resume callbacks; shared composer hosts select the full bundle conservatively"
       ],
       "decidingAssertions": [
         "ThreadStop targets exact provider turn and holds queues; synthetic execution must acknowledge interruption before child terminalizes.",
         "BackgroundWorkStop preserves superseded attempts, replacement sessions, parent/peer/user/frozen/wrong-workflow projections; released descendants include resumed coordinators and active children behind settled parents. Live/nonretryable owners remain running.",
         "EventSink.pendingStart rejects wrong run/attempt/session/native-thread/root/receipt without events/outbox/projection writes; accepted replay emits no second effect.",
-        "NativeStopConjunctions captures exact control request, truthful close-failure owner and real child-process ESRCH after successful shutdown, preserving peer process/queue."
+        "NativeStopConjunctions captures exact control request, truthful close-failure owner and real child-process ESRCH after successful shutdown, preserving peer process/queue.",
+        "ComposerPrimaryActions markup asserts Stop availability and Queue alongside Stop for a running turn with sendable content; it does not invoke Stop/Resume callbacks or qualify native interruption."
       ],
       "checks": {
         "server": [
@@ -118,11 +122,13 @@
           "src/orchestration-v2/EventSink.pendingStart.test.ts",
           "src/orchestration-v2/NativeStopConjunctions.integration.test.ts",
           "src/orchestration-v2/RunExecutionService.test.ts"
-        ]
+        ],
+        "web-unit": ["src/components/chat/ComposerPrimaryActions.test.tsx"]
       },
       "limits": [
         "Synthetic Claude SDK child-process traffic proves physical ownership for those fixtures, not authenticated providers, packaged desktop or mobile shutdown.",
-        "No universal exactly-once external execution guarantee; final provider/platform checks remain range-dependent."
+        "No universal exactly-once external execution guarantee; final provider/platform checks remain range-dependent.",
+        "Existing ComposerPrimaryActions tests assert control availability/labels only; Stop/Resume callback interaction is a remaining client gap, not established by backend ownership tests."
       ]
     },
     {
@@ -134,16 +140,19 @@
         "apps/server/src/serverRuntimeStartup",
         "apps/web/src/components/chat/QueuedRunsControl",
         "apps/mobile/src/",
-        "apps/web/src/components/ChatView"
+        "apps/web/src/components/ChatView",
+        "apps/web/src/components/chat/queuedRunShortcuts"
       ],
       "consumers": [
         "Native Orchestrator admission -> EventSink/outbox -> worker start; TerminalQueueHold -> explicit Resume/selected Send/admitted direct Send",
-        "Legacy readers/cutover retain inert held queue; web/mobile/client-runtime commands consume same contract"
+        "Legacy readers/cutover retain inert held queue; web/mobile/client-runtime commands consume same contract",
+        "ChatComposer submission intent -> resolveComposerSteerRequested; queuedRunShortcuts -> actual QueuedRunsControl imperative handle -> exact environment/thread/queuedRun/targetRun command"
       ],
       "decidingAssertions": [
         "NativeQueueHoldPolicy drains success FIFO once, holds Stop/failure, admits explicit Resume/selected Send/direct Send, refuses active head; continuation/Queue/Steer fallback never release prior held work. Late old terminal/checkpoint cannot re-hold replacement.",
         "QueuedStartRecovery preserves full message/skills/attachment bytes, modes, root/plan and queue position; explicit Retry creates a distinct attempt, stale start cannot change it.",
-        "Budget/QueuedRunSend bound queued admission. LegacyV1RecoveryAcceptance preserves original source bytes, rebuilds/idempotently imports held rows with no automatic offers; only explicit release starts work."
+        "Budget/QueuedRunSend bound queued admission. LegacyV1RecoveryAcceptance preserves original source bytes, rebuilds/idempotently imports held rows with no automatic offers; only explicit release starts work.",
+        "Client disposition preserves normal/alternate Queue/Steer intent and refuses idle steer. Real QueuedRunsControl shortcut fixture dispatches exact native queue-head/active-run identifiers, ignores repeats/unavailable shortcuts and sends the selected held run with exact environment/thread/run; the strip exposes no blanket Resume. Composer markup asserts Queue availability alongside Stop."
       ],
       "checks": {
         "server": [
@@ -152,11 +161,17 @@
           "src/orchestration-v2/QueuedMessageBudget.integration.test.ts",
           "src/orchestration-v2/scient-fork/QueuedRunSend.integration.test.ts",
           "src/orchestration-v2/legacy/LegacyV1RecoveryAcceptance.integration.test.ts"
+        ],
+        "web-unit": [
+          "src/components/chat/ComposerPrimaryActions.test.tsx",
+          "src/components/chat/queuedRunShortcuts.test.tsx",
+          "src/scient/threadQueue/disposition.test.ts"
         ]
       },
       "limits": [
         "Legacy compatibility suites qualify recovery/import only, never a second execution authority.",
-        "No native mobile interaction in this early bundle; changed mobile queue UI requires its applicable platform gate."
+        "No native mobile interaction in this early bundle; changed mobile queue UI requires its applicable platform gate.",
+        "Shortcut fixture exercises the actual React queue control with controlled command transport; it does not mount the complete ChatComposer or qualify a native desktop interaction."
       ]
     },
     {
@@ -175,13 +190,15 @@
         "apps/server/src/orchestration-v2/Orchestrator",
         "apps/server/src/orchestration-v2/ProviderTurnStartService",
         "apps/web/src/components/chat/ModelPicker",
-        "apps/web/src/components/chat/ComposerProvider"
+        "apps/web/src/components/chat/ComposerProvider",
+        "apps/web/src/components/ChatView"
       ],
       "consumers": [
         "ServerSettings schema/persistence -> ProviderInstanceRegistry reconciliation -> modelSelection.instanceId -> ProviderSessionManager exact session/MCP reuse",
         "Selected environment useSettings merge/write -> ProviderSettingsPanel scoped mutation; project settings upgrade",
         "Shared resolveProviderModelPreferences, resolveProjectSettings and applyServerSettingsPatch -> native model curation and project/environment precedence across clients",
-        "Atomic provider-instance settings -> synchronously acquired settings subscription -> hydration reconciliation -> rebuilt native driver -> ProviderRegistry aggregate snapshots"
+        "Atomic provider-instance settings -> synchronously acquired settings subscription -> hydration reconciliation -> rebuilt native driver -> ProviderRegistry aggregate snapshots",
+        "ChatView/ChatComposer compose settings, selected provider instance and model; shared ChatComposer hosts conservatively select all boundaries"
       ],
       "decidingAssertions": [
         "Server settings retain malformed/legacy configuration handling; registry projects assigned models by instance and reconciles exact scope.",
@@ -252,11 +269,23 @@
     {
       "id": "reader",
       "triggers": [
-        "apps/web/src/components/chat/",
+        "apps/web/src/components/chat/MessagesTimeline",
+        "apps/web/src/components/chat/readerScroll",
+        "apps/web/src/components/chat/readingEnd",
+        "apps/web/src/components/chat/responseFollow",
+        "apps/web/src/components/chat/timelineScroll",
+        "apps/web/src/components/chat/pageScrollController",
+        "apps/web/src/components/chat/liveFollowOffset",
+        "apps/web/src/components/chat/useBoundedAnswerFollow",
+        "apps/web/src/components/chat/useTimelineEndControl",
+        "apps/web/src/components/chat/unreadTimelineMessages",
+        "apps/web/src/components/chat/motionClock",
         "apps/web/src/components/ChatView",
         "apps/web/src/components/ChatMarkdown",
         "apps/web/src/scient/typography/",
-        "apps/web/src/index.css"
+        "apps/web/src/index.css",
+        "apps/web/src/components/chat/ModelPicker",
+        "apps/web/src/components/chat/ComposerProvider"
       ],
       "consumers": [
         "ChatView -> production MessagesTimeline -> readerScrolling/readingEnd/timelineScrollAnchoring",

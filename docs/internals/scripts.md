@@ -90,10 +90,15 @@ SCIENT_PI_TEST_BINARY=/absolute/path/to/pi pnpm alignment:checks --all --native 
 ```
 
 `--base` includes committed, staged, working changes and non-ignored untracked paths
-relative to that commit. Renames include both paths. `--path` is repeatable and describes
+by unioning base-to-HEAD, HEAD-to-index, index-to-working-tree and untracked inputs.
+A later restoration cannot cancel an earlier staged or committed impact. Deletes and
+renames retain their paths, including both rename sides. `--path` is repeatable and describes
 repository-relative consumer impact; it need not be an existing file. Choose exactly one
 selection mode. Unknown paths and shared contracts, client runtime, execution/provider
-cores, mobile surfaces, dependencies or test setup select all six boundaries. Maintainer prose under `docs/internals/` and
+cores, mobile surfaces, shared ChatComposer/ComposerPrimaryActions hosts, dependencies
+or test setup select all six boundaries. Recognized chat reader owners select reader
+checks; other chat paths retain the unknown-path fallback. ChatView also selects settings;
+queuedRunShortcuts selects the queue boundary and its existing client dispatch witnesses. Maintainer prose under `docs/internals/` and
 `docs/operations/`, and read-only `.repos/` references, are explicit exclusions; runtime
 instructions such as `AGENTS.md` are not. Review all exclusions for the actual range.
 
