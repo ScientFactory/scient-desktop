@@ -21,6 +21,8 @@ import {
 } from "./latexMeasurementSnapshot";
 import { measureLatexDocument } from "./latexVisualPaginationExtension";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
+import { latexViewportParagraphMeasurement } from "./latexViewport";
+import { measureLatexParagraph } from "./latexParagraphMeasurement";
 import "./scient-latex.css";
 
 let root: Root;
@@ -56,7 +58,7 @@ afterEach(() => {
   clearVisualDraft(key);
 });
 
-async function open() {
+async function open(source = input) {
   clearVisualDraft(key);
   await page.viewport(1400, 900);
   host = document.createElement("div");
@@ -67,8 +69,8 @@ async function open() {
     <LatexVisualEditor
       draftKey={key}
       fileRevision="snapshot-r1"
-      source={input}
-      sourceSnapshot={createLatexEditorSourceSnapshot(input)}
+      source={source}
+      sourceSnapshot={createLatexEditorSourceSnapshot(source)}
       disabled={false}
       onEditingChange={() => {}}
       onOpenSource={() => {}}
@@ -246,4 +248,71 @@ it("preserves an active math editor without constructing a second field", async 
   expect(field.hasFocus()).toBe(true);
   expect(field.value).toBe(value);
   expect(editor.state.doc).toBe(doc);
+}, 20000);
+
+it("reuses compatible paragraph geometry without cloning its formula contents", async () => {
+  await open(
+    input.replace(
+      "\\end{document}",
+      Array.from(
+        { length: 30 },
+        (_, index) => `Additional paragraph ${index}. More prose \\(z_${index}^2\\).\n\n`,
+      ).join("") + "\\end{document}",
+    ),
+  );
+  await expect
+    .poll(() => editor.view.dom.dataset.latexViewportPending, { timeout: 30000 })
+    .toBe("0");
+  const doc = editor.state.doc;
+  const full = await createLatexMeasurementSnapshot(editor.view, async () => true);
+  const compact = await createLatexMeasurementSnapshot(
+    editor.view,
+    async () => true,
+    (element) => latexViewportParagraphMeasurement(editor.view, element)?.height ?? null,
+  );
+  expect(full).not.toBeNull();
+  expect(compact).not.toBeNull();
+  try {
+    const reused = [...compact!.root.querySelectorAll("[data-latex-snapshot-reused]")];
+    expect(reused.length).toBeGreaterThan(0);
+    expect(reused.every((element) => element.childNodes.length === 0)).toBe(true);
+    expect(compact!.root.querySelectorAll("*").length).toBeLessThan(
+      full!.root.querySelectorAll("*").length,
+    );
+    const expected = collect(full!);
+    const actual = collect(compact!);
+    expect(actual.map((unit) => unit.position)).toEqual(expected.map((unit) => unit.position));
+    for (const [index, unit] of actual.entries()) {
+      expect(Math.abs(unit.top - expected[index]!.top)).toBeLessThan(1);
+      expect(Math.abs(unit.bottom - expected[index]!.bottom)).toBeLessThan(1);
+    }
+    expect(editor.state.doc).toBe(doc);
+  } finally {
+    full?.destroy();
+    compact?.destroy();
+  }
+}, 20000);
+
+it("reuses an empty paragraph workspace and isolates nested or failed measurements", async () => {
+  await open();
+  const paragraph = editor.view.dom.querySelector<HTMLElement>("p")!;
+  let first: HTMLElement | null = null;
+  measureLatexParagraph(editor.view, paragraph, (copy) => {
+    first = copy.parentElement;
+    measureLatexParagraph(editor.view, paragraph, (nested) => {
+      expect(nested.parentElement).not.toBe(first);
+      expect(first!.isConnected).toBe(true);
+    });
+  });
+  expect(first!.childNodes.length).toBe(0);
+  expect(first!.isConnected).toBe(false);
+  expect(() =>
+    measureLatexParagraph(editor.view, paragraph, (copy) => {
+      expect(copy.parentElement).toBe(first);
+      throw Error("interrupted measurement");
+    }),
+  ).toThrow("interrupted measurement");
+  expect(first!.childNodes.length).toBe(0);
+  measureLatexParagraph(editor.view, paragraph, (copy) => expect(copy.parentElement).toBe(first));
+  expect(first!.isConnected).toBe(false);
 }, 20000);

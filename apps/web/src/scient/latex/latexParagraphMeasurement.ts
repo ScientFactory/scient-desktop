@@ -120,6 +120,9 @@ const layoutProperties = [
   "text-orientation",
 ] as const;
 
+// Detached workspaces retain no source nodes, formulas or geometry between calls.
+const paragraphWorkspaces = new WeakMap<Document, { host: HTMLDivElement; busy: boolean }>();
+
 /** Measure one ordinary paragraph outside the editable DOM and its page gaps.
  * Resolved styles retain mark fonts and indentation without cloning any live
  * editor. Source positions come from the original text nodes, never the copy.
@@ -159,7 +162,13 @@ export function measureLatexParagraph<T>(
     return copy;
   };
   const copy = copyNode(original) as HTMLElement;
-  const host = owner.createElement("div");
+  let workspace = paragraphWorkspaces.get(owner);
+  if (!workspace || workspace.busy) {
+    workspace = { host: owner.createElement("div"), busy: false };
+    if (!paragraphWorkspaces.get(owner)?.busy) paragraphWorkspaces.set(owner, workspace);
+  }
+  workspace.busy = true;
+  const host = workspace.host;
   host.className = "scient-latex-visual-document";
   host.setAttribute("aria-hidden", "true");
   host.inert = true;
@@ -184,6 +193,8 @@ export function measureLatexParagraph<T>(
       },
     );
   } finally {
+    host.replaceChildren();
     host.remove();
+    workspace.busy = false;
   }
 }

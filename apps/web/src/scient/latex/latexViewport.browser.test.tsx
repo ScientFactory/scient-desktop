@@ -842,3 +842,45 @@ it("follows navigation that arrives while opening fonts are still pending", asyn
     document.fonts.delete(face);
   }
 }, 45000);
+
+it.each(["navigation", "selection"] as const)(
+  "cancels a held anchor settlement after same-top %s",
+  async (replacement) => {
+    const editor = await open();
+    await prepared(editor);
+    const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
+    scroll.scrollTop = 800;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const callbacks: FrameRequestCallback[] = [];
+    const frame = vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+      callbacks.push(callback);
+      return 1000000 + callbacks.length;
+    });
+    const cancel = vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+    const oldPadding = editor.view.dom.style.paddingTop;
+    try {
+      const anchor = captureLatexViewportAnchor(editor.view)!;
+      editor.view.dom.style.paddingTop = "100px";
+      anchor.restore();
+      expect(callbacks.length).toBeGreaterThan(0);
+      const desired = scroll.scrollTop;
+      editor.view.dom.style.paddingTop = "200px";
+      if (replacement === "navigation") navigateLatexViewport(editor.view);
+      else {
+        editor.commands.setTextSelection(editor.state.selection.head + 1);
+        captureLatexViewportAnchor(editor.view);
+      }
+      // Exercise even canceled callbacks to verify logical ownership, independent
+      // of the browser removing the scheduled frame from its queue.
+      for (const callback of [...callbacks]) callback(performance.now());
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(scroll.scrollTop).toBe(desired);
+      expect(current).toBe(source);
+    } finally {
+      editor.view.dom.style.paddingTop = oldPadding;
+      frame.mockRestore();
+      cancel.mockRestore();
+    }
+  },
+  45000,
+);

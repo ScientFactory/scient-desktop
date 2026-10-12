@@ -20,6 +20,7 @@ import {
   latexViewportContext,
   latexViewportMeasurement,
   latexViewportPreparedElement,
+  latexViewportParagraphMeasurement,
   latexViewportOpening,
   latexViewportUnit,
   recordLatexViewportMeasurement,
@@ -971,6 +972,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       let measuredDocument: DocumentNode | null = null;
       let typography = "";
       let fontKey = "";
+      let measuredFontKey = "";
       let lineCache = new WeakMap<DocumentNode, CachedLines>();
       let spacingCache: ParagraphSpacingCache = new WeakMap();
       let blockCache = new WeakMap<DocumentNode, CachedUnits>();
@@ -1194,6 +1196,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
         try {
           await prepareLatexReadingFonts(root);
           if (!stillCurrent()) return;
+          const sameFonts = measuredFontKey === latexReadingFontKey(root);
           fontKey = latexReadingFontKey(root);
           // Hiding only our widgets exposes natural flow without replacing the
           // editable DOM or touching its native selection and composition.
@@ -1204,6 +1207,11 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             style.textIndent,
             style.letterSpacing,
           ]);
+          const reusableLayout =
+            naturalBlocks !== null &&
+            sameFonts &&
+            currentTypography === typography &&
+            style.width === naturalWidth;
           if (currentTypography !== typography) {
             typography = currentTypography;
             invalidate();
@@ -1258,7 +1266,11 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             .find(0, view.state.doc.content.size, (spec) => spec.latexColumnBreak === true)
             .map((decoration) => decoration.from);
           if (!local) {
-            snapshot = await createLatexMeasurementSnapshot(view, yieldLayout);
+            snapshot = await createLatexMeasurementSnapshot(view, yieldLayout, (element) =>
+              reusableLayout && unchanged(element)
+                ? (latexViewportParagraphMeasurement(view, element)?.height ?? null)
+                : null,
+            );
             if (!stillCurrent()) return;
             if (!snapshot) {
               measureScope.dataset.latexMeasureVisible = "true";
@@ -1341,6 +1353,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           }
           naturalBlocks = measured?.naturalBlocks ?? nextBlocks;
           naturalWidth = style.width;
+          measuredFontKey = fontKey;
           dirtyBlocks.clear();
           directDirtyBlocks.clear();
           intrinsicDirtyBlocks.clear();

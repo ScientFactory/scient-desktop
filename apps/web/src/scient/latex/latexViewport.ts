@@ -16,7 +16,8 @@ import {
 import { Decoration, DecorationSet, type EditorView, type NodeView } from "@tiptap/pm/view";
 import { scientMarkdownSearchState } from "../markdownEditor/prosemirror/search";
 import { afterEditorPaint } from "./afterEditorPaint";
-import { mathReadingPreviewReady } from "./mathReadingPreview";
+import { mathReadingPreviewReady, hasMathReadingPreview } from "./mathReadingPreview";
+import { mathReadingPreparationKeys } from "./mathReadingNodeView";
 import { latexReferencePresentation } from "./latexEquationReferences";
 import { createLatexViewportRetention } from "./latexViewportRetention";
 import { latexTypographyKey } from "./latexTypography";
@@ -39,6 +40,8 @@ export interface ViewportMeasurement {
   readonly lines: readonly ViewportLine[];
   readonly wordSpacing?: number | undefined;
   readonly displayContentHeight?: number | undefined;
+  readonly mathKeys?: readonly string[];
+  readonly mathFallbacks?: number;
 }
 
 interface Unit {
@@ -239,6 +242,19 @@ export function recordLatexViewportMeasurement(
   if (view.state.doc.nodeAt(position) !== node) return;
   const context = latexViewportContext(view, node, position);
   if (context !== expectedContext) return;
+  const element = view.nodeDOM(position);
+  const previews =
+    element instanceof Element ? [...element.querySelectorAll(".scient-latex-math-preview")] : [];
+  const fallbacks = previews.filter((preview) =>
+    preview.hasAttribute("data-math-preview-fallback"),
+  );
+  measurement = {
+    ...measurement,
+    mathKeys: mathReadingPreparationKeys(
+      previews.filter((preview) => !preview.hasAttribute("data-math-preview-fallback")),
+    ),
+    mathFallbacks: fallbacks.length,
+  };
   let byContext = measurements.get(node);
   if (!byContext) measurements.set(node, (byContext = new Map()));
   const previous = byContext.get(context);
@@ -247,6 +263,8 @@ export function recordLatexViewportMeasurement(
     previous.height === measurement.height &&
     previous.wordSpacing === measurement.wordSpacing &&
     previous.displayContentHeight === measurement.displayContentHeight &&
+    JSON.stringify(previous.mathKeys) === JSON.stringify(measurement.mathKeys) &&
+    previous.mathFallbacks === measurement.mathFallbacks &&
     previous.lines.length === measurement.lines.length &&
     previous.lines.every((line, index) => {
       const next = measurement.lines[index]!;
@@ -269,6 +287,31 @@ export function recordLatexViewportMeasurement(
     measurement,
     JSON.stringify(measurement).length * 2,
     owners.get(view)?.reading(node) ?? false,
+    owners.get(view)?.reading(node) ? "replace" : "available",
+  );
+}
+
+/** Preparation survives live-DOM eviction, but not source/layout changes or
+ * the eviction of a required formula result from the shared byte budget.
+ */
+export function latexViewportPrepared(view: EditorView, node: DocumentNode, position: number) {
+  const measurement = latexViewportMeasurement(view, node, position);
+  if (!measurement) return false;
+  const mounted = view.nodeDOM(position);
+  // Interactive math owns its live geometry and is pinned by the viewport.
+  // Its passive cache key is recorded again after returning to reading mode.
+  if (mounted instanceof Element && mounted.querySelector("math-field")) return true;
+  let formulas = node.type.name === "latexDisplayMath" ? 1 : 0;
+  node.descendants((child) => {
+    if (child.type.name === "latexInlineMath") formulas++;
+  });
+  if (mounted instanceof Element && !mounted.hasAttribute("data-latex-viewport-closed")) {
+    const previews = [...mounted.querySelectorAll(".scient-latex-math-preview")];
+    if (previews.length >= formulas && previews.every(mathReadingPreviewReady)) return true;
+  }
+  return (
+    (measurement.mathKeys?.length ?? 0) + (measurement.mathFallbacks ?? 0) >= formulas &&
+    (measurement.mathKeys ?? []).every(hasMathReadingPreview)
   );
 }
 
@@ -283,29 +326,63 @@ export function latexViewportOpening(view: EditorView): boolean {
 
 /** Explicit navigation supersedes restoration even if scrollTop is unchanged. */
 export function navigateLatexViewport(view: EditorView, position?: number) {
+  anchorSettlements.get(view)?.();
+  anchorSettlements.delete(view);
+  readingAnchors.delete(view);
   owners.get(view)?.navigate(position);
 }
 
 const anchorSettlements = new WeakMap<EditorView, () => void>();
+const readingAnchors = new WeakMap<
+  EditorView,
+  {
+    document: DocumentNode;
+    selection: EditorState["selection"];
+    node: DocumentNode;
+    position: number;
+    viewport: HTMLElement;
+    offset: number;
+    expectedTop: number;
+  }
+>();
 
 /** Anchor a viewport exchange to the latest visible source block, not a stale caret. */
-export function captureLatexViewportAnchor(view: EditorView) {
+export function captureLatexViewportAnchor(view: EditorView, incoming?: ReadonlySet<DocumentNode>) {
   const viewport = view.dom.closest<HTMLElement>(".scient-latex-visual-scroll");
   if (!viewport || !view.dom.isConnected || viewport.clientHeight <= 0) return null;
   const box = viewport.getBoundingClientRect();
-  const paper = view.dom.getBoundingClientRect();
-  const target = view.dom.ownerDocument.elementFromPoint(
-    Math.min(box.right - 20, Math.max(box.left + 20, paper.left + paper.width / 2)),
-    box.top + Math.min(60, box.height / 3),
-  );
-  let element = target?.closest<HTMLElement>("[data-latex-viewport]");
+  const previous = readingAnchors.get(view);
+  const retained =
+    previous &&
+    previous.document === view.state.doc &&
+    previous.selection.eq(view.state.selection) &&
+    previous.viewport === viewport &&
+    Math.abs(previous.expectedTop - viewport.scrollTop) < 1 &&
+    view.state.doc.nodeAt(previous.position) === previous.node;
+  const previousElement = retained ? view.nodeDOM(previous.position) : null;
+  let target: Element | null = null;
+  if (!(previousElement instanceof HTMLElement)) {
+    const paper = view.dom.getBoundingClientRect();
+    target = view.dom.ownerDocument.elementFromPoint(
+      Math.min(box.right - 20, Math.max(box.left + 20, paper.left + paper.width / 2)),
+      box.top + Math.min(60, box.height / 3),
+    );
+  }
+  let element =
+    previousElement instanceof HTMLElement
+      ? previousElement
+      : target?.closest<HTMLElement>("[data-latex-viewport]");
   let member = element && memberElements.get(element);
   // During cold preparation a partially visible predecessor can change its
   // height. Prefer the first whole visible source block so publishing that
   // height cannot move the content the reader is about to enter.
   let firstTop = box.top + Math.min(350, box.height / 2);
   let sibling = element?.nextElementSibling;
-  for (let index = 0; sibling && index < 8; index++, sibling = sibling.nextElementSibling) {
+  for (
+    let index = 0;
+    !retained && sibling && index < 8;
+    index++, sibling = sibling.nextElementSibling
+  ) {
     const candidate = memberElements.get(sibling);
     if (!candidate) continue;
     const rect = candidate.dom.getBoundingClientRect();
@@ -314,8 +391,15 @@ export function captureLatexViewportAnchor(view: EditorView) {
     member = candidate;
     element = candidate.dom;
   }
+  const viewportState = key.getState(view.state);
+  const relevant = (candidate: Member) =>
+    candidate.dom.isConnected &&
+    (candidate.mounted ||
+      viewportState?.visible.has(candidate.node()) ||
+      viewportState?.pageDemand.has(candidate.node()) ||
+      incoming?.has(candidate.node()));
   for (const candidate of members.get(view) ?? []) {
-    if (!candidate.mounted || !candidate.dom.isConnected) continue;
+    if (retained || !relevant(candidate)) continue;
     const rect = candidate.dom.getBoundingClientRect();
     if (rect.top < box.top + 20 || rect.top >= firstTop) continue;
     firstTop = rect.top;
@@ -323,11 +407,12 @@ export function captureLatexViewportAnchor(view: EditorView) {
     element = candidate.dom;
   }
   // Headings, title whitespace and page gaps need a nearby source unit too.
-  // Search only bounded mounted views; distant opaque units need no layout reads.
+  // Search mounted and incoming/observed cold views; distant opaque units
+  // need no layout reads. Keep one source identity throughout preparation.
   if (!member) {
     let nearest = Infinity;
     for (const candidate of members.get(view) ?? []) {
-      if (!candidate.mounted || !candidate.dom.isConnected) continue;
+      if (!relevant(candidate)) continue;
       const rect = candidate.dom.getBoundingClientRect();
       if (rect.bottom <= box.top || rect.top >= box.bottom) continue;
       const distance = Math.abs(rect.top - (box.top + Math.min(60, box.height / 3)));
@@ -339,8 +424,24 @@ export function captureLatexViewportAnchor(view: EditorView) {
   }
   const position = member?.position();
   if (!member || position === undefined || !element) return null;
-  const top = element.getBoundingClientRect().top;
+  const top = retained ? box.top + previous.offset : element.getBoundingClientRect().top;
   const node = member.node();
+  if (!retained) {
+    anchorSettlements.get(view)?.();
+    anchorSettlements.delete(view);
+  }
+  const readingAnchor = retained
+    ? previous
+    : {
+        document: view.state.doc,
+        selection: view.state.selection,
+        node,
+        position,
+        viewport,
+        offset: top - box.top,
+        expectedTop: viewport.scrollTop,
+      };
+  readingAnchors.set(view, readingAnchor);
   return {
     position,
     top,
@@ -353,6 +454,7 @@ export function captureLatexViewportAnchor(view: EditorView) {
       if (!(next instanceof HTMLElement)) return;
       const delta = next.getBoundingClientRect().top - top;
       viewport.scrollTop += delta;
+      readingAnchor.expectedTop = viewport.scrollTop;
       // Layout can settle after a scroll correction. Correct that once, only
       // while navigation, source and selection remain unchanged.
       if (Math.abs(delta) < 0.5) return;
@@ -364,6 +466,7 @@ export function captureLatexViewportAnchor(view: EditorView) {
         anchorSettlements.delete(view);
         if (
           view.isDestroyed ||
+          readingAnchors.get(view) !== readingAnchor ||
           !viewport.isConnected ||
           view.state.doc !== document ||
           !view.state.selection.eq(selection) ||
@@ -371,12 +474,28 @@ export function captureLatexViewportAnchor(view: EditorView) {
         )
           return;
         const settled = view.nodeDOM(position);
-        if (settled instanceof HTMLElement)
+        if (settled instanceof HTMLElement) {
           viewport.scrollTop += settled.getBoundingClientRect().top - top;
+          readingAnchor.expectedTop = viewport.scrollTop;
+        }
       });
       anchorSettlements.set(view, cancel);
     },
   };
+}
+
+/** Natural geometry for a source-backed paragraph in the current layout. */
+export function latexViewportParagraphMeasurement(view: EditorView, element: Element) {
+  const member = memberElements.get(element);
+  const position = member?.position();
+  if (
+    !member ||
+    member.node().type.name !== "paragraph" ||
+    position === undefined ||
+    element.parentElement !== view.dom
+  )
+    return null;
+  return latexViewportMeasurement(view, member.node(), position);
 }
 
 /** A remounted unit may use geometry from the same source/layout generation. */
@@ -397,6 +516,14 @@ const orderedPagePlacements = new WeakMap<
   readonly { position: number; page: number }[],
   readonly { position: number; page: number }[]
 >();
+const pageUnits = new WeakMap<
+  readonly { position: number; page: number }[],
+  WeakMap<DocumentNode, Map<number, readonly Unit[]>>
+>();
+const unitPages = new WeakMap<
+  readonly { position: number; page: number }[],
+  WeakMap<DocumentNode, Map<DocumentNode, Set<number>>>
+>();
 
 export function latexViewportPageNodes(
   view: EditorView,
@@ -408,23 +535,48 @@ export function latexViewportPageNodes(
     ordered = [...placements].sort((a, b) => a.position - b.position);
     orderedPagePlacements.set(placements, ordered);
   }
-  return documentUnits(view.state.doc).filter((unit) => {
-    let low = 0,
-      high = ordered.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if (ordered[middle]!.position <= unit.position) low = middle + 1;
-      else high = middle;
+  let documents = pageUnits.get(placements);
+  if (!documents) pageUnits.set(placements, (documents = new WeakMap()));
+  let index = documents.get(view.state.doc);
+  if (!index) {
+    index = new Map();
+    const membership = new Map<DocumentNode, Set<number>>();
+    let cursor = 0;
+    for (const unit of documentUnits(view.state.doc)) {
+      while (cursor < ordered.length && ordered[cursor]!.position <= unit.position) cursor++;
+      const touching = new Set<number>();
+      if (cursor) touching.add(ordered[cursor - 1]!.page + 1);
+      for (
+        let point = cursor;
+        point < ordered.length && ordered[point]!.position < unit.position + unit.node.nodeSize;
+        point++
+      )
+        touching.add(ordered[point]!.page + 1);
+      for (const page of touching) index.set(page, [...(index.get(page) ?? []), unit]);
+      membership.set(unit.node, touching);
     }
-    if (low && pages.has(ordered[low - 1]!.page + 1)) return true;
-    for (
-      let index = low;
-      index < ordered.length && ordered[index]!.position < unit.position + unit.node.nodeSize;
-      index++
-    )
-      if (pages.has(ordered[index]!.page + 1)) return true;
-    return false;
-  });
+    documents.set(view.state.doc, index);
+    let byDocument = unitPages.get(placements);
+    if (!byDocument) unitPages.set(placements, (byDocument = new WeakMap()));
+    byDocument.set(view.state.doc, membership);
+  }
+  const found = new Set<Unit>();
+  for (const page of pages) for (const unit of index.get(page) ?? []) found.add(unit);
+  return [...found].sort((a, b) => a.position - b.position);
+}
+
+/** Known offscreen source members have no visible membership; their completion
+ * must not invalidate an unrelated reading page.
+ */
+export function latexViewportMemberPages(
+  view: EditorView,
+  element: Element,
+  placements: readonly { position: number; page: number }[],
+) {
+  const member = memberElements.get(element);
+  if (!member) return null;
+  latexViewportPageNodes(view, new Set(), placements);
+  return unitPages.get(placements)?.get(view.state.doc)?.get(member.node()) ?? new Set<number>();
 }
 
 export function demandLatexViewportPages(view: EditorView, nodes: ReadonlySet<DocumentNode>) {
@@ -761,6 +913,8 @@ function createOwner(
   let preparing = new Set<DocumentNode>();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let measurementRequested = false;
+  let cachePressure = latexReadingCacheBudget.statistics();
+  let idleWarmCapacity = true;
   let refreshRequested = false;
   const refreshNodes = new Set<DocumentNode>();
   let previousDocument = view.state.doc;
@@ -860,7 +1014,9 @@ function createOwner(
       (update.print === undefined || update.print === previous.print)
     )
       return;
-    const anchor = previous.opening ? null : captureLatexViewportAnchor(view);
+    const anchor = previous.opening
+      ? null
+      : captureLatexViewportAnchor(view, update.pageDemand ?? update.visible);
     view.dispatch(view.state.tr.setMeta(key, update).setMeta("addToHistory", false));
     if (update.opening !== undefined && update.opening !== previous.opening)
       onOpeningChange(update.opening);
@@ -912,6 +1068,8 @@ function createOwner(
       layoutReady = false;
       measurementRequested = false;
       refreshRequested = true;
+      idleWarmCapacity = true;
+      cachePressure = latexReadingCacheBudget.statistics();
     }
     if (!latexReadingFontsReady(view.dom)) {
       statusLabel.textContent = key.getState(view.state)?.opening
@@ -1129,22 +1287,26 @@ function createOwner(
       return;
     }
     // Wait for the currently prepared nodes to receive accurate natural geometry.
+    const capacity = latexReadingCacheBudget.statistics();
+    if (capacity.spaceGeneration !== cachePressure.spaceGeneration) idleWarmCapacity = true;
+    else if (capacity.capacityRejections > cachePressure.capacityRejections)
+      idleWarmCapacity = false;
+    cachePressure = capacity;
     preparing = new Set(
       [...preparing].filter((node) => {
         const unit = all.find((unit) => unit.node === node);
-        return unit && !latexViewportMeasurement(view, node, unit.position);
+        return unit && !latexViewportPrepared(view, node, unit.position);
       }),
     );
     const pending = all.filter(
       (unit) =>
-        !viewport.fallback.has(unit.node) &&
-        !latexViewportMeasurement(view, unit.node, unit.position),
+        !viewport.fallback.has(unit.node) && !latexViewportPrepared(view, unit.node, unit.position),
     );
     const readingPending = pending.filter((unit) => required.has(unit.node));
     const urgent = readingPending.length
       ? readingPending
       : pending.filter((unit) => viewport.presented.has(unit.node));
-    const candidates = (urgent.length ? urgent : pending).filter(
+    const candidates = (urgent.length ? urgent : idleWarmCapacity ? pending : []).filter(
       () => urgent.length || performance.now() - lastScroll > 180,
     );
     candidates.sort(
@@ -1174,7 +1336,7 @@ function createOwner(
         }
       }
     }
-    if (!target && pending.length) {
+    if (!target && pending.length && idleWarmCapacity) {
       clearTimeout(timeout);
       timeout = setTimeout(schedule, 190);
     }
@@ -1393,6 +1555,9 @@ function createOwner(
   document.fonts?.addEventListener("loadingdone", changed);
   window.addEventListener("beforeprint", beforePrint);
   window.addEventListener("afterprint", afterPrint);
+  const unsubscribeSpace = latexReadingCacheBudget.subscribeSpace(() => {
+    if (!idleWarmCapacity) schedule();
+  });
   schedule();
   return {
     context,
@@ -1421,7 +1586,11 @@ function createOwner(
       schedule();
     },
     reading(node: DocumentNode) {
-      return visited.has(node);
+      return (
+        visited.has(node) ||
+        requiredNodes.has(node) ||
+        !!key.getState(view.state)?.presented.has(node)
+      );
     },
     observe(member: Member) {
       observer?.observe(member.dom);
@@ -1482,6 +1651,9 @@ function createOwner(
       )
         this.navigate(view.state.selection.head);
       if (previousDocument !== view.state.doc) {
+        readingAnchors.delete(view);
+        anchorSettlements.get(view)?.();
+        anchorSettlements.delete(view);
         previousDocument = view.state.doc;
         resetOpeningFrames();
         const viewport = key.getState(view.state);
@@ -1501,11 +1673,13 @@ function createOwner(
     },
     destroy() {
       saveReadingPosition();
+      unsubscribeSpace();
       disposed = true;
       cancel?.();
       clearTimeout(timeout);
       clearTimeout(scrollIdleTimer);
       retention.clear();
+      readingAnchors.delete(view);
       anchorSettlements.get(view)?.();
       anchorSettlements.delete(view);
       status.remove();

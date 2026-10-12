@@ -15,6 +15,7 @@ export interface LatexMeasurementGeometry {
 export async function createLatexMeasurementSnapshot(
   view: EditorView,
   yieldForInput: () => Promise<boolean>,
+  reuseParagraphHeight: (element: HTMLElement) => number | null = () => null,
 ): Promise<(LatexMeasurementGeometry & { destroy(): void }) | null> {
   const original = view.dom;
   if (original.querySelector("math-field, iframe, video, audio, object, embed")) return null;
@@ -75,7 +76,21 @@ export async function createLatexMeasurementSnapshot(
       if (child.value instanceof HTMLElement && child.value.localName.includes("-")) return null;
       const copy = clone(child.value);
       item.copy.appendChild(copy);
-      stack.push(frame(child.value, copy));
+      const height = child.value instanceof HTMLElement ? reuseParagraphHeight(child.value) : null;
+      if (
+        copy instanceof HTMLElement &&
+        height !== null &&
+        Number.isFinite(height) &&
+        height >= 0
+      ) {
+        // The cached branch of measurement consumes outer geometry and source
+        // positions only. Formula shadows and text need no second live copy.
+        copy.dataset.latexViewport = "closed";
+        copy.dataset.latexSnapshotReused = "true";
+        copy.dataset.latexViewportClosed = "true";
+        copy.style.setProperty("--scient-latex-viewport-natural-height", `${height}px`);
+        copy.style.setProperty("--scient-latex-viewport-gap-height", "0px");
+      } else stack.push(frame(child.value, copy));
     } else if (
       !item.shadowCopied &&
       item.source instanceof HTMLElement &&
