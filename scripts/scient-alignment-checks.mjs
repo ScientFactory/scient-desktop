@@ -1,10 +1,10 @@
-import * as ChildProcess from "node:child_process";
-import * as FS from "node:fs";
-import * as Path from "node:path";
-import { pathToFileURL } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 const mapping = JSON.parse(
-  FS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url)),
+  NodeFS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url)),
 );
 const matches = (path, prefix) => path.startsWith(prefix);
 
@@ -70,7 +70,7 @@ function parseArgs(argv) {
     );
   for (const path of args.paths) {
     if (
-      Path.posix.normalize(path) !== path ||
+      NodePath.posix.normalize(path) !== path ||
       path.startsWith("/") ||
       path.startsWith("../") ||
       path.includes("\\") ||
@@ -89,12 +89,16 @@ function parseArgs(argv) {
 }
 
 const git = (cwd, args) =>
-  ChildProcess.execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+  NodeChildProcess.execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
 
 /** Run the target checkout's existing suites serially; this never copies lane source into it. */
 export function main(argv) {
   const args = parseArgs(argv);
-  const cwd = FS.realpathSync(git(args.cwd, ["rev-parse", "--show-toplevel"]).trim());
+  const cwd = NodeFS.realpathSync(git(args.cwd, ["rev-parse", "--show-toplevel"]).trim());
   const head = git(cwd, ["rev-parse", "HEAD"]).trim();
   const base = args.base
     ? git(cwd, ["rev-parse", "--verify", "--end-of-options", `${args.base}^{commit}`]).trim()
@@ -125,7 +129,7 @@ export function main(argv) {
     return [
       {
         id,
-        cwd: Path.join(cwd, group.cwd),
+        cwd: NodePath.join(cwd, group.cwd),
         argv: ["pnpm", ...group.args, ...files],
         files,
         requiredEnv: group.requiredEnv ?? null,
@@ -155,7 +159,7 @@ export function main(argv) {
   // suite is unavailable evidence, never a substring-filtered empty success.
   for (const command of commands.filter((command) => command.included)) {
     for (const file of command.files) {
-      if (!FS.statSync(Path.join(command.cwd, file), { throwIfNoEntry: false })?.isFile()) {
+      if (!NodeFS.statSync(NodePath.join(command.cwd, file), { throwIfNoEntry: false })?.isFile()) {
         throw new Error(`Unavailable check in target checkout: ${file}`);
       }
     }
@@ -168,7 +172,7 @@ export function main(argv) {
   }
   for (const command of commands.filter((command) => command.included)) {
     const start = performance.now();
-    const result = ChildProcess.spawnSync(command.argv[0], command.argv.slice(1), {
+    const result = NodeChildProcess.spawnSync(command.argv[0], command.argv.slice(1), {
       cwd: command.cwd,
       stdio: "inherit",
     });
@@ -186,7 +190,10 @@ export function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(Path.resolve(process.argv[1])).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === NodeURL.pathToFileURL(NodePath.resolve(process.argv[1])).href
+) {
   try {
     process.exitCode = main(process.argv.slice(2));
   } catch (error) {

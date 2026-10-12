@@ -19,6 +19,10 @@ import {
   ensure,
 } from "./PiNativeTestHarness.ts";
 
+const decodeModelMessages = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ role: Schema.String, content: Schema.Unknown })),
+);
+
 it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
   for (const capabilities of [
     new Set<string>(),
@@ -199,9 +203,7 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
             );
             assert.lengthOf(modelRequests, 4);
             assert.include(modelRequests[0]!, "scient_test_echo");
-            const messages = Schema.decodeUnknownSync(
-              Schema.Array(Schema.Struct({ role: Schema.String, content: Schema.Unknown })),
-            )(decodeRecord(modelRequests[0]!).messages);
+            const messages = decodeModelMessages(decodeRecord(modelRequests[0]!).messages);
             const system = messages.find((message) => message.role === "system")?.content;
             if (typeof system !== "string") return yield* Effect.die("Missing native system input");
             assert.include(system, SCIENT_ORCHESTRATION_INSTRUCTIONS.trim());
