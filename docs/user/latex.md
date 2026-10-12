@@ -1267,6 +1267,12 @@ numbers, indented entries and clickable targets. Captions and references share
 chapter numbering (for example, Figure 1.1 and Table 2.1). Page numbers reflect the
 Visual layout; exact float placement and compiled page breaks remain PDF features.
 
+Visual prepares reading content in the background while you pause. Completed
+content stays mounted while its reading memory budget permits; recently visited
+pages take priority when space runs short. Interactive equation editors are created
+on demand. Your formula stays visible while its editor prepares, with a small
+preparation hint. A stalled editor keeps readable content and offers **Retry**.
+
 Theorem and proof bodies remain editable when their formulas use grouped legacy
 font commands such as `K_{\rm LQR}`. References in proof headings are clickable,
 and algorithms may retain a size declaration such as `\small` before their steps.

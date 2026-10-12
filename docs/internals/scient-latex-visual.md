@@ -1819,8 +1819,13 @@ UI font completion does not invalidate the editor. Later real metrics, source,
 macro, reference, ancestor or typography changes still invalidate incompatible
 geometry. Retention never grants validity to an old measurement.
 
-Recent viewport blocks remain mounted under a 128-block, 4 MiB estimated
-source/DOM admission budget, without a time expiry. Visible, selected and active
+Completed passive reading blocks remain mounted under a 64 MiB estimated
+source/DOM admission budget, without a time expiry or independent block-count
+ceiling. Idle completions use spare capacity; new reading demand evicts background
+views before recently visited ones. The estimate includes source attributes,
+light and mathematical shadow elements, text and DOM attributes. Immutable source
+weights and context-compatible DOM weights are reused until resource/preview/input
+view changes. Visible, selected and active
 blocks retain their separate admission rules. Geometry and passive formula markup
 share a 24 MiB estimated byte budget, including keys and entry overhead, with
 idle admission declining new results when full instead of evicting completed
@@ -1837,6 +1842,24 @@ preempts idle preparation, admitting at most eight blocks per paint and measurin
 up to 32 required units separately from background cohorts of up to 64. Typing,
 composition and active scrolling defer background admission. Reading feedback
 reflects missing visible content rather than distant unfinished work.
+Compatible geometry can already exist for a block which has never mounted its
+reading content. When preparation completes or pauses at reusable-cache capacity,
+idle admission also mounts those blocks: up to eight known-weight views with a
+cumulative byte reservation, or one exploratory view whose complete DOM estimate
+is charged on the next paint. Completed passive DOM does not own interactive
+MathLive input models.
+
+Equation activation keeps the original passive wrapper and equation numbers in
+normal flow while the existing interactive React view initializes in an absolute,
+transparent, input-protected sibling. Pending focus belongs to the noneditable
+reading wrapper; Tab cancels staging before normal navigation. A distinct `scient-latex-math-ready` signal waits for
+rendered MathLive ink and stable geometry; `scient-latex-math-mounted` keeps its
+existing semantics. Publication removes only the passive wrapper, leaving the
+connected custom element intact. Native keyboard-sink focus completes the existing
+MathLive focus handoff immediately. Pending input cannot replace the selected atom:
+typing, IME, paste and drop remain blocked until publication. New source, context,
+selection, readonly, outside focus/pointer intent or disposal cancels admission.
+Failure after a bounded deadline retains readable ink and exposes local Retry.
 
 Scrolling uses one preparation mask per sheet, outside the editable DOM. Complete
 visible pages and one page ahead are admitted independently of thumbnail demand.
@@ -2442,7 +2465,7 @@ columns, custom editors and protected embedded elements retain the full snapshot
 or live measurement fallback. One empty detached paragraph workspace per document
 is reused; nested calls receive a separate workspace, and cleanup runs after errors.
 
-The 24 MiB reusable cache and 128-block/4 MiB live reading admission limits remain
+The 24 MiB reusable cache and 64 MiB passive reading DOM admission limits remain
 conservative estimates rather than claims about total JavaScript heap. Source/model,
 node-local geometry, decoded images, active editors and transient rendering remain
 outside that reusable-cache estimate. Background-first LRU uses an ordered set,
