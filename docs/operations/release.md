@@ -54,6 +54,37 @@ Release versions follow the current stable line. A version does not imply
 proximity to `v1.0.0`; semantic versions permit any number of patch and minor
 releases before the product earns the `1.0.0` contract.
 
+## Runtime payload checks
+
+The WSL tarball omits `*.map` at every depth, matching the existing desktop
+ASAR and Windows server-sidecar source-map policy. Build output retains its
+maps for debugging; archive filtering does not delete them or change map
+generation. Packaged launchers do not enable source-map loading. Preserve the
+corresponding source revision and build output when diagnosing bundled stacks.
+
+Whisper, resource monitor, and SyncTeX run from external Electron resources.
+Their `apps/desktop/prod-resources` staging trees are excluded from `app.asar`
+on every platform; Linux also excludes the KDE and Hyprland capture staging
+trees. Keep individual exclusions: Linux registration reads
+`apps/desktop/prod-resources/icon.png` from the archive, and other branding
+files must remain available.
+
+The artifact builder inspects emitted ASAR contents and checks every staged
+runtime file exists and is nonempty in external resources, including libraries,
+provenance, and licenses. On POSIX targets it also checks that executable files
+retain executable permission and requires the named runtime binaries to be
+executable even if staging already lost their mode. Linux's archived
+registration icon is required.
+Windows validation separately inspects the actual WSL tar members and rejects
+maps even when the archive digest is valid.
+
+These are structural checks, not native acceptance. Payload changes still need
+macOS voice/resource-monitor/SyncTeX acceptance, Windows/WSL startup, terminal,
+provider, search and install/update checks, and Linux capture/runtime/registration
+acceptance. Record compressed artifact sizes separately from raw file sizes;
+repacking or compression models cannot establish installer download savings.
+Keep differential updates enabled and qualify the normal update path.
+
 ## Production identity and data safety
 
 Production artifacts use product name `Scient`, bundle/application ID
