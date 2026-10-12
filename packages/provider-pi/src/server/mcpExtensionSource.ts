@@ -16,6 +16,7 @@ export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
+export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -36,6 +37,7 @@ import { Type } from "typebox";
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
+const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const RUNTIME_GUIDANCE_ENV = "PI_RUNTIME_GUIDANCE";
 const TOOL_NAME_MAP_ENV = "PI_TOOL_NAME_MAP";
 const ORCHESTRATION_INSTRUCTIONS = ${
@@ -61,6 +63,7 @@ type McpTool = {
   readonly name: string;
   readonly description?: string;
   readonly inputSchema?: Record<string, unknown>;
+  readonly annotations?: { readonly readOnlyHint?: boolean };
   readonly outputSchema?: Record<string, unknown>;
 };
 
@@ -328,10 +331,21 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     typeof pi.getAllTools === "function" &&
     pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
 
+  const readOnlyMcpTools = new Set<string>();
+  const isReadOnlyMcpTool = (name: string) => {
+    const extensionPath = env(EXTENSION_PATH_ENV);
+    if (extensionPath === undefined || !readOnlyMcpTools.has(name) || typeof pi.getAllTools !== "function") return false;
+    // A user extension may own the same name. Only our registered HTTP bridge
+    // may inherit the canonical T3 server's read-only annotation.
+    return pi.getAllTools().some((tool) => tool.name === name &&
+      typeof tool.sourceInfo?.path === "string" &&
+      NodePath.resolve(tool.sourceInfo.path) === NodePath.resolve(extensionPath));
+  };
+
   pi.on("tool_call", async (event, ctx) => {
     const mode = runtimeMode();
     if (mode === "full-access") return;
-    if (event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) {
+    if ((event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) || isReadOnlyMcpTool(event.toolName)) {
       return;
     }
     if (mode === "auto-accept-edits" && FILE_CHANGE_TOOLS.has(event.toolName)) {
@@ -396,8 +410,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   const registerTools = () => {
     // The host supplies its canonical Scient projection; the MCP call itself
     // always uses the canonical catalog name from the bridge.
+    readOnlyMcpTools.clear();
     for (const tool of catalog) {
       const name = modelToolName(tool.name);
+      if (tool.annotations?.readOnlyHint === true) readOnlyMcpTools.add(name);
       const exposure = deferOptionalTools && !directTools.has(tool.name) ? "deferred" : "direct";
       registeredToolNames.add(name);
       pi.registerTool({

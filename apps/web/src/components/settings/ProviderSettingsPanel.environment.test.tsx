@@ -110,6 +110,8 @@ vi.mock("../../hooks/useSettings", () => ({
     settingsState.updateEnvironmentIds.push(environmentId);
     return settingsState.updateSettings;
   },
+  useUpdateEnvironmentModelPreferences: () => settingsState.updateSettings,
+  useToggleEnvironmentModelFavorite: () => () => undefined,
   usePersistEnvironmentProviderInstanceMutation: (environmentId: EnvironmentId) => {
     settingsState.mutationEnvironmentIds.push(environmentId);
     return settingsState.mutateProviderInstance;
@@ -140,6 +142,7 @@ vi.mock("../../state/session", () => ({
 
 vi.mock("../../state/entities", () => ({
   useProjects: () => [],
+  useServerConfigs: () => new Map(),
 }));
 
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
@@ -689,16 +692,34 @@ describe("EnvironmentProviderSettings routing", () => {
   });
 
   it.each([
-    ["onFavoriteModelsChange", { favorites: [{ provider: codexId, model: "chosen" }] }],
+    [
+      "onFavoriteModelsChange",
+      { setModelFavorites: [{ provider: codexId, model: "chosen", favorite: true }] },
+    ],
     [
       "onHiddenModelsChange",
-      { providerModelPreferences: { [codexId]: { hiddenModels: ["chosen"], modelOrder: [] } } },
+      {
+        setModelsHidden: [
+          {
+            provider: codexId,
+            model: "chosen",
+            hidden: true,
+            initialPreferences: { hiddenModels: [], modelOrder: [] },
+          },
+        ],
+      },
     ],
     [
       "onModelOrderChange",
-      { providerModelPreferences: { [codexId]: { hiddenModels: [], modelOrder: ["chosen"] } } },
+      {
+        setProviderModelOrder: {
+          provider: codexId,
+          modelOrder: ["chosen"],
+          initialPreferences: { hiddenModels: [], modelOrder: [] },
+        },
+      },
     ],
-  ])("saves %s on this device without changing the selected server", (action, expected) => {
+  ])("saves %s on the selected environment for every connected client", (action, expected) => {
     atoms.providers = [provider()];
     const panel = renderPanel({ targetInstanceId: codexId });
     const editor = visitElements(
@@ -708,8 +729,8 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(editor).not.toBeNull();
     if (!editor) throw new Error("Provider editor was not rendered");
     (editor.props[action] as (models: string[]) => void)(["chosen"]);
-    expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
-    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+    expect(settingsState.updateSettings).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(settingsState.updateClientSettings).not.toHaveBeenCalled();
   });
 
   it("does not substitute another account when the requested instance was removed", () => {

@@ -101,6 +101,7 @@ it.live(
                     ? "Root answer at the exact native boundary"
                     : "Native destination answer";
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(messages),

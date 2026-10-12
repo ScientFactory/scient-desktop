@@ -85,6 +85,8 @@ import Migration0062 from "./Migrations/062_WebhookRelayDeliveries.ts";
 import Migration0063 from "./Migrations/063_McpAppModelContext.ts";
 // Incoming migrations follow Scient's immutable shipped ledger.
 import Migration0064 from "./Migrations/064_ThreadSnapshotWindowIndexes.ts";
+// T3 migration 61 follows Scient shipped ledger at the next free ID.
+import Migration0065 from "./Migrations/065_PullRequestReviewGuides.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -173,6 +175,7 @@ export const migrationEntries = [
   [62, "WebhookRelayDeliveries", Migration0062],
   [63, "McpAppModelContext", Migration0063],
   [64, "ThreadSnapshotWindowIndexes", Migration0064],
+  [65, "PullRequestReviewGuides", Migration0065],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

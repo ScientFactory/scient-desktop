@@ -23,6 +23,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -60,6 +61,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
             }),
           ),
       }),
+      ServerSettings.layerTest(),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -139,6 +141,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
             }),
           ),
       }),
+      ServerSettings.layerTest(),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -244,6 +247,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
             }),
           ),
       }),
+      ServerSettings.layerTest(),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -333,7 +337,10 @@ const projectLaunchHarness = (input: {
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
 }) => {
   const projectId = ProjectId.make("project:client-target");
-  const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus" };
+  const modelSelection = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-opus",
+  };
   const sourceThreadId = ThreadId.make("thread:project-launch-caller");
   const threadScope = {
     threadId: sourceThreadId,
@@ -347,6 +354,7 @@ const projectLaunchHarness = (input: {
     modelSelection,
   };
   const layerDependencies = Layer.mergeAll(
+    ServerSettings.layerTest(),
     NodeCrypto.layer,
     Layer.mock(ProviderSessionManagerV2)({
       resolveMcpInvocationPolicy: (requested) =>

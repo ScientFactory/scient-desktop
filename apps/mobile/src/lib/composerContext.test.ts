@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
   formatComposerContextReference,
   projectComposerContextForProvider,
@@ -254,5 +255,20 @@ describe("native context delivery", () => {
     expect(message.context).toEqual(context);
     expect(message.text).toBe(text);
     expect(context.records).toEqual([terminal, review, pr]);
+  });
+});
+
+// An image-only prompt remains a request while retaining the native image record.
+it("normalizes image-only native sends without dropping image context", () => {
+  const context: OrchestrationMessageContext = { version: 1, records: [image] };
+  const reference = formatComposerContextReference(image);
+  expect(serializeComposerMessageForServer(reference, context)).toEqual({
+    text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    context,
+  });
+  const withProse = `${reference} what is this?`;
+  expect(serializeComposerMessageForServer(withProse, context)).toEqual({
+    text: withProse,
+    context,
   });
 });

@@ -1,7 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { RunAttemptId } from "@t3tools/contracts";
+import { RunAttemptId, ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -102,7 +105,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(members[0]?.presentation?.usage?.toolUses, 2);
         assert.equal(members[0]?.model, "claude/reader");
         assert.isTrue(
-          members.every((agent) => agent.nativeTaskRef === null && agent.childThreadId === null),
+          members.every(
+            (agent) =>
+              agent.nativeTaskRef === null &&
+              agent.runId === null &&
+              agent.providerThreadId === null,
+          ),
         );
         const firstTerminal = members[0]?.completedAt;
         yield* Queue.offer(
@@ -472,3 +480,108 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 });
+
+it.effect(
+  "reserves a settled query through causal EOF cleanup before same-native replacement",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const clock = yield* Clock.Clock;
+        const cleanupEntered = yield* Deferred.make<void>();
+        const cleanupRelease = yield* Deferred.make<void>();
+        const closeJoined = yield* Deferred.make<void>();
+        let firstExit = true;
+        let cleanupPending = false;
+        const controlledClock = {
+          ...clock,
+          currentTimeMillis: Effect.suspend(() => {
+            if (!cleanupPending) return clock.currentTimeMillis;
+            cleanupPending = false;
+            return Deferred.succeed(cleanupEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(cleanupRelease)),
+              Effect.andThen(clock.currentTimeMillis),
+            );
+          }),
+        };
+        yield* Effect.gen(function* () {
+          const h = yield* makeWakeHarnessWithOptions({
+            freshQueueOnReopen: true,
+            onStreamExit: Effect.sync(() => {
+              if (firstExit) {
+                cleanupPending = true;
+                firstExit = false;
+              }
+            }),
+            close: () => Deferred.succeed(closeJoined, undefined).pipe(Effect.asVoid),
+            forkSession: () => Effect.succeed({ sessionId: "synthetic-eof-close-observer" }),
+          });
+          const turn = (attempt: string) =>
+            makeClaudeTestTurnInput({
+              threadId: h.threadId,
+              providerThread: h.providerThread,
+              now: DateTime.makeUnsafe("2026-10-12T00:00:00.000Z"),
+              attemptId: RunAttemptId.make(attempt),
+              text: "Run a workflow",
+              attachments: [],
+            });
+          yield* h.runtime.startTurn(turn("eof-cleanup-owner"));
+          yield* h.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "eof-legacy-workflow",
+              task_type: "local_workflow",
+              workflow_name: "Legacy cleanup",
+              description: "Still working",
+              tool_use_id: "eof-legacy-workflow-tool",
+              uuid: "00000000-0000-4000-8000-000000001801",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          const coordinator = yield* Queue.take(h.subagentReceipts);
+          assert.equal(coordinator.subagent.status, "running");
+          yield* h.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000001802",
+              result: "Launched.",
+            }),
+          );
+          assert.equal((yield* Queue.take(h.terminalReceipts)).status, "completed");
+          yield* Queue.shutdown(h.sdkMessages);
+          // The first cleanup clock read occurs inside legacy coordinator retirement,
+          // after native EOF and its queryOwnership reservation, with the root settled.
+          yield* Deferred.await(cleanupEntered);
+          const refused = yield* h.runtime
+            .startTurn(turn("eof-cleanup-replacement"))
+            .pipe(Effect.result);
+          assert.equal(refused._tag, "Failure");
+          assert.include(JSON.stringify(refused), "Claude captured Stop close remains unresolved.");
+          assert.lengthOf(h.processQueues, 1, "cleanup must not open a replacement process");
+          // Use the existing public fork close owner to join the captured query's
+          // real closed receipt. Its SDK fork is synthetic and writes no native files.
+          const joined = yield* h.runtime
+            .forkThread({
+              sourceProviderThread: h.providerThread,
+              targetThreadId: ThreadId.make("synthetic-eof-close-observer"),
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(closeJoined);
+          yield* Deferred.succeed(cleanupRelease, undefined);
+          yield* Fiber.join(joined);
+          const ended = yield* Queue.take(h.subagentReceipts);
+          assert.equal(ended.subagent.id, coordinator.subagent.id);
+          assert.notEqual(ended.subagent.status, "running");
+          yield* h.runtime.startTurn(turn("eof-cleanup-replacement"));
+          assert.lengthOf(
+            h.processQueues,
+            2,
+            "the same native thread can start after cleanup joins",
+          );
+        }).pipe(Effect.provideService(Clock.Clock, controlledClock));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
+    ),
+);

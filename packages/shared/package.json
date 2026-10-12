@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./scientTextGenerationSelection": {
+      "types": "./src/scientTextGenerationSelection.ts",
+      "import": "./src/scientTextGenerationSelection.ts"
+    },
     "./orchestrationV2ForkInitialization": {
       "types": "./src/orchestrationV2ForkInitialization.ts",
       "import": "./src/orchestrationV2ForkInitialization.ts"

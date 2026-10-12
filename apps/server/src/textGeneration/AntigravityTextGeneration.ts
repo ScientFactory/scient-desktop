@@ -346,7 +346,7 @@ export const makeAntigravityGeneration = Effect.fn("makeAntigravityGeneration")(
   return {
     textGeneration: TextGenerationOperations.fromRunner(
       "AntigravityTextGeneration",
-      runAntigravityJson,
+      TextGenerationOperations.withoutInvestigation("Antigravity", runAntigravityJson),
     ),
     generateStructured: runAntigravityJson,
   };

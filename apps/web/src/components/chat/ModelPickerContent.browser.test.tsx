@@ -118,6 +118,7 @@ function render(
   }
   root.render(
     <ModelPickerContent
+      environmentId={null}
       activeInstanceId={provider.instanceId}
       model="model-0"
       lockedProvider={locked ? provider.driver : null}

@@ -8,6 +8,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
+import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -67,7 +68,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     storedSelection,
   );
   const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providers),
+      settings,
+      target?.projectId ?? null,
+    ),
   );
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
@@ -108,9 +113,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       const entry = applyProviderInstanceSettings(
         deriveProviderInstanceEntries(config.providers),
         candidate.settings,
+        candidate.projectId,
       ).find((option) => option.instanceId === instanceId);
       const options = getCustomModelOptionsByInstance(
-        { ...settings, ...candidate.settings },
+        mergeEnvironmentSettings(candidate.settings, settings),
         config.providers,
       ).get(instanceId);
       if (
@@ -166,6 +172,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         selection && (activeEntry || storedUnavailable) ? (
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
             <ProviderModelPicker
+              environmentId={representative?.environmentId ?? null}
               activeInstanceId={selection.instanceId}
               model={selection.model}
               lockedProvider={null}

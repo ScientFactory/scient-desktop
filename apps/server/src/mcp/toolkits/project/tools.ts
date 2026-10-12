@@ -21,6 +21,7 @@ import {
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../../../config.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -151,6 +152,7 @@ const ThreadLaunchTool = Tool.make("scient_thread_launch", {
     GitVcsDriver.GitVcsDriver,
     FileSystem.FileSystem,
     ServerConfig.ServerConfig,
+    ServerSettings.ServerSettingsService,
   ],
 })
   .annotate(Tool.Destructive, true)

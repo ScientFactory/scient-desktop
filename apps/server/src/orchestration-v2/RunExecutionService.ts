@@ -89,8 +89,12 @@ import {
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
   // Set once this run's root turn ended. A child thread created after that
-  // belongs to the run that is live then, so this one no longer adopts it.
+  // belongs to the run that is live then, so this one no longer adopts it,
+  // except a workflow member enrolled below: its coordinator keeps this run
+  // open, so the member is this run's to follow.
   readonly rootTurnEnded: boolean;
+  /** Member thread id to the coordinator child thread that spawned it. */
+  readonly workflowMemberParents: ReadonlyMap<ThreadId, ThreadId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
   readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
@@ -378,6 +382,7 @@ export function makeProviderEventRoutingState(input: {
   return {
     ownedThreadIds: new Set([input.identity.threadId, ...(input.relatedThreadIds ?? [])]),
     rootTurnEnded: false,
+    workflowMemberParents: new Map(),
     ownedProviderThreadIds: new Set([
       input.identity.providerThreadId,
       ...(input.relatedProviderThreadIds ?? []),
@@ -428,10 +433,12 @@ export function routeProviderEvent(
         return [true, state];
       }
       const isOwnedSubagent =
-        !state.rootTurnEnded &&
         event.appThread.lineage.relationshipToParent === "subagent" &&
         event.appThread.lineage.parentThreadId !== null &&
-        ownsThread(event.appThread.lineage.parentThreadId);
+        ownsThread(event.appThread.lineage.parentThreadId) &&
+        (!state.rootTurnEnded ||
+          state.workflowMemberParents.get(event.appThread.id) ===
+            event.appThread.lineage.parentThreadId);
       if (!isOwnedSubagent) {
         return [false, state];
       }
@@ -1266,7 +1273,10 @@ export const layer: Layer.Layer<
                   routing.ownedThreadIds.has(event.node.threadId);
                 if (
                   !belongsToRootSubagent &&
-                  !belongsToOwnedChildThread &&
+                  !(
+                    belongsToOwnedChildThread &&
+                    (event.node.runId === null || event.node.runId === input.run.id)
+                  ) &&
                   !routing.workflowMembers.has(event.node.id)
                 ) {
                   return;
@@ -1306,7 +1316,11 @@ export const layer: Layer.Layer<
                     return next;
                   });
                 }
-                if (belongsToOwnedChildThread && deliverable) {
+                if (
+                  belongsToOwnedChildThread &&
+                  (event.turnItem.runId === null || belongsToRootRun) &&
+                  deliverable
+                ) {
                   yield* Ref.update(openRunOwnedSubagents, (current) => {
                     const childTurnItems = new Map(current.childTurnItems);
                     if (isSettledTurnItemStatus(event.turnItem.status)) {

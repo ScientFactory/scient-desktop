@@ -6260,6 +6260,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           generateCommitMessage: (): never => {
             throw new Error("Unexpected generation");
           },
+          generateReviewGuide: (): never => {
+            throw new Error("Unexpected review guide generation");
+          },
           generatePrContent: (): never => {
             throw new Error("Unexpected generation");
           },
@@ -6464,6 +6467,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             generateCommitMessage: (): never => {
               throw new Error("Unexpected generation");
             },
+            generateReviewGuide: (): never => {
+              throw new Error("Unexpected review guide generation");
+            },
             generatePrContent: (): never => {
               throw new Error("Unexpected generation");
             },
@@ -6565,6 +6571,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
           generateCommitMessage: (): never => {
             throw new Error("Unexpected generation");
+          },
+          generateReviewGuide: (): never => {
+            throw new Error("Unexpected review guide generation");
           },
           generatePrContent: (): never => {
             throw new Error("Unexpected generation");
@@ -6781,6 +6790,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
           generateCommitMessage: (): never => {
             throw new Error("Unexpected generation");
+          },
+          generateReviewGuide: (): never => {
+            throw new Error("Unexpected review guide generation");
           },
           generatePrContent: (): never => {
             throw new Error("Unexpected generation");
