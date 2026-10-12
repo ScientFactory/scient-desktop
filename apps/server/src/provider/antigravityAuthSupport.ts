@@ -40,6 +40,8 @@ export const ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE =
   "Antigravity could not prepare the sign-in helper. Try again.";
 export const ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE =
   "Antigravity could not start its sign-in runtime. Try again.";
+export const ANTIGRAVITY_RUNTIME_RESOLUTION_FAILED_MESSAGE =
+  "Antigravity could not find a usable sign-in runtime. Review its installation and executable path, then try again.";
 export const ANTIGRAVITY_LINK_CAPTURE_FAILED_MESSAGE =
   "Antigravity could not capture the Google sign-in link. Start sign-in again.";
 
@@ -228,6 +230,9 @@ export function antigravityAuthStageFailure(
   beforeAuthorizationUrl: boolean,
 ): string | undefined {
   if (isSetupError(error)) {
+    if (beforeAuthorizationUrl && error.operation === "resolve") {
+      return ANTIGRAVITY_RUNTIME_RESOLUTION_FAILED_MESSAGE;
+    }
     if (error.detail === "Google sign-in expired. Start sign-in again.") {
       return "Google sign-in expired. Start sign-in again.";
     }

@@ -20,6 +20,9 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+// SCIENT-FORK:START — bounded native failure metadata, without provider payloads.
+import { recordAntigravityAuthFailure } from "../scient/providerLifecycle/antigravityAuthDiagnostics.ts";
+// SCIENT-FORK:END
 import {
   antigravityAuthStageFailure,
   parseAntigravityAuthorizationUrl,
@@ -228,6 +231,11 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     lock.withPermits(1)(
       Effect.gen(function* () {
         if (activeFlow !== flow) return;
+        // SCIENT-FORK:START — only the current failed attempt emits diagnostics.
+        if (Exit.isFailure(result)) {
+          yield* recordAntigravityAuthFailure(result.cause, !flow.authorizationUrlReceived);
+        }
+        // SCIENT-FORK:END
         activeFlow = undefined;
         operation = "idle";
         flow.pending = undefined;
