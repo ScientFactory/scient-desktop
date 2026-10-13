@@ -153,7 +153,7 @@ export const isLegacyContextHistoryReadable = Effect.fn("ContextHistory.validate
 });
 
 /** Initial membership is committed with the handoff event; status updates carry only its ID. */
-export const captureContextHistory = Effect.fn("ContextHistory.capture")(function* (
+const captureContextHistory = Effect.fn("ContextHistory.capture")(function* (
   sql: SqlClient.SqlClient,
   handoff: OrchestrationV2ContextHandoff,
 ) {
@@ -373,9 +373,7 @@ const contextCandidates = Effect.fn("ContextHistory.candidates")(function* (
   }));
 });
 
-export const readContextSummaryPage = Effect.fn("ContextHistory.readSummaryPage")(function* <
-  E = never,
->(
+const readContextSummaryPage = Effect.fn("ContextHistory.readSummaryPage")(function* <E = never>(
   sql: SqlClient.SqlClient,
   sourceId: ContextHandoffId,
   offset: number,

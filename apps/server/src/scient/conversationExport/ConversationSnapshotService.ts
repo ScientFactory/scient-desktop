@@ -49,7 +49,7 @@ import { turnItemMetadataSql } from "../../orchestration-v2/scient-fork/ContextH
 /** A portable snapshot is assembled in memory for its digest and document writers.
  * Refuse beyond this capture allowance before hydration; retained sources remain
  * available through bounded detail pages. Attachment packaging has its own cap. */
-export const CONVERSATION_SNAPSHOT_CAPTURE_BYTES = 32 * 1024 * 1024;
+const CONVERSATION_SNAPSHOT_CAPTURE_BYTES = 32 * 1024 * 1024;
 
 export class ConversationThreadNotFoundError extends Schema.TaggedError<ConversationThreadNotFoundError>()(
   "ConversationThreadNotFoundError",
