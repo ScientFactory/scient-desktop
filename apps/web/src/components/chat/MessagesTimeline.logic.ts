@@ -1,5 +1,3 @@
-import { isForkInitializationHandoff } from "@t3tools/client-runtime/handoff";
-import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -51,16 +49,11 @@ import {
   type MessageId,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
-  type OrchestrationV2ContextTransfer,
   type RunAttemptId,
   RunId,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
-import {
-  resolveMarkdownDirectionHint,
-  type FixedContentDirection,
-} from "../../scient/bidi/contentDirection";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
 import {
   resolveT3McpToolDefinition,
@@ -71,63 +64,48 @@ import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
+// SCIENT-FORK:START — Scient owners this timeline composes: fork separators and handoffs,
+// imported-turn folds, trace paths and icons, activity issues, content direction, setup
+// scripts after handoff, and subagent workflow groups.
+import { isForkInitializationHandoff } from "@t3tools/client-runtime/handoff";
+import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
+import type { OrchestrationV2ContextTransfer } from "@t3tools/contracts";
+import { collectToolFilePaths, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  resolveMarkdownDirectionHint,
+  type FixedContentDirection,
+} from "../../scient/bidi/contentDirection";
+import {
+  forkBaselineMarkerRowAfter,
+  forkBaselineMarkerVisible,
+  inheritedForkMarkerRow,
+  isLocalIncomingForkEvent,
+  leadingForkMarkerRow,
+  type ForkMarkerRow,
+} from "../../scient/fork/forkTimelineMarkers";
+import {
+  historicalFoldBoundaries,
+  historicalFoldBoundary,
+  timelineEntryHistoryKey,
+} from "../../scient/fork/historicalTimelineTurns";
 import {
   compactPathLabel,
-  compactPathPresentation,
+  traceEntryPathPresentation,
   tracePathPresentation,
 } from "../../scient/presentation/compactPathLabel";
+import { subagentRowGroupKey } from "../../scient/presentation/subagentRowGroups";
 import {
   groupTraceIconOverride,
   type TraceIconOverride,
 } from "../../scient/presentation/traceIcons";
-import { collectToolFilePaths, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
-import { computeElapsedMs } from "@scientfactory/conversation/work-log-grouping";
-// SCIENT-FORK:START — historical turns group inert presentation.
-import { timelineEntryHistoryKey } from "../../scient/fork/historicalTimelineTurns";
+import {
+  hasPostHandoffSetupScript as postHandoffSetupScript,
+  insertPostHandoffSetupRow,
+} from "../../scient/threadTimeline/postHandoffSetup";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — real answers stay visible when their turn folds.
 import { keepsSettledAnswerVisible } from "../../scient/threadTimeline/keptAnswers";
 // SCIENT-FORK:END
-
-/** The later of two ISO timestamps, ignoring unparseable ones. */
-function maxIsoTimestamp(a: string | null, b: string | null): string | null {
-  if (a === null) return b;
-  if (b === null) return a;
-  const aMs = Date.parse(a);
-  const bMs = Date.parse(b);
-  if (!Number.isFinite(aMs)) return b;
-  if (!Number.isFinite(bMs)) return a;
-  return bMs > aMs ? b : a;
-}
-
-export function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
-  const lastAssistantMessageIdByResponseKey = new Map<string, string>();
-  let runlessResponseIndex = 0;
-
-  for (const timelineEntry of timelineEntries) {
-    if (timelineEntry.kind !== "message") {
-      continue;
-    }
-    const { message } = timelineEntry;
-    if (message.role === "user") {
-      runlessResponseIndex += 1;
-      continue;
-    }
-    if (message.role !== "assistant") {
-      continue;
-    }
-
-    const historyKey = timelineEntryHistoryKey(timelineEntry);
-    const responseKey = message.runId
-      ? `run:${message.runId}`
-      : historyKey !== null
-        ? `history:${historyKey}`
-        : `runless:${runlessResponseIndex}`;
-    lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
-  }
-
-  return new Set(lastAssistantMessageIdByResponseKey.values());
-}
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -180,38 +158,12 @@ function workEntryReadRawPaths(entry: WorkLogEntry): readonly string[] {
   return collectToolFilePaths(workEntryToolDataRecord(entry));
 }
 
-/** The path that owns a trace heading, with its surrounding action text. */
+// SCIENT-FORK:START — a trace heading names its path compactly, with the full path on hover
+// (scient/presentation/compactPathLabel.ts).
 export function workEntryPathPresentation(entry: WorkLogEntry, workspaceRoot: string | undefined) {
-  if (entry.itemType === "reasoning" || entry.tone === "thinking" || entry.command?.trim()) {
-    return undefined;
-  }
-  const action = toolGroupAction(entry);
-  const paths = action === "read" ? workEntryReadRawPaths(entry) : (entry.changedFiles ?? []);
-  const detail = entry.detail?.trim();
-  const providerRetry =
-    entry.projectedItem?.item.type === "error" && entry.projectedItem.item.retry !== undefined;
-  const item = entry.structuredPayload;
-  if (
-    action !== "read" &&
-    item?.type === "dynamic_tool" &&
-    dynamicToolTitle(item.toolName, item.input)
-  ) {
-    return undefined;
-  }
-  const path =
-    action !== "read" && detail && !providerRetry
-      ? compactPathPresentation(detail, workspaceRoot)
-      : paths[0]
-        ? tracePathPresentation(paths[0], workspaceRoot)
-        : undefined;
-  if (!path) return undefined;
-  const prefix = action === "read" ? "Read " : "";
-  const suffix =
-    paths.length > 1 && (action === "read" || !detail || providerRetry)
-      ? ` +${paths.length - 1} more`
-      : "";
-  return { ...path, prefix, suffix, text: `${prefix}${path.label}${suffix}` };
+  return traceEntryPathPresentation(entry, workspaceRoot, workEntryReadRawPaths);
 }
+// SCIENT-FORK:END
 
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
   // SCIENT-FORK:START — activity-kind issues always lead their row's label.
@@ -235,8 +187,10 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
         : formatSearchToolLabel(workEntryToolDataRecord(entry));
     if (searchLabel) return searchLabel;
   }
+  // SCIENT-FORK:START — read and changed-file paths read compactly (scient/presentation/compactPathLabel.ts).
   const path = workEntryPathPresentation(entry, workspaceRoot);
   if (path) return path.text;
+  // SCIENT-FORK:END
   // Retrying providers keep their progress label; other diagnostics expose
   // the retained message instead of a generic error heading. File bodies
   // are never a compact read label.
@@ -249,8 +203,10 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   const detailIsSearchOutput =
     (action === "code-search" || action === "search") && /[\r\n]/.test(compactDetail ?? "");
   if (compactDetail && !providerRetry && action !== "read" && !detailIsSearchOutput) {
+    // SCIENT-FORK:START — a path detail reads compactly; changed files are named above.
     return compactPathLabel(compactDetail, workspaceRoot);
   }
+  // SCIENT-FORK:END
   if (action === "read" && !entry.viewedImagePath) {
     return "Read file";
   }
@@ -269,7 +225,9 @@ export function threadReadTargetId(entry: Pick<WorkLogEntry, "structuredPayload"
   return typeof threadId === "string" && threadId.trim().length > 0 ? threadId.trim() : null;
 }
 
+// SCIENT-FORK:START — Scient's own name for a thread, and T3's in older history.
 const THREAD_READ_OBJECTS = [" a Scient thread", " a T3 thread"] as const;
+// SCIENT-FORK:END
 
 export function threadReadTargetTitle(
   shell: Pick<ThreadShell, "title" | "archivedAt" | "deletedAt"> | null,
@@ -283,8 +241,10 @@ export function threadReadTargetTitle(
  * `Read thread “Title”`), keeping the label's tense. Null keeps the generic label.
  */
 export function threadReadLabelPrefix(label: string) {
+  // SCIENT-FORK:START
   const object = THREAD_READ_OBJECTS.find((suffix) => label.endsWith(suffix));
   return object ? `${label.slice(0, -object.length)} thread` : null;
+  // SCIENT-FORK:END
 }
 
 /** Inspectable read-file output is the path when we have one, otherwise nothing. */
@@ -298,7 +258,9 @@ export function workEntryReadOutput(
   const paths = [
     ...new Set(
       workEntryReadRawPaths(entry as WorkLogEntry)
+        // SCIENT-FORK:START — the full path the trace's hover card shows (scient/presentation/compactPathLabel.ts).
         .map((path) => tracePathPresentation(path, workspaceRoot).fullPath)
+        // SCIENT-FORK:END
         .filter((path) => path.length > 0),
     ),
   ];
@@ -401,16 +363,17 @@ export interface TimelineEndState {
 /**
  * The follow re-arm band (#5566): strict isAtEnd flickers false for a frame
  * while streaming content grows under the viewport, so follow re-arms within
- * this distance of the real content bottom instead. Sending passes its own
- * allowance based on rendered text height; reaching either band never arms
- * following.
+ * this distance of the real content bottom instead.
  */
 const TIMELINE_FOLLOW_REARM_THRESHOLD_PX = 40;
 
+// SCIENT-FORK:START — sending passes its own allowance based on rendered text height;
+// reaching either band never arms following.
 export function resolveTimelineIsAtEnd(
   state: TimelineEndState | undefined,
   allowancePx = TIMELINE_FOLLOW_REARM_THRESHOLD_PX,
 ): boolean | undefined {
+  // SCIENT-FORK:END
   if (!state) {
     return undefined;
   }
@@ -424,7 +387,9 @@ export function resolveTimelineIsAtEnd(
   // and the visible edge above the composer. LegendList's own isAtEnd subtracts
   // the inset and is true anywhere in the bottom composer-height band, so it is
   // only a fallback here, never a short-circuit.
+  // SCIENT-FORK:START
   return contentLength - scroll - scrollLength <= allowancePx;
+  // SCIENT-FORK:END
 }
 
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
@@ -555,6 +520,23 @@ export function resolveTimelineMinimapInteractiveWidth(
   return expanded ? TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH : collapsedWidth;
 }
 
+function computeElapsedMs(startIso: string, endIso: string): number | null {
+  const start = Date.parse(startIso);
+  const end = Date.parse(endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+function maxIsoTimestamp(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (!Number.isFinite(aMs)) return b;
+  if (!Number.isFinite(bMs)) return a;
+  return bMs > aMs ? b : a;
+}
+
 export interface TimelineDurationMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -575,6 +557,9 @@ export type MessagesTimelineRow = MessagesTimelineRowContent & {
 };
 
 type MessagesTimelineRowContent =
+  // SCIENT-FORK:START — "Conversation forked here" (scient/fork/forkTimelineMarkers.ts).
+  | ForkMarkerRow
+  // SCIENT-FORK:END
   | {
       kind: "worktree-setup";
       id: string;
@@ -627,8 +612,10 @@ type MessagesTimelineRowContent =
       summaryKind: ToolGroupSummaryKind;
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
+      // SCIENT-FORK:START — Scient's mark and trace icons (scient/presentation/traceIcons.ts).
       summaryToolIcon?: "browser" | "device" | "scient" | "t3-code" | "pull-request";
       summaryTraceIcon?: TraceIconOverride;
+      // SCIENT-FORK:END
       hasFailure: boolean;
     }
   | {
@@ -666,21 +653,17 @@ type MessagesTimelineRowContent =
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
-      /** Files the message's turn changed, for every assistant message of that
-          turn, not only the one the changed-files card attaches to. */
-      assistantTurnChangedFiles?: TurnDiffSummary["files"] | undefined;
       revertTurnCount?: number | undefined;
+      // SCIENT-FORK:START — files the message's turn changed, for every assistant message of
+      // that turn (not only the one the changed-files card attaches to); Scient fork V2; and
+      // content direction.
+      assistantTurnChangedFiles?: TurnDiffSummary["files"] | undefined;
       canForkConversation?: boolean | undefined;
       assistantDirectionHint?: FixedContentDirection | null | undefined;
+      // SCIENT-FORK:END
       // SCIENT-FORK:START — a settled earlier answer of its turn, kept visible with its copy row.
       keptAnswer?: boolean | undefined;
       // SCIENT-FORK:END
-    }
-  | {
-      kind: "fork-marker";
-      id: string;
-      /** SCIENT-FORK: an earlier fork point this conversation shows, and the conversation it came from. */
-      originThreadId?: ThreadId | undefined;
     }
   | {
       kind: "assistant-meta";
@@ -690,7 +673,9 @@ type MessagesTimelineRowContent =
       message: ChatMessage;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
+      // SCIENT-FORK:START — Scient fork V2.
       canForkConversation?: boolean | undefined;
+      // SCIENT-FORK:END
     }
   | {
       kind: "event";
@@ -784,13 +769,39 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
-// SCIENT-FORK:START — fork checkpoint message lookups, kept importable from here.
-export {
-  findLatestCompletedAssistantMessageId,
-  findPrecedingCompletedAssistantMessageId,
-} from "../../scient/fork/forkCheckpointMessages";
+// SCIENT-FORK:START — fork checkpoint lookups (scient/fork/forkCheckpointMessages.ts) read these.
 export { deriveUnsettledRunId };
-// SCIENT-FORK:END
+export function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
+  // SCIENT-FORK:END
+  const lastAssistantMessageIdByResponseKey = new Map<string, string>();
+  let nullTurnResponseIndex = 0;
+
+  for (const timelineEntry of timelineEntries) {
+    if (timelineEntry.kind !== "message") {
+      continue;
+    }
+    const { message } = timelineEntry;
+    if (message.role === "user") {
+      nullTurnResponseIndex += 1;
+      continue;
+    }
+    if (message.role !== "assistant") {
+      continue;
+    }
+
+    // SCIENT-FORK:START — imported turns group by provenance (scient/fork/historicalTimelineTurns.ts).
+    const historyKey = timelineEntryHistoryKey(timelineEntry);
+    const responseKey = message.runId
+      ? `turn:${message.runId}`
+      : historyKey !== null
+        ? `history:${historyKey}`
+        : `unkeyed:${nullTurnResponseIndex}`;
+    // SCIENT-FORK:END
+    lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
+  }
+
+  return new Set(lastAssistantMessageIdByResponseKey.values());
+}
 
 interface TurnFold {
   runId: RunId;
@@ -1106,25 +1117,15 @@ function deriveTurnFolds(input: {
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
 
-  // Reuse the existing runless disclosure key, not an executable historical run.
-  // Match the prompt by provenance because queued users can precede all answers.
-  const historicalBoundaries = new Map<string, { key: RunId; createdAt: string }>();
-  for (const entry of input.timelineEntries) {
-    const historyKey = timelineEntryHistoryKey(entry);
-    if (
-      historyKey !== null &&
-      timelineEntryStartsResponse(entry) &&
-      !historicalBoundaries.has(historyKey)
-    ) {
-      historicalBoundaries.set(historyKey, {
-        key: RunId.make(`runless:${entry.id}`),
-        createdAt: entry.createdAt,
-      });
-    }
-  }
-
-  // Fold state is keyed by run, so each prompt of a runless thread lends its
-  // response a stable key of its own.
+  // SCIENT-FORK:START — imported turns fold under their own prompt (scient/fork/historicalTimelineTurns.ts).
+  const historicalBoundaries = historicalFoldBoundaries(
+    input.timelineEntries,
+    timelineEntryStartsResponse,
+  );
+  // SCIENT-FORK:END
+  // Fold state is keyed by run, so each runless prompt lends its response a
+  // stable key of its own. Decide per prompt, not per thread: a V1 thread's
+  // first V2 run must not unfold every imported turn above it.
   let runlessKey: RunId | null = null;
   let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
@@ -1142,19 +1143,20 @@ function deriveTurnFolds(input: {
       runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
       continue;
     }
-    const historyKey = timelineEntryHistoryKey(entry);
-    const historicalBoundary =
-      historyKey === null ? undefined : historicalBoundaries.get(historyKey);
-    // Unknown historical prompts remain visible rather than borrowing another turn.
-    if (historyKey !== null && historicalBoundary === undefined) continue;
+    // SCIENT-FORK:START — an imported entry folds with its own turn; unknown prompts stay visible.
+    const historicalBoundary = historicalFoldBoundary(historicalBoundaries, entry);
+    if (historicalBoundary === null) continue;
     const runId = timelineEntryFoldRunId(entry, historicalBoundary?.key ?? runlessKey);
+    // SCIENT-FORK:END
     if (!runId) {
       continue;
     }
+    // SCIENT-FORK:START — an imported turn's failure keeps it unfolded, like a runless turn's.
     if (
       (historicalBoundary !== undefined || runId === runlessKey) &&
       timelineEntryFailedItem(entry) !== null
     ) {
+      // SCIENT-FORK:END
       runlessFailedKeys.add(runId);
     }
     let group = groupsByRunId.get(runId);
@@ -1166,10 +1168,12 @@ function deriveTurnFolds(input: {
         // Each user boundary starts at most one turn; a second turn after the
         // same user message (e.g. a steer-superseded continuation) falls back
         // to its own first entry.
+        // SCIENT-FORK:START
         startBoundary: historicalBoundary?.createdAt ?? pendingBoundary?.createdAt ?? null,
         anchorEntryId: historicalBoundary ? entry.id : (pendingBoundary?.anchorEntryId ?? entry.id),
       };
       if (historicalBoundary === undefined) pendingBoundary = null;
+      // SCIENT-FORK:END
       groupsByRunId.set(runId, group);
     }
     group.entries.push(entry);
@@ -1242,11 +1246,12 @@ function deriveTurnFolds(input: {
       continue;
     }
 
-    // Linked resources stay visible but their lifetime is not response work.
+    // SCIENT-FORK:START — linked resources stay visible but their lifetime is not response work.
     const firstEntry = group.entries.find((entry) => !timelineEntryIsPersistentResourceCard(entry));
     const lastEntry = group.entries.findLast(
       (entry) => !timelineEntryIsPersistentResourceCard(entry),
     );
+    // SCIENT-FORK:END
     if (!firstEntry || !lastEntry) {
       continue;
     }
@@ -1357,6 +1362,8 @@ function attachTrailingToolGroupsToAssistant(
     }
 
     messageRowsWithoutMeta.add(row.id);
+    // SCIENT-FORK:START — the meta row takes a trailing work row's time, else the answer's;
+    // it carries the answer's Scient fork V2 action.
     const trailingRow = rows[lastTrailingWorkIndex];
     const trailingCreatedAt =
       trailingRow?.kind === "work" || trailingRow?.kind === "work-toggle"
@@ -1365,13 +1372,14 @@ function attachTrailingToolGroupsToAssistant(
     metaRowsAfterIndex.set(lastTrailingWorkIndex, {
       kind: "assistant-meta",
       id: `assistant-meta:${row.message.id}`,
-      createdAt: trailingCreatedAt,
       ...(row.projectedItem === undefined ? {} : { projectedItem: row.projectedItem }),
+      createdAt: trailingCreatedAt,
       message: row.message,
       showAssistantCopyButton: row.showAssistantCopyButton,
       assistantCopyStreaming: row.assistantCopyStreaming,
       canForkConversation: row.canForkConversation,
     });
+    // SCIENT-FORK:END
   }
 
   const result: MessagesTimelineRow[] = [];
@@ -1474,7 +1482,9 @@ function deriveTimelineTurnFolds(
 
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  // SCIENT-FORK:START — hides the fork-initialization handoff event.
   contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
+  // SCIENT-FORK:END
   latestRun?: TimelineLatestRun | null;
   runningRunId?: RunId | null;
   expandedRunIds?: ReadonlySet<RunId>;
@@ -1489,26 +1499,36 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt?: string | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   supportsConversationRollback: boolean;
+  // SCIENT-FORK:START — where this conversation was forked (scient/fork/forkTimelineMarkers.ts).
   hasForkBaseline?: boolean | undefined;
   forkBaselineAssistantMessageId?: MessageId | null | undefined;
+  // SCIENT-FORK:END
   /** Task ids of subagents still working, used by the active tool indicator. */
   liveAgentTaskIds?: ReadonlySet<string> | undefined;
+  // SCIENT-FORK:START — subagent rows group by workflow (scient/presentation/subagentRowGroups.ts).
   subagentWorkflowIds?: ReadonlyMap<string, string> | undefined;
+  // SCIENT-FORK:END
   /** Live bootstrap progress. Renders a stage card under the first user message. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
+  // SCIENT-FORK:START — the fork-initialization handoff event stays hidden.
   const timelineEntries = timelineRowEntries(input.timelineEntries).filter(
     (entry) =>
       entry.kind !== "event" ||
       !isForkInitializationHandoff(entry.projectedItem, input.contextTransfers),
   );
+  // SCIENT-FORK:END
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
+  // SCIENT-FORK:START — files-changed chips on every assistant message of a turn.
   const turnDiffSummaryByRunId = new Map<RunId, TurnDiffSummary>();
+  // SCIENT-FORK:END
   for (const summary of input.turnDiffSummaries) {
     if (summary.assistantMessageId) {
       turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
     }
+    // SCIENT-FORK:START
     turnDiffSummaryByRunId.set(summary.runId, summary);
+    // SCIENT-FORK:END
   }
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
@@ -1517,17 +1537,11 @@ export function deriveMessagesTimelineRows(input: {
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
-  const nativeSubagentRows = new Map<string, number>();
-  const hasVisibleForkMarker =
-    input.hasForkBaseline === true &&
-    (input.forkBaselineAssistantMessageId === null ||
-      timelineEntries.some(
-        (entry) =>
-          entry.kind === "message" && entry.message.id === input.forkBaselineAssistantMessageId,
-      ));
-  if (input.hasForkBaseline === true && input.forkBaselineAssistantMessageId === null) {
-    nextRows.push({ kind: "fork-marker", id: "conversation-fork-marker" });
-  }
+  // SCIENT-FORK:START — "Conversation forked here" separators (scient/fork/forkTimelineMarkers.ts).
+  const hasVisibleForkMarker = forkBaselineMarkerVisible(input, timelineEntries);
+  const leadingForkMarker = leadingForkMarkerRow(input);
+  if (leadingForkMarker) nextRows.push(leadingForkMarker);
+  // SCIENT-FORK:END
   const durationStartByMessageId = computeMessageDurationStart(
     timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
@@ -1565,11 +1579,9 @@ export function deriveMessagesTimelineRows(input: {
       }
     }
   }
-
   // SCIENT-FORK:START — bidi hint carried from the latest user message.
   let latestUserDirectionHint: FixedContentDirection | null = null;
   // SCIENT-FORK:END
-
   const collapsedSupersededEntryIds = new Set<string>();
   for (const fold of supersededFoldsByAnchorEntryId.values()) {
     if (!input.expandedAttemptIds?.has(fold.attemptId)) {
@@ -1668,6 +1680,7 @@ export function deriveMessagesTimelineRows(input: {
     activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
   );
   const appendWorkingRow = () => {
+    // SCIENT-FORK:START — "Working for" starts at the prompt when several runs form one response.
     const boundary = timelineEntries[lastResponseBoundaryIndex(timelineEntries)];
     const startedAt =
       activeVisualResponseRunIds.size > 1 &&
@@ -1675,10 +1688,13 @@ export function deriveMessagesTimelineRows(input: {
       boundary.message.role === "user"
         ? boundary.message.createdAt
         : input.activeTurnStartedAt;
+    // SCIENT-FORK:END
     nextRows.push({
       kind: "working",
       id: "working-indicator-row",
+      // SCIENT-FORK:START
       createdAt: startedAt ?? null,
+      // SCIENT-FORK:END
     });
   };
   let hasActivityRow = false;
@@ -1696,6 +1712,7 @@ export function deriveMessagesTimelineRows(input: {
       ),
     );
   };
+
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const timelineEntry = timelineEntries[index];
     if (!timelineEntry) {
@@ -1718,35 +1735,17 @@ export function deriveMessagesTimelineRows(input: {
     ) {
       continue;
     }
-    // The Scient baseline separator already represents this local incoming
-    // fork. Keep outgoing and inherited fork records as distinct history.
-    if (
-      hasVisibleForkMarker &&
-      timelineEntry.kind === "event" &&
-      timelineEntry.projectedItem.visibility === "local" &&
-      timelineEntry.projectedItem.item.type === "fork" &&
-      (timelineEntry.projectedItem.item.source.type === "run" ||
-        timelineEntry.projectedItem.item.source.type === "message") &&
-      timelineEntry.projectedItem.item.targetThreadId === timelineEntry.projectedItem.item.threadId
-    ) {
+    // SCIENT-FORK:START — the baseline separator already represents this fork's own incoming
+    // fork event; an inherited earlier fork point reads like a separator too.
+    if (hasVisibleForkMarker && isLocalIncomingForkEvent(timelineEntry)) {
       continue;
     }
-    // SCIENT-FORK: an inherited point where an earlier conversation was forked
-    // (a fork of a fork shows its parent's) reads like this fork's own marker.
-    if (
-      timelineEntry.kind === "event" &&
-      timelineEntry.projectedItem.visibility === "inherited" &&
-      timelineEntry.projectedItem.item.type === "fork" &&
-      (timelineEntry.projectedItem.item.source.type === "run" ||
-        timelineEntry.projectedItem.item.source.type === "message")
-    ) {
-      nextRows.push({
-        kind: "fork-marker",
-        id: `fork-marker:${timelineEntry.id}`,
-        originThreadId: timelineEntry.projectedItem.item.source.threadId,
-      });
+    const inheritedForkMarker = inheritedForkMarkerRow(timelineEntry);
+    if (inheritedForkMarker) {
+      nextRows.push(inheritedForkMarker);
       continue;
     }
+    // SCIENT-FORK:END
 
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
     if (turnFold) {
@@ -1929,7 +1928,9 @@ export function deriveMessagesTimelineRows(input: {
           const summaryToolIcon = usesSingleToolCallLabel
             ? resolveWorkEntryToolPresentation(singleEntry, "completed")?.icon
             : undefined;
+          // SCIENT-FORK:START — a group whose entries share a Scient trace icon shows it.
           const summaryTraceIcon = groupTraceIconOverride(visibleGroupedEntries);
+          // SCIENT-FORK:END
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -1947,7 +1948,9 @@ export function deriveMessagesTimelineRows(input: {
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
             ...(summaryToolIcon ? { summaryToolIcon } : {}),
+            // SCIENT-FORK:START
             ...(summaryTraceIcon ? { summaryTraceIcon } : {}),
+            // SCIENT-FORK:END
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
@@ -1997,26 +2000,18 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "event") {
-      const item = timelineEntry.projectedItem.item;
-      const groupKey =
-        item.type === "subagent"
-          ? [
-              timelineEntry.projectedItem.sourceThreadId,
-              timelineEntry.projectedItem.visibility,
-              item.runId ?? (item.providerTurnId === null ? item.subagentId : "runless"),
-              item.providerTurnId,
-              input.subagentWorkflowIds?.get(item.subagentId) ?? "direct",
-            ].join("\u0000")
-          : null;
-      const previousIndex = groupKey === null ? undefined : nativeSubagentRows.get(groupKey);
-      const previous = previousIndex === undefined ? undefined : nextRows[previousIndex];
+      const previous = nextRows.at(-1);
       if (
-        item.type === "subagent" &&
-        previousIndex !== undefined &&
-        previousIndex === nextRows.length - 1 &&
-        previous?.kind === "event"
+        timelineEntry.projectedItem.item.type === "subagent" &&
+        previous?.kind === "event" &&
+        previous.projectedItem.item.type === "subagent" &&
+        // SCIENT-FORK:START — also by source, visibility and agent-panel workflow
+        // (scient/presentation/subagentRowGroups.ts).
+        subagentRowGroupKey(previous.projectedItem, input.subagentWorkflowIds) ===
+          subagentRowGroupKey(timelineEntry.projectedItem, input.subagentWorkflowIds)
+        // SCIENT-FORK:END
       ) {
-        nextRows[previousIndex] = {
+        nextRows[nextRows.length - 1] = {
           ...previous,
           subagents: [
             ...(previous.subagents ?? [previous.projectedItem]),
@@ -2025,7 +2020,6 @@ export function deriveMessagesTimelineRows(input: {
         };
         continue;
       }
-      if (groupKey !== null) nativeSubagentRows.set(groupKey, nextRows.length);
       nextRows.push({
         kind: "event",
         id: timelineEntry.id,
@@ -2035,10 +2029,11 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    // SCIENT-FORK:START
     if (timelineEntry.message.role === "user") {
       latestUserDirectionHint = resolveMarkdownDirectionHint(timelineEntry.message.text);
     }
-
+    // SCIENT-FORK:END
     const assistantResponseStillInProgress =
       timelineEntry.message.role === "assistant" &&
       runIdIsActiveResponse(timelineEntry.message.runId);
@@ -2076,14 +2071,17 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "assistant"
           ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
           : undefined,
+      // SCIENT-FORK:START
       assistantTurnChangedFiles:
         timelineEntry.message.role === "assistant" && timelineEntry.message.runId !== null
           ? turnDiffSummaryByRunId.get(timelineEntry.message.runId)?.files
           : undefined,
+      // SCIENT-FORK:END
       revertTurnCount:
         timelineEntry.message.role === "user"
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
+      // SCIENT-FORK:START — Scient fork V2 on prompts and final answers; content direction.
       canForkConversation:
         timelineEntry.message.role === "user"
           ? !timelineEntry.message.streaming
@@ -2097,22 +2095,15 @@ export function deriveMessagesTimelineRows(input: {
             : undefined,
       assistantDirectionHint:
         timelineEntry.message.role === "assistant" ? latestUserDirectionHint : undefined,
+      // SCIENT-FORK:END
       // SCIENT-FORK:START
       ...(keptAnswer ? { keptAnswer, showAssistantCopyButton: true } : {}),
       // SCIENT-FORK:END
     });
-
-    if (
-      input.hasForkBaseline === true &&
-      input.forkBaselineAssistantMessageId !== undefined &&
-      input.forkBaselineAssistantMessageId !== null &&
-      timelineEntry.message.id === input.forkBaselineAssistantMessageId
-    ) {
-      nextRows.push({
-        kind: "fork-marker",
-        id: "conversation-fork-marker",
-      });
-    }
+    // SCIENT-FORK:START — the separator after the answer this conversation was forked after.
+    const forkBaselineMarker = forkBaselineMarkerRowAfter(input, timelineEntry.message.id);
+    if (forkBaselineMarker) nextRows.push(forkBaselineMarker);
+    // SCIENT-FORK:END
   }
 
   // Until the agent's turn is live, the setup card sits under the send with
@@ -2128,19 +2119,21 @@ export function deriveMessagesTimelineRows(input: {
     input.worktreeSetup !== undefined &&
     worktreeSetupAgentStarted(input.worktreeSetup) &&
     input.latestRun?.startedAt != null;
-  // SCIENT-FORK:START — a setup script may keep running after the agent starts.
-  const setupScriptStage = input.worktreeSetup?.stages.find((stage) => stage.id === "setup-script");
-  const hasPostHandoffSetupScript =
-    setupHandedOff &&
-    (setupScriptStage?.status === "running" || setupScriptStage?.status === "failed");
+  // SCIENT-FORK:START — a setup script may keep running after the agent starts
+  // (scient/threadTimeline/postHandoffSetup.ts).
+  const hasPostHandoffSetupScript = postHandoffSetupScript(input.worktreeSetup, setupHandedOff);
   // SCIENT-FORK:END
+  // A finished setup keeps the slot until the turn is live, so the card does
+  // not jump above the working header in the gap before the run starts.
   const setupOwnsWorkingSlot =
     !setupHandedOff &&
     (input.worktreeSetup?.phase === "running" || input.worktreeSetup?.phase === "done");
+  // SCIENT-FORK:START
   if (
     input.worktreeSetup &&
     (!setupHandedOff || (input.worktreeSetup.phase !== "running" && !hasPostHandoffSetupScript))
   ) {
+    // SCIENT-FORK:END
     const setupRow = {
       kind: "worktree-setup",
       id: WORKTREE_SETUP_ROW_ID,
@@ -2184,25 +2177,11 @@ export function deriveMessagesTimelineRows(input: {
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
   }
-  // Scient setup scripts may keep running after the agent starts. Preserve
-  // that durable status row while using upstream's stable pre-handoff layout.
+  // SCIENT-FORK:START
   if (input.worktreeSetup && hasPostHandoffSetupScript) {
-    const setupRow = {
-      kind: "worktree-setup",
-      id: WORKTREE_SETUP_ROW_ID,
-      createdAt: input.worktreeSetup.startedAt,
-      snapshot: input.worktreeSetup,
-      embedded: true,
-    } as const;
-    const workingRowIndex = nextRows.findIndex((row) => row.kind === "working");
-    if (workingRowIndex >= 0) {
-      nextRows.splice(workingRowIndex + 1, 0, setupRow);
-    } else {
-      nextRows.push(setupRow);
-    }
+    insertPostHandoffSetupRow(nextRows, input.worktreeSetup, WORKTREE_SETUP_ROW_ID);
   }
-  // A running setup owns the working slot above its card and shows no
-  // activity row of its own; every other state gets the usual tail.
+  // SCIENT-FORK:END
   if (
     input.isWorking &&
     !setupOwnsWorkingSlot &&
@@ -2310,7 +2289,9 @@ function attachCreatedThreadSummaries(
   });
 }
 
+// SCIENT-FORK:START — exported for tests of the post-handoff setup row.
 export const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
+// SCIENT-FORK:END
 
 type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
 
@@ -2492,8 +2473,10 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.projectedItem === bm.projectedItem &&
         a.message === bm.message &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
-        a.assistantCopyStreaming === bm.assistantCopyStreaming &&
-        a.canForkConversation === bm.canForkConversation
+        // SCIENT-FORK:START
+        a.canForkConversation === bm.canForkConversation &&
+        // SCIENT-FORK:END
+        a.assistantCopyStreaming === bm.assistantCopyStreaming
       );
     }
 
@@ -2569,17 +2552,20 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.expanded === bw.expanded &&
         a.summary === bw.summary &&
         a.summaryKind === bw.summaryKind &&
+        // SCIENT-FORK:START — the summary icon can change while the summary text does not.
         a.summaryToolIcon === bw.summaryToolIcon &&
         a.summaryTraceIcon === bw.summaryTraceIcon &&
+        // SCIENT-FORK:END
         a.toolSurface === bw.toolSurface &&
         Equal.equals(a.toolIcon, bw.toolIcon) &&
         a.hasFailure === bw.hasFailure
       );
     }
 
+    // SCIENT-FORK:START
     case "fork-marker":
       return a.originThreadId === (b as typeof a).originThreadId;
-
+    // SCIENT-FORK:END
     case "message": {
       const bm = b as typeof a;
       return (
@@ -2590,13 +2576,15 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
+        // SCIENT-FORK:START
         a.assistantTurnChangedFiles === bm.assistantTurnChangedFiles &&
-        a.revertTurnCount === bm.revertTurnCount &&
         a.canForkConversation === bm.canForkConversation &&
+        a.assistantDirectionHint === bm.assistantDirectionHint &&
+        // SCIENT-FORK:END
         // SCIENT-FORK:START
         a.keptAnswer === bm.keptAnswer &&
         // SCIENT-FORK:END
-        a.assistantDirectionHint === bm.assistantDirectionHint
+        a.revertTurnCount === bm.revertTurnCount
       );
     }
   }

@@ -1,4 +1,7 @@
-import { isFileCitation, type ComposerCitation, type FileCitation } from "@t3tools/contracts";
+import type { AssistantCitation } from "@t3tools/contracts";
+// SCIENT-FORK:START — quotes from Markdown files (scient-file-citation://) share this chip; its
+// labels, copy text and navigation come from the composer-citation owners.
+import { isFileCitation, type ComposerCitation } from "@t3tools/contracts";
 import {
   composerCitationLabel,
   serializeComposerCitation,
@@ -7,19 +10,20 @@ import {
   fileCitationHash,
   fileCitationNavigation,
 } from "~/scient/markdownEditor/fileCitationNavigation";
+import { FileCitationHoverCard } from "~/scient/markdownEditor/FileCitationHoverCard";
+// SCIENT-FORK:END
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRightIcon } from "lucide-react";
+// SCIENT-FORK:START — a composer chip can be removed.
+import { ArrowUpRightIcon, PencilIcon, QuoteIcon, XIcon } from "lucide-react";
+// SCIENT-FORK:END
 import {
-  Fragment,
   useCallback,
   useEffect,
   useEffectEvent,
   useRef,
   useState,
-  type ReactElement,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { PencilIcon, QuoteIcon, XIcon } from "lucide-react";
 import {
   findAssistantCitationSourceAnchor,
   type AssistantCitationSourceAnchor,
@@ -33,7 +37,6 @@ import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
@@ -44,15 +47,21 @@ import { observeResize } from "~/lib/observeResize";
 export function AssistantCitationChip({
   citation,
   composer = false,
+  // SCIENT-FORK:START — file quotes; a removable composer chip.
   onRemove,
+  // SCIENT-FORK:END
   commentEditor,
 }: {
+  // SCIENT-FORK:START — file quotes; a removable composer chip.
   citation: ComposerCitation;
   onRemove?: () => void;
+  // SCIENT-FORK:END
   composer?: boolean;
   commentEditor?: {
     open: boolean;
+    // SCIENT-FORK:START — the Markdown editor creates a citation from the same popover.
     mode?: "create" | "edit";
+    // SCIENT-FORK:END
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
     onOpenChange: (open: boolean) => void;
     onCancel?: () => void;
@@ -94,6 +103,7 @@ export function AssistantCitationChip({
   });
   useEffect(() => {
     if (!commentOpen || sourceAnchor === unavailableSourceAnchor) return;
+    // SCIENT-FORK:START — a file quote has no assistant-message source to find.
     const anchor =
       sourceAnchor ??
       (isFileCitation(citation) ? null : findAssistantCitationSourceAnchor(document, citation));
@@ -101,6 +111,7 @@ export function AssistantCitationChip({
     return observeAssistantCitationCommentSource({
       anchor,
       citation: isFileCitation(citation) ? undefined : citation,
+      // SCIENT-FORK:END
       onUnavailable: onSourceUnavailable,
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
@@ -110,40 +121,51 @@ export function AssistantCitationChip({
     ? {
         contextElement: activeSourceAnchor.source,
         getBoundingClientRect: () => {
+          // SCIENT-FORK:START — an editor selection can resolve its own line rects.
           const rects = activeSourceAnchor.resolveRects?.() ?? [
             ...activeSourceAnchor.range.getClientRects(),
           ];
           return rects.at(-1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          // SCIENT-FORK:END
         },
       }
     : undefined;
+  // SCIENT-FORK:START — file quotes label, copy and link to their file.
   const label = composerCitationLabel(citation);
+  // SCIENT-FORK:END
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,
     params: { environmentId: citation.environmentId, threadId: citation.threadId },
+    // SCIENT-FORK:START — file quotes label, copy and link to their file.
     hash: isFileCitation(citation) ? fileCitationHash(citation) : assistantCitationHash(citation),
     "data-markdown-copy": serializeComposerCitation(citation),
+    // SCIENT-FORK:END
     resetScroll: false,
     onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
       }
       event.preventDefault();
+      // SCIENT-FORK:START — a file quote opens its file at the quoted lines.
       if (isFileCitation(citation)) {
         void navigate(fileCitationNavigation(citation));
       } else void navigate(assistantCitationNavigation(citation));
+      // SCIENT-FORK:END
     },
   };
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
       className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-foreground"
+      // SCIENT-FORK:START — a file quote names its file.
       aria-label={`View cited ${isFileCitation(citation) ? citation.path : "assistant text"}: ${label}`}
+      // SCIENT-FORK:END
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
     </Link>
   );
+  // SCIENT-FORK:START — in chat, a file quote is a link chip with a hover card, not the popover.
   const chatSourceLink = (
     <Link
       {...sourceLinkProps}
@@ -155,13 +177,16 @@ export function AssistantCitationChip({
     </Link>
   );
   if (!composer && !isFileCitation(citation)) {
+    // SCIENT-FORK:END
     return (
       <ContextChipPopover
         kind="citation"
         icon={<QuoteIcon />}
         label={label}
         accessibleLabel={`Quoted assistant text: ${label}`}
+        // SCIENT-FORK:START — the composer-citation owner serializes both kinds.
         copyMarkdown={serializeComposerCitation(citation)}
+        // SCIENT-FORK:END
       >
         <div className="flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start gap-3 p-1 text-sm">
           <AssistantCitationQuote citation={citation} />
@@ -179,6 +204,7 @@ export function AssistantCitationChip({
     <ContextChip
       kind="citation"
       contentEditable={false}
+      // SCIENT-FORK:START — a file quote is marked as one and shows its hover card.
       data-assistant-citation-chip={isFileCitation(citation) ? undefined : "true"}
       data-file-citation-chip={isFileCitation(citation) ? "true" : undefined}
       data-markdown-copy={serializeComposerCitation(citation)}
@@ -188,14 +214,10 @@ export function AssistantCitationChip({
           citation={citation}
           trigger={composer ? composerSourceLink : chatSourceLink}
         />
-      ) : composer ? (
-        composerSourceLink
       ) : (
-        <Tooltip>
-          <TooltipTrigger render={chatSourceLink} />
-          <TooltipPopup side="top">View source</TooltipPopup>
-        </Tooltip>
+        composerSourceLink
       )}
+      {/* SCIENT-FORK:END */}
       {commentEditor ? (
         <Popover
           open={commentEditor.open}
@@ -217,7 +239,9 @@ export function AssistantCitationChip({
           {commentEditor.open ? (
             <PopoverPopup
               {...composerFloatingLayerProps}
+              // SCIENT-FORK:START — the editor's writing menu stays with its selection.
               data-writing-menu-owner={activeSourceAnchor?.selectionOwnerId}
+              // SCIENT-FORK:END
               side={activeSourceAnchor ? "bottom" : "top"}
               align="end"
               anchor={popupAnchor}
@@ -241,17 +265,21 @@ export function AssistantCitationChip({
                   : undefined
               }
               ref={commentPopupRef}
+              // SCIENT-FORK:START — the Markdown editor creates a citation from the same popover.
               aria-label={
                 commentEditor.mode === "create" ? "Add citation to chat" : "Edit citation comment"
               }
+              // SCIENT-FORK:END
               width="md"
               padding="compact"
               onPointerDown={(event) => event.stopPropagation()}
             >
               <AssistantCitationCommentEditor
+                // SCIENT-FORK:START — file quotes; the editor's create mode.
                 key={serializeComposerCitation(citation)}
                 citation={citation}
                 {...(commentEditor.mode ? { mode: commentEditor.mode } : {})}
+                // SCIENT-FORK:END
                 inputRef={commentInputRef}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;
@@ -282,6 +310,7 @@ export function AssistantCitationChip({
           ) : null}
         </Popover>
       ) : null}
+      {/* SCIENT-FORK:START — a composer chip can be removed. */}
       {onRemove ? (
         <ContextChipAction
           onClick={onRemove}
@@ -292,62 +321,12 @@ export function AssistantCitationChip({
           <XIcon aria-hidden="true" className="size-[0.85em]" />
         </ContextChipAction>
       ) : null}
+      {/* SCIENT-FORK:END */}
     </ContextChip>
   );
 }
 
-/**
- * Compact hover card for a file citation: the filename stands out, the directory
- * wraps at path separators onto a few short lines, and the cited range and
- * excerpt follow. Replaces the native `title`, which rendered deep absolute
- * paths as one unstyled line spanning the chat width.
- */
-function FileCitationHoverCard({
-  citation,
-  trigger,
-}: {
-  citation: FileCitation;
-  trigger: ReactElement;
-}) {
-  const separatorIndex = Math.max(citation.path.lastIndexOf("/"), citation.path.lastIndexOf("\\"));
-  const fileName = citation.path.slice(separatorIndex + 1);
-  const directory = separatorIndex > 0 ? citation.path.slice(0, separatorIndex + 1) : "";
-  // Offer a break after every separator so long paths wrap between segments.
-  const directorySegments = directory.split(/(?<=[\\/])/);
-  const excerpt = citation.text.replace(/\s+/g, " ").trim();
-  return (
-    <Tooltip>
-      <TooltipTrigger render={trigger} />
-      <TooltipPopup side="top" className="max-w-72">
-        <span className="flex min-w-0 flex-col gap-0.5 py-0.5 text-left">
-          <span className="font-medium text-foreground">{fileName || citation.path}</span>
-          {directory ? (
-            <span className="line-clamp-3 font-mono text-2xs text-muted-foreground">
-              {directorySegments.map((segment, index) => (
-                // oxlint-disable-next-line react/no-array-index-key -- segments are positional and static
-                <Fragment key={index}>
-                  {segment}
-                  <wbr />
-                </Fragment>
-              ))}
-            </span>
-          ) : null}
-          <span className="text-muted-foreground">
-            Lines {citation.startLine}–{citation.endLine}
-            {citation.origin === "draft" ? " · unsaved at capture" : ""}
-          </span>
-          {excerpt ? (
-            <span className="mt-0.5 line-clamp-2 border-l-2 border-border pl-1.5 text-muted-foreground">
-              {excerpt}
-            </span>
-          ) : null}
-        </span>
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function AssistantCitationQuote({ citation }: { citation: ComposerCitation }) {
+function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
   const [fade, setFade] = useState({ top: false, bottom: false });
   const updateFade = useCallback((element: HTMLElement) => {
     const top = element.scrollTop > 1;

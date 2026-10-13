@@ -1,10 +1,7 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
-import { END_GAP, promptResponseLastIndex } from "./useBoundedAnswerFollow";
-
-/** How much of a message counts as its start being shown: its first lines. */
-const FIRST_LINES_PX = 48;
+import { END_GAP, FIRST_LINES_PX, promptResponseLastIndex } from "./useBoundedAnswerFollow";
 
 /**
  * Where the follow of `promptId` would have the view now (a scroll offset),

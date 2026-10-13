@@ -1,7 +1,4 @@
-import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
-import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 // SCIENT-FORK:START — send motion, and the send follow ChatView owns (chat/responseFollow.ts).
-import { returnToLiveFollow } from "./liveFollowOffset";
 import type { TimelineResponseFollow } from "./responseFollow";
 import { ThinkingRowFade } from "./ThinkingRowFade";
 import {
@@ -11,29 +8,35 @@ import {
 } from "./timelineEntranceMotion";
 import { useWorkingRowExit, useWorkingRowExitAnimation } from "./workingRowExit";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — reading positions, the reading-end rule, the unread count and the
+// send follow (chat/readerScrolling.ts, readerScrollPolicy.ts, useBoundedAnswerFollow.ts).
+import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import {
   timelineRowsKey,
   type RestingAtReadingEnd,
   useReaderScrollInput,
   useReadingBookkeepingFrame,
+  useReadingPositionRestore,
+  useReadingRestoreTarget,
   useSaveReadingPosition,
 } from "./readerScrolling";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import {
+  latestTurnUnfinished,
   readerAtReadingEnd,
   readingEndAllowance,
   readingEndGapOnScreen,
-  resolveReadingRow,
 } from "./readerScrollPolicy";
-
+// SCIENT-FORK:END
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
+// SCIENT-FORK:START — T3's computer-use drawing is not in Scient (scient/presentation/traceIconSet.ts).
+// SCIENT-FORK:END
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
-import { TracePathLabel } from "./TracePathLabel";
-import { TracePathTooltipEnabled } from "./TracePathLabel.context";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
@@ -54,7 +57,6 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
-  type OrchestrationV2ContextTransfer,
   type RunAttemptId,
   type ScopedThreadRef,
   type ServerProvider,
@@ -62,13 +64,14 @@ import {
   type RunId,
   ThreadId,
   type ToolActivityIcon,
-  type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
+// SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+// SCIENT-FORK:END
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
@@ -83,19 +86,22 @@ import {
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+// SCIENT-FORK:START — agent-spawn rows read the agent panel model.
 import {
   emptyAgentPanelModel,
   type AgentPanelModel,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+// SCIENT-FORK:END
 import {
   subagentGroupSummary,
   summarizeSubagentStatuses,
 } from "@t3tools/client-runtime/state/subagent-display";
 import { observeResize } from "~/lib/observeResize";
 
+// SCIENT-FORK:START
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
-
+// SCIENT-FORK:END
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 
@@ -106,7 +112,7 @@ import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 // SCIENT-FORK:START — live activity.
-import { LiveActivityDot, observeLiveActivitySweep } from "./liveActivity";
+import { LiveActivityDot, LiveStepElapsed, observeLiveActivitySweep } from "./liveActivity";
 // SCIENT-FORK:END
 import {
   createContext,
@@ -123,7 +129,9 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+// SCIENT-FORK:START — no live follow: maintainScrollAtEnd options are not needed.
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+// SCIENT-FORK:END
 import { FileDiff } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
@@ -152,42 +160,39 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
-import { ScientTraceSymbol, ScientTraceSymbolMono } from "./ScientTraceSymbol";
+// SCIENT-FORK:START — reasoning trace styling.
 import "../../scient/presentation/scient-reasoning-trace.css";
+// SCIENT-FORK:END
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
-
+// SCIENT-FORK:START — Scient's mark replaces T3's wordmark (scient/presentation/traceIconSet.ts).
+// SCIENT-FORK:END
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
-  BookOpenIcon,
   BotIcon,
+  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ChevronUpIcon,
   CircleAlertIcon,
-  CircleXIcon,
-  CloudIcon,
   DownloadIcon,
   EyeIcon,
-  FolderOpenIcon,
   GitForkIcon,
   GlobeIcon,
-  ImageIcon,
-  LayersIcon,
   type LucideIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
   Redo2Icon,
-  PencilIcon,
-  ScanTextIcon,
+  // SCIENT-FORK:START — compaction shows ScanTextIcon (imported with the Scient trace icons).
+  // SCIENT-FORK:END
   SearchIcon,
-  ShieldCheckIcon,
   SmartphoneIcon,
-  SquareMousePointerIcon,
+  SquarePenIcon,
+  TerminalIcon,
   Undo2Icon,
   HammerIcon,
   WrenchIcon,
@@ -195,11 +200,6 @@ import {
   ZapIcon,
   RotateCcwIcon,
 } from "lucide-react";
-import {
-  SquareTerminalLowered,
-  TRACE_ICON_STROKE,
-  traceIconOverride,
-} from "../../scient/presentation/traceIcons";
 import { ChevronDown, ChevronRight } from "lucide";
 import type {
   ComposerContextId,
@@ -217,6 +217,8 @@ import {
   buildExpandedImagePreview,
   ExpandedImagePreview,
 } from "./ExpandedImagePreview";
+// SCIENT-FORK:START — message images show in Scient's gallery (scient/images/ScientChatImageGallery.tsx).
+// SCIENT-FORK:END
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
@@ -226,7 +228,8 @@ import { useProject, useThreadShell } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
-  rememberTimelinePosition,
+  // SCIENT-FORK:START — the reading position has one writer (readerScrolling.ts).
+  // SCIENT-FORK:END
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -246,11 +249,14 @@ import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssis
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
+  // SCIENT-FORK:START — the unread badge counts each response's latest message.
   deriveTerminalAssistantMessageIds,
+  // SCIENT-FORK:END
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
   resolveAssistantMessageCopyState,
-  resolveTimelineIsAtEnd,
+  // SCIENT-FORK:START — the reading position has one writer (readerScrolling.ts).
+  // SCIENT-FORK:END
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
   resolveTimelineMinimapHeightStyle,
@@ -268,7 +274,9 @@ import {
   threadReadTargetTitle,
   toolGroupAction,
   workEntryDisplayLabel,
+  // SCIENT-FORK:START
   workEntryPathPresentation,
+  // SCIENT-FORK:END
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   worktreeSetupAgentStarted,
@@ -286,8 +294,10 @@ import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
+// SCIENT-FORK:START — Scient fork V2: message fork buttons and the landing fork's list.
 import { ScientForkMessageButton } from "./scient-fork/ScientForkMessageButton";
 import { settledListThreadKey } from "../scient-fork/forkLanding";
+// SCIENT-FORK:END
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import {
   ContextChipPopover as UserMessageContextPopover,
@@ -322,6 +332,8 @@ import { createContextPresentationRegistry } from "../contextPresentationRegistr
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useClientSettings } from "~/hooks/useSettings";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
+// SCIENT-FORK:START — no reduced-motion check: nothing glides to the end.
+// SCIENT-FORK:END
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -331,7 +343,8 @@ import {
   formatUpcomingTimestamp,
 } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
-
+// SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+// SCIENT-FORK:END
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import {
   isV2LifecycleItem,
@@ -344,7 +357,15 @@ import {
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 // SCIENT-FORK:START — fork-only renderers and helpers.
+import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
+import type { OrchestrationV2ContextTransfer } from "@t3tools/contracts";
+import { CircleXIcon, ScanTextIcon } from "lucide-react";
+import { ForkMarkerSeparator } from "~/scient/fork/ForkMarkerSeparator";
 import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
+import { TracePathLabel } from "~/scient/presentation/TracePathLabel";
+import { TracePathTooltipEnabled } from "~/scient/presentation/TracePathLabel.context";
+import { TRACE_ICON_STROKE, traceIconOverride } from "~/scient/presentation/traceIcons";
+import { scientTraceIcon, type ScientTraceIconName } from "~/scient/presentation/traceIconSet";
 // Website tool icons never fetch a web favicon.
 import { remoteImageAddress } from "~/scient/presentation/remoteImageAddress";
 import {
@@ -430,7 +451,6 @@ interface TimelineRowSharedState {
   expandedSpawnEntryIds: ReadonlySet<string>;
   onOpenAgents: () => void;
   // SCIENT-FORK:END
-
   workGroupViewState: WorkGroupViewState;
 }
 
@@ -487,11 +507,12 @@ function TimelineListFooter({
 }
 
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
-/** Older-history pages a missing saved message may load before falling back. */
-const MAX_READING_HISTORY_PAGES = 2;
-
+// SCIENT-FORK:START — no live follow: the timeline never pins to its end (maintainScrollAtEnd off).
+// SCIENT-FORK:END
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
+// SCIENT-FORK:START — no smooth live-follow variant either.
+// SCIENT-FORK:END
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -511,8 +532,10 @@ interface MessagesTimelineProps {
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
   ) => boolean;
+  // SCIENT-FORK:START — agent-spawn rows read the agent panel model.
   agentPanelModel?: AgentPanelModel;
   onOpenAgents?: () => void;
+  // SCIENT-FORK:END
   isWorking: boolean;
   /** The live work belongs to a runless root turn (a provider-native subagent). */
   runlessWorkActive?: boolean;
@@ -534,7 +557,9 @@ interface MessagesTimelineProps {
 
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  // SCIENT-FORK:START — hides the fork-initialization handoff event.
   contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
+  // SCIENT-FORK:END
   latestRun: TimelineLatestRun | null;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
@@ -556,10 +581,10 @@ interface MessagesTimelineProps {
   }) => void;
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
+  // SCIENT-FORK:START — Scient fork V2: separators and fork buttons.
   hasForkBaseline?: boolean;
   forkBaselineAssistantMessageId?: MessageId | null;
   forkOriginThreadId?: ThreadId | undefined;
-  // SCIENT-FORK:START
   onForkAssistantMessage?: (messageId: MessageId) => void;
   onForkUserMessage?: (message: ChatMessage) => void;
   // SCIENT-FORK:END
@@ -582,21 +607,18 @@ interface MessagesTimelineProps {
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
+  // SCIENT-FORK:START — placement in flight, the send follow and releasing unused reserved room.
   timelinePositioningPending?: boolean;
   readingFollowPromptId?: string | null;
-  // SCIENT-FORK:START — the send follow's lifecycle, owned by ChatView (chat/responseFollow.ts).
+  /** The send follow's lifecycle, owned by ChatView (chat/responseFollow.ts). */
   responseFollow?: TimelineResponseFollow;
-  // SCIENT-FORK:END
   onReleaseUnusedAnchor?: () => void;
+  // SCIENT-FORK:END
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  // SCIENT-FORK:START — the unread count below; no live-follow flag: the timeline never pins
+  // to its end.
   onUnreadBelowChange?: (count: number) => void;
-  /**
-   * Whether the timeline should keep pinning to the live edge as content
-   * grows. Off while the user is reading history; LegendList's own
-   * maintainScrollAtEnd would otherwise re-pin regardless of ChatView's
-   * scroll-mode refs whenever the user drifts near the bottom.
-   */
-  liveFollowEnabled?: boolean;
+  // SCIENT-FORK:END
   /**
    * Whether the real rows extend past the viewport above the composer.
    * Reported after scrolls, row size changes, and viewport resizes.
@@ -611,7 +633,9 @@ interface MessagesTimelineProps {
   onPositionedThreadKeyChange?: ((threadKey: string | null) => void) | undefined;
   // SCIENT-FORK:END
   hideEmptyPlaceholder?: boolean;
+  // SCIENT-FORK:START — the restore waits while older history loads.
   positionHistoryLoading?: boolean;
+  // SCIENT-FORK:END
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
   /** Non-null when older turns exist beyond the loaded window. */
@@ -638,7 +662,8 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
     <ConversationTimeline
       {...props}
       {...find}
-      liveFollowEnabled={!findOpen && (props.liveFollowEnabled ?? true)}
+      // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+      // SCIENT-FORK:END
     />
   );
 }
@@ -647,8 +672,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
+  // SCIENT-FORK:START
   agentPanelModel,
   onOpenAgents = NOOP_OPEN_AGENTS,
+  // SCIENT-FORK:END
   isWorking,
   runlessWorkActive = false,
   activeTurnInProgress,
@@ -665,7 +692,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   awaitingUser = false,
   listRef,
   timelineEntries,
+  // SCIENT-FORK:START
   contextTransfers,
+  // SCIENT-FORK:END
   findExpanded = false,
   findQuery = "",
   activeFindMatch = null,
@@ -683,10 +712,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onRollbackCheckpoint,
   supportsConversationRollback,
   onRevertToTurnCount,
+  // SCIENT-FORK:START
   hasForkBaseline,
   forkBaselineAssistantMessageId,
   forkOriginThreadId,
-  // SCIENT-FORK:START
   onForkAssistantMessage,
   onForkUserMessage,
   // SCIENT-FORK:END
@@ -709,15 +738,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onAnchorReady,
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
+  // SCIENT-FORK:START — placement in flight, the send follow and releasing unused reserved room.
   timelinePositioningPending = false,
   readingFollowPromptId = null,
-  // SCIENT-FORK:START — the send follow's lifecycle.
   responseFollow,
-  // SCIENT-FORK:END
   onReleaseUnusedAnchor,
+  // SCIENT-FORK:END
   onIsAtEndChange,
+  // SCIENT-FORK:START — the unread count below.
   onUnreadBelowChange,
+  // SCIENT-FORK:END
   onContentOverflowChange,
+  // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+  // SCIENT-FORK:END
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
@@ -725,17 +758,21 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onPositionedThreadKeyChange,
   // SCIENT-FORK:END
   hideEmptyPlaceholder = false,
+  // SCIENT-FORK:START — the restore waits while older history loads.
   positionHistoryLoading = false,
+  // SCIENT-FORK:END
   topFadeEnabled = false,
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
+  // SCIENT-FORK:START — the saved position is read again once the list has loaded.
   const [listLoadVersion, setListLoadVersion] = useState(0);
   const rememberedPosition = useMemo(
     () => readTimelinePosition(listIdentityKey),
     [listIdentityKey, listLoadVersion],
   );
+  // SCIENT-FORK:END
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
     () => rememberedPosition?.disclosures?.runs ?? new Set(),
   );
@@ -751,10 +788,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     () => new Set(),
   );
   // SCIENT-FORK:END
-  // Whether the latest run is unfinished (running, or it ended interrupted or
-  // with an error): its latest content is then the reading end.
-  const turnUnfinished =
-    runningRunId !== null || latestRun?.status === "interrupted" || latestRun?.status === "failed";
+  // SCIENT-FORK:START — the reading end, the loaded list and older-history paging for the restore.
+  // Whether the latest run is unfinished: its latest content is then the reading end.
+  const turnUnfinished = latestTurnUnfinished(runningRunId, latestRun?.status);
   const turnUnfinishedRef = useRef(turnUnfinished);
   useLayoutEffect(() => {
     turnUnfinishedRef.current = turnUnfinished;
@@ -770,17 +806,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
     key: listIdentityKey,
     count: 0,
   });
-  const readingHistoryPageCount =
-    readingHistoryPages.key === listIdentityKey ? readingHistoryPages.count : 0;
-
+  // SCIENT-FORK:END
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(() =>
     rememberedPosition?.atEnd === false ? null : listIdentityKey,
   );
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
-  // SCIENT-FORK: the thread whose positioning ran out of frames before it held still.
+  // SCIENT-FORK:START — the thread whose positioning ran out of frames before it held
+  // still. No reduced-motion check: nothing glides to the end.
   const [abandonedPositionKey, setAbandonedPositionKey] = useState<string | null>(null);
+  // SCIENT-FORK:END
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestRunRef = useRef(latestRun);
+  // SCIENT-FORK:START — no settling identity: the list never pins its end on a thread switch.
+  // SCIENT-FORK:END
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
@@ -788,9 +826,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
     setPositionedThreadKey(null);
-    // SCIENT-FORK
+    // SCIENT-FORK:START — a new thread's positioning starts over.
     setAbandonedPositionKey(null);
+    // SCIENT-FORK:END
     previousLatestRunRef.current = latestRun;
+    // SCIENT-FORK:START — no settling identity: nothing pins the end on a thread switch.
+    // SCIENT-FORK:END
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
@@ -807,6 +848,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const expandCitedRun = useCallback((runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   }, []);
+  // SCIENT-FORK:START — agent-spawn rows expand in place (scient/presentation/AgentSpawnRow.tsx).
   const onToggleSpawnRow = useCallback((entryId: string, expanded: boolean, runId?: RunId) => {
     setExpandedSpawnEntryIds((current) => {
       if (current.has(entryId) === expanded) return current;
@@ -820,6 +862,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
     }
   }, []);
+  // SCIENT-FORK:END
   // Nested tool state shares the bounded thread-position cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
     () =>
@@ -830,18 +873,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
     [listIdentityKey, rememberedPosition],
   );
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
-  // Expanding or collapsing a block at the end must not pin the end: the
-  // toggled row keeps its place instead (maintainVisibleContentPosition).
+  // SCIENT-FORK:START — expanding or collapsing a block at the end must not pin the end:
+  // the toggled row keeps its place instead (maintainVisibleContentPosition).
+  // SCIENT-FORK:END
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
-  // The reader's own scrolling input, held until their movement has stopped:
-  // a drag, an animated wheel notch or key scroll moves for several frames.
+  // SCIENT-FORK:START — the reader's own scrolling input, held until their movement has
+  // stopped: a drag, an animated wheel notch or key scroll moves for several frames.
   const readerInputRef = useRef(false);
   const scrollbarHeldRef = useRef(false);
   const lastBookkeepingScrollRef = useRef<number | null>(null);
   const stillFramesRef = useRef(0);
   // Schedules a bookkeeping pass; set once the per-frame scheduler exists.
   const scheduleBookkeepingRef = useRef<() => void>(() => {});
-
+  // SCIENT-FORK:END
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -859,6 +903,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   }, []);
 
+  // SCIENT-FORK:START — a toggle never pins the end; the toggled row keeps its place, and
+  // collapsing at the reading end still reports it (no settling identity, no end pin).
   const suspendEndScrollMaintenanceForDisclosure = useCallback(
     (anchorKey: string, collapsed = false) => {
       disclosureAnchorKeyRef.current = anchorKey;
@@ -892,8 +938,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     },
     [contentInsetEndAdjustment, listRef, onToolOutputCollapsedAtEnd],
   );
+  // SCIENT-FORK:END
 
   const shouldRestoreVisibleContentPosition = useCallback((row: MessagesTimelineRow) => {
+    // SCIENT-FORK:START — a toggle never pins the end.
+    // SCIENT-FORK:END
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   }, []);
@@ -1047,7 +1096,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const projection = deriveMessagesTimelineRowsWithState(
       {
         timelineEntries,
+        // SCIENT-FORK:START
         contextTransfers,
+        // SCIENT-FORK:END
         latestRun,
         runningRunId,
         expandedRunIds: visibleExpandedRunIds,
@@ -1058,10 +1109,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
         activeTurnStartedAt,
         turnDiffSummaries,
         supportsConversationRollback,
+        // SCIENT-FORK:START — fork separators and subagent workflow groups.
         hasForkBaseline,
         forkBaselineAssistantMessageId,
         subagentWorkflowIds,
-
+        // SCIENT-FORK:END
         worktreeSetup,
       },
       previous?.threadKey === listIdentityKey && previous.workspaceRoot === workspaceRoot
@@ -1072,12 +1124,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return projection.rows;
   }, [
     rowsProjectionRef,
-    hasForkBaseline,
-    forkBaselineAssistantMessageId,
     listIdentityKey,
     workspaceRoot,
     timelineEntries,
-    contextTransfers,
     latestRun,
     runningRunId,
     visibleExpandedRunIds,
@@ -1088,16 +1137,21 @@ const ConversationTimeline = memo(function ConversationTimeline({
     activeTurnStartedAt,
     turnDiffSummaries,
     supportsConversationRollback,
+    // SCIENT-FORK:START
+    hasForkBaseline,
+    forkBaselineAssistantMessageId,
+    contextTransfers,
     subagentWorkflowIds,
+    // SCIENT-FORK:END
     worktreeSetup,
   ]);
   // SCIENT-FORK:START — a finished turn's working header closes its space (chat/workingRowExit.ts).
   const stableRows = useStableRows(rawRows, listIdentityKey);
   const { rows, exit: workingRowExit } = useWorkingRowExit(stableRows, listIdentityKey);
   // SCIENT-FORK:END
-  // A finished reveal (revealed or cancelled) no longer holds off idle end pinning.
-  const [finishedRevealPromptId, setFinishedRevealPromptId] = useState<string | null>(null);
   // SCIENT-FORK:START — ChatView owns the follow; a finished one ends there too.
+  // A finished reveal (revealed or cancelled) no longer holds off idle end keeping.
+  const [finishedRevealPromptId, setFinishedRevealPromptId] = useState<string | null>(null);
   const onFollowFinished = responseFollow?.onFinished;
   const onResumeFollow = responseFollow?.onResume;
   const onRevealFinished = useCallback(
@@ -1107,10 +1161,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     },
     [onFollowFinished],
   );
-  // SCIENT-FORK:END
   const revealActive =
     readingFollowPromptId !== null && finishedRevealPromptId !== readingFollowPromptId;
-  // SCIENT-FORK:START — the follow settles with the prompt's own run, and says what it follows.
+  // The follow settles with the prompt's own run, and says what it follows.
   const followingPromptId = useBoundedAnswerFollow({
     listRef,
     rows,
@@ -1123,238 +1176,51 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onFinished: onRevealFinished,
   });
   // SCIENT-FORK:END
-
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
-  // The last allowed page must arrive before the saved message is given up on.
-  const readingHistoryExhausted =
-    loadEarlier === null ||
-    (readingHistoryPageCount >= MAX_READING_HISTORY_PAGES && !loadEarlier.loading);
-  const restoreTarget = rememberedPosition
-    ? resolveReadingRow(rows, rememberedPosition, readingHistoryExhausted)
-    : null;
-  const restoreRowIndex = restoreTarget?.index ?? -1;
-  const restoreOffset = restoreTarget?.exact ? (rememberedPosition?.offsetWithinRow ?? 0) : 0;
-  const waitingForReadingHistory =
-    restoringThreadPosition &&
-    !!rememberedPosition &&
-    restoreTarget === null &&
-    !readingHistoryExhausted;
-  useEffect(() => {
-    if (
-      !waitingForReadingHistory ||
-      positionHistoryLoading ||
-      !loadEarlier ||
-      loadEarlier.loading ||
-      readingHistoryPageCount >= MAX_READING_HISTORY_PAGES
-    )
-      return;
-    const cursor = loadEarlier.cursor ?? "initial";
-    if (requestedReadingPages.current.cursors.has(cursor)) return;
-    requestedReadingPages.current.cursors.add(cursor);
-    setReadingHistoryPages((current) => ({
-      key: listIdentityKey,
-      count: (current.key === listIdentityKey ? current.count : 0) + 1,
-    }));
-    loadEarlier.onLoadEarlier();
-  }, [
-    waitingForReadingHistory,
+  // SCIENT-FORK:START — restore by message identity, paging in older history (chat/readerScrolling.ts).
+  const { restoreRowIndex, restoreOffset, waitingForReadingHistory } = useReadingRestoreTarget({
+    rows,
+    rememberedPosition,
+    restoringThreadPosition,
     positionHistoryLoading,
     loadEarlier,
     listIdentityKey,
-    readingHistoryPageCount,
-  ]);
+    readingHistoryPages,
+    setReadingHistoryPages,
+    requestedReadingPages,
+  });
+  // SCIENT-FORK:END
   const restoringAlwaysRender = useMemo(
     () =>
       restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
     [restoreRowIndex, restoringThreadPosition],
   );
-  useLayoutEffect(() => {
-    if (!restoringThreadPosition || rows.length === 0 || !readingListLoaded) return;
-    const list = listRef.current;
-    if (!list) return;
-    if (citationRequest !== null || (anchorMessageId !== null && !rememberedPosition)) {
-      setPositionedThreadKey(listIdentityKey);
-      return;
-    }
-    let cancelled = false;
-    let settleFrame: number | null = null;
-    const viewport: HTMLElement | null = list.getScrollableNode();
-    const cancelRestoration = () => {
-      if (cancelled) return;
-      cancelled = true;
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      // Supersede any pending estimated-index scroll before the browser applies the gesture.
-      if (viewport)
-        void list.scrollToOffset({
-          get offset() {
-            return viewport.scrollTop;
-          },
-          animated: false,
-        });
-      setPositionedThreadKey(listIdentityKey);
-    };
-    const cancelForNavigation = () => {
-      cancelRestoration();
-      onManualNavigation();
-    };
-    const onScrollKey = (event: globalThis.KeyboardEvent) => {
-      if (
-        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key) &&
-        !(
-          event.target instanceof Element &&
-          event.target.closest("input, textarea, [contenteditable=true]")
-        )
-      )
-        cancelForNavigation();
-    };
-    viewport?.addEventListener("wheel", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("touchmove", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("pointerdown", cancelForNavigation, { passive: true });
-    viewport?.ownerDocument.addEventListener("keydown", onScrollKey);
-    const position = rememberedPosition;
-    const index = restoreRowIndex;
-    const targetRowId = rows[index]?.id;
-    if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
-    const cleanup = () => {
-      cancelled = true;
-      if (cancelPositionRestoreRef?.current === cancelRestoration) {
-        cancelPositionRestoreRef.current = null;
-      }
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      viewport?.removeEventListener("wheel", cancelForNavigation);
-      viewport?.removeEventListener("touchmove", cancelForNavigation);
-      viewport?.removeEventListener("pointerdown", cancelForNavigation);
-      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
-    };
-    if (positionHistoryLoading || waitingForReadingHistory) return cleanup;
-    // SCIENT-FORK:START — left while following: back to where the follow is now (chat/liveFollowOffset.ts).
-    const followingPromptId = position?.followingPromptId;
-    if (followingPromptId) {
-      returnToLiveFollow({
-        list,
-        rows,
-        composerInset: contentInsetEndAdjustment,
-        promptId: followingPromptId,
-        cancelled: () => cancelled,
-        nextFrame: (step) => {
-          settleFrame = requestAnimationFrame(step);
-        },
-        done: () => {
-          setPositionedThreadKey(listIdentityKey);
-          // The follow carries on from here while the prompt's run still works.
-          onResumeFollow?.(followingPromptId);
-        },
-      });
-      return cleanup;
-    }
-    // SCIENT-FORK:END
-    const scrolling =
-      position && index >= 0
-        ? list.scrollToIndex({
-            index,
-            animated: false,
-            viewPosition: 0,
-            viewOffset: -restoreOffset,
-          })
-        : list.scrollToEnd({ animated: false });
-    void Promise.resolve(scrolling).then(() => {
-      if (cancelled) return;
-      if (!position || index < 0) {
-        // Rows measure after the first jump; keep the end in view until the
-        // list height holds for two frames, so a fresh open lands at the end.
-        let stableEndFrames = 0;
-        let remainingEndFrames = 60;
-        const settleAtEnd = () => {
-          if (cancelled) return;
-          const element = list.getScrollableNode();
-          if (!element || --remainingEndFrames <= 0) {
-            // SCIENT-FORK
-            setAbandonedPositionKey(listIdentityKey);
-            setPositionedThreadKey(listIdentityKey);
-            return;
-          }
-          if (element.scrollHeight - element.clientHeight - element.scrollTop > 1) {
-            stableEndFrames = 0;
-            void Promise.resolve(list.scrollToEnd({ animated: false })).then(() => {
-              if (!cancelled) settleFrame = requestAnimationFrame(settleAtEnd);
-            });
-            return;
-          }
-          if (++stableEndFrames >= 2) setPositionedThreadKey(listIdentityKey);
-          else settleFrame = requestAnimationFrame(settleAtEnd);
-        };
-        settleFrame = requestAnimationFrame(settleAtEnd);
-        return;
-      }
-      // Index scrolling starts from estimates. Keep the saved row mounted
-      // until its measured position and the DOM agree for two layout frames.
-      let stableFrames = 0;
-      let remainingFrames = 60;
-      const reconcile = () => {
-        if (cancelled) return;
-        if (--remainingFrames <= 0) {
-          // SCIENT-FORK
-          setAbandonedPositionKey(listIdentityKey);
-          setPositionedThreadKey(listIdentityKey);
-          return;
-        }
-        const state = list.getState();
-        const rowIndex = targetRowId === undefined ? undefined : state.indexByKey(targetRowId);
-        const row = rowIndex === undefined ? undefined : state.elementAtIndex(rowIndex);
-        const element = list.getScrollableNode();
-        if (!row || !element) {
-          settleFrame = requestAnimationFrame(reconcile);
-          return;
-        }
-        const offset = Math.max(
-          0,
-          Math.min(
-            element.scrollTop +
-              row.getBoundingClientRect().top -
-              element.getBoundingClientRect().top +
-              restoreOffset,
-            element.scrollHeight - element.clientHeight,
-          ),
-        );
-        if (Math.abs(element.scrollTop - offset) > 1) {
-          stableFrames = 0;
-          void list.scrollToOffset({ offset, animated: false }).then(() => {
-            if (!cancelled) settleFrame = requestAnimationFrame(reconcile);
-          });
-          return;
-        }
-        if (++stableFrames >= 2) {
-          setPositionedThreadKey(listIdentityKey);
-        } else {
-          settleFrame = requestAnimationFrame(reconcile);
-        }
-      };
-      settleFrame = requestAnimationFrame(reconcile);
-    });
-    return cleanup;
-  }, [
-    citationRequest,
-    anchorMessageId,
-    cancelPositionRestoreRef,
-    listIdentityKey,
+  // SCIENT-FORK:START — restore by message identity, settle at the end, give up visibly, and
+  // return to a follow the reader left (chat/readerScrolling.ts).
+  useReadingPositionRestore({
     listRef,
-    onManualNavigation,
+    rows,
+    listIdentityKey,
     rememberedPosition,
     restoringThreadPosition,
-    rows,
+    readingListLoaded,
+    citationRequest,
+    anchorMessageId,
     restoreRowIndex,
     restoreOffset,
     waitingForReadingHistory,
     positionHistoryLoading,
-    readingListLoaded,
-    // SCIENT-FORK:START — the return to a follow.
     contentInsetEndAdjustment,
+    cancelPositionRestoreRef,
+    onManualNavigation,
     onResumeFollow,
-    // SCIENT-FORK:END
-  ]);
+    setPositionedThreadKey,
+    setAbandonedPositionKey,
+  });
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — report the positioned thread to a landing fork.
   const positionedListThreadKey = settledListThreadKey({
     listThreadKey: listIdentityKey,
@@ -1399,7 +1265,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onManualNavigation,
   });
   const [findListReady, setFindListReady] = useState(false);
+  // SCIENT-FORK:START — the list's onLoad (inline below) also reloads the saved position.
+  // SCIENT-FORK:END
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
+  // SCIENT-FORK:START — the followed prompt stays rendered while its response is followed.
   const followPromptIndex = readingFollowPromptId
     ? rows.findIndex((row) => row.kind === "message" && row.message.id === readingFollowPromptId)
     : -1;
@@ -1407,6 +1276,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     () => (followPromptIndex >= 0 ? { indices: [followPromptIndex] } : undefined),
     [followPromptIndex],
   );
+  // SCIENT-FORK:END
   const [fullscreenAppRowId, setFullscreenAppRowId] = useState<string | null>(null);
   // Only the row that holds the pin can release it.
   const onAppFullscreenChange = useCallback((rowId: string, fullscreen: boolean) => {
@@ -1416,10 +1286,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // position never drops a full-screen app's row. The app is pinned by key,
   // which stays right as earlier rows load in.
   const alwaysRender = useMemo(() => {
+    // SCIENT-FORK:START — the followed prompt's pin.
     const indices = [
       ...(restoringAlwaysRender?.indices ?? []),
       ...(followAlwaysRender?.indices ?? []),
     ];
+    // SCIENT-FORK:END
     const keys = [
       ...(citationAlwaysRender?.keys ?? []),
       ...(fullscreenAppRowId === null ? [] : [fullscreenAppRowId]),
@@ -1429,7 +1301,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ...(indices.length === 0 ? {} : { indices }),
       ...(keys.length === 0 ? {} : { keys }),
     };
+    // SCIENT-FORK:START — the followed prompt's pin.
   }, [citationAlwaysRender, restoringAlwaysRender, fullscreenAppRowId, followAlwaysRender]);
+  // SCIENT-FORK:END
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = useCallback(
@@ -1501,6 +1375,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onContentOverflowChange(measureContentOverflow());
     });
   }, [measureContentOverflow, onContentOverflowChange]);
+  // SCIENT-FORK:START — row size changes run the per-frame bookkeeping (onItemSizeChanged
+  // below); a disclosure toggle never pins the end.
+  // SCIENT-FORK:END
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   // The list's own layout effects have already run here, so estimated row
   // positions are in place. Reporting before the first paint lets a thread
@@ -1512,7 +1389,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onContentOverflowChange?.(measureContentOverflow());
   }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
 
-  // SCIENT-FORK:START — remember the reading position by row identity.
+  // SCIENT-FORK:START — remember the reading position by row identity; the unread badge's
+  // unit; where the reader rests at the reading end.
   const saveReadingPosition = useSaveReadingPosition({
     listRef,
     restoringThreadPosition,
@@ -1532,7 +1410,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     paintedExpandedAttemptIds,
     workGroupViewState,
   });
-  // SCIENT-FORK:END
   // Each response's latest message: the unit the unread badge counts.
   const responseEndMessageIds = useMemo(
     () => deriveTerminalAssistantMessageIds(timelineEntries),
@@ -1542,31 +1419,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // to the end of the last message's text, and where that end sat in the
   // content. Null when not at the end.
   const restingAtReadingEndRef = useRef<RestingAtReadingEnd | null>(null);
+  // SCIENT-FORK:END
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
+    // SCIENT-FORK:START — the per-frame reading bookkeeping: one writer for the reading
+    // position (Scient's saver records message identity and a follow still going, and skips
+    // while a placement is in flight; upstream's raw record would overwrite that), the unread
+    // count below, releasing reserved room, the reading-end report, where the reader rests
+    // at the end, and the reader's input (chat/readerScrolling.ts, readerScrollPolicy.ts).
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
-    const anchorIsAtEnd = resolveTimelineIsAtEnd(state);
-    const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
-    if (position && state && anchorIsAtEnd !== undefined) {
-      const index = state.indexByKey(position.rowId);
-      const row = index === undefined ? undefined : state.elementAtIndex(index);
-      const element = listRef.current?.getScrollableNode();
-      if (row && element) {
-        rememberTimelinePosition(listIdentityKey, {
-          ...position,
-          // DOM geometry includes the header and the virtualizer's layout adjustment.
-          offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
-          scrollOffset: element.scrollTop,
-          atEnd: anchorIsAtEnd,
-          disclosures: {
-            runs: paintedExpandedRunIds,
-            workGroups: paintedExpandedWorkGroupIds,
-            attempts: paintedExpandedAttemptIds,
-            workGroupState: workGroupViewState,
-          },
-        });
-      }
-    }
     saveReadingPosition();
     const viewport = listRef.current?.getScrollableNode();
     if (state && viewport && onUnreadBelowChange) {
@@ -1637,6 +1498,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       else scheduleBookkeepingRef.current();
     }
     lastBookkeepingScrollRef.current = scrollNow;
+    // SCIENT-FORK:END
     reportContentOverflow();
     if (!state || minimapItems.length === 0) {
       return;
@@ -1685,6 +1547,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listIdentityKey,
     restoringThreadPosition,
     listRef,
+    // SCIENT-FORK:START — the per-frame reading bookkeeping.
     positionHistoryLoading,
     saveReadingPosition,
     timelineEntries,
@@ -1696,6 +1559,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     contentInsetEndAdjustment,
     runningRunId,
     turnUnfinished,
+    // SCIENT-FORK:END
     minimapItems,
     minimapStripMap,
     onIsAtEndChange,
@@ -1719,7 +1583,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     anchoredEndSpace,
     disclosureToggleSettling,
   });
-  // SCIENT-FORK:END
   useEffect(() => {
     handleScrollOnNextFrame();
   }, [handleScroll, handleScrollOnNextFrame, rows.length]);
@@ -1729,6 +1592,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (!viewport) return;
     return observeResize(viewport, handleScrollOnNextFrame);
   }, [handleScrollOnNextFrame, listRef, readingListLoaded]);
+  // SCIENT-FORK:END
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -2051,12 +1915,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // A status line (settled, snoozed) still needs the list, whose footer renders it.
     footer === null
   ) {
-    // The inner list will remount. Block captures until its new onLoad and
+    // SCIENT-FORK:START — the inner list will remount. Block captures until its new onLoad and
     // restoration complete, so layout at offset zero cannot overwrite the receipt.
     if (readingListLoaded) {
       setReadingListLoaded(false);
       setPositionedThreadKey(null);
     }
+    // SCIENT-FORK:END
     if (hideEmptyPlaceholder) {
       // Occupy the pane with the theme surface so a thread switch cannot
       // punch a hole through to the window chrome (white in light mode).
@@ -2078,11 +1943,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
               ref={setTimelineViewportElement}
               className="relative h-full min-h-0"
               data-assistant-citation-viewport="true"
+              // SCIENT-FORK:START — Legend coalesces public scroll callbacks into a later frame.
+              // Capture the native event now, before a same-frame thread switch can replace rows.
               onScrollCapture={(event) => {
-                // Legend coalesces public scroll callbacks into a later frame. Capture
-                // the native event now, before a same-frame thread switch can replace rows.
                 if (event.target === listRef.current?.getScrollableNode()) saveReadingPosition();
               }}
+              // SCIENT-FORK:END
             >
               {onCiteAssistantText && citationThreadRef ? (
                 <AssistantSelectionToolbar
@@ -2099,21 +1965,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 getItemType={getItemType}
                 renderItem={renderItem}
                 estimatedItemSize={90}
+                // SCIENT-FORK:START — the restore places the list (chat/readerScrolling.ts).
                 initialScrollAtEnd={false}
+                // SCIENT-FORK:END
                 // Legend needs a data refresh to mount new pins without a scroll event.
                 dataVersion={readyCitationRequest?.key ?? listIdentityKey}
                 {...(alwaysRender ? { alwaysRender } : {})}
+                // SCIENT-FORK:START — the same thread can temporarily lose its loaded rows.
+                // A remounted list must restore its latest receipt, not assume the old DOM
+                // survived.
                 onLoad={() => {
                   onCitationListLoad();
                   setFindListReady(true);
-                  // The same thread can temporarily lose its loaded rows. A remounted
-                  // list must restore its latest receipt, not assume the old DOM survived.
                   setListLoadVersion((version) => version + 1);
                   setPositionedThreadKey(null);
                   setReadingListLoaded(true);
                 }}
+                // SCIENT-FORK:END
                 {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
                 contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
+                // SCIENT-FORK:START — never pins to the end; content position is not kept during
+                // any restore; scrolls and row size changes run the per-frame bookkeeping.
                 maintainScrollAtEnd={false}
                 maintainVisibleContentPosition={
                   findActive || citationPositioning || restoringThreadPosition
@@ -2123,6 +1995,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 maintainScrollAtEndThreshold={1}
                 onScroll={handleScrollOnNextFrame}
                 onItemSizeChanged={handleScrollOnNextFrame}
+                // SCIENT-FORK:END
                 className={cn(
                   "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
                   topFadeEnabled && "topbar-scroll-fade",
@@ -2525,25 +2398,21 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         // they sit closer to the work that follows them.
         isWorkLogRow || isSubagentGroup
           ? undefined
-          : isExpandedToolGroup
-            ? "pb-1"
-            : isExpandedToolGroupHeader
-              ? "pb-0"
-              : row.kind === "turn-fold" || row.kind === "working"
-                ? "pb-1.5"
-                : (row.kind === "message" &&
-                      row.message.role === "assistant" &&
-                      // SCIENT-FORK:START — a kept answer is spaced like the final answer.
-                      !row.showAssistantMeta &&
-                      row.keptAnswer !== true) ||
-                    // SCIENT-FORK:END
-                    row.kind === "worktree-setup" ||
-                    row.kind === "event" ||
-                    row.kind === "attempt-fold" ||
-                    row.kind === "html-render" ||
-                    row.kind === "mcp-app"
-                  ? "pb-2"
-                  : "pb-4",
+          : row.kind === "turn-fold" || row.kind === "working"
+            ? "pb-1.5"
+            : (row.kind === "message" &&
+                  row.message.role === "assistant" &&
+                  // SCIENT-FORK:START — a kept answer is spaced like the final answer.
+                  !row.showAssistantMeta &&
+                  row.keptAnswer !== true) ||
+                // SCIENT-FORK:END
+                row.kind === "worktree-setup" ||
+                row.kind === "event" ||
+                row.kind === "attempt-fold" ||
+                row.kind === "html-render" ||
+                row.kind === "mcp-app"
+              ? "pb-2"
+              : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"
@@ -2577,11 +2446,15 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           ) : null}
           {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
           {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
-          {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
+          {/* SCIENT-FORK:START — Thinking steps aside while the answer above it appears. */}
+          {row.kind === "thinking" ? <FadingThinkingTimelineRow row={row} /> : null}
+          {/* SCIENT-FORK:END */}
         </WorkLogBlock>
       ) : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {/* SCIENT-FORK:START — "Conversation forked here" (scient/fork/ForkMarkerSeparator.tsx). */}
       {row.kind === "fork-marker" ? <ForkMarkerTimelineRow row={row} /> : null}
+      {/* SCIENT-FORK:END */}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
@@ -2599,39 +2472,21 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   );
 });
 
+// SCIENT-FORK:START — an earlier fork point links to the conversation it came from.
 function ForkMarkerTimelineRow({
   row,
 }: {
   row: Extract<MessagesTimelineRow, { kind: "fork-marker" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  // SCIENT-FORK: an earlier fork point links to the conversation it came from.
-  const originThreadId = row.originThreadId ?? ctx.forkOriginThreadId;
   return (
-    <div className="flex items-center gap-3 px-1 py-3 text-xs text-muted-foreground">
-      <div className="h-px flex-1 bg-border/60" />
-      <span className="shrink-0 rounded-full border border-border/70 bg-muted/35 px-2.5 py-1">
-        {originThreadId ? (
-          <Link
-            to="/$environmentId/$threadId"
-            params={{
-              environmentId: ctx.activeThreadEnvironmentId,
-              threadId: originThreadId,
-            }}
-            className="hover:text-foreground hover:underline"
-            aria-label="Open original conversation"
-          >
-            Conversation forked here
-          </Link>
-        ) : (
-          "Conversation forked here"
-        )}
-      </span>
-      <div className="h-px flex-1 bg-border/60" />
-    </div>
+    <ForkMarkerSeparator
+      environmentId={ctx.activeThreadEnvironmentId}
+      originThreadId={row.originThreadId ?? ctx.forkOriginThreadId}
+    />
   );
 }
-
+// SCIENT-FORK:END
 function WorktreeSetupTimelineRow({
   row,
 }: {
@@ -2949,7 +2804,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           className="me-1 text-2xs text-muted-foreground/70"
           data-user-message-attribution="t3code"
         >
+          {/* SCIENT-FORK:START — Scient product label. */}
           Sent by Scient
+          {/* SCIENT-FORK:END */}
         </p>
       ) : userMessage.attribution === "agent" ? (
         <p className="me-1 text-2xs text-muted-foreground/70" data-user-message-attribution="agent">
@@ -2971,6 +2828,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         <MessageAuthorHeading>You</MessageAuthorHeading>
+        {/* SCIENT-FORK:START — images show in Scient's gallery (scient/images/ScientChatImageGallery.tsx);
+            videos keep their own grid. */}
         <ScientChatImageGallery
           className="mb-2 max-w-[420px]"
           images={regularImages}
@@ -2986,6 +2845,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         )}
+        {/* SCIENT-FORK:END */}
         {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
           <div className="mb-2 flex flex-col gap-1">
             {unchippedFiles.map((file) => {
@@ -3074,12 +2934,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
+            {/* SCIENT-FORK:START — Scient fork V2 from a prompt. */}
             {row.canForkConversation === true && ctx.onForkUserMessage ? (
               <ScientForkMessageButton
                 label="Fork conversation from this message"
                 onFork={() => ctx.onForkUserMessage?.(row.message)}
               />
             ) : null}
+            {/* SCIENT-FORK:END */}
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
             )}
@@ -3306,15 +3168,19 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  // SCIENT-FORK:START — an answer that is only images is not empty.
   const assistantImages = (row.message.attachments ?? []).filter(isImageAttachment);
   const messageText =
     row.message.text ||
     (row.message.streaming || assistantImages.length > 0 ? "" : "(empty response)");
+  // SCIENT-FORK:END
 
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
+        {/* SCIENT-FORK:START — Scient product label. */}
         <MessageAuthorHeading>Scient</MessageAuthorHeading>
+        {/* SCIENT-FORK:END */}
         <div data-thread-find-text="true">
           <AssistantCitationSource
             messageId={row.message.id}
@@ -3323,6 +3189,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
+            {/* SCIENT-FORK:START — the answer's file links, content direction and images
+                (scient/images/ScientChatImageGallery.tsx). */}
             <>
               <ChatMarkdown
                 text={messageText}
@@ -3347,9 +3215,11 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                   if (preview) ctx.onImageExpand(preview);
                 }}
               />
-              {/* SCIENT-FORK: the end of the answer's readable content (withReadingEnd). */}
+              {/* SCIENT-FORK:START — the end of the answer's readable content (withReadingEnd). */}
               <span data-reading-end="true" aria-hidden="true" className="block h-0" />
+              {/* SCIENT-FORK:END */}
             </>
+            {/* SCIENT-FORK:END */}
           </AssistantCitationSource>
         </div>
         <AssistantChangedFilesSection
@@ -3367,13 +3237,18 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             message={row.message}
             showCopyButton={row.showAssistantCopyButton}
             copyStreaming={row.assistantCopyStreaming}
+            // SCIENT-FORK:START — Scient fork V2 from the final answer.
             canForkConversation={row.canForkConversation}
+            // SCIENT-FORK:END
           />
         ) : null}
       </div>
     </>
   );
 }
+
+// SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+// SCIENT-FORK:END
 
 function AssistantMetaTimelineRow({
   row,
@@ -3388,7 +3263,9 @@ function AssistantMetaTimelineRow({
         message={row.message}
         showCopyButton={row.showAssistantCopyButton}
         copyStreaming={row.assistantCopyStreaming}
+        // SCIENT-FORK:START
         canForkConversation={row.canForkConversation}
+        // SCIENT-FORK:END
         alwaysVisible
       />
     </div>
@@ -3401,7 +3278,9 @@ function AssistantMessageMeta({
   message,
   showCopyButton,
   copyStreaming,
+  // SCIENT-FORK:START
   canForkConversation,
+  // SCIENT-FORK:END
   alwaysVisible = false,
 }: {
   className?: string;
@@ -3409,7 +3288,9 @@ function AssistantMessageMeta({
   message: ChatMessage;
   showCopyButton: boolean;
   copyStreaming: boolean;
+  // SCIENT-FORK:START
   canForkConversation?: boolean | undefined;
+  // SCIENT-FORK:END
   alwaysVisible?: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
@@ -3434,9 +3315,11 @@ function AssistantMessageMeta({
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
       />
+      {/* SCIENT-FORK:START — Scient fork V2 replaces upstream's "Fork from this response". */}
       {canForkConversation === true && ctx.onForkAssistantMessage ? (
         <ScientForkMessageButton onFork={() => ctx.onForkAssistantMessage?.(message.id)} />
       ) : null}
+      {/* SCIENT-FORK:END */}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -3635,11 +3518,13 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility, sourceThreadId } = row.projectedItem;
+  // SCIENT-FORK:START — a workflow the agent panel knows renders as its group, even alone.
   if (
     item.type === "subagent" &&
     ((row.subagents?.length ?? 1) > 1 ||
       ctx.agentPanelModel.workflows.some((group) => group.workflow.id === item.subagentId))
   ) {
+    // SCIENT-FORK:END
     return <V2SubagentGroup key={row.id} row={row} />;
   }
   if (item.type === "secret_request") {
@@ -3995,70 +3880,6 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
 });
 
 // ---------------------------------------------------------------------------
-// Self-ticking labels — update their own text nodes so elapsed-time display
-// does not create a React commit every second while a response is streaming.
-// ---------------------------------------------------------------------------
-
-/** Live elapsed time for the "Working for" label. */
-function WorkingTimer({ createdAt }: { createdAt: string }) {
-  const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = formatWorkingTimerNow(createdAt);
-
-  useEffect(() => {
-    const updateText = () => {
-      if (textRef.current) {
-        textRef.current.textContent = formatWorkingTimerNow(createdAt);
-      }
-    };
-    updateText();
-    const id = setInterval(updateText, 1000);
-    return () => clearInterval(id);
-  }, [createdAt]);
-
-  return (
-    <span ref={textRef} className="tabular-nums">
-      {initialText}
-    </span>
-  );
-}
-
-/** A step this young shows no timer: only one that runs long needs to prove it is alive. */
-const LIVE_STEP_TIMER_AFTER_MS = 10_000;
-
-function liveStepElapsedSuffix(startedAt: string): string {
-  const elapsedMs = Date.now() - Date.parse(startedAt);
-  return Number.isFinite(elapsedMs) && elapsedMs >= LIVE_STEP_TIMER_AFTER_MS
-    ? ` · ${formatWorkingTimerNow(startedAt)}`
-    : "";
-}
-
-/**
- * How long a step that is still running has run, once it has run long enough
- * to wonder. Ticks through DOM writes, like the turn's own timer.
- */
-function LiveStepElapsed({ startedAt }: { startedAt: string }) {
-  const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = liveStepElapsedSuffix(startedAt);
-
-  useEffect(() => {
-    const updateText = () => {
-      if (textRef.current) {
-        textRef.current.textContent = liveStepElapsedSuffix(startedAt);
-      }
-    };
-    updateText();
-    const id = setInterval(updateText, 1000);
-    return () => clearInterval(id);
-  }, [startedAt]);
-
-  return (
-    <span ref={textRef} className="shrink-0 whitespace-pre tabular-nums">
-      {initialText}
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Extracted row sections — own their state / store subscriptions so changes
 // re-render only the affected row, not the entire list.
 // ---------------------------------------------------------------------------
@@ -4135,6 +3956,28 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
 
 function formatWorkingTimerNow(startIso: string): string {
   return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
+}
+
+function WorkingTimer({ createdAt }: { createdAt: string }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = formatWorkingTimerNow(createdAt);
+
+  useEffect(() => {
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = formatWorkingTimerNow(createdAt);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
+    return () => clearInterval(id);
+  }, [createdAt]);
+
+  return (
+    <span ref={textRef} className="tabular-nums">
+      {initialText}
+    </span>
+  );
 }
 
 // Matches the grouped WorkLog row's min-h-6.
@@ -4299,6 +4142,7 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
+  // SCIENT-FORK:START — the light's copy of a label shows no path tooltip of its own.
   return (
     <TracePathTooltipEnabled value={false}>
       <span
@@ -4311,6 +4155,7 @@ function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
       </span>
     </TracePathTooltipEnabled>
   );
+  // SCIENT-FORK:END
 }
 
 const failedToolIconClassName = "text-tool-error-icon/40";
@@ -4422,7 +4267,9 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
 function CompactingLabel() {
   return (
     <span className="inline-flex items-center gap-1.5">
+      {/* SCIENT-FORK:START — Scient's compaction icon and trace line weight. */}
       <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
+      {/* SCIENT-FORK:END */}
       Compacting…
     </span>
   );
@@ -4431,40 +4278,45 @@ function CompactingLabel() {
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
-  // SCIENT-FORK:START — Thinking steps aside while the answer above it appears (chat/ThinkingRowFade.tsx),
-  // and sweeps only as the current activity (chat/liveActivity.tsx).
+  // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).
   const { sendMotion } = use(TimelineRowActivityCtx);
-  // Reserve the activity row during setup so the handoff keeps the same height.
-  const activity =
-    isPreparingWorktree || isCompacting ? (
-      <WorkLogRow label="" />
-    ) : (
-      // Only the current activity sweeps (chat/liveActivity.tsx).
-      <LiveActivityRow
-        label="Thinking"
-        iconName="brain"
-        active
-        shimmer={sendMotion.currentActivityRowId === row.id}
-      />
-    );
-  const { groupId } = row;
-  const content =
-    groupId === undefined || isPreparingWorktree || isCompacting ? (
-      activity
-    ) : (
-      <button
-        type="button"
-        className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-        aria-expanded={row.expanded === true}
-        onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
-      >
-        {activity}
-      </button>
-    );
-  return <ThinkingRowFade answerId={sendMotion.thinkingFollowsAnswerId}>{content}</ThinkingRowFade>;
   // SCIENT-FORK:END
+  // Reserve the activity row during setup so the handoff keeps the same height.
+  if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
+  // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).
+  const activity = (
+    <LiveActivityRow
+      label="Thinking"
+      iconName="brain"
+      active
+      shimmer={sendMotion.currentActivityRowId === row.id}
+    />
+  );
+  // SCIENT-FORK:END
+  const { groupId } = row;
+  if (groupId === undefined) return activity;
+  return (
+    <button
+      type="button"
+      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      aria-expanded={row.expanded === true}
+      onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
+    >
+      {activity}
+    </button>
+  );
 }
 
+// SCIENT-FORK:START — Thinking steps aside while the answer above it appears (chat/ThinkingRowFade.tsx).
+function FadingThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
+  const { sendMotion } = use(TimelineRowActivityCtx);
+  return (
+    <ThinkingRowFade answerId={sendMotion.thinkingFollowsAnswerId}>
+      <ThinkingTimelineRow row={row} />
+    </ThinkingRowFade>
+  );
+}
+// SCIENT-FORK:END
 function LiveActivityRow({
   label,
   iconName,
@@ -4482,13 +4334,15 @@ function LiveActivityRow({
 }) {
   const animated = active && !failed;
   const showShimmer = animated && shimmer;
-  // SCIENT-FORK:START — one smooth sweep, on the current activity only; its text rests
-  // lighter under the light; other live rows stay still (no stepped shine).
   return (
     <div
+      // SCIENT-FORK:START — one smooth sweep, on the current activity only (chat/liveActivity.tsx).
       ref={showShimmer ? observeLiveActivitySweep : undefined}
+      // SCIENT-FORK:END
       className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed"
     >
+      {/* SCIENT-FORK:START — its text rests lighter under the light; other live rows stay still
+          (no stepped shine). */}
       <div className={showShimmer ? "live-activity-rest" : undefined}>
         <LiveActivityContent
           label={label}
@@ -4548,7 +4402,9 @@ function LiveActivityContent({
             <ToolActivityIconView
               icon={toolIcon}
               fallbackName={iconName}
+              // SCIENT-FORK:START — trace icon line weight.
               className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
+              // SCIENT-FORK:END
               muted={!highlighted}
             />
           </span>
@@ -4567,11 +4423,13 @@ function LiveActivityContent({
       }
       trailing={
         showTrailingFailureMark ? (
+          // SCIENT-FORK:START — failures show a circled X at trace line weight.
           <CircleXIcon
             aria-hidden
             className={cn("size-3 shrink-0", TRACE_ICON_STROKE, failedToolIconClassName)}
           />
         ) : null
+        // SCIENT-FORK:END
       }
     />
   );
@@ -4632,9 +4490,11 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     ? getQuestionTextPreview(row.entry.questionAnswer)
     : "";
   const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  // SCIENT-FORK:START — the path shows compactly, with its full path on hover.
   const pathLabel = (
     <TracePathLabel text={label} path={workEntryPathPresentation(row.entry, ctx.workspaceRoot)} />
   );
+  // SCIENT-FORK:END
   const threadLabel = threadReadLabel(label, threadTarget);
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
@@ -4700,19 +4560,26 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             >
               {row.entry.detail ?? label}
             </ReactMarkdown>
-          ) : row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
+          ) : // SCIENT-FORK:START — a long-running step shows how long it has run (chat/liveActivity.tsx).
+          row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
             <span className="flex min-w-0">
               <span className="min-w-0 truncate">{pathLabel}</span>
-              <LiveStepElapsed startedAt={row.entry.createdAt} />
+              <LiveStepElapsed
+                startedAt={row.entry.createdAt}
+                formatElapsed={formatWorkingTimerNow}
+              />
             </span>
           ) : threadLabel ? (
+            // SCIENT-FORK:END
             <ThreadReadLabel
               label={threadLabel}
               environmentId={ctx.activeThreadEnvironmentId}
               linked={false}
             />
           ) : (
+            // SCIENT-FORK:START
             pathLabel
+            // SCIENT-FORK:END
           )
         }
         iconName={workEntryIconName(row.entry)}
@@ -4745,7 +4612,9 @@ function toolGroupSummaryIconName(
     case "command":
       return "terminal";
     case "thread-create":
+      // SCIENT-FORK:START — Scient's mark for a created thread.
       return "scient";
+    // SCIENT-FORK:END
     case "browser":
       return "browser";
     case "device":
@@ -4757,7 +4626,9 @@ function toolGroupSummaryIconName(
     case "other":
       return "wrench";
     case "dynamic-tool":
+      // SCIENT-FORK:START
       return "wrench";
+    // SCIENT-FORK:END
     case "reasoning":
       return "brain";
     case "agent-tool":
@@ -4779,12 +4650,14 @@ function WorkGroupToggleTimelineRow({
   return (
     <WorkGroupHeader
       label={row.summary}
+      // SCIENT-FORK:START — a group sharing a Scient trace icon shows it.
       iconName={
         row.summaryTraceIcon ??
         row.summaryToolIcon ??
         row.toolSurface ??
         toolGroupSummaryIconName(row.summaryKind)
       }
+      // SCIENT-FORK:END
       toolIcon={row.toolIcon}
       failed={row.hasFailure}
       expanded={row.expanded}
@@ -4816,7 +4689,9 @@ function WorkGroupHeader(props: {
         <ToolActivityIconView
           icon={props.toolIcon}
           fallbackName={props.iconName}
+          // SCIENT-FORK:START — trace icon line weight (scient/presentation/traceIcons.ts).
           className={cn("size-4 shrink-0 text-icon-muted", TRACE_ICON_STROKE)}
+          // SCIENT-FORK:END
           muted
         />
       }
@@ -5028,7 +4903,9 @@ function UserMessagePreviewAnnotationDetails(props: {
             src={props.image.previewUrl}
             alt="Annotated preview crop"
             className="max-h-64 w-full object-contain"
+            // SCIENT-FORK:START — the crop loads CORS-clean so it can be copied.
             crossOrigin="anonymous"
+            // SCIENT-FORK:END
           />
         </button>
       ) : (
@@ -5623,6 +5500,9 @@ function useStableRows(rows: MessagesTimelineRow[], identity: string): MessagesT
 // ---------------------------------------------------------------------------
 
 type WorkEntryIconName =
+  // SCIENT-FORK:START — names only Scient draws (scient/presentation/traceIconSet.ts).
+  | ScientTraceIconName
+  // SCIENT-FORK:END
   | "bot"
   | "brain"
   | "browser"
@@ -5631,23 +5511,37 @@ type WorkEntryIconName =
   | "computer"
   | "device"
   | "eye"
-  | "folder"
   | "globe"
   | "hammer"
-  | "image"
   | "message-circle"
   | "search"
-  | "shield"
-  | "skill"
   | "square-pen"
   | "terminal"
   | "pull-request"
-  | "scient-mono"
-  | "scient"
   | "t3-code"
   | "wrench"
   | "x"
   | "zap";
+
+function BrowserAppIcon({ className }: { className: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M8.5 19H7.2C4.4 19 3 17.5 3 14.6V7.4C3 4.5 4.5 3 7.4 3h8.2C18.5 3 20 4.5 20 7.4v2.4" />
+      <circle cx="7.4" cy="7.2" r="0.75" fill="currentColor" stroke="none" />
+      <path d="M11.2 7.2h4.3" />
+      <path d="m12.4 11.4 7.5 2.6-3.4 1.6-1.5 3.6z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
 
 function ToolActivityIconView(props: {
   icon: ToolActivityIcon | undefined;
@@ -5656,7 +5550,9 @@ function ToolActivityIconView(props: {
   muted: boolean;
 }) {
   const { resolvedTheme } = use(TimelineRowCtx);
+  // SCIENT-FORK:START — muted trace icons sit one step darker in light theme.
   const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-50");
+  // SCIENT-FORK:END
   if (!props.icon) {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
@@ -5720,7 +5616,9 @@ function NativeAppToolActivityIcon(props: {
     return (
       <WorkEntryIcon
         name={props.fallbackName}
+        // SCIENT-FORK:START
         className={cn(props.className, props.muted && "opacity-70 light:brightness-50")}
+        // SCIENT-FORK:END
       />
     );
   }
@@ -5765,7 +5663,9 @@ function ToolActivityImageIcon(props: {
       {displayedSrc === null ? (
         <WorkEntryIcon
           name={props.fallbackName}
+          // SCIENT-FORK:START
           className={cn(props.className, props.muted && "opacity-70 light:brightness-50")}
+          // SCIENT-FORK:END
         />
       ) : null}
       {displayedSrc ? (
@@ -5782,7 +5682,9 @@ function ToolActivityImageIcon(props: {
             aria-hidden
             decoding="async"
             referrerPolicy="no-referrer"
+            // SCIENT-FORK:START
             className={cn("block size-full object-contain", props.muted && "light:brightness-50")}
+            // SCIENT-FORK:END
             onError={() => handleLoadError(displayedSrc)}
           />
         </span>
@@ -5806,40 +5708,32 @@ function ToolActivityImageIcon(props: {
   );
 }
 
-/** Scient's trace icon set: each action name maps to its Lucide drawing. */
 function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className: string }) {
+  // SCIENT-FORK:START — Scient's trace icon set draws its names first (scient/presentation/traceIconSet.ts).
+  const scientIcon = scientTraceIcon(name, className);
+  if (scientIcon) return scientIcon;
+  // SCIENT-FORK:END
   switch (name) {
     case "pull-request":
       return <PullRequestGlyph.pullRequest className={className} aria-hidden />;
     case "bot":
       return <BotIcon className={className} aria-hidden />;
     case "brain":
-      return <CloudIcon className={className} aria-hidden />;
+      return <BrainIcon className={className} aria-hidden />;
     case "browser":
-      return <SquareMousePointerIcon className={className} aria-hidden />;
-    case "computer":
-      return <MousePointerClickIcon className={className} aria-hidden />;
+      return <BrowserAppIcon className={className} />;
+    // SCIENT-FORK:START — T3's computer-use drawing is not in Scient; the set above draws it.
+    // SCIENT-FORK:END
     case "device":
       return <SmartphoneIcon className={className} aria-hidden />;
-    case "t3-code":
-    case "scient":
-      return <ScientTraceSymbol className={className} />;
-    case "scient-mono":
-      return <ScientTraceSymbolMono className={className} />;
+    // SCIENT-FORK:START — T3's wordmark is not in Scient; the set above draws Scient's mark.
+    // SCIENT-FORK:END
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":
       return <CircleAlertIcon className={className} aria-hidden />;
     case "eye":
-      return <BookOpenIcon className={className} aria-hidden />;
-    case "folder":
-      return <FolderOpenIcon className={className} aria-hidden />;
-    case "image":
-      return <ImageIcon className={className} aria-hidden />;
-    case "shield":
-      return <ShieldCheckIcon className={className} aria-hidden />;
-    case "skill":
-      return <LayersIcon className={className} aria-hidden />;
+      return <EyeIcon className={className} aria-hidden />;
     case "globe":
       return <GlobeIcon className={className} aria-hidden />;
     case "hammer":
@@ -5849,13 +5743,13 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "message-circle":
       return <MessageCircleIcon className={className} aria-hidden />;
     case "square-pen":
-      return <PencilIcon className={className} aria-hidden />;
+      return <SquarePenIcon className={className} aria-hidden />;
     case "terminal":
-      return <SquareTerminalLowered className={className} aria-hidden />;
+      return <TerminalIcon className={className} aria-hidden />;
     case "wrench":
       return <WrenchIcon className={className} aria-hidden />;
     case "x":
-      return <CircleXIcon className={className} aria-hidden />;
+      return <XIcon className={className} aria-hidden />;
     case "zap":
       return <ZapIcon className={className} aria-hidden />;
   }
@@ -5874,7 +5768,9 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   if (tone === "thinking") {
     return {
       iconName: "brain",
+      // SCIENT-FORK:START — trace text and icons sit one step lighter (scient-trace.css).
       className: "text-trace-icon",
+      // SCIENT-FORK:END
     };
   }
   if (tone === "info") {
@@ -5955,8 +5851,10 @@ function buildToolCallExpandedBody(
   return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
+// SCIENT-FORK:START — expanded tool output keeps a fixed text-2xs (arrived with the #369 sync).
 const toolCallExpandedBodyClassName =
   "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-2xs leading-relaxed select-text";
+// SCIENT-FORK:END
 
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (workEntry.structuredPayload?.type === "notification") {
@@ -5970,11 +5868,15 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
         return "terminal";
       case "monitor":
         return "eye";
+      // SCIENT-FORK:START — Scient's provider-work and truncated-output notifications.
       case "provider_work":
+      // SCIENT-FORK:END
       case "background_task":
         return "zap";
+      // SCIENT-FORK:START
       case "output_truncated":
         return "circle-alert";
+      // SCIENT-FORK:END
       case "system":
         return "t3-code";
       default:
@@ -5982,11 +5884,15 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
         return "zap";
     }
   }
+  // SCIENT-FORK:START — approvals show a shield; questions keep the speech bubble.
   if (workEntry.itemType === "approval_request") return "shield";
   if (workEntry.itemType === "user_input_request") return "message-circle";
+  // SCIENT-FORK:END
   if (workEntry.toolSurface) return workEntry.toolSurface;
+  // SCIENT-FORK:START — an icon from what the action did (scient/presentation/traceIcons.ts).
   const override = traceIconOverride(workEntry);
   if (override) return override;
+  // SCIENT-FORK:END
   const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
   if (toolPresentation) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
@@ -6030,7 +5936,9 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
   return (
+    // SCIENT-FORK:START — reasoning details get Scient's reasoning trace styling.
     <WorkLogDetails kind="reasoning">
+      {/* SCIENT-FORK:END */}
       {entries.map((entry) => (
         <ChatMarkdown
           key={entry.id}
@@ -6229,7 +6137,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       workEntryRawCommand(workEntry) ||
       workEntry.command?.trim() ||
       workEntry.detail?.trim() ||
+      // SCIENT-FORK:START — a row with a web address expands to "Open in browser".
       workEntry.externalUrl ||
+      // SCIENT-FORK:END
       workEntry.changedFiles?.length ||
       viewedImage,
     );
@@ -6264,6 +6174,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               turnItemHasDetail(workEntry.projectedItem.item),
             );
   // Reserve destructive row styling for severe failures, not routine tool errors.
+  // SCIENT-FORK:START — tool icons sit one step lighter (scient-trace.css).
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
     showWarningIndicator
@@ -6276,6 +6187,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             ? "text-trace-icon"
             : iconConfig.className,
   );
+  // SCIENT-FORK:END
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"
     : showDestructiveRowStyle
@@ -6318,12 +6230,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <span
           className={iconWrapperClass}
           role={showFailedIndicator ? "img" : undefined}
+          // SCIENT-FORK:START — activity issues read "Operation failed".
           aria-label={showFailedIndicator ? failureLabel : undefined}
+          // SCIENT-FORK:END
         >
           <ToolActivityIconView
             icon={entryToolIcon}
             fallbackName={entryIconName}
+            // SCIENT-FORK:START — trace icon line weight.
             className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
+            // SCIENT-FORK:END
             muted
           />
         </span>
@@ -6353,10 +6269,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   linked
                 />
               ) : (
+                // SCIENT-FORK:START — the path shows compactly, with its full path on hover.
                 <TracePathLabel
                   text={previewText}
                   path={workEntryPathPresentation(workEntry, workspaceRoot)}
                 />
+                // SCIENT-FORK:END
               )}
             </span>
             {answerPreview ? (
@@ -6407,11 +6325,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
+            // SCIENT-FORK:START — failures show a circled X at trace line weight.
             <CircleXIcon
               aria-hidden
               className={cn("size-3 shrink-0", TRACE_ICON_STROKE, failedToolIconClassName)}
             />
           ) : null}
+          {/* SCIENT-FORK:END */}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
           <span
             className={cn(
@@ -6446,6 +6366,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       {expanded && workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
+      {/* SCIENT-FORK:START — a row with a web address opens it in the browser. */}
       {expanded && workEntry.externalUrl ? (
         <div className="mt-1 ms-7 cursor-default" onClick={stopRowToggle}>
           <a
@@ -6459,6 +6380,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           </a>
         </div>
       ) : null}
+      {/* SCIENT-FORK:END */}
       {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
       {expanded &&
       !isReasoning &&
