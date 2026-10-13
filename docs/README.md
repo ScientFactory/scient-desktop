@@ -190,6 +190,3 @@ Follow their linked successors for current behavior.
 ## Manuscript integration foundation
 
 - [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — unmounted foundation: local application and connection-state invariants.
-  - [Manual sync implementation plan](./internals/scient-overleaf-sync-plan.md) — approved plan and delivery sequence; planning owner until the feature ships.
-  - [Coordinator transition and ownership contract](./internals/scient-overleaf-coordinator-contract.md) — rules, owner decisions, acceptance matrix and step status for PR B.
-  - [Cloud protocol qualification (2026-10-09)](./reports/overleaf-cloud-qualification-20261009.md) — dated evidence for the exercised Git-bridge behavior.

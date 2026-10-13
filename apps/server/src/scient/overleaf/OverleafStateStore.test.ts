@@ -1,13 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real directories, a real second process, real fsync.
 // Coordinator contract step 1: the store-level parts of acceptance cases A04
-// (second process, lease), A17 (corrupt/unsupported state), A20 (unsafe or
-// cross-volume retention), and A19 only for failures injected at the store's
+// (second process, lease), A17 (corrupt/unsupported state), A20 (retention
+// location: remount, unplug, no volume UUID, exFAT, read-only, disk root), and A19 only for failures injected at the store's
 // write boundaries (not partial writes or process death mid-write).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -20,6 +21,59 @@ import type {
 } from "./OverleafConnectionState.ts";
 import { overleafConnectionFixture } from "./OverleafConnectionState.testkit.ts";
 import * as OverleafStateStore from "./OverleafStateStore.ts";
+import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
+import { fileExchangeTestHelper } from "../workspace/fileExchange.testkit.ts";
+
+const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
+const fakeVolume: OverleafVolumeIdentityResolver = async () => VOLUME;
+const helper = await fileExchangeTestHelper();
+const diskImagesAvailable =
+  HostProcess.Platform.defaultValue() === "darwin" &&
+  NodeChildProcess.spawnSync("/usr/bin/hdiutil", ["help"]).status !== null;
+
+/** A disposable disk image; attach mounts it at a chosen path, as a reconnected disk would be. */
+const diskImage = (root: string, format: "APFS" | "ExFAT") =>
+  Effect.gen(function* () {
+    const file = NodePath.join(root, `${format}.dmg`);
+    yield* Effect.promise(async () => {
+      NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
+        "create",
+        "-quiet",
+        "-size",
+        "20m",
+        "-fs",
+        format,
+        "-volname",
+        `SCT${format.toUpperCase()}`,
+        file,
+      ]);
+    });
+    let mounted: string | null = null;
+    const detach = Effect.sync(() => {
+      if (mounted === null) return;
+      NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", "-quiet", mounted]);
+      mounted = null;
+    });
+    yield* Effect.addFinalizer(() => detach);
+    return {
+      attach: (name: string) =>
+        Effect.promise(async () => {
+          const point = NodePath.join(root, `mount-${name}`);
+          await NodeFSP.mkdir(point);
+          NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
+            "attach",
+            "-quiet",
+            "-nobrowse",
+            "-mountpoint",
+            point,
+            file,
+          ]);
+          mounted = point;
+          return NodeFSP.realpath(point);
+        }),
+      detach,
+    };
+  });
 
 type Point = Parameters<NonNullable<OverleafStateStore.OverleafStateStoreHooks["at"]>>[0];
 
@@ -33,7 +87,11 @@ const temporaryRoot = () =>
  * A store whose lifetime (and lease) ends when `close` runs, like a server
  * exit, or at the latest when the test's scope closes.
  */
-const openStore = (root: string, hooks?: OverleafStateStore.OverleafStateStoreHooks) =>
+const openStore = (
+  root: string,
+  hooks?: OverleafStateStore.OverleafStateStoreHooks,
+  volumeUuid?: OverleafVolumeIdentityResolver,
+) =>
   Effect.gen(function* () {
     const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
       Scope.close(scope, Exit.void),
@@ -41,6 +99,7 @@ const openStore = (root: string, hooks?: OverleafStateStore.OverleafStateStoreHo
     const store = yield* OverleafStateStore.make({
       root,
       ...(hooks === undefined ? {} : { hooks }),
+      ...(volumeUuid === undefined ? {} : { volumeUuid }),
     }).pipe(Scope.provide(scope));
     return { store, close: Scope.close(scope, Exit.void) };
   });
@@ -567,47 +626,128 @@ describe("OverleafStateStore", () => {
   );
 
   describe("prepareRetention", () => {
-    it.live("creates a private directory on the checkout's volume", () =>
+    const prepare = (
+      store: OverleafStateStore.OverleafStateStore["Service"],
+      checkoutRoot: string,
+      expected: { volume: string; fileId: string } | null = null,
+    ) =>
+      store.prepareRetention({
+        environmentId: "environment-1",
+        connectionId: "connection-1",
+        checkoutRoot,
+        exchangeHelper: helper ?? null,
+        expected,
+      });
+    const refusal = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
+      Effect.flip(effect).pipe(
+        Effect.map((error) => ("reason" in error ? error.reason : error._tag)),
+      );
+
+    it.live("keeps copies in the state directory when it shares the checkout's volume", () =>
       Effect.scoped(
         Effect.gen(function* () {
           const root = yield* temporaryRoot();
-          const checkout = NodePath.join(root, "..", NodePath.basename(root) + "-checkout");
-          yield* Effect.acquireRelease(
-            Effect.promise(() => NodeFSP.mkdir(checkout)),
-            () => Effect.promise(() => NodeFSP.rm(checkout, { recursive: true, force: true })),
-          );
-          const { store } = yield* openStore(NodePath.join(root, "overleaf"));
-          const prepared = yield* store.prepareRetention({
-            connectionId: "connection-1",
-            checkoutRoot: checkout,
-          });
-          const stat = yield* Effect.promise(() => NodeFSP.stat(prepared.directory));
-          expect(stat.isDirectory()).toBe(true);
-          expect(stat.mode & 0o077).toBe(0);
+          const checkout = NodePath.join(root, "checkout");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+          const { store } = yield* openStore(NodePath.join(root, "state"), undefined, fakeVolume);
+          const prepared = yield* prepare(store, checkout);
           expect(prepared.directory).toBe(
             yield* Effect.promise(() =>
-              NodeFSP.realpath(NodePath.join(root, "overleaf", "retained", "connection-1")),
+              NodeFSP.realpath(NodePath.join(root, "state", "retained", "connection-1")),
             ),
           );
-          // Stable identity across calls, so the connection can detect a replaced vault.
-          const again = yield* store.prepareRetention({
-            connectionId: "connection-1",
-            checkoutRoot: checkout,
-          });
-          expect(again.identity).toEqual(prepared.identity);
+          expect(prepared.identity.volume).toBe(VOLUME);
+          const stat = yield* Effect.promise(() => NodeFSP.stat(prepared.directory));
+          expect(stat.mode & 0o077).toBe(0);
+          expect(yield* prepare(store, checkout, prepared.identity)).toEqual(prepared);
+          // Capability probes leave nothing behind.
+          expect(yield* Effect.promise(() => NodeFSP.readdir(prepared.directory))).toEqual([]);
         }),
       ),
     );
 
-    it.live("refuses state inside the checkout, where checkout cleanup could erase it", () =>
+    it.live(
+      "puts copies in a hidden folder beside the checkout otherwise, and never recreates it",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* temporaryRoot();
+            const checkout = NodePath.join(root, "paper");
+            yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+            // State inside the checkout could be erased by checkout cleanup, so it is not used.
+            const { store } = yield* openStore(
+              NodePath.join(checkout, ".state", "overleaf"),
+              undefined,
+              fakeVolume,
+            );
+            const prepared = yield* prepare(store, checkout);
+            const expectedDirectory = yield* Effect.promise(async () =>
+              NodePath.join(
+                await NodeFSP.realpath(root),
+                ".scient-overleaf",
+                "environment-1",
+                "connection-1",
+              ),
+            );
+            expect(prepared.directory).toBe(expectedDirectory);
+
+            // A recorded folder that disappeared is reported, and nothing is created in its place.
+            yield* Effect.promise(() => NodeFSP.rm(expectedDirectory, { recursive: true }));
+            expect(yield* refusal(prepare(store, checkout, prepared.identity))).toBe(
+              "vault-missing",
+            );
+            expect(
+              yield* Effect.promise(() =>
+                NodeFSP.access(expectedDirectory).then(
+                  () => true,
+                  () => false,
+                ),
+              ),
+            ).toBe(false);
+            // A different folder at the same place is not the recorded one.
+            yield* Effect.promise(() => NodeFSP.mkdir(expectedDirectory, { mode: 0o700 }));
+            expect(yield* refusal(prepare(store, checkout, prepared.identity))).toBe(
+              "vault-replaced",
+            );
+          }),
+        ),
+    );
+
+    it.live("refuses a disk without a volume identity, never using the device number", () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const checkout = yield* temporaryRoot();
-          const { store } = yield* openStore(NodePath.join(checkout, ".state", "overleaf"));
-          const refused = yield* Effect.flip(
-            store.prepareRetention({ connectionId: "connection-1", checkoutRoot: checkout }),
+          const root = yield* temporaryRoot();
+          const checkout = NodePath.join(root, "checkout");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+          const { store } = yield* openStore(
+            NodePath.join(root, "state"),
+            undefined,
+            async () => null,
           );
-          expect(refused).toMatchObject({ reason: "inside-checkout" });
+          expect(yield* refusal(prepare(store, checkout))).toBe("no-volume-identity");
+        }),
+      ),
+    );
+
+    it.live("refuses a read-only location beside the checkout", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* temporaryRoot();
+          const parent = NodePath.join(root, "parent");
+          const checkout = NodePath.join(parent, "paper");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout, { recursive: true }));
+          const { store } = yield* openStore(
+            NodePath.join(checkout, ".state", "overleaf"),
+            undefined,
+            fakeVolume,
+          );
+          // Create the state tree first, then make the parent read-only.
+          yield* store.createConnection(overleafConnectionFixture());
+          yield* Effect.acquireRelease(
+            Effect.promise(() => NodeFSP.chmod(parent, 0o500)),
+            () => Effect.promise(() => NodeFSP.chmod(parent, 0o700)),
+          );
+          expect(yield* refusal(prepare(store, checkout))).toBe("read-only-parent");
         }),
       ),
     );
@@ -616,38 +756,82 @@ describe("OverleafStateStore", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const root = yield* temporaryRoot();
+          const checkout = NodePath.join(root, "checkout");
           const elsewhere = NodePath.join(root, "elsewhere");
           yield* Effect.promise(async () => {
-            await NodeFSP.mkdir(NodePath.join(root, "overleaf"), { recursive: true });
+            await NodeFSP.mkdir(checkout);
+            await NodeFSP.mkdir(NodePath.join(root, "state"), { recursive: true });
             await NodeFSP.mkdir(elsewhere);
-            await NodeFSP.symlink(elsewhere, NodePath.join(root, "overleaf", "retained"));
+            await NodeFSP.symlink(elsewhere, NodePath.join(root, "state", "retained"));
           });
-          const { store } = yield* openStore(NodePath.join(root, "overleaf"));
-          const refused = yield* Effect.flip(
-            store.prepareRetention({ connectionId: "connection-1", checkoutRoot: root }),
-          );
-          expect(refused).toMatchObject({ reason: "unsafe-directory" });
+          const { store } = yield* openStore(NodePath.join(root, "state"), undefined, fakeVolume);
+          expect(yield* refusal(prepare(store, checkout))).toBe("unsafe-directory");
         }),
       ),
     );
 
-    // `/dev` is a separate filesystem on macOS and Linux; it stands in for a
-    // checkout on another volume without mounting a disk image.
-    it.live("refuses a checkout on another volume instead of copying across volumes", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const root = yield* temporaryRoot();
-          const [state, dev] = yield* Effect.promise(() =>
-            Promise.all([NodeFSP.stat(root), NodeFSP.stat("/dev")]),
-          );
-          if (state.dev === dev.dev) return;
-          const { store } = yield* openStore(NodePath.join(root, "overleaf"));
-          const refused = yield* Effect.flip(
-            store.prepareRetention({ connectionId: "connection-1", checkoutRoot: "/dev" }),
-          );
-          expect(refused).toMatchObject({ reason: "cross-volume" });
-        }),
-      ),
-    );
+    // Real disks: APFS for remount and unplug, exFAT for the capability check.
+    describe.skipIf(!diskImagesAvailable || helper === undefined)("on mounted disk images", () => {
+      it.live(
+        "finds the folder after the disk is mounted elsewhere and waits while it is unplugged",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const root = yield* temporaryRoot();
+              const image = yield* diskImage(root, "APFS");
+              const first = yield* image.attach("first");
+              yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(first, "paper")));
+              const { store } = yield* openStore(NodePath.join(root, "state"));
+              const prepared = yield* prepare(store, NodePath.join(first, "paper"));
+              expect(prepared.directory).toBe(
+                NodePath.join(first, ".scient-overleaf", "environment-1", "connection-1"),
+              );
+              yield* image.detach;
+              expect(
+                yield* refusal(prepare(store, NodePath.join(first, "paper"), prepared.identity)),
+              ).toBe("volume-unavailable");
+
+              const second = yield* image.attach("second");
+              const again = yield* prepare(
+                store,
+                NodePath.join(second, "paper"),
+                prepared.identity,
+              );
+              expect(again.identity).toEqual(prepared.identity);
+              expect(again.directory).toBe(
+                NodePath.join(second, ".scient-overleaf", "environment-1", "connection-1"),
+              );
+              // The root of a disk has no place beside it on the same disk.
+              expect(yield* refusal(prepare(store, second))).toBe("disk-root-checkout");
+            }),
+          ),
+      );
+
+      it.live("refuses exFAT, which can neither exchange nor link files", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* temporaryRoot();
+            const image = yield* diskImage(root, "ExFAT");
+            const mounted = yield* image.attach("exfat");
+            const checkout = NodePath.join(mounted, "paper");
+            yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+            const { store } = yield* openStore(NodePath.join(root, "state"));
+            expect(yield* refusal(prepare(store, checkout))).toBe("unsupported-filesystem");
+            // The declared development fallback needs hard links, which exFAT lacks too.
+            expect(
+              yield* refusal(
+                store.prepareRetention({
+                  environmentId: "environment-1",
+                  connectionId: "connection-1",
+                  checkoutRoot: checkout,
+                  exchangeHelper: null,
+                  expected: null,
+                }),
+              ),
+            ).toBe("unsupported-filesystem");
+          }),
+        ),
+      );
+    });
   });
 });

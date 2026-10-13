@@ -2,8 +2,10 @@
 
 This is an unmounted server foundation, not an available product feature. No
 routes, UI, automatic synchronization or network publication coordinator uses
-it; the coordinator is being built in steps per its
-[contract](./scient-overleaf-coordinator-contract.md).
+it; the coordinator is being built in steps. Its plan, contract, owner decisions
+and status live on the working-documents PR
+[#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
+closed rather than merged; this file records what is implemented.
 The planned workflow is manual, folder-first synchronization through a private
 bare Git repository. The workspace's repository and checkpoint index do not
 participate in its merge protocol.
@@ -133,24 +135,34 @@ older one was still exiting gains write access once the older one is gone.
 Reads need no lease.
 
 The applier's application directory (displaced copies and journals) is
-`stateDir/overleaf/retained/<connection>`: private, owned by the server user,
-not a symlink, outside the checkout so checkout cleanup cannot erase it, and on
-the checkout's volume. A checkout on another volume is refused rather than
-given storage beside it.
+`stateDir/overleaf/retained/<connection>` when Scient's state shares the
+checkout's volume and lies outside it. Otherwise it is a hidden
+`.scient-overleaf/<environment>/<connection>` folder beside the checkout on the
+project's own disk, so projects on external disks are supported. Either way it
+is private, owned by the server user, not a symlink and outside the checkout,
+so checkout cleanup cannot erase it. Its location is recorded as the disk's
+volume UUID (from `diskutil`) plus the folder's file ID, never the device
+number, so a disk mounted again under another path is recognized. Once
+recorded, nothing is created: a missing folder (unplugged disk, deleted
+folder) or a different folder in its place is reported, never replaced.
+Before use, a probe exchanges two files through the host's exchange helper;
+a disk that cannot (exFAT and FAT among them) is refused. Without a helper,
+the declared development fallback requires hard links instead. Each refusal
+has its own reason: disk not connected, no volume UUID, unsupported file
+system, read-only or shared parent, checkout at the root of its disk, unsafe
+folder, missing or replaced folder.
 
 ## Remaining integration gates
 
-The [coordinator contract](./scient-overleaf-coordinator-contract.md) defines
-the remaining work and tracks each step's status; the
-[sync plan](./scient-overleaf-sync-plan.md) is the feature's planning owner.
+The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
+defines the remaining work and tracks each step's status.
 Before exposing operations, implement connection ownership/binding checks,
 prepare/apply/publish recovery, bounded inventory and repository retention,
 checkout suspension for checkpoint restores and worktree/VCS operations, and
 the editor-flush bridge. The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
-in the development app. The exercised Cloud protocol behavior is recorded in
-[the Cloud qualification](../reports/overleaf-cloud-qualification-20261009.md);
+in the development app. The exercised Cloud protocol behavior is recorded on #535;
 packaged, signed macOS helper behavior is a separate gate. A local bare Git
 remote does not establish the Cloud bridge's commit/history or
 publication-acknowledgement semantics. Server Pro, Windows and Linux remain

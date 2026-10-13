@@ -7,8 +7,9 @@
  *   only by compare-and-set on its revision;
  * - `receipts/<connection>/<request>.json`: idempotency records, created once;
  * - `quarantine/`: unreadable documents moved aside with their bytes intact;
- * - `retained/<connection>/`: the applier's application directory, which holds
- *   displaced manuscript copies and must share the manuscript's volume;
+ * - `retained/<connection>/`: the applier's application directory when this
+ *   tree shares the checkout's volume (otherwise `.scient-overleaf` beside the
+ *   checkout; see `OverleafRetentionVault.ts`);
  * - `lease.sqlite`: the process lease.
  *
  * Every mutation first holds the process lease, an exclusive SQLite lock held
@@ -39,6 +40,12 @@ import * as SqlError from "effect/sql/SqlError";
 import * as ServerConfig from "../../config.ts";
 import { makeRuntimeSqliteLayer } from "../../persistence/Sqlite.ts";
 import { directoryIdentity, syncDirectory } from "../workspace/RetainedFileMutation.ts";
+import {
+  locateOverleafRetention,
+  macVolumeUuid,
+  type OverleafVolumeFileIdentity,
+  type OverleafVolumeIdentityResolver,
+} from "./OverleafRetentionVault.ts";
 import {
   OverleafConnectionDocument,
   OverleafOperationReceipt,
@@ -143,17 +150,39 @@ export class OverleafRecordInvalidError extends Schema.TaggedError<OverleafRecor
 export class OverleafRetentionUnavailableError extends Schema.TaggedError<OverleafRetentionUnavailableError>()(
   "OverleafRetentionUnavailableError",
   {
-    reason: Schema.Literals(["cross-volume", "inside-checkout", "unsafe-directory"]),
+    reason: Schema.Literals([
+      "volume-unavailable",
+      "no-volume-identity",
+      "unsupported-filesystem",
+      "read-only-parent",
+      "shared-parent",
+      "disk-root-checkout",
+      "unsafe-directory",
+      "vault-missing",
+      "vault-replaced",
+    ]),
   },
 ) {
   override get message(): string {
     switch (this.reason) {
-      case "cross-volume":
-        return "The manuscript is on a different volume from Scient's state, so replaced files cannot be kept safely.";
-      case "inside-checkout":
-        return "Scient's state is inside the checkout, where checkout cleanup could erase kept files.";
+      case "volume-unavailable":
+        return "The disk holding this project is not connected.";
+      case "no-volume-identity":
+        return "This disk does not report a stable identity, so Scient cannot keep replaced files safely on it.";
+      case "unsupported-filesystem":
+        return "This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as APFS or Mac OS Extended.";
+      case "read-only-parent":
+        return "Scient cannot create its folder for kept files beside this project, because that location is read-only.";
+      case "shared-parent":
+        return "The folder containing this project belongs to another user, so Scient will not keep files there.";
+      case "disk-root-checkout":
+        return "This project is the top folder of its disk, so there is no place beside it on the same disk for kept files.";
       case "unsafe-directory":
         return "The folder for kept files is not a private directory owned by Scient.";
+      case "vault-missing":
+        return "The folder holding this connection's kept files is missing. Reconnect the disk it was on.";
+      case "vault-replaced":
+        return "The folder for kept files is not the one this connection recorded.";
     }
   }
 }
@@ -215,15 +244,21 @@ export class OverleafStateStore extends Context.Service<
       readonly resultCategory: string;
     }) => Effect.Effect<void, WriteError | OverleafRecordInvalidError | OverleafRequestReusedError>;
     /**
-     * Creates or verifies the connection's private application directory for
-     * the applier. It must be on the manuscript checkout's volume and outside
-     * the checkout, so checkpoint cleanup and worktree removal cannot erase it.
+     * Creates (first connect) or re-verifies (recorded identity) the private
+     * folder the applier keeps displaced copies in: the state directory when it
+     * shares the checkout's volume, otherwise `.scient-overleaf` beside the
+     * checkout. See `OverleafRetentionVault.ts`.
      */
     readonly prepareRetention: (input: {
+      readonly environmentId: string;
       readonly connectionId: string;
       readonly checkoutRoot: string;
+      /** The host's exchange helper; null only for the declared development fallback (D8). */
+      readonly exchangeHelper: string | null;
+      /** The connection's recorded location, or null when connecting for the first time. */
+      readonly expected: OverleafVolumeFileIdentity | null;
     }) => Effect.Effect<
-      { readonly directory: string; readonly identity: { dev: string; ino: string } },
+      { readonly directory: string; readonly identity: OverleafVolumeFileIdentity },
       WriteError | OverleafRetentionUnavailableError
     >;
   }
@@ -273,6 +308,8 @@ async function privateDirectory(directory: string, userId: number | undefined): 
 export const make = (options: {
   readonly root: string;
   readonly hooks?: OverleafStateStoreHooks;
+  /** Test seam: the disk's volume UUID for a path. Defaults to `diskutil`. */
+  readonly volumeUuid?: OverleafVolumeIdentityResolver;
 }) =>
   Effect.gen(function* () {
     const userId = yield* HostProcess.UserId;
@@ -647,31 +684,23 @@ export const make = (options: {
     const prepareRetention: OverleafStateStore["Service"]["prepareRetention"] = (input) =>
       withLease(
         Effect.gen(function* () {
-          const checked = yield* io("prepare-retention", async () => {
-            if (!isServerId(input.connectionId)) throw new Error("Invalid connection id.");
-            const directory = NodePath.join(retained, input.connectionId);
-            if (
-              !(await privateDirectory(retained, userId)) ||
-              !(await privateDirectory(directory, userId))
-            )
-              return "unsafe-directory" as const;
-            const realDirectory = await NodeFSP.realpath(directory);
-            const realCheckout = await NodeFSP.realpath(input.checkoutRoot);
-            if (
-              realDirectory === realCheckout ||
-              realDirectory.startsWith(`${realCheckout}${NodePath.sep}`)
-            )
-              return "inside-checkout" as const;
-            const [vault, checkout] = await Promise.all([
-              NodeFSP.stat(realDirectory, { bigint: true }),
-              NodeFSP.stat(realCheckout, { bigint: true }),
-            ]);
-            if (vault.dev !== checkout.dev) return "cross-volume" as const;
-            return { directory: realDirectory, identity: await directoryIdentity(realDirectory) };
+          const located = yield* io("prepare-retention", () => {
+            if (!isServerId(input.connectionId) || !isServerId(input.environmentId))
+              throw new Error("Invalid connection or environment id.");
+            return locateOverleafRetention({
+              stateRetained: retained,
+              environmentId: input.environmentId,
+              connectionId: input.connectionId,
+              checkoutRoot: input.checkoutRoot,
+              userId,
+              exchangeHelper: input.exchangeHelper,
+              expected: input.expected,
+              volumeUuid: options.volumeUuid ?? macVolumeUuid,
+            });
           });
-          if (typeof checked === "string")
-            return yield* new OverleafRetentionUnavailableError({ reason: checked });
-          return checked;
+          if (located._tag === "refused")
+            return yield* new OverleafRetentionUnavailableError({ reason: located.reason });
+          return { directory: located.directory, identity: located.identity };
         }),
       );
 

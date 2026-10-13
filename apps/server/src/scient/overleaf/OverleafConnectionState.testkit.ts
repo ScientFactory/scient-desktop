@@ -9,8 +9,14 @@ export const overleafConnectionFixture = (
   revision: 1,
   environmentId: "environment-1",
   binding: { bindingId: "binding-1", authorityGeneration: 1, scopeRevision: 1 },
-  checkout: { canonicalRoot: "/workspace", identity: { dev: "1", ino: "2" } },
-  folder: { relativePath: "paper", identity: { dev: "1", ino: "3" } },
+  checkout: {
+    canonicalRoot: "/workspace",
+    identity: { volume: "0A1B2C3D-0000-4000-8000-000000000001", fileId: "2" },
+  },
+  folder: {
+    relativePath: "paper",
+    identity: { volume: "0A1B2C3D-0000-4000-8000-000000000001", fileId: "3" },
+  },
   remote: { host: "www.overleaf.com", projectId: "0123456789abcdef01234567", branch: "main" },
   mode: "manual",
   state: "active",
@@ -21,7 +27,10 @@ export const overleafConnectionFixture = (
   managedPaths: [],
   localOnlyPaths: [],
   attentionPaths: [],
-  retention: { vaultIdentity: { dev: "1", ino: "4" }, copies: [] },
+  retention: {
+    vaultIdentity: { volume: "0A1B2C3D-0000-4000-8000-000000000001", fileId: "4" },
+    copies: [],
+  },
   activeApply: null,
   lastAttemptNumber: 0,
   attempts: [],

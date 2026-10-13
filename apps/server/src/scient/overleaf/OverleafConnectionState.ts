@@ -46,9 +46,15 @@ const IsoTime = Schema.String.check(
     );
   }),
 );
-const PhysicalIdentity = Schema.Struct({
-  dev: Schema.String.check(Schema.isPattern(/^\d{1,40}$/u)),
-  ino: Schema.String.check(Schema.isPattern(/^\d{1,40}$/u)),
+/**
+ * A folder's identity across remounts: its disk's volume UUID plus its file ID.
+ * Never the device number, which macOS can reassign on every mount.
+ */
+const VolumeFileIdentity = Schema.Struct({
+  volume: Schema.String.check(
+    Schema.isPattern(/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u),
+  ),
+  fileId: Schema.String.check(Schema.isPattern(/^\d{1,40}$/u)),
 });
 const ManuscriptPath = Schema.String.check(
   Schema.makeFilter((path: string) => manuscriptPathProblem(path) === null),
@@ -180,9 +186,9 @@ export const OverleafConnectionDocument = Schema.Struct({
   binding: Authority,
   checkout: Schema.Struct({
     canonicalRoot: Schema.String.check(Schema.isMaxLength(4_096)),
-    identity: PhysicalIdentity,
+    identity: VolumeFileIdentity,
   }),
-  folder: Schema.Struct({ relativePath: FolderPath, identity: PhysicalIdentity }),
+  folder: Schema.Struct({ relativePath: FolderPath, identity: VolumeFileIdentity }),
   remote: Schema.Struct({
     host: Schema.Literal("www.overleaf.com"),
     projectId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{24}$/u)),
@@ -204,7 +210,7 @@ export const OverleafConnectionDocument = Schema.Struct({
   localOnlyPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   attentionPaths: Schema.Array(ManuscriptPath).check(Schema.isMaxLength(MANAGED_PATH_LIMIT)),
   retention: Schema.Struct({
-    vaultIdentity: PhysicalIdentity,
+    vaultIdentity: VolumeFileIdentity,
     copies: Schema.Array(RetainedCopy).check(Schema.isMaxLength(RETAINED_COPY_LIMIT)),
   }),
   activeApply: Schema.NullOr(ApplyLink),
