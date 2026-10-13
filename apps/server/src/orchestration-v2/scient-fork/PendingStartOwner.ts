@@ -15,13 +15,65 @@ import type {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import type * as EffectOutbox from "../EffectOutbox.ts";
+import type * as EventSink from "../EventSink.ts";
+import type { CheckpointServiceV2Error } from "../CheckpointService.ts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProjectionStore from "../ProjectionStore.ts";
 import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import type { RunExecutionServiceV2StartRootRunInput } from "../RunExecutionService.ts";
+
+export type PendingStartPreparation = (
+  preparation: Effect.Effect<void, CheckpointServiceV2Error>,
+) => Effect.Effect<
+  void,
+  CheckpointServiceV2Error | EventSink.EventSinkV2Error | ProjectionStore.ProjectionStoreV2Error
+>;
+
+/** Stop can cancel local preparation without interrupting a native offer or its receipt ingestion. */
+export const pendingStartPreparation =
+  (input: {
+    readonly eventSink: Pick<EventSink.EventSinkV2Shape, "latestSequence" | "stream">;
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly rootNodeId: NodeId;
+    readonly shouldStartProviderTurn: () => Effect.Effect<
+      boolean,
+      ProjectionStore.ProjectionStoreV2Error
+    >;
+  }): PendingStartPreparation =>
+  (preparation) =>
+    Effect.gen(function* () {
+      const afterSequence = yield* input.eventSink.latestSequence({ threadId: input.threadId });
+      const pull = yield* Stream.toPull(
+        input.eventSink.stream({
+          threadId: input.threadId,
+          afterSequence,
+          eventType: "turn-item.updated",
+        }),
+      );
+      // The stream replays commits between the cursor read and subscription. Recheck
+      // current ownership too: Stop may already have committed before that cursor.
+      if (!(yield* input.shouldStartProviderTurn())) return;
+      const stopped = Stream.fromPull(Effect.succeed(pull)).pipe(
+        Stream.filter(
+          ({ event }) =>
+            event.type === "turn-item.updated" &&
+            event.threadId === input.threadId &&
+            event.runId === input.runId &&
+            event.nodeId === input.rootNodeId &&
+            event.payload.type === "run_interrupt_request",
+        ),
+        Stream.mapEffect(() => input.shouldStartProviderTurn()),
+        Stream.filter((eligible) => !eligible),
+        Stream.runHead,
+        Effect.flatMap((stop) => (Option.isSome(stop) ? Effect.void : Effect.never)),
+      );
+      yield* Effect.raceFirst(preparation, stopped);
+    }).pipe(Effect.scoped);
 
 /** The captured owner of a locally declined start, never a native acceptance receipt. */
 export interface PendingStartOwner {
