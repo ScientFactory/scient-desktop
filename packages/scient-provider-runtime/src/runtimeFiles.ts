@@ -19,7 +19,9 @@ import type {
 const MAX_REDIRECTS = 5;
 const TRANSIENT_DOWNLOAD_STATUSES = new Set([500, 502, 503, 504]);
 const MAX_TRANSIENT_RETRIES = 2;
-const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
+/** Largest artifact the installer downloads; release discovery rejects larger ones. */
+export const MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
+const MAX_DOWNLOAD_BYTES = MANAGED_RUNTIME_MAX_DOWNLOAD_BYTES;
 // Compressed downloads and expanded payloads have independent budgets.
 // Providers must explicitly opt in above the unchanged default below.
 const MAX_EXPANDED_BYTES = 768 * 1024 * 1024;

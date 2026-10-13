@@ -1,7 +1,12 @@
 import type { RuntimeCitationSource } from "@t3tools/contracts";
 import { extractCodexCitationSources } from "../../provider/codexCitations.ts";
-// SCIENT-FORK: running-fork text capture producer.
-import { makeCodexTextSnapshots } from "../scient-provider/ProviderTextSnapshots.ts";
+// SCIENT-FORK:START — running-fork text capture producer.
+import {
+  makeCodexGenerationEnd,
+  makeCodexTextSnapshots,
+  withoutTextSnapshots,
+} from "../scient-provider/ProviderTextSnapshots.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK: Codex presentation and generated-image import stay in the owned module.
 import {
   codexCitationPresentation,
@@ -1318,7 +1323,9 @@ export interface CodexAppServerClientFactoryShape {
     readonly threadId: ThreadId;
     readonly providerSessionId: OrchestrationV2ProviderSession["id"];
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+    // SCIENT-FORK:START — running-fork text capture observes app-server termination.
     readonly onTermination?: CodexClient.CodexAppServerClientOptions["onTermination"];
+    // SCIENT-FORK:END
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
     /** Resolved once by the adapter and used verbatim by the production spawner. */
@@ -1614,12 +1621,14 @@ export const layerAppServerClientFactory: Layer.Layer<
                   logOutgoing: true,
                   logger: protocolLogger,
                 };
+          // SCIENT-FORK:START — running-fork text capture observes app-server termination.
           const context = yield* Layer.build(
             CodexClient.layerChildProcess(handle, {
               ...clientOptions,
               ...(input.onTermination ? { onTermination: input.onTermination } : {}),
             }),
           );
+          // SCIENT-FORK:END
           return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
             Effect.provide(context),
           );
@@ -1810,27 +1819,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
         // SCIENT-FORK: the exact launch identity of this app-server process.
         const configuration = codexLaunchConfiguration({ settings, launch, environment });
-        const textGenerationEnded = yield* Deferred.make<
-          never,
-          ProviderAdapter.ProviderTextSnapshotError
-        >();
-        let textGenerationIsEnded = false;
+        // SCIENT-FORK:START — running-fork text capture ends with this app-server process.
+        const textGeneration = yield* makeCodexGenerationEnd();
+        // SCIENT-FORK:END
         const client = yield* clientFactory.open({
-          onTermination: (cause) =>
-            Effect.sync(() => {
-              textGenerationIsEnded = true;
-            }).pipe(
-              Effect.andThen(
-                Deferred.fail(
-                  textGenerationEnded,
-                  new ProviderAdapter.ProviderTextSnapshotError({
-                    reason: "consumer-ended",
-                    cause,
-                  }),
-                ),
-              ),
-              Effect.asVoid,
-            ),
+          // SCIENT-FORK:START — running-fork text capture ends with this app-server process.
+          onTermination: textGeneration.onTermination,
+          // SCIENT-FORK:END
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
@@ -1924,7 +1919,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           model: input.modelSelection.model,
           now,
         });
+        // SCIENT-FORK:START — the queue also carries running-fork text snapshot batches.
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2InternalEvent>();
+        // SCIENT-FORK:END
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
@@ -6592,27 +6589,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }).pipe(Effect.mapError(mcpAppsError("Codex MCP resource read failed."))),
         };
 
+        // SCIENT-FORK:START — one native stream also carries running-fork text batches.
         const nativeEvents = Stream.fromEffectRepeat(Queue.take(events));
+        // SCIENT-FORK:END
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          events: nativeEvents.pipe(
-            Stream.filter(
-              (event): event is ProviderAdapter.ProviderAdapterV2Event =>
-                event.type !== "internal.text_snapshot",
-            ),
-          ),
           // SCIENT-FORK:START — running-fork text capture from this exact app-server session.
+          events: withoutTextSnapshots(nativeEvents),
           textSnapshots: makeCodexTextSnapshots({
             driver: CODEX_PROVIDER,
             instanceId: adapterOptions.instanceId,
             providerSessionId: input.providerSessionId,
             nativeEvents,
             events,
-            generationEnded: textGenerationEnded,
-            isGenerationEnded: () => textGenerationIsEnded,
+            generationEnded: textGeneration.generationEnded,
+            isGenerationEnded: textGeneration.isGenerationEnded,
             activeTurns,
             interruptingNativeTurns,
             finalAnswerItemIdsByTurn,
@@ -7468,6 +7462,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // SCIENT-FORK:START — Refuse source reuse before fork-local mutation.
               const sourceBelongsToInstance =
                 threadInput.sourceProviderThread.providerInstanceId === adapterOptions.instanceId;
+              // SCIENT-FORK:END
               const boundary = yield* resolveCodexForkBoundary(threadInput);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
@@ -7477,10 +7472,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ? {}
                       : { lastTurnId: boundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
+                      // SCIENT-FORK:START — a session without host MCP injection forks without a credential.
                       mcpSession:
                         input.configureMcp === false
                           ? undefined
                           : yield* mcpSessions.read(threadInput.targetThreadId),
+                      // SCIENT-FORK:END
                       ...(threadInput.modelSelection === undefined
                         ? {}
                         : { modelSelection: threadInput.modelSelection }),
@@ -7499,6 +7496,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+              // SCIENT-FORK:START — Refuse source reuse before fork-local mutation.
               if (sourceBelongsToInstance && response.thread.id === threadId) {
                 return yield* new ProviderAdapter.ProviderAdapterForkThreadError({
                   driver: CODEX_PROVIDER,

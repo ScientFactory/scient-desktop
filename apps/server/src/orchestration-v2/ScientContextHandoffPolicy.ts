@@ -8,11 +8,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { hasScientContextHistory } from "./ScientHistoricalContext.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
-  hasScientContextHistory,
-} from "./ScientHistoricalContext.ts";
+} from "@t3tools/provider-core/server/handoffBudget";
 import {
   handoffTokenCap,
   scientHandoffTokenCapOverride,

@@ -24,6 +24,8 @@ import type {
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
+import * as Option from "effect/Option";
+import { ServerConfig } from "../config.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -193,6 +195,7 @@ export class WorkspaceFileSystem extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
+  const config = yield* Effect.serviceOption(ServerConfig);
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -478,6 +481,7 @@ export const make = Effect.gen(function* () {
     workspacePaths,
     workspaceEntries,
     readFile,
+    exchangeHelper: Option.isSome(config) ? config.value.fileExchangePath : undefined,
   });
   // SCIENT-FORK:END
 

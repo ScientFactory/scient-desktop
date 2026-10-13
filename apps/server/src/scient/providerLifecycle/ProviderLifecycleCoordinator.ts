@@ -15,11 +15,16 @@ export interface ProviderLifecycleCoordinatorShape {
   readonly reserve: (input: {
     readonly instanceId: ProviderInstanceId;
     readonly provider?: ProviderDriverKind;
+    /** Shared native credentials require a provider-wide lease even for account operations. */
+    readonly exclusiveProvider?: boolean;
     readonly reservation: ProviderLifecycleReservation;
   }) => Effect.Effect<boolean>;
   readonly release: (input: { readonly operationId: string }) => Effect.Effect<boolean>;
   readonly current: (
     instanceId: ProviderInstanceId,
+  ) => Effect.Effect<ProviderLifecycleReservation | undefined>;
+  readonly currentForProvider: (
+    provider: ProviderDriverKind,
   ) => Effect.Effect<ProviderLifecycleReservation | undefined>;
 }
 
@@ -42,7 +47,8 @@ export const make = Effect.gen(function* () {
       const providerConnectionKey = providerConnectionPrefix
         ? `${providerConnectionPrefix}${input.instanceId}`
         : undefined;
-      const changesSharedRuntime = input.reservation.kind !== "connection";
+      const changesSharedRuntime =
+        input.reservation.kind !== "connection" || input.exclusiveProvider === true;
 
       if (current.has(instanceKey)) return [false, current] as const;
       if (providerKey && current.has(providerKey)) return [false, current] as const;
@@ -77,6 +83,8 @@ export const make = Effect.gen(function* () {
     release,
     current: (instanceId) =>
       Ref.get(reservations).pipe(Effect.map((map) => map.get(`instance:${instanceId}`))),
+    currentForProvider: (provider) =>
+      Ref.get(reservations).pipe(Effect.map((map) => map.get(`provider:${provider}`))),
   });
 });
 

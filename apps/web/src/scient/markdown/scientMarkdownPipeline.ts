@@ -7,7 +7,6 @@ import {
   CHAT_MARKDOWN_SANITIZE_SCHEMA,
   rehypePreserveImageSourceMeta,
 } from "@t3tools/shared/markdownPipeline";
-import { isWindowsDrivePathHref } from "@t3tools/shared/markdownLinks";
 import { remarkScientMath, remarkScientMathRefinements } from "../math/remarkScientMath";
 import { remarkScientSingleDollarMath } from "../math/scientSingleDollarMath";
 
@@ -19,7 +18,11 @@ type MarkdownImageHastNode = {
   children?: MarkdownImageHastNode[];
 };
 
-/** Carries authored image source metadata through the sanitizer to the image renderer. */
+/**
+ * Marks a standalone figure for Scient's image card. Runs after the shared
+ * `rehypePreserveImageSourceMeta`, which already carries the authored source
+ * and title through the sanitizer.
+ */
 function rehypeScientImageMetadata() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (
@@ -27,13 +30,9 @@ function rehypeScientImageMetadata() {
       parent?: MarkdownImageHastNode,
       inTableCell = false,
     ) => {
-      const src = node.properties?.src;
-      const title = node.properties?.title;
       if (node.type === "element" && node.tagName === "img") {
         node.properties = {
           ...node.properties,
-          ...(typeof src === "string" && isWindowsDrivePathHref(src) ? { dataLocalSrc: src } : {}),
-          ...(typeof title === "string" ? { dataMarkdownTitle: title } : {}),
           // Keep Scient's actions for standalone figures, not authored inline layouts.
           dataScientImageCard:
             !inTableCell &&
@@ -77,11 +76,13 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS = withScientMath(SHARED_REMARK_PLUGINS
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = withScientMath(
   SHARED_REMARK_PLUGINS_WITH_BREAKS,
 );
-export const CHAT_MARKDOWN_REHYPE_PLUGINS = [
-  ...SHARED_REHYPE_PLUGINS.slice(0, -1),
-  rehypeScientImageMetadata,
-  [rehypeSanitize, SCIENT_SANITIZE_SCHEMA],
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+// Scient's sanitizer replaces the shared one in place, found by its schema rather than by position,
+// so a plugin upstream adds after sanitization stays after it.
+export const CHAT_MARKDOWN_REHYPE_PLUGINS = SHARED_REHYPE_PLUGINS.flatMap((plugin) =>
+  Array.isArray(plugin) && plugin[1] === CHAT_MARKDOWN_SANITIZE_SCHEMA
+    ? [rehypeScientImageMetadata, [rehypeSanitize, SCIENT_SANITIZE_SCHEMA]]
+    : [plugin],
+) satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 export const CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW = [
   rehypePreserveImageSourceMeta,
   rehypeScientImageMetadata,

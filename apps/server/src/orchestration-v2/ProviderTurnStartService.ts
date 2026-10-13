@@ -1,3 +1,4 @@
+import { isContextHistoryItem } from "./scient-fork/ContextHistoryCandidates.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
@@ -49,6 +50,7 @@ import { isProviderInstanceDisabledOpen } from "./scient-provider/ProviderInstan
 // SCIENT-FORK:END provider-enabled-at-open
 // SCIENT-FORK:START — a Stop before native acceptance declines and captures the start.
 import {
+  pendingStartPreparation,
   pendingStartCancellation,
   startUnlessStopRequested,
 } from "./scient-fork/PendingStartOwner.ts";
@@ -65,14 +67,12 @@ import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.t
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
+import { hasScientContextHistory } from "./ScientHistoricalContext.ts";
 import {
   handoffBudget,
-  hasScientContextHistory,
-  attachmentTokenAllowance,
   contextUsageForHandoff,
-  historicalMessage,
   latestNativeContextUsage,
-} from "./ScientHistoricalContext.ts";
+} from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -710,6 +710,7 @@ export const layer: Layer.Layer<
         threadId: input.threadId,
         runs: projection.runs,
         willRetry: input.willRetry,
+        referenceOnly: !forceBytePolicy && hasScientContextHistory(projection),
         settleStartFailure,
       });
       // SCIENT-FORK:END
@@ -1177,7 +1178,7 @@ export const layer: Layer.Layer<
         if (history === undefined) return undefined;
         return history.filter(
           (item) =>
-            item.runId !== null && missedRunIds.has(item.runId) && historicalMessage(item) !== null,
+            item.runId !== null && missedRunIds.has(item.runId) && isContextHistoryItem(item),
         );
       });
       if (missedItems === undefined) return;
@@ -1301,42 +1302,40 @@ export const layer: Layer.Layer<
       // Use saved text and actual native attachments when telemetry is absent.
       // Legacy attempts lack native identity; exclude their explicitly recovered
       // history, whose attachments were not replayed into the replacement thread.
+      // SCIENT-FORK:START — bounded measurement when native telemetry is absent.
       const nativeContextEstimate = (bytesPerToken: number) =>
         Effect.gen(function* () {
           return sameNativeThread
-            ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
-                if (
-                  item.runId === run.id ||
-                  projection.runs.some(
-                    (source) => source.id === item.runId && source.status === "rolled_back",
-                  ) ||
-                  (item.runId !== null &&
-                    missedRunIds.has(item.runId) &&
-                    !deliveredItemIds.has(item.id)) ||
-                  (item.providerThreadId !== providerThread.id && !deliveredItemIds.has(item.id))
-                )
-                  return sum;
-                const historical = historicalMessage(item);
-                const nativeAttachments =
-                  item.type === "user_message" &&
-                  item.providerThreadId === providerThread.id &&
-                  item.runId !== null &&
-                  (nativeInputRunIds.has(item.runId) ||
-                    (legacyInputRunIds.has(item.runId) &&
-                      !coveredItemIds.has(item.id) &&
-                      !legacyRecoveredRunIds.has(item.runId)))
-                    ? attachmentTokenAllowance(item.attachments)
-                    : 0;
-                return (
-                  sum +
-                  (historical === null
-                    ? 0
-                    : Math.ceil(Buffer.byteLength(historical.text) / bytesPerToken)) +
-                  nativeAttachments
-                );
-              }, 0)
+            ? (yield* projectionStore.getNativeHistoryEstimates(input.threadId)).reduce(
+                (sum, item) => {
+                  if (
+                    item.runId === run.id ||
+                    projection.runs.some(
+                      (source) => source.id === item.runId && source.status === "rolled_back",
+                    ) ||
+                    (item.runId !== null &&
+                      missedRunIds.has(item.runId) &&
+                      !deliveredItemIds.has(item.id)) ||
+                    (item.providerThreadId !== providerThread.id && !deliveredItemIds.has(item.id))
+                  )
+                    return sum;
+                  const nativeAttachments =
+                    item.type === "user_message" &&
+                    item.providerThreadId === providerThread.id &&
+                    item.runId !== null &&
+                    (nativeInputRunIds.has(item.runId) ||
+                      (legacyInputRunIds.has(item.runId) &&
+                        !coveredItemIds.has(item.id) &&
+                        !legacyRecoveredRunIds.has(item.runId)))
+                      ? item.attachmentTokens
+                      : 0;
+                  return sum + Math.ceil(item.textBytes / bytesPerToken) + nativeAttachments;
+                },
+                0,
+              )
             : 0;
         });
+      // SCIENT-FORK:END
       const modelContextWindow =
         knownModelWindow ??
         (handoffUsage !== null || reuseTelemetry ? previousUsage?.maxTokens : undefined);
@@ -1428,6 +1427,9 @@ export const layer: Layer.Layer<
                 });
               }),
               alreadyDeliveredItemIds: deliveredItemIds,
+              // SCIENT-FORK:START — the required source resolver never falls back to lost history.
+              resolveHistory: projectionStore.resolveContextHistory,
+              // SCIENT-FORK:END
               // SCIENT-FORK:START — fork workspace and import provenance.
               ...scientHandoffDeliveryProvenance(projection.thread),
               // SCIENT-FORK:END
@@ -1584,6 +1586,19 @@ export const layer: Layer.Layer<
             sameNativeThread &&
             !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+        // SCIENT-FORK:START — ordinary prompts prepare locally; adopted native work has already begun.
+        ...(providerWork === undefined
+          ? {
+              prepareBeforeProviderTurn: pendingStartPreparation({
+                eventSink,
+                threadId: input.threadId,
+                runId: run.id,
+                rootNodeId: rootNode.id,
+                shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+              }),
+            }
+          : {}),
+        // SCIENT-FORK:END
         cancelBeforeProviderTurn: makePendingStartCancellation({
           threadId: input.threadId,
           runId: run.id,

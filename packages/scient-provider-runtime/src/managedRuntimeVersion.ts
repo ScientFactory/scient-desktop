@@ -1,6 +1,7 @@
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 
 import type { ManagedRuntimeCatalogProvider } from "./managedRuntimeArtifact.ts";
+import { compareManagedMuseVersions } from "./museVersion.ts";
 
 export type ManagedRuntimeVersionComparison = "older" | "equal" | "newer" | "unknown";
 
@@ -133,6 +134,10 @@ export function compareManagedRuntimeVersions(input: {
 }): ManagedRuntimeVersionComparison {
   if (input.provider === "cursor") {
     return compareCursorVersions(input.current, input.candidate);
+  }
+  if (input.provider === "muse") {
+    const comparison = compareManagedMuseVersions(input.current, input.candidate);
+    return comparison === undefined ? "unknown" : comparisonFromNumber(comparison);
   }
   if (!parseSemver(input.current) || !parseSemver(input.candidate)) return "unknown";
   return comparisonFromNumber(compareSemverVersions(input.candidate, input.current));

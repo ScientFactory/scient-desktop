@@ -9,6 +9,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+// SCIENT-FORK:START — retained sources freeze only after their capture event in each replay.
+import { resetContextHistoryProjection } from "./scient-fork/ContextHistorySource.ts";
+// SCIENT-FORK:END
 
 export interface ProjectionVerificationV2 {
   readonly valid: boolean;
@@ -123,6 +126,9 @@ export const layer: Layer.Layer<
       yield* sql.withTransaction(
         Effect.gen(function* () {
           const throughSequence = yield* eventStore.latestSequence();
+          // SCIENT-FORK:START — reset derived capture order, preserving immutable bodies/membership.
+          yield* resetContextHistoryProjection(sql);
+          // SCIENT-FORK:END
           yield* sql`DELETE FROM orchestration_v2_projection_context_transfers`;
           yield* sql`DELETE FROM orchestration_v2_projection_context_handoffs`;
           yield* sql`DELETE FROM orchestration_v2_projection_checkpoints`;

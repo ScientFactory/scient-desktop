@@ -9,6 +9,41 @@ const PRIMARY = ProviderInstanceId.make("codex");
 const SECONDARY = ProviderInstanceId.make("codex-work");
 
 describe("ProviderLifecycleCoordinator", () => {
+  it.effect(
+    "can reserve a shared native account across instances without weakening independent sign-ins",
+    () =>
+      Effect.gen(function* () {
+        const coordinator = yield* make;
+        assert.isTrue(
+          yield* coordinator.reserve({
+            instanceId: PRIMARY,
+            provider: CODEX,
+            exclusiveProvider: true,
+            reservation: { operationId: "shared-account", kind: "connection" },
+          }),
+        );
+        assert.deepEqual(yield* coordinator.currentForProvider(CODEX), {
+          operationId: "shared-account",
+          kind: "connection",
+        });
+        assert.isFalse(
+          yield* coordinator.reserve({
+            instanceId: SECONDARY,
+            provider: CODEX,
+            reservation: { operationId: "peer-account", kind: "connection" },
+          }),
+        );
+        assert.isFalse(
+          yield* coordinator.reserve({
+            instanceId: SECONDARY,
+            provider: CODEX,
+            reservation: { operationId: "peer-runtime", kind: "runtime" },
+          }),
+        );
+        yield* coordinator.release({ operationId: "shared-account" });
+        assert.isUndefined(yield* coordinator.currentForProvider(CODEX));
+      }),
+  );
   it.effect("keeps shared runtime changes exclusive across provider accounts", () =>
     Effect.gen(function* () {
       const coordinator = yield* make;

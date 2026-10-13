@@ -120,10 +120,13 @@ export function WorkLogDetails({
   kind = "text",
 }: {
   children: ReactNode;
+  // SCIENT-FORK:START — reasoning details get Scient's reasoning trace styling (scient-reasoning-trace.css).
   kind?: "text" | "reasoning" | "panel" | "media";
+  // SCIENT-FORK:END
 }) {
   return (
     <div
+      // SCIENT-FORK:START — reasoning reads like text, with its own trace styling.
       data-scient-reasoning-trace={kind === "reasoning" || undefined}
       className={cn(
         "cursor-auto",
@@ -133,6 +136,7 @@ export function WorkLogDetails({
             ? "mt-0.5 mb-1.5 pb-2"
             : "mt-1",
       )}
+      // SCIENT-FORK:END
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >

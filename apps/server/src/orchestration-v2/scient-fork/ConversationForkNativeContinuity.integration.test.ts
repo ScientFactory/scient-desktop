@@ -28,12 +28,12 @@ import {
   layer as makeCodexProviderAdapterRegistryReplayLayer,
 } from "../Adapters/CodexAdapterV2.testkit.ts";
 import { EventSinkV2 } from "../EventSink.ts";
+import { historicalMessage } from "../ScientHistoricalContext.ts";
 import {
   handoffCoverage,
-  historicalMessage,
   historyResponseItems,
   selectHistory,
-} from "../ScientHistoricalContext.ts";
+} from "@t3tools/provider-core/server/handoffBudget";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
@@ -628,7 +628,7 @@ it.live.each(
           const selected = selectHistory({
             messages,
             budget: 16000,
-            coverage: `Context handoff (full_thread_summary):\n${handoffCoverage({ threadId: targetId, coveredRunOrdinals: { from: 1, to: 1 }, items: owned })}`,
+            coverage: `Context handoff (full_thread_summary):\n${handoffCoverage({ threadId: targetId, coveredRunOrdinals: { from: 1, to: 1 }, items: owned.filter((item) => historicalMessage(item) !== null) })}`,
           });
           const freshResult: unknown = decodeFrame(
             encodeFrame(sourceStart.frame)
@@ -809,8 +809,16 @@ it.live.each(
               : "differs from the frozen source provider scope",
           );
           assert.equal(target.contextHandoffs[0]?.delivery?.status, "injected");
+          const retained = yield* ProjectionStoreV2.use((store) =>
+            store.resolveContextHistory({
+              handoffs: [target.contextHandoffs[0]!],
+              coverage: "Native fallback retention witness",
+              budget: 64_000,
+              alreadyDeliveredItemIds: new Set(),
+            }),
+          );
           assert.deepEqual(
-            target.contextHandoffs[0]?.history?.messages.map((message) => message.text),
+            retained.messages.map((message) => message.text),
             [
               THREAD_FORK_NATIVE_SOURCE_PROMPT,
               "source fork seed ok",
@@ -822,14 +830,8 @@ it.live.each(
             ],
           );
           if (scenario === "native-failure") {
-            assert.include(
-              target.contextHandoffs[0]?.history?.messages.at(-1)?.text ?? "",
-              "Which dataset?",
-            );
-            assert.include(
-              target.contextHandoffs[0]?.history?.messages.at(-1)?.text ?? "",
-              "Measured dataset",
-            );
+            assert.include(retained.messages.at(-1)?.text ?? "", "Which dataset?");
+            assert.include(retained.messages.at(-1)?.text ?? "", "Measured dataset");
           }
         }
         if (scenario === "changed-instance") {
@@ -1161,11 +1163,16 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
           1,
           "Only the rejected target turn needs recovery; source prefix must not be replayed",
         );
-        assert.ok(
-          recovered.contextHandoffs[0]?.history?.messages.every(
-            (message) => message.runId === failedRun.id,
-          ),
+        const recoveredHistory = yield* ProjectionStoreV2.use((store) =>
+          store.resolveContextHistory({
+            handoffs: [recovered.contextHandoffs[0]!],
+            coverage: "Rejected-turn recovery witness",
+            budget: 64_000,
+            alreadyDeliveredItemIds: new Set(),
+          }),
         );
+        assert.isAbove(recoveredHistory.messages.length, 0);
+        assert.ok(recoveredHistory.messages.every((message) => message.runId === failedRun.id));
         assert.isNull((yield* Ref.get(driver.state)).failure);
       }).pipe(Effect.provide(runtime));
     }).pipe(Effect.provide(NodeServices.layer)),

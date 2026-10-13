@@ -431,7 +431,7 @@ type VisibleRow = {
 };
 
 it.live(
-  "a pending new-worktree fork owns immutable facts but refuses sends and child forks until its durable job completes",
+  "a pending new-worktree fork owns immutable facts and refuses sends until its durable job completes, but can be forked",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -481,28 +481,34 @@ it.live(
           (row) => row.item.type === "assistant_message",
         )?.item;
         assert.ok(inherited?.type === "assistant_message");
-        const child = yield* Effect.result(
-          forks.dispatch({
-            ...command,
-            commandId: CommandId.make("pending-child"),
-            originThreadId: command.newThreadId,
-            newThreadId: ThreadId.make("pending-child"),
-            sourceAssistantMessageId: inherited.messageId,
-            workspaceMode: "local",
-          }),
-        );
-        assert.equal(child._tag, "Failure");
-        if (child._tag === "Failure") {
-          assert.include(child.failure.message, "Finish the original fork's workspace setup");
-          assert.equal(child.failure.forkDisposition, "rejected");
-        }
+        // The refused send committed nothing.
         assert.equal(yield* sink.latestSequence({}), seq);
-        assert.deepEqual(yield* store.getThreadProjection(command.newThreadId), pending);
+        // Its history is shared and ready, so it forks locally now.
+        yield* forks.dispatch({
+          ...command,
+          commandId: CommandId.make("pending-child"),
+          originThreadId: command.newThreadId,
+          newThreadId: ThreadId.make("pending-child"),
+          sourceAssistantMessageId: inherited.messageId,
+          workspaceMode: "local",
+        });
+        const child = yield* store.getThread(ThreadId.make("pending-child"));
+        assert.equal(child.conversationFork?.status, "ready");
+        assert.equal(child.lineage.parentThreadId, command.newThreadId);
+        // The pending parent only gains its outgoing transfer to the child.
+        const parentAfter = yield* store.getThreadProjection(command.newThreadId);
+        assert.deepEqual({ ...parentAfter, contextTransfers: pending.contextTransfers }, pending);
+        assert.deepEqual(
+          parentAfter.contextTransfers
+            .slice(pending.contextTransfers.length)
+            .map((transfer) => transfer.targetThreadId),
+          [ThreadId.make("pending-child")],
+        );
         assert.lengthOf(yield* outbox.listByCommandId(command.commandId), 1);
         // The refused send is recorded only as rejected; it committed nothing.
         const sendReceipt = yield* receipts.getByCommandId(CommandId.make("pending-send"));
         assert.ok(Option.isNone(sendReceipt) || sendReceipt.value.status === "rejected");
-        assert.ok(Option.isNone(yield* receipts.getByCommandId(CommandId.make("pending-child"))));
+        assert.ok(Option.isSome(yield* receipts.getByCommandId(CommandId.make("pending-child"))));
 
         yield* (yield* OrchestrationEffectWorkerV2).drain();
         const completed = yield* Fiber.join(waiting);

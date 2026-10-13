@@ -57,3 +57,28 @@ export function useScientMathRemarkPlugins(
     [basePlugins, needsAuthoredIntent, sourceText],
   );
 }
+
+/** A rendered Markdown node's source position, as react-markdown reports it. */
+interface MarkdownSourcePositionNode {
+  readonly position?:
+    | {
+        readonly start: { readonly offset?: number | undefined };
+        readonly end: { readonly offset?: number | undefined };
+      }
+    | undefined;
+}
+
+/**
+ * The authored source of a math node, so Find can index the token the user
+ * wrote. Math normalization preserves offsets; without a position the
+ * normalized TeX stands in.
+ */
+export function authoredMathNodeSource(
+  node: MarkdownSourcePositionNode | undefined,
+  authoredText: string,
+  tex: string,
+): string {
+  const start = node?.position?.start.offset;
+  const end = node?.position?.end.offset;
+  return start !== undefined && end !== undefined ? authoredText.slice(start, end) : tex;
+}

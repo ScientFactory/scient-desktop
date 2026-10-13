@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <sys/stdio.h>
@@ -13,6 +14,10 @@
 #endif
 #endif
 int main(int argc, char **argv) {
+  if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+    puts("scient-file-exchange/1");
+    return 0;
+  }
   if (argc != 3) return 64;
   int result;
 #if defined(__APPLE__)

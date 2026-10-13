@@ -139,6 +139,9 @@ export const ProviderAuthState = Schema.Struct({
   ),
   interaction: ForwardCompatibleOptional(Schema.NullOr(ProviderAuthInteraction)),
   credentialOwner: ForwardCompatibleOptional(Schema.Literals(["provider", "t3"])),
+  // SCIENT-FORK:START — native account writes are not necessarily an account-status witness.
+  accountVerified: ForwardCompatibleOptional(Schema.Boolean),
+  // SCIENT-FORK:END
 });
 export type ProviderAuthState = typeof ProviderAuthState.Type;
 

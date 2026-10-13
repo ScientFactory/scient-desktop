@@ -1,10 +1,17 @@
 import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
-import { LoaderIcon, RefreshCwIcon, ShieldCheckIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  CopyIcon,
+  LoaderIcon,
+  RefreshCwIcon,
+  ShieldCheckIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Button } from "../../components/ui/button";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { providerRuntimeComputerLabel } from "./providerConnectionPresentation";
 import type { ProviderUpdateIssue, ProviderUpdateOffer } from "./providerLifecycleActions";
 import {
@@ -76,6 +83,28 @@ export function AssistedSetupActions(props: {
       )}
     >
       {props.children}
+    </div>
+  );
+}
+
+/** The one-time code a device sign-in asks the user to confirm on the provider's page. */
+export function AssistedSetupDeviceCode(props: {
+  readonly code: string;
+  readonly providerName: string;
+}) {
+  const { copyToClipboard } = useCopyToClipboard();
+  return (
+    <div className="ms-8 flex w-fit items-center gap-2 rounded-md border bg-background/40 py-0.5 ps-2.5 pe-1 in-[[data-model-picker-content=true]]:mx-auto in-[[data-model-picker-content=true]]:ms-0">
+      <code className="text-sm font-semibold tracking-wider text-foreground">{props.code}</code>
+      <Button
+        aria-label={`Copy ${props.providerName} device code`}
+        onClick={() => copyToClipboard(props.code, undefined)}
+        size="icon-sm"
+        type="button"
+        variant="ghost-muted"
+      >
+        <CopyIcon aria-hidden />
+      </Button>
     </div>
   );
 }

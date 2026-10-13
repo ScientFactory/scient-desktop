@@ -19,6 +19,7 @@ import { GrokDriver } from "../../provider/AppProviderDriverComposition.ts";
 import { OmpDriver } from "../../provider/Drivers/OmpDriver.ts";
 import { PiDriver } from "../../provider/PiDriverComposition.ts";
 import { ScientAgentDriver } from "../../provider/Drivers/ScientAgentDriver.ts";
+import { MuseDriver } from "../../provider/MuseDriverComposition.ts";
 
 import type { ProviderManagedRuntimeActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
@@ -76,6 +77,7 @@ describe("ManagedRuntimeCatalogReconciler", () => {
       PiDriver,
       OmpDriver,
       ScientAgentDriver,
+      MuseDriver,
     ];
     assert.deepStrictEqual(
       drivers.map((driver) => catalogProviderForDriver(driver.driverKind)),

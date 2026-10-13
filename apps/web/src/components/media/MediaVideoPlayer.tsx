@@ -1,4 +1,4 @@
-import { Maximize2Icon, PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
+import { PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { cn } from "../../lib/utils";
@@ -23,7 +23,6 @@ interface MediaVideoPlayerProps {
   readonly stateClassName?: string | undefined;
   readonly style?: CSSProperties | undefined;
   readonly copyMarkdown?: string | undefined;
-  readonly onExpand?: ((src: string) => void) | undefined;
   readonly onRetry?: (() => Promise<unknown>) | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
 }
@@ -43,7 +42,6 @@ export function MediaVideoPlayer({
   stateClassName,
   style,
   copyMarkdown,
-  onExpand,
   onRetry,
   actionsSource,
 }: MediaVideoPlayerProps) {
@@ -130,23 +128,6 @@ export function MediaVideoPlayer({
     }
   };
 
-  const expandButton =
-    onExpand && src !== null ? (
-      <Button
-        type="button"
-        variant="secondary"
-        size="icon-xs"
-        className={failed ? undefined : "absolute top-2 right-2"}
-        aria-label={`Expand ${label || "video"}`}
-        onClick={() => {
-          videoRef.current?.pause();
-          onExpand(latestSrc ?? src);
-        }}
-      >
-        <Maximize2Icon />
-      </Button>
-    ) : null;
-
   const player = (
     <span
       className={cn("relative inline-block align-middle", className)}
@@ -180,7 +161,6 @@ export function MediaVideoPlayer({
               </Button>
             ) : null}
             <OpenMediaLink originalUrl={originalUrl} src={latestSrc ?? src} fileName={label} />
-            {expandButton}
           </span>
         </span>
       ) : src !== null && !failed ? (
@@ -218,7 +198,6 @@ export function MediaVideoPlayer({
           style={style}
         />
       )}
-      {!failed && expandButton}
       {onOpen ? (
         <button
           type="button"

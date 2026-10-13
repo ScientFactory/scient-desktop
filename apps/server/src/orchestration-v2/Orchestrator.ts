@@ -1,3 +1,5 @@
+import { isContextHistoryItem } from "./scient-fork/ContextHistoryCandidates.ts";
+import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -86,6 +88,7 @@ import {
   inheritedForkPrefixIsNative,
 } from "./scient-fork/ConversationForkNativeSource.ts";
 // SCIENT-FORK:START — Scient orchestration modules
+import { pendingStartInterruptEffect } from "./scient-fork/PendingStartInterrupt.ts";
 import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
 import { isQueueUsageLimited } from "@t3tools/shared/scientQueuedRunSend";
 import {
@@ -805,7 +808,7 @@ function latestContextTransfer(
 
 function visibleDeltaRunOrdinals(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
-  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  items: ReadonlyArray<Pick<OrchestrationV2TurnItem, "runId">>,
 ): OrchestrationV2ContextHandoff["coveredRunOrdinals"] {
   const ordinals = items.flatMap((item) => {
     if (item.runId === null) {
@@ -891,6 +894,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
+  const boundedContextSources = (yield* ContextHandoffPolicyOverride) !== "byte";
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
@@ -1063,29 +1067,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
-  const readHandoffItems = (threadId: ThreadId, runIds?: ReadonlyArray<RunId | null>) =>
-    projectionStore
-      .getThreadRecords(
-        threadId,
-        ["turnItems"],
-        runIds === undefined ? undefined : { turnItemRunIds: runIds },
-      )
-      .pipe(
-        Effect.map((records) => records.turnItems),
-        // SCIENT-FORK:START — a fork's inherited history is history too, ahead of its own items.
-        Effect.flatMap((local) =>
-          runIds !== undefined && !runIds.includes(null)
-            ? Effect.succeed(local)
-            : projectionStore.getForkHistoryItems(threadId).pipe(
-                Effect.map((history) => {
-                  const inherited = new Set<string>(history.map((item) => item.id));
-                  return [...history, ...local.filter((item) => !inherited.has(item.id))];
-                }),
-              ),
-        ),
-        // SCIENT-FORK:END
-        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-      );
+  const readHandoffItems = (
+    threadId: ThreadId,
+    runIds?: ReadonlyArray<RunId | null>,
+    portable = false,
+  ) =>
+    Effect.gen(function* () {
+      const records = yield* projectionStore.getThreadRecords(threadId, ["contextTransfers"]);
+      if (boundedContextSources && (portable || hasScientContextHistory(records)))
+        return yield* projectionStore.getContextHistoryCandidates(threadId, runIds);
+      return yield* projectionStore
+        .getThreadRecords(
+          threadId,
+          ["turnItems"],
+          runIds === undefined ? undefined : { turnItemRunIds: runIds },
+        )
+        .pipe(
+          Effect.map((records) => records.turnItems),
+          // SCIENT-FORK:START — a fork's inherited history is history too, ahead of its own items.
+          Effect.flatMap((local) =>
+            runIds !== undefined && !runIds.includes(null)
+              ? Effect.succeed(local)
+              : projectionStore.getForkHistoryItems(threadId).pipe(
+                  Effect.map((history) => {
+                    const inherited = new Set<string>(history.map((item) => item.id));
+                    return [...history, ...local.filter((item) => !inherited.has(item.id))];
+                  }),
+                ),
+          ),
+          // SCIENT-FORK:END
+          Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+        );
+    }).pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
 
   const getProjectionWithPendingEvents = (
     threadId: ThreadId,
@@ -1697,9 +1710,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.historyOrigin === "scient_fork" ||
           projection.thread.historyOrigin === "conversation_import"
           ? readHandoffItems(threadId, [null]).pipe(
-              Effect.map((items) =>
-                items.some((item) => historicalMessage(item) !== null) ? items : [],
-              ),
+              Effect.map((items) => (items.some(isContextHistoryItem) ? items : [])),
             )
           : Effect.succeed([]),
       );
@@ -1983,7 +1994,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ),
               toModel: queuedRun.modelSelection.model,
               strategy: activeHandoff.strategy,
-              summary: activeHandoff.summaryText,
+              summary: activeHandoff.history?.coverage ?? activeHandoff.summaryText.slice(0, 2_000),
             };
       const checkpointEvents: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> =
         checkpointScope !== storedCheckpointScope
@@ -5817,9 +5828,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.historyOrigin === "scient_fork" ||
           projection.thread.historyOrigin === "conversation_import"
           ? readHandoffItems(command.threadId, [null]).pipe(
-              Effect.map((items) =>
-                items.some((item) => historicalMessage(item) !== null) ? items : [],
-              ),
+              Effect.map((items) => (items.some(isContextHistoryItem) ? items : [])),
             )
           : Effect.succeed([]),
       );
@@ -6435,16 +6444,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? yield* legacyImportItemsRead
           : !requiresPortableFork || sourceProjection === null || sourceRun === null
             ? []
-            : yield* readHandoffItems(sourceProjection.thread.id, [
-                ...sourceProjection.runs
-                  .filter((run) => run.ordinal <= sourceRun.ordinal)
-                  .map((run) => run.id),
-                ...(sourceProjection.thread.historyOrigin === "v1_import" ||
-                sourceProjection.thread.historyOrigin === "scient_fork" ||
-                sourceProjection.thread.historyOrigin === "conversation_import"
-                  ? [null]
-                  : []),
-              ]);
+            : yield* readHandoffItems(
+                sourceProjection.thread.id,
+                [
+                  ...sourceProjection.runs
+                    .filter((run) => run.ordinal <= sourceRun.ordinal)
+                    .map((run) => run.id),
+                  ...(sourceProjection.thread.historyOrigin === "v1_import" ||
+                  sourceProjection.thread.historyOrigin === "scient_fork" ||
+                  sourceProjection.thread.historyOrigin === "conversation_import"
+                    ? [null]
+                    : []),
+                ],
+                true,
+              );
       const portableForkHandoff =
         !requiresPortableFork ||
         pendingForkTransfer === undefined ||
@@ -6677,6 +6690,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               mergeBackSourceProjection.runs
                 .filter((run) => run.ordinal <= mergeBackSourceRun.ordinal)
                 .map((run) => run.id),
+              true,
             );
       const mergeBackHandoff =
         pendingMergeBackTransfer === undefined ||
@@ -6921,7 +6935,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               fromModelSelections: handoffFromModelSelections,
               toModel: modelSelection.model,
               strategy: activeHandoff.strategy,
-              summary: activeHandoff.summaryText,
+              summary: activeHandoff.history?.coverage ?? activeHandoff.summaryText.slice(0, 2_000),
             };
       const nativeForkResolution: OrchestrationV2ContextTransferResolution | null =
         !canResolveForkNatively || providerThread.nativeThreadRef === null
@@ -10312,7 +10326,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         message: command.reason ?? "Interrupt requested",
       };
 
+      // SCIENT-FORK:START — unoffered held input can settle without a new native receipt.
       const settledHeldOwner = heldBeforeStop !== undefined && providerTurn?.status !== "running";
+      // SCIENT-FORK:END
       // Background work can outlive a provider switch, such as a Codex dev
       // server left running when the thread moved to Claude. Stop also reaches
       // each other live provider thread that owns pending work; that
@@ -10372,8 +10388,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       if (
+        // SCIENT-FORK:START — a running start waits for ownership proof; absence of a receipt is not proof of non-admission.
         (providerTurn === undefined && (run.status === "preparing" || run.status === "starting")) ||
         settledHeldOwner
+        // SCIENT-FORK:END
       ) {
         const attempt = projection.attempts.find(
           (candidate) => candidate.id === run.activeAttemptId,
@@ -10581,9 +10599,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       );
 
-      // Native acceptance can precede the ingestor's provider-turn receipt.
-      // Keep that run blocking and its start alive; the durable interrupt
-      // resolves the owned turn receipt before calling the adapter.
+      // SCIENT-FORK:START — resolve a pending receipt through Scient's exact-attempt control.
+      let pendingInterrupt: PendingOrchestrationEffectV2 | undefined;
       if (providerTurn === undefined) {
         const attempt = projection.attempts.find(
           (candidate) => candidate.id === run.activeAttemptId,
@@ -10595,34 +10612,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Run ${command.runId} has no active attempt to interrupt.`,
           });
         }
-        yield* emitEvent({
-          type: "turn-item.updated",
+        pendingInterrupt = pendingStartInterruptEffect({
+          commandId: command.commandId,
           threadId: command.threadId,
           runId: run.id,
-          nodeId: rootNode.id,
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: interruptRequestItem,
+          expectedAttemptId: attempt.id,
+          providerSessionId,
+          providerThreadId: providerThread.id,
         });
-        if (command.holdQueue !== false) yield* holdQueuedRuns;
-        yield* stopRemainingWork();
-        yield* Ref.update(effects, (existing) => [
-          ...existing,
-          {
-            id: `effect:${command.commandId}:provider-run.interrupt:${attempt.id}`,
-            commandId: command.commandId,
-            threadId: command.threadId,
-            request: {
-              type: "provider-run.interrupt",
-              runId: run.id,
-              expectedAttemptId: attempt.id,
-              providerSessionId,
-              providerThreadId: providerThread.id,
-            },
-          } satisfies PendingOrchestrationEffectV2,
-        ]);
-        return cancelledHeldSteer;
       }
+      // SCIENT-FORK:END
       yield* emitEvent({
         type: "turn-item.updated",
         threadId: command.threadId,
@@ -10634,6 +10633,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       if (command.holdQueue !== false) yield* holdQueuedRuns;
       yield* stopRemainingWork();
+      // SCIENT-FORK:START — keep the shared Stop plan; only its native control effect differs.
+      if (providerTurn === undefined) {
+        yield* Ref.update(effects, (existing) => [...existing, pendingInterrupt!]);
+        return cancelledHeldSteer;
+      }
+      // SCIENT-FORK:END
       yield* stopRemainingWork();
       yield* Ref.update(effects, (existing) => [
         ...existing,

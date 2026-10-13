@@ -773,7 +773,7 @@ describe("orchestration v2 legacy v1 cutover", () => {
               ]);
 
               // First continuation of a migrated thread: a fresh provider session
-              // receives the newest transcript suffix inside the 32k handoff.
+              // receives bounded whole history items through the receiving handoff budget.
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
                 createdBy: "user",
@@ -795,10 +795,14 @@ describe("orchestration v2 legacy v1 cutover", () => {
               const handoff = continued.contextHandoffs[0]!;
               assert.equal(handoff.strategy, "manual_context");
               assert.isAtMost(handoff.summaryText.length, 32_000);
-              assert.include(handoff.summaryText, LATEST_MARKER);
-              assert.notInclude(handoff.summaryText, EARLIEST_MARKER);
               const turns = yield* Ref.get(capturedTurns);
               assert.equal(turns.length, 1);
+              assert.include(turns[0]!.text, LATEST_MARKER);
+              // The default Scient allowance fits all four whole items, including
+              // the original constraints; the old V1 suffix-only preparation no longer applies.
+              assert.include(turns[0]!.text, EARLIEST_MARKER);
+              assert.lengthOf(handoff.delivery!.itemIds, 4);
+              assert.deepEqual(handoff.delivery!.omittedItemIds, []);
               assert.include(turns[0]!.text, "Context handoff (manual_context):");
               assert.include(turns[0]!.text, `User message:\n${CONTINUATION_PROMPT}`);
 

@@ -1,6 +1,6 @@
 import { use, useId } from "react";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { workEntryPathPresentation } from "./MessagesTimeline.logic";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import type { TraceEntryPathPresentation } from "./compactPathLabel";
 import { TracePathTooltipEnabled } from "./TracePathLabel.context";
 
 export function TracePathLabel({
@@ -8,7 +8,7 @@ export function TracePathLabel({
   path,
 }: {
   text: string;
-  path: ReturnType<typeof workEntryPathPresentation>;
+  path: TraceEntryPathPresentation | undefined;
 }) {
   const enabled = use(TracePathTooltipEnabled);
   const popupId = useId();

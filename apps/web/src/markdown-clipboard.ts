@@ -14,8 +14,8 @@ import {
   markClipboardDirection,
 } from "./scient/clipboard/clipboardDirection";
 import { materializeClipboardContent } from "./scient/clipboard/clipboardContent";
+import { mathAwareRange, replaceRenderedMathWithSource } from "./scient/clipboard/mathClipboard";
 // SCIENT-FORK:END
-
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
 const SANITIZED_HTML_SELECTOR = [
@@ -374,37 +374,14 @@ export function serializeTableElementToCsv(table: Element): string {
   return lines.join("\n");
 }
 
-const MATH_COPY_SELECTOR =
-  ".scient-math-inline[data-markdown-copy], .scient-math-display[data-markdown-copy]";
-
-/** A rendered equation is one semantic object, including when a range ends inside it. */
-function mathAwareRange(source: Range): Range {
-  const range = source.cloneRange();
-  const mathAt = (node: Node) =>
-    (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)?.closest(
-      MATH_COPY_SELECTOR,
-    );
-  const startMath = mathAt(range.startContainer);
-  const endMath = mathAt(range.endContainer);
-  if (startMath) range.setStartBefore(startMath);
-  if (endMath) range.setEndAfter(endMath);
-  return range;
-}
-
 // SCIENT-FORK:START — `direction` is set only when the copy contains right-to-left text
 function sanitizedHtmlFrom(container: Element, direction?: FixedContentDirection): string {
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — chips, details, display math, and diagram cards keep their content
+  // SCIENT-FORK:START — chips, details, display math, and diagram cards keep their content;
+  // equations copy as their TeX source (scient/clipboard/mathClipboard.ts).
   if (direction) materializeClipboardContent(container);
+  replaceRenderedMathWithSource(container);
   // SCIENT-FORK:END
-  // Export portable source once, rather than KaTeX's visual + accessibility DOM.
-  // The live document retains its MathML; only this detached copy is changed.
-  for (const math of container.querySelectorAll(MATH_COPY_SELECTOR)) {
-    const replacement = document.createElement("span");
-    replacement.dir = "ltr";
-    replacement.textContent = math.getAttribute("data-markdown-copy");
-    math.replaceWith(replacement);
-  }
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
@@ -417,7 +394,7 @@ function sanitizedHtmlFrom(container: Element, direction?: FixedContentDirection
     }
     node.remove();
   }
-  // SCIENT-FORK:START
+  // SCIENT-FORK:START — right-to-left copies carry explicit direction.
   if (direction) markClipboardDirection(container, direction);
   // SCIENT-FORK:END
   return `<meta charset="utf-8">${container.innerHTML}`;
@@ -435,7 +412,6 @@ export function renderedMarkdownClipboardHtml(detached: Element): string {
   );
 }
 // SCIENT-FORK:END
-
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -444,9 +420,11 @@ export function chatMarkdownClipboardPayload(
   const fragments: Array<{ container: Element; source: Element | null; text: string }> = [];
   // SCIENT-FORK:END
   for (let index = 0; index < selection.rangeCount; index += 1) {
+    // SCIENT-FORK:START — a selection that ends inside an equation copies the whole equation.
     const selectedRange = selection.getRangeAt(index);
     if (selectedRange.collapsed) continue;
     const range = mathAwareRange(selectedRange);
+    // SCIENT-FORK:END
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
     const ancestor = range.commonAncestorContainer;
@@ -456,18 +434,22 @@ export function chatMarkdownClipboardPayload(
       const text = range.toString();
       if (text) {
         texts.push(text);
+        // SCIENT-FORK:START — HTML is built once the whole copy is known to hold RTL text or not.
         fragments.push({ container, source: ancestorElement, text });
+        // SCIENT-FORK:END
       }
       continue;
     }
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);
+    // SCIENT-FORK:START — HTML is built once the whole copy is known to hold RTL text or not.
     fragments.push({ container, source: ancestorElement, text });
+    // SCIENT-FORK:END
   }
   if (texts.length === 0) return null;
+  // SCIENT-FORK:START — right-to-left copies carry explicit direction in `text/html`.
   const text = texts.join("\n\n");
-  // SCIENT-FORK:START
   const rtl = hasStrongRtl(text);
   const html = fragments
     .map((fragment) =>
@@ -477,6 +459,6 @@ export function chatMarkdownClipboardPayload(
       ),
     )
     .join("");
-  // SCIENT-FORK:END
   return { text, html };
+  // SCIENT-FORK:END
 }
