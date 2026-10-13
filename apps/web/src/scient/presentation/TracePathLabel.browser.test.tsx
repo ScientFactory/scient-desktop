@@ -6,9 +6,9 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { EnvironmentId, RunId } from "@t3tools/contracts";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
-import { TooltipScrollDismissArea } from "../ui/tooltip";
-import { MessagesTimeline } from "./MessagesTimeline";
-import { workEntryPathPresentation } from "./MessagesTimeline.logic";
+import { TooltipScrollDismissArea } from "~/components/ui/tooltip";
+import { MessagesTimeline } from "~/components/chat/MessagesTimeline";
+import { workEntryPathPresentation } from "~/components/chat/MessagesTimeline.logic";
 import { TracePathLabel } from "./TracePathLabel";
 import { TracePathTooltipEnabled } from "./TracePathLabel.context";
 
