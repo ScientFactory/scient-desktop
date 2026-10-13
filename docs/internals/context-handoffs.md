@@ -74,7 +74,7 @@ history and immutable membership. Reservation recovery queries the event log's p
 without collecting conversation events, and retains receipt ownership and locked token rechecks.
 
 The complete current request has its own refusal gate in
-[`AttachmentPrompt`](../../apps/server/src/orchestration-v2/AttachmentPrompt.ts), including expanded
+[`attachmentPrompt`](../../packages/provider-core/src/server/attachmentPrompt.ts), including expanded
 composer citations, projected typed context, selected-skill instructions (including their trusted
 runtime-instruction suffix where used), attachment descriptors and captured-window data.
 `ProviderTurnStartService` validates that prepared material before allocating inherited history.
@@ -115,7 +115,7 @@ wrappers. `ContextHandoffDelivery.ts` deduplicates previously delivered item IDs
 `pending` before injection or inline send, then `injected` or `inline` after acceptance. Ambiguous
 pending delivery requires replacing the native thread before retry; insufficient allowance fails
 without truncating the current request. See
-[ContextHandoffBudget](../../apps/server/src/orchestration-v2/ContextHandoffBudget.ts) and
+[handoffBudget](../../packages/provider-core/src/server/handoffBudget.ts) and
 [ContextHandoffDelivery](../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts).
 
 Legacy V1 data is hydrated into V2 app history before continuation or boundary inspection. Imported queued
