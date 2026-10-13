@@ -1,3 +1,5 @@
+import { isContextHistoryItem } from "./scient-fork/ContextHistoryCandidates.ts";
+import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -802,7 +804,7 @@ function latestContextTransfer(
 
 function visibleDeltaRunOrdinals(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
-  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  items: ReadonlyArray<Pick<OrchestrationV2TurnItem, "runId">>,
 ): OrchestrationV2ContextHandoff["coveredRunOrdinals"] {
   const ordinals = items.flatMap((item) => {
     if (item.runId === null) {
@@ -888,6 +890,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
+  const boundedContextSources = (yield* ContextHandoffPolicyOverride) !== "byte";
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
@@ -1059,29 +1062,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
-  const readHandoffItems = (threadId: ThreadId, runIds?: ReadonlyArray<RunId | null>) =>
-    projectionStore
-      .getThreadRecords(
-        threadId,
-        ["turnItems"],
-        runIds === undefined ? undefined : { turnItemRunIds: runIds },
-      )
-      .pipe(
-        Effect.map((records) => records.turnItems),
-        // SCIENT-FORK:START — a fork's inherited history is history too, ahead of its own items.
-        Effect.flatMap((local) =>
-          runIds !== undefined && !runIds.includes(null)
-            ? Effect.succeed(local)
-            : projectionStore.getForkHistoryItems(threadId).pipe(
-                Effect.map((history) => {
-                  const inherited = new Set<string>(history.map((item) => item.id));
-                  return [...history, ...local.filter((item) => !inherited.has(item.id))];
-                }),
-              ),
-        ),
-        // SCIENT-FORK:END
-        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-      );
+  const readHandoffItems = (
+    threadId: ThreadId,
+    runIds?: ReadonlyArray<RunId | null>,
+    portable = false,
+  ) =>
+    Effect.gen(function* () {
+      const records = yield* projectionStore.getThreadRecords(threadId, ["contextTransfers"]);
+      if (boundedContextSources && (portable || hasScientContextHistory(records)))
+        return yield* projectionStore.getContextHistoryCandidates(threadId, runIds);
+      return yield* projectionStore
+        .getThreadRecords(
+          threadId,
+          ["turnItems"],
+          runIds === undefined ? undefined : { turnItemRunIds: runIds },
+        )
+        .pipe(
+          Effect.map((records) => records.turnItems),
+          // SCIENT-FORK:START — a fork's inherited history is history too, ahead of its own items.
+          Effect.flatMap((local) =>
+            runIds !== undefined && !runIds.includes(null)
+              ? Effect.succeed(local)
+              : projectionStore.getForkHistoryItems(threadId).pipe(
+                  Effect.map((history) => {
+                    const inherited = new Set<string>(history.map((item) => item.id));
+                    return [...history, ...local.filter((item) => !inherited.has(item.id))];
+                  }),
+                ),
+          ),
+          // SCIENT-FORK:END
+          Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+        );
+    }).pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
 
   const getProjectionWithPendingEvents = (
     threadId: ThreadId,
@@ -1650,9 +1662,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.historyOrigin === "scient_fork" ||
           projection.thread.historyOrigin === "conversation_import"
           ? readHandoffItems(threadId, [null]).pipe(
-              Effect.map((items) =>
-                items.some((item) => historicalMessage(item) !== null) ? items : [],
-              ),
+              Effect.map((items) => (items.some(isContextHistoryItem) ? items : [])),
             )
           : Effect.succeed([]),
       );
@@ -1936,7 +1946,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ),
               toModel: queuedRun.modelSelection.model,
               strategy: activeHandoff.strategy,
-              summary: activeHandoff.summaryText,
+              summary: activeHandoff.history?.coverage ?? activeHandoff.summaryText.slice(0, 2_000),
             };
       const checkpointEvents: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> =
         checkpointScope !== storedCheckpointScope
@@ -5756,9 +5766,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.historyOrigin === "scient_fork" ||
           projection.thread.historyOrigin === "conversation_import"
           ? readHandoffItems(command.threadId, [null]).pipe(
-              Effect.map((items) =>
-                items.some((item) => historicalMessage(item) !== null) ? items : [],
-              ),
+              Effect.map((items) => (items.some(isContextHistoryItem) ? items : [])),
             )
           : Effect.succeed([]),
       );
@@ -6374,16 +6382,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? yield* legacyImportItemsRead
           : !requiresPortableFork || sourceProjection === null || sourceRun === null
             ? []
-            : yield* readHandoffItems(sourceProjection.thread.id, [
-                ...sourceProjection.runs
-                  .filter((run) => run.ordinal <= sourceRun.ordinal)
-                  .map((run) => run.id),
-                ...(sourceProjection.thread.historyOrigin === "v1_import" ||
-                sourceProjection.thread.historyOrigin === "scient_fork" ||
-                sourceProjection.thread.historyOrigin === "conversation_import"
-                  ? [null]
-                  : []),
-              ]);
+            : yield* readHandoffItems(
+                sourceProjection.thread.id,
+                [
+                  ...sourceProjection.runs
+                    .filter((run) => run.ordinal <= sourceRun.ordinal)
+                    .map((run) => run.id),
+                  ...(sourceProjection.thread.historyOrigin === "v1_import" ||
+                  sourceProjection.thread.historyOrigin === "scient_fork" ||
+                  sourceProjection.thread.historyOrigin === "conversation_import"
+                    ? [null]
+                    : []),
+                ],
+                true,
+              );
       const portableForkHandoff =
         !requiresPortableFork ||
         pendingForkTransfer === undefined ||
@@ -6616,6 +6628,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               mergeBackSourceProjection.runs
                 .filter((run) => run.ordinal <= mergeBackSourceRun.ordinal)
                 .map((run) => run.id),
+              true,
             );
       const mergeBackHandoff =
         pendingMergeBackTransfer === undefined ||
@@ -6860,7 +6873,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               fromModelSelections: handoffFromModelSelections,
               toModel: modelSelection.model,
               strategy: activeHandoff.strategy,
-              summary: activeHandoff.summaryText,
+              summary: activeHandoff.history?.coverage ?? activeHandoff.summaryText.slice(0, 2_000),
             };
       const nativeForkResolution: OrchestrationV2ContextTransferResolution | null =
         !canResolveForkNatively || providerThread.nativeThreadRef === null

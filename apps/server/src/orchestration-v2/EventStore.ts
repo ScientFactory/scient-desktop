@@ -48,6 +48,8 @@ export const EventStoreV2Error = Schema.Union([
 export type EventStoreV2Error = typeof EventStoreV2Error.Type;
 
 export interface EventStoreV2Shape {
+  readonly commandPublicationProven: OrchestrationEventStore.OrchestrationEventStore["Service"]["commandPublicationProven"];
+  readonly attachmentPublicationProven: OrchestrationEventStore.OrchestrationEventStore["Service"]["attachmentPublicationProven"];
   readonly append: (input: {
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -108,6 +110,8 @@ const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.Orches
           );
 
       return EventStoreV2.of({
+        commandPublicationProven: applicationEvents.commandPublicationProven,
+        attachmentPublicationProven: applicationEvents.attachmentPublicationProven,
         append: (input) =>
           applicationEvents.appendAgentEvents(input).pipe(
             Effect.mapError(

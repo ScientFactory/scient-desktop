@@ -1,3 +1,27 @@
+// SCIENT-FORK:START — retained-source adapters and fixture selection.
+import { ContextHandoffId, type OrchestrationV2ContextHandoff } from "@t3tools/contracts";
+import { selectHistory } from "@t3tools/provider-core/server/handoffBudget";
+import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import {
+  readContextHistoryCandidates,
+  contextHistoryCandidate,
+  type ContextHistoryCandidate,
+} from "./scient-fork/ContextHistoryCandidates.ts";
+import { hasHistoricalContext } from "./scient-fork/context/historicalItems.ts";
+import {
+  recordContextHistory,
+  freezeContextHistory,
+  selectContextHistory,
+  readContextHandoffSummary,
+  isLegacyContextHistoryReadable,
+} from "./scient-fork/ContextHistorySource.ts";
+import { handoffMetadataSql, turnItemMetadataSql } from "./scient-fork/ContextHistorySql.ts";
+import {
+  readNativeHistoryEstimates,
+  nativeHistoryEstimate,
+  type NativeHistoryEstimate,
+} from "./scient-fork/NativeHistoryEstimate.ts";
+// SCIENT-FORK:END
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import { makeThreadFind, findProjectedThreadItems } from "./ThreadFind.ts";
@@ -506,7 +530,35 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
+  readonly getNativeHistoryEstimates: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<NativeHistoryEstimate>, ProjectionStoreV2Error>;
   /** SCIENT-FORK: a fork's inherited history, in order, as the fork shows it; empty otherwise. */
+  readonly getContextHandoffSummaryPage: (
+    threadId: ThreadId,
+    handoffId: ContextHandoffId,
+    offset: number,
+    maxChars: number,
+    consume?: (text: string) => Effect.Effect<void, ProjectionStoreV2Error>,
+  ) => Effect.Effect<
+    {
+      readonly handoff: OrchestrationV2ContextHandoff;
+      readonly text: string;
+      readonly textBytes: number;
+      readonly nextTextOffset: number | null;
+    } | null,
+    ProjectionStoreV2Error
+  >;
+  readonly resolveContextHistory: (
+    input: Parameters<typeof selectContextHistory>[1],
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<typeof selectContextHistory>>,
+    ProjectionStoreV2Error
+  >;
+  readonly getContextHistoryCandidates: (
+    threadId: ThreadId,
+    runIds?: ReadonlyArray<RunId | null>,
+  ) => Effect.Effect<ReadonlyArray<ContextHistoryCandidate>, ProjectionStoreV2Error>;
   readonly getForkHistoryItems: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2TurnItem>, ProjectionStoreV2Error>;
@@ -2341,6 +2393,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             break;
           }
           case "turn-item.updated": {
+            // SCIENT-FORK:START — freeze referenced versions before canonical replacement.
+            yield* freezeContextHistory(sql, event);
+            // SCIENT-FORK:END
             const payloadJson = yield* encodeTurnItemPayload(event.payload);
             const payload = parseEncodedPayload(payloadJson);
             yield* sql`
@@ -2493,7 +2548,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "checkpoint.rollback-requested":
             break;
           case "context-handoff.updated": {
-            const payloadJson = yield* encodeContextHandoffPayload(event.payload);
+            // SCIENT-FORK:START — persist the source once and project bounded metadata.
+            const recordedHandoff = yield* recordContextHistory(sql, event);
+            const payloadJson = yield* encodeContextHandoffPayload(recordedHandoff);
+            // SCIENT-FORK:END
             const payload = parseEncodedPayload(payloadJson);
             yield* sql`
               INSERT INTO orchestration_v2_projection_context_handoffs (
@@ -2687,7 +2745,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? []
             : window === undefined
               ? yield* sql<PayloadRow>`
-                SELECT payload_json
+                SELECT ${turnItemMetadataSql(sql, sql`payload_json`)} AS payload_json
                 FROM orchestration_v2_projection_turn_items
                 WHERE thread_id = ${threadId}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
@@ -2698,7 +2756,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `
               : yield* sql<PayloadRow>`
                 WITH eligible AS NOT MATERIALIZED (
-                  SELECT item.rowid AS item_rowid, item.payload_json, item.ordinal, item.turn_item_id,
+                  SELECT item.rowid AS item_rowid, ${turnItemMetadataSql(sql, sql`item.payload_json`)} AS payload_json, item.ordinal, item.turn_item_id,
                     item.run_id, item.node_id, item.type
                   FROM orchestration_v2_projection_turn_items AS item
                   LEFT JOIN orchestration_v2_projection_runs AS run
@@ -3155,11 +3213,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
-                SELECT payload_json FROM orchestration_v2_projection_context_handoffs
+                SELECT ${handoffMetadataSql(sql, sql`payload_json`, sql`'legacy-projection:' || context_handoff_id`)} AS payload_json FROM orchestration_v2_projection_context_handoffs
                 WHERE thread_id = ${threadId} ORDER BY rowid ASC
               `
               : sql<PayloadRow>`
-                SELECT payload_json FROM orchestration_v2_projection_context_handoffs AS handoff
+                SELECT ${handoffMetadataSql(sql, sql`payload_json`, sql`'legacy-projection:' || context_handoff_id`)} AS payload_json FROM orchestration_v2_projection_context_handoffs AS handoff
                 WHERE handoff.thread_id = ${threadId}
                   AND (
                     handoff.status IN ('pending', 'ready')
@@ -3473,7 +3531,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND node_id IN (SELECT value FROM json_each(${named("nodeId", projection.nodes)}))
           `,
           sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_context_handoffs
+            SELECT ${handoffMetadataSql(sql, sql`payload_json`, sql`'legacy-projection:' || context_handoff_id`)} AS payload_json FROM orchestration_v2_projection_context_handoffs
             WHERE thread_id = ${threadId}
               AND context_handoff_id IN (
                 SELECT value FROM json_each(${named("contextHandoffId", projection.contextHandoffs)})
@@ -3999,13 +4057,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               readonly target_thread_id: string | null;
               readonly payload_json: string;
             }>`
-              SELECT rowid AS row_id, ${sql(table.id)} AS entity_id,
+              WITH page AS (SELECT rowid AS row_id, ${sql(table.id)} AS entity_id,
                 ${sql(table.name === "context_transfers" ? "source_thread_id" : "thread_id")} AS thread_id,
                 ${table.name === "context_transfers" ? sql`target_thread_id` : sql`NULL`} AS target_thread_id,
-                payload_json
+                ${
+                  table.name === "context_handoffs"
+                    ? handoffMetadataSql(
+                        sql,
+                        sql`payload_json`,
+                        sql`'legacy-projection:' || context_handoff_id`,
+                      )
+                    : table.name === "turn_items"
+                      ? turnItemMetadataSql(sql, sql`payload_json`)
+                      : sql`payload_json`
+                } AS payload_json
               FROM ${sql(`orchestration_v2_projection_${table.name}`)}
               WHERE rowid > ${afterRowId}
-              ORDER BY rowid ASC LIMIT ${pageSize}
+              ORDER BY rowid ASC LIMIT ${pageSize}), sized AS (
+                SELECT *, SUM(octet_length(payload_json)) OVER (ORDER BY row_id) AS batch_bytes FROM page
+              ) SELECT row_id, entity_id, thread_id, target_thread_id, payload_json FROM sized
+              WHERE batch_bytes <= 4194304 OR row_id = (SELECT MIN(row_id) FROM sized)
+              ORDER BY row_id
             `;
             for (const row of rows) {
               if (table.name === "threads") actualThreadIds.add(ThreadId.make(row.entity_id));
@@ -4038,10 +4110,73 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 for (const owner of owners) unreadable.add(ThreadId.make(owner.thread_id));
               }
             }
-            if (rows.length < pageSize) break;
+            if (rows.length === 0) break;
             afterRowId = rows[rows.length - 1]!.row_id;
             yield* Effect.yieldNow;
           }
+        }
+        // Source identity must not hide a missing body behind otherwise-decodable metadata.
+        const brokenSources = yield* sql<{ readonly thread_id: string }>`
+          WITH context AS (SELECT thread_id, context_handoff_id,
+            CASE WHEN json_valid(payload_json) THEN payload_json ELSE 'null' END AS payload_json
+            FROM orchestration_v2_projection_context_handoffs)
+          SELECT context.thread_id FROM context
+          WHERE json_type(context.payload_json, '$.historySource') = 'object' AND (
+            (EXISTS (SELECT 1 FROM scient_handoff_legacy_sources AS source
+              WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')) AND NOT EXISTS (
+                SELECT 1 FROM scient_handoff_legacy_sources AS source
+                LEFT JOIN orchestration_events AS event ON event.event_id = source.event_id
+                WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')
+                  AND COALESCE(source.payload_json, event.payload_json) IS NOT NULL))
+            OR (NOT EXISTS (SELECT 1 FROM scient_handoff_legacy_sources AS source
+              WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')) AND (
+                json_extract(context.payload_json, '$.historySource.summaryOnly') = 1
+                OR json_extract(context.payload_json, '$.historySource.itemCount') <> (
+                  SELECT COUNT(*) FROM scient_handoff_history WHERE source_id = json_extract(context.payload_json, '$.historySource.id'))
+                OR EXISTS (
+                  SELECT 1 FROM scient_handoff_history AS history
+                  LEFT JOIN scient_handoff_frozen_items AS body ON body.body_id = history.body_id
+                  LEFT JOIN scient_fork_frozen_items AS frozen ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
+                  LEFT JOIN orchestration_v2_projection_turn_items AS item ON item.turn_item_id = history.source_item_id AND item.thread_id = history.source_thread_id
+                  WHERE history.source_id = json_extract(context.payload_json, '$.historySource.id')
+                    AND COALESCE(frozen.item_json, body.item_json, item.payload_json) IS NULL
+                )
+              ))
+          )
+        `;
+        for (const row of brokenSources) unreadable.add(ThreadId.make(row.thread_id));
+        const legacyOwners = yield* sql<{
+          readonly thread_id: string;
+          readonly source_id: string;
+          readonly item_count: number;
+          readonly summary_only: number;
+        }>`
+          WITH context AS (SELECT thread_id, context_handoff_id,
+            CASE WHEN json_valid(payload_json) THEN payload_json ELSE 'null' END AS payload_json
+            FROM orchestration_v2_projection_context_handoffs)
+          SELECT context.thread_id,
+            COALESCE(json_extract(context.payload_json, '$.historySource.id'), 'legacy-projection:' || context.context_handoff_id) AS source_id,
+            COALESCE(json_extract(context.payload_json, '$.historySource.itemCount'), json_array_length(context.payload_json, '$.history.messages'), 0) AS item_count,
+            COALESCE(json_extract(context.payload_json, '$.historySource.summaryOnly'), json_type(context.payload_json, '$.history') IS NULL) AS summary_only
+          FROM context
+          WHERE json_valid(context.payload_json) AND EXISTS (
+            SELECT 1 FROM scient_handoff_legacy_sources WHERE source_id = COALESCE(
+              json_extract(context.payload_json, '$.historySource.id'), 'legacy-projection:' || context.context_handoff_id))
+        `;
+        const verifiedLegacy = new Map<string, boolean>();
+        for (const owner of legacyOwners) {
+          const key = `${owner.source_id}:${owner.item_count}:${owner.summary_only}`;
+          let readable = verifiedLegacy.get(key);
+          if (readable === undefined) {
+            readable = yield* isLegacyContextHistoryReadable(
+              sql,
+              ContextHandoffId.make(owner.source_id),
+              owner.item_count,
+              owner.summary_only === 1,
+            );
+            verifiedLegacy.set(key, readable);
+          }
+          if (!readable) unreadable.add(ThreadId.make(owner.thread_id));
         }
         // A full fork projection also reads its source. Propagate decode failures
         // and missing sources through the same ancestry without loading history.
@@ -4100,7 +4235,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE thread_id = ${threadId} AND scope_id IN ${sql.in(nodes.flatMap((node) => (node.checkpointScopeId === null ? [] : [node.checkpointScopeId])))} ORDER BY ordinal_within_parent ASC, scope_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeCheckpointScopePayload, threadId)));
             const contextHandoffs = yield* sql<PayloadRow>`
-              SELECT payload_json FROM orchestration_v2_projection_context_handoffs
+              SELECT ${handoffMetadataSql(sql, sql`payload_json`, sql`'legacy-projection:' || context_handoff_id`)} AS payload_json FROM orchestration_v2_projection_context_handoffs
               WHERE thread_id = ${threadId} ORDER BY rowid ASC
             `.pipe(Effect.flatMap(decodeRows(decodeContextHandoffPayload, threadId)));
             const contextTransfers = yield* sql<PayloadRow>`
@@ -4108,7 +4243,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE source_thread_id = ${threadId} OR target_thread_id = ${threadId} ORDER BY rowid ASC
             `.pipe(Effect.flatMap(decodeRows(decodeContextTransferPayload, threadId)));
             const turnItems = yield* sql<PayloadRow>`
-              SELECT payload_json FROM orchestration_v2_projection_turn_items
+              SELECT ${turnItemMetadataSql(sql, sql`payload_json`)} AS payload_json FROM orchestration_v2_projection_turn_items
               WHERE thread_id = ${threadId} AND run_id = ${runId} ORDER BY ordinal ASC, turn_item_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeTurnItemPayload, threadId)));
             const providerSessions = yield* sql<PayloadRow>`
@@ -5005,7 +5140,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
     // SCIENT-FORK:END
     const getTurnItem: ProjectionStoreV2Shape["getTurnItem"] = ({ threadId, itemId }) =>
-      sql<{ payload_json: string }>`SELECT payload_json
+      sql<{
+        payload_json: string;
+      }>`SELECT ${turnItemMetadataSql(sql, sql`payload_json`)} AS payload_json
         FROM orchestration_v2_projection_turn_items
         WHERE turn_item_id = ${itemId} AND thread_id = ${threadId}`.pipe(
         Effect.flatMap((rows) =>
@@ -5013,7 +5150,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? decodeTurnItemPayload(rows[0].payload_json)
             : // SCIENT-FORK: an item a fork shows from its history, as it shows it.
               sql<{ readonly position: number; readonly payload_json: string | null }>`
-                SELECT history.position, COALESCE(frozen.item_json, item.payload_json) AS payload_json
+                SELECT history.position, ${turnItemMetadataSql(sql, sql`COALESCE(frozen.item_json, item.payload_json)`)} AS payload_json
                 FROM scient_fork_history AS history
                 LEFT JOIN scient_fork_frozen_items AS frozen
                   ON frozen.thread_id = history.thread_id AND frozen.position = history.position
@@ -5421,7 +5558,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         );
         const payloads = yield* sql<{ at: number; payload_json: string | null }>`
         SELECT json_extract(wanted.value, '$.at') AS at,
-          COALESCE(frozen.item_json, item.payload_json) AS payload_json
+          ${turnItemMetadataSql(sql, sql`COALESCE(frozen.item_json, item.payload_json)`)} AS payload_json
         FROM json_each(${sources}) wanted
         LEFT JOIN scient_fork_frozen_items frozen
           ON frozen.thread_id = ${threadId}
@@ -6502,7 +6639,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadProjection,
       getTurnStartContext,
       getTurnStartHistory,
+      getNativeHistoryEstimates: (threadId) =>
+        readNativeHistoryEstimates(sql, threadId).pipe(
+          sql.withTransaction,
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        ),
       // SCIENT-FORK:START
+      getContextHandoffSummaryPage: (threadId, handoffId, offset, maxChars, consume) =>
+        readContextHandoffSummary(sql, threadId, handoffId, offset, maxChars, consume).pipe(
+          sql.withTransaction,
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        ),
+      resolveContextHistory: (input) =>
+        selectContextHistory(sql, input).pipe(
+          sql.withTransaction,
+          Effect.mapError(
+            (cause) =>
+              new ProjectionStoreReadError({ threadId: input.handoffs[0]!.threadId, cause }),
+          ),
+        ),
+      getContextHistoryCandidates: (threadId, runIds) =>
+        readContextHistoryCandidates(sql, threadId, runIds).pipe(
+          sql.withTransaction,
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        ),
       getForkHistoryItems: (threadId) =>
         readForkHistoryIndex(sql, threadId).pipe(
           Effect.flatMap((index) => readForkHistoryRows(sql, threadId, index)),
@@ -6561,6 +6721,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
   Effect.gen(function* () {
     const replayState = yield* Ref.make(makeProjectionReplayState());
     const sequence = yield* Ref.make(0);
+    const contextSources = new Map<string, ReadonlyArray<OrchestrationV2HistoricalMessage>>();
 
     const service: ProjectionStoreV2Shape = {
       apply: (event) =>
@@ -6581,6 +6742,31 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     ?.checkpointScopes.find((scope) => scope.id === event.payload.id),
                 );
                 if (error !== undefined) return [error, existing] as const;
+              }
+              if (
+                event.type === "context-handoff.updated" &&
+                event.payload.historySource?.entries !== undefined &&
+                !contextSources.has(event.payload.historySource.id)
+              ) {
+                contextSources.set(
+                  event.payload.historySource.id,
+                  event.payload.historySource.entries.flatMap((entry) => {
+                    const item = existing.projections
+                      .get(entry.threadId)
+                      ?.turnItems.find((item) => item.id === entry.itemId);
+                    const message = item === undefined ? null : historicalMessage(item);
+                    return message === null
+                      ? []
+                      : [
+                          {
+                            ...message,
+                            ...(entry.runStatus === undefined
+                              ? {}
+                              : { runStatus: entry.runStatus }),
+                          },
+                        ];
+                  }),
+                );
               }
               const next: ProjectionReplayState = {
                 projections: new Map(existing.projections),
@@ -7115,6 +7301,83 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           })),
         ),
       // SCIENT-FORK: forks need the SQL store.
+      getContextHandoffSummaryPage: (threadId, handoffId, offset, maxChars, consume) =>
+        service.getThreadProjection(threadId).pipe(
+          Effect.flatMap((projection) =>
+            Effect.gen(function* () {
+              const handoff = projection.contextHandoffs.find(
+                (handoff) => handoff.id === handoffId,
+              );
+              if (handoff === undefined) return null;
+              if (consume !== undefined) {
+                for (let at = offset; at < handoff.summaryText.length; at += maxChars)
+                  yield* consume(handoff.summaryText.slice(at, at + maxChars));
+              }
+              return {
+                handoff,
+                textBytes: Buffer.byteLength(handoff.summaryText),
+                text: handoff.summaryText.slice(offset, offset + maxChars),
+                nextTextOffset:
+                  handoff.summaryText.length > offset + maxChars ? offset + maxChars : null,
+              };
+            }),
+          ),
+        ),
+      resolveContextHistory: (input) =>
+        Effect.gen(function* () {
+          for (const handoff of input.handoffs) {
+            if (
+              handoff.historySource !== undefined &&
+              !contextSources.has(handoff.historySource.id)
+            )
+              return yield* new ProjectionStoreReadError({
+                threadId: handoff.threadId,
+                cause: "Context history source is missing.",
+              });
+          }
+          const seen = new Set(input.alreadyDeliveredItemIds);
+          const groups = input.handoffs.map((handoff) =>
+            handoff.historySource === undefined
+              ? (handoff.history?.messages ?? [])
+              : (contextSources.get(handoff.historySource.id) ?? []),
+          );
+          const messages = groups.flat().filter((message) => {
+            if (seen.has(message.itemId)) return false;
+            seen.add(message.itemId);
+            return true;
+          });
+          return {
+            ...selectHistory({
+              messages,
+              coverage: input.coverage,
+              budget: input.budget,
+              omittedItems: input.handoffs.reduce(
+                (sum, handoff) => sum + (handoff.history?.omittedItems ?? 0),
+                0,
+              ),
+            }),
+            itemIdsByHandoff: new Map(
+              input.handoffs.map((handoff, at) => [
+                handoff.id,
+                new Set(groups[at]!.map((message) => message.itemId)),
+              ]),
+            ),
+          };
+        }),
+      getContextHistoryCandidates: (threadId, runIds) =>
+        service
+          .getThreadProjection(threadId)
+          .pipe(
+            Effect.map((projection) =>
+              projection.turnItems
+                .filter(
+                  (item) =>
+                    hasHistoricalContext(item) &&
+                    (runIds === undefined || runIds.includes(item.runId)),
+                )
+                .map(contextHistoryCandidate),
+            ),
+          ),
       getForkHistoryItems: () => Effect.succeed([]),
       getReleasableFiles: () => Effect.succeed([]),
       getProjectThreadTitles: (threadId) =>
@@ -7153,6 +7416,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               ),
             ),
           ),
+      getNativeHistoryEstimates: (threadId) =>
+        service
+          .getTurnStartHistory(threadId)
+          .pipe(Effect.map((items) => items.map(nativeHistoryEstimate))),
       getRuntimeRecoveryProjection: (threadId) => service.getThreadProjection(threadId),
       getThreadSnapshot: (threadId) =>
         service.getThreadProjection(threadId).pipe(

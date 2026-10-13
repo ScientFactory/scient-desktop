@@ -1036,6 +1036,27 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   /** Producer-owned history policy, never native execution authority. Absence is backward compatible:
    * canonical fork/import provenance may still select Scient; ordinary history keeps generic policy. */
   budgetPolicy: Schema.optional(Schema.Literal("scient")),
+  // SCIENT-FORK:START — immutable retained history is resolved at delivery, not copied into status.
+  historySource: Schema.optional(
+    Schema.Struct({
+      id: ContextHandoffId,
+      itemCount: NonNegativeInt,
+      partialSnapshot: Schema.optional(Schema.Boolean),
+      summaryOnly: Schema.optional(Schema.Literal(true)),
+      // Only the creation event carries membership. Projections and delivery updates keep the ID.
+      entries: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            threadId: ThreadId,
+            itemId: TurnItemId,
+            forkPosition: Schema.optional(NonNegativeInt),
+            runStatus: Schema.optional(OrchestrationV2RunStatus),
+          }),
+        ),
+      ),
+    }),
+  ),
+  // SCIENT-FORK:END
   history: Schema.optional(
     Schema.Struct({
       messages: Schema.Array(OrchestrationV2HistoricalMessage),

@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ContextHandoff,
   OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
+import { TurnItemId } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import {
@@ -23,7 +24,12 @@ const encodeSourceOmissions = Schema.encodeEffect(
  * refusal does not leave an ambiguous marker behind.
  */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
-  function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
+  function* <
+    InjectError = never,
+    PersistError = never,
+    BudgetError = never,
+    ResolveError = never,
+  >(input: {
     readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly budget: number | Effect.Effect<number, BudgetError>;
@@ -36,6 +42,23 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       history: ProviderAdapter.ProviderAdapterV2HistoricalContext,
     ) => Effect.Effect<boolean, InjectError>;
     readonly persist: (handoff: OrchestrationV2ContextHandoff) => Effect.Effect<void, PersistError>;
+    // SCIENT-FORK:START — source membership is immutable; bodies are selected under one budget.
+    readonly resolveHistory?: (input: {
+      readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
+      readonly coverage: string;
+      readonly budget: number;
+      readonly alreadyDeliveredItemIds: ReadonlySet<string>;
+    }) => Effect.Effect<
+      {
+        readonly messages: NonNullable<OrchestrationV2ContextHandoff["history"]>["messages"];
+        readonly context: string;
+        readonly omittedItems: number;
+        readonly omittedItemIds: ReadonlyArray<string>;
+        readonly itemIdsByHandoff: ReadonlyMap<string, ReadonlySet<string>>;
+      },
+      ResolveError
+    >;
+    // SCIENT-FORK:END
   }) {
     const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId ?? undefined;
     const pending = input.handoffs.filter(
@@ -47,6 +70,15 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     if (pending.length === 0 || (input.deferInline && input.inject === undefined))
       return { context: "", delivered: Effect.void, unsent: Effect.void };
     const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
+    if (
+      input.resolveHistory === undefined &&
+      pending.some((handoff) => handoff.historySource !== undefined)
+    )
+      return yield* new ContextHandoffSourceUnavailableError();
+    // A retry-created plan is not yet in the projection. Commit its source before reading it.
+    for (const handoff of pending) {
+      if (handoff.historySource?.entries !== undefined) yield* input.persist(handoff);
+    }
     let coverage = pending
       .map(
         (handoff) =>
@@ -74,8 +106,10 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     }
     if (
       input.sharedForkWorkspace &&
-      pending.some((handoff) =>
-        handoff.history?.messages.some((message) => message.status === "interrupted"),
+      pending.some(
+        (handoff) =>
+          handoff.historySource?.partialSnapshot === true ||
+          handoff.history?.messages.some((message) => message.status === "interrupted"),
       )
     )
       coverage +=
@@ -98,23 +132,48 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       oldContext && historyCost([], `${coverage}\n${oldContext}`) + 512 <= budget
         ? `${coverage}\n${oldContext}`
         : coverage;
-    const selected = selectHistory({
-      messages,
-      coverage: fullCoverage,
-      omittedItems: pending.reduce((sum, handoff) => sum + (handoff.history?.omittedItems ?? 0), 0),
-      budget,
-    });
+    const selected =
+      input.resolveHistory === undefined
+        ? selectHistory({
+            messages,
+            coverage: fullCoverage,
+            omittedItems: pending.reduce(
+              (sum, handoff) => sum + (handoff.history?.omittedItems ?? 0),
+              0,
+            ),
+            budget,
+          })
+        : yield* input.resolveHistory({
+            handoffs: pending,
+            coverage: fullCoverage,
+            budget,
+            alreadyDeliveredItemIds: input.alreadyDeliveredItemIds,
+          });
     if (historyCost(selected.messages, selected.context) > budget) {
       if (input.deferInline) return { context: "", delivered: Effect.void, unsent: Effect.void };
       return yield* new ContextHandoffBudgetError();
     }
     const omittedItemIds = new Set(selected.omittedItemIds);
+    const restore = (handoff: OrchestrationV2ContextHandoff) => {
+      if (handoff.historySource === undefined) return input.persist(handoff);
+      const { entries: _entries, ...source } = handoff.historySource;
+      return input.persist({ ...handoff, historySource: source });
+    };
     const persist = (status: "pending" | "injected" | "inline") =>
       Effect.forEach(
         pending,
-        (handoff) =>
-          input.persist({
+        (handoff) => {
+          const { entries: _entries, ...source } = handoff.historySource ?? {
+            id: handoff.id,
+            itemCount: 0,
+          };
+          const owns =
+            "itemIdsByHandoff" in selected
+              ? (selected.itemIdsByHandoff.get(handoff.id) ?? new Set<string>())
+              : new Set((handoff.history?.messages ?? []).map((message) => message.itemId));
+          return input.persist({
             ...handoff,
+            ...(handoff.historySource === undefined ? {} : { historySource: source }),
             ...(nativeThreadId === undefined
               ? {}
               : {
@@ -123,20 +182,17 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
                     status,
                     omittedItemIds: [
                       ...(handoff.history?.omittedItemIds ?? []),
-                      ...(handoff.history?.messages ?? [])
-                        .filter((message) => omittedItemIds.has(message.itemId))
-                        .map((message) => message.itemId),
+                      ...[...owns]
+                        .filter((id) => omittedItemIds.has(id))
+                        .map((id) => TurnItemId.make(id)),
                     ],
                     itemIds: selected.messages
-                      .filter((message) =>
-                        handoff.history?.messages.some(
-                          (candidate) => candidate.itemId === message.itemId,
-                        ),
-                      )
+                      .filter((message) => owns.has(message.itemId))
                       .map((message) => message.itemId),
                   },
                 }),
-          }),
+          });
+        },
         { discard: true },
       );
     if (input.inject !== undefined && nativeThreadId !== undefined) {
@@ -165,13 +221,13 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     if (input.deferInline) {
       // Compaction APIs cannot accept an inline transcript. Keep it available
       // for the next ordinary turn when native injection is unsupported.
-      yield* Effect.forEach(pending, input.persist, { discard: true });
+      yield* Effect.forEach(pending, restore, { discard: true });
       return { context: "", delivered: Effect.void, unsent: Effect.void };
     }
     return {
       context: renderHistory(selected.messages, selected.context),
       delivered: persist("inline"),
-      unsent: Effect.forEach(pending, input.persist, { discard: true }),
+      unsent: Effect.forEach(pending, restore, { discard: true }),
     };
   },
 );
@@ -182,5 +238,14 @@ export class ContextHandoffDeliveryUncertainError extends Schema.TaggedError<Con
 ) {
   override get message() {
     return "Historical context delivery is uncertain; replace the native thread before retrying.";
+  }
+}
+
+export class ContextHandoffSourceUnavailableError extends Schema.TaggedError<ContextHandoffSourceUnavailableError>()(
+  "ContextHandoffSourceUnavailableError",
+  {},
+) {
+  override get message() {
+    return "The immutable history source reader is unavailable; historical context was not delivered.";
   }
 }

@@ -1,3 +1,13 @@
+// SCIENT-FORK:START — bounded retained-history and publication-proof adapters.
+import {
+  commandPublicationProven,
+  attachmentPublicationProven,
+} from "../orchestration-v2/AttachmentPublicationProof.ts";
+import {
+  handoffMetadataSql,
+  turnItemMetadataSql,
+} from "../orchestration-v2/scient-fork/ContextHistorySql.ts";
+// SCIENT-FORK:END
 /**
  * Historical name for the shared application event store.
  *
@@ -64,6 +74,15 @@ export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer Even
 export class OrchestrationEventStore extends Context.Service<
   OrchestrationEventStore,
   {
+    readonly commandPublicationProven: (
+      ...input: [Parameters<typeof commandPublicationProven>[1], number]
+    ) => Effect.Effect<boolean, OrchestrationEventStoreError>;
+    readonly attachmentPublicationProven: (
+      ...input: [
+        Parameters<typeof attachmentPublicationProven>[1],
+        Parameters<typeof attachmentPublicationProven>[2],
+      ]
+    ) => Effect.Effect<boolean, OrchestrationEventStoreError>;
     /** Append one project event to the shared application log. */
     readonly appendProjectEvent: (
       event: UnsequencedProjectEvent,
@@ -427,7 +446,10 @@ const makeEventStore = Effect.gen(function* () {
         stream_id,
         event_type,
         occurred_at,
-        payload_json,
+        CASE event_type
+          WHEN 'context-handoff.updated' THEN ${handoffMetadataSql(sql, sql`payload_json`, sql`'legacy-event:' || event_id`)}
+          WHEN 'turn-item.updated' THEN ${turnItemMetadataSql(sql, sql`payload_json`)}
+          ELSE payload_json END AS payload_json,
         metadata_json,
         application_event_version,
         causation_event_id,
@@ -738,6 +760,16 @@ const makeEventStore = Effect.gen(function* () {
     // SCIENT-FORK:START — V1 accessors alongside the V2 surface.
     ...makeV1EventAccess(sql),
     // SCIENT-FORK:END
+    commandPublicationProven: (owner, sequence) =>
+      commandPublicationProven(sql, owner, sequence).pipe(
+        Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.commandPublicationProven")),
+      ),
+    attachmentPublicationProven: (owner, attachment) =>
+      attachmentPublicationProven(sql, owner, attachment).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("OrchestrationEventStore.attachmentPublicationProven"),
+        ),
+      ),
     appendProjectEvent,
     appendAgentEvents,
     readAgentEvents,

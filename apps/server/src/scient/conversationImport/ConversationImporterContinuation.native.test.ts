@@ -15,6 +15,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2ContextHandoff,
   TurnItemId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -64,6 +65,17 @@ import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1Th
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+
+const retainedMessages = Effect.fn("ImportTest.retainedMessages")(function* (
+  handoff: OrchestrationV2ContextHandoff,
+) {
+  return (yield* (yield* ProjectionStoreV2).resolveContextHistory({
+    handoffs: [handoff],
+    coverage: handoff.history?.coverage ?? "Retained import source",
+    budget: 1_000_000,
+    alreadyDeliveredItemIds: new Set(),
+  })).messages;
+});
 import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
@@ -1404,8 +1416,9 @@ it.live(
         const smallHandoff = bounded.contextHandoffs.at(-1);
         assert.ok(smallHandoff?.history && smallHandoff.delivery);
         const smallDelivered = new Set(smallHandoff.delivery.itemIds);
+        const smallHistory = yield* retainedMessages(smallHandoff);
         assert.equal(
-          smallHandoff.history.messages.filter(
+          smallHistory.filter(
             (message) =>
               smallDelivered.has(message.itemId) &&
               (message.kind === "user_message" || message.kind === "assistant_message"),
@@ -1767,16 +1780,12 @@ it.live.each(["portable import", "legacy SQL"] as const)(
           }
           const sent = yield* store.getThreadProjection(threadId);
           const handoff = sent.contextHandoffs.at(-1)!;
+          const retained = yield* retainedMessages(handoff);
           assert.equal(handoff.history?.omittedItems, 0);
-          assert.equal(
-            handoff.history?.messages.filter((message) => message.text.includes(unique)).length,
-            1,
-          );
+          assert.equal(retained.filter((message) => message.text.includes(unique)).length, 1);
           assert.isTrue(
             handoff.delivery?.itemIds.some((id) =>
-              handoff.history?.messages.some(
-                (message) => message.itemId === id && message.text.includes(unique),
-              ),
+              retained.some((message) => message.itemId === id && message.text.includes(unique)),
             ) ?? false,
           );
         }
@@ -3463,16 +3472,17 @@ it.live(
             const late = yield* deliver("late-preset", selected).pipe(Effect.forkScoped);
             yield* Deferred.await(opened).pipe(Effect.timeout("10 seconds"));
             const prepared = (yield* store.getThreadProjection(lateTarget)).contextHandoffs.at(-1)!;
+            const retained = yield* retainedMessages(prepared);
             assert.equal(prepared.budgetPolicy, "scient");
             assert.deepEqual(prepared.history!.omittedItemIds, []);
             assert.deepEqual(
-              prepared.history!.messages.map((message) => message.text),
+              retained.map((message) => message.text),
               original.items
                 .flatMap((item) => historicalMessage(item) ?? [])
                 .map((message) => message.text),
             );
             assert.isAbove(
-              prepared.history!.messages.reduce((bytes, message) => bytes + message.text.length, 0),
+              retained.reduce((bytes, message) => bytes + message.text.length, 0),
               48_000,
             );
             assert.equal((yield* settings.getSettings).scientFork.contextHandoffSize, "compact");

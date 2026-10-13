@@ -11,8 +11,10 @@ import {
   type ChatAttachment,
   type ConversationSnapshotSelection,
   type ConversationSnapshotV1,
-  type MessageId,
   type ThreadId,
+  MessageId,
+  TurnId,
+  ScientConversationExportError,
 } from "@t3tools/contracts";
 import {
   SnapshotRangeError,
@@ -29,6 +31,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Semaphore from "effect/Semaphore";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -41,6 +44,12 @@ import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Option from "effect/Option";
 import { conversationSnapshotProjection } from "./conversationSnapshotProjection.ts";
+import { turnItemMetadataSql } from "../../orchestration-v2/scient-fork/ContextHistorySql.ts";
+
+/** A portable snapshot is assembled in memory for its digest and document writers.
+ * Refuse beyond this capture allowance before hydration; retained sources remain
+ * available through bounded detail pages. Attachment packaging has its own cap. */
+export const CONVERSATION_SNAPSHOT_CAPTURE_BYTES = 32 * 1024 * 1024;
 
 export class ConversationThreadNotFoundError extends Schema.TaggedError<ConversationThreadNotFoundError>()(
   "ConversationThreadNotFoundError",
@@ -61,6 +70,7 @@ const isConversationSnapshotReadError = Schema.is(ConversationSnapshotReadError)
 export type ConversationSnapshotError =
   | ConversationThreadNotFoundError
   | ConversationRangeError
+  | ScientConversationExportError
   | ConversationSnapshotReadError;
 
 export interface CapturedConversation {
@@ -90,6 +100,7 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
+  const captureLock = yield* Semaphore.make(1);
 
   const locate = (attachment: ChatAttachment): string | null =>
     resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }) ??
@@ -102,6 +113,28 @@ const make = Effect.gen(function* () {
     sql
       .withTransaction(
         Effect.gen(function* () {
+          const sizes = yield* sql<{ readonly bytes: number }>`
+            WITH shown AS (
+              SELECT ${turnItemMetadataSql(sql, sql`COALESCE(frozen.item_json, item.payload_json)`)} AS body
+              FROM scient_fork_history AS history
+              LEFT JOIN scient_fork_frozen_items AS frozen ON frozen.thread_id = history.thread_id AND frozen.position = history.position
+              LEFT JOIN orchestration_v2_projection_turn_items AS item ON item.turn_item_id = history.source_item_id
+              WHERE history.thread_id = ${threadId}
+              UNION ALL
+              SELECT ${turnItemMetadataSql(sql, sql`payload_json`)} FROM orchestration_v2_projection_turn_items AS item
+              WHERE item.thread_id = ${threadId} AND NOT EXISTS (
+                SELECT 1 FROM scient_fork_history WHERE thread_id = ${threadId} AND source_item_id = item.turn_item_id)
+              UNION ALL SELECT payload_json FROM orchestration_v2_projection_messages WHERE thread_id = ${threadId}
+              UNION ALL SELECT payload_json FROM orchestration_v2_projection_plans WHERE thread_id = ${threadId}
+            ) SELECT COALESCE(SUM(octet_length(body)), 0) AS bytes FROM shown
+          `;
+          let remaining = CONVERSATION_SNAPSHOT_CAPTURE_BYTES - sizes[0]!.bytes;
+          if (remaining < 0)
+            return yield* new ScientConversationExportError({
+              reason: "too-large",
+              message:
+                "This conversation exceeds the export capture allowance. Its retained history is still available through paged reads.",
+            });
           const snapshot = yield* query.getThreadSnapshot(threadId);
           const project = yield* projects.get(snapshot.projection.thread.projectId);
           const thread = yield* Effect.try({
@@ -112,8 +145,55 @@ const make = Effect.gen(function* () {
               ),
             catch: (cause) => new ConversationSnapshotReadError({ cause }),
           });
+          const summaries: (typeof thread.messages)[number][] = [];
+          for (const { item } of snapshot.projection.visibleTurnItems) {
+            if (item.type !== "handoff") continue;
+            const first = yield* query.getContextHandoffSummaryPage(
+              threadId,
+              item.contextHandoffId,
+              0,
+              0,
+            );
+            if (first?.handoff.historySource?.summaryOnly !== true) continue;
+            if (first.textBytes > remaining)
+              return yield* new ScientConversationExportError({
+                reason: "too-large",
+                message:
+                  "The retained handoff summary exceeds the export capture allowance. It remains available through paged reads.",
+              });
+            remaining -= first.textBytes;
+            const parts: string[] = [];
+            yield* query.getContextHandoffSummaryPage(
+              threadId,
+              item.contextHandoffId,
+              0,
+              65536,
+              (text) =>
+                Effect.sync(() => {
+                  parts.push(text);
+                }),
+            );
+            summaries.push({
+              id: MessageId.make(`handoff-summary:${item.id}`),
+              role: "system",
+              text: parts.join(""),
+              turnId: item.runId === null ? (item.historyTurnId ?? null) : TurnId.make(item.runId),
+              streaming: false,
+              attachments: [],
+              createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
+              updatedAt: DateTime.formatIso(item.updatedAt),
+            });
+          }
           return {
-            thread,
+            thread:
+              summaries.length === 0
+                ? thread
+                : {
+                    ...thread,
+                    messages: [...thread.messages, ...summaries].toSorted((a, b) =>
+                      a.createdAt.localeCompare(b.createdAt),
+                    ),
+                  },
             deletedAt: snapshot.projection.thread.deletedAt,
             sequence: snapshot.snapshotSequence,
             threadSequence: yield* events.latestSequence({ threadId }),
@@ -124,7 +204,8 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           isThreadNotFound(cause)
             ? new ConversationThreadNotFoundError({ threadId })
-            : isConversationSnapshotReadError(cause)
+            : Schema.is(ScientConversationExportError)(cause) ||
+                isConversationSnapshotReadError(cause)
               ? cause
               : new ConversationSnapshotReadError({ cause }),
         ),
@@ -178,7 +259,7 @@ const make = Effect.gen(function* () {
       snapshot: { ...snapshotContent, contentDigest: `sha256:${Hex.encode(digest)}` },
       attachmentFiles,
     };
-  });
+  }, captureLock.withPermits(1));
 
   return ConversationSnapshotService.of({ capture });
 });

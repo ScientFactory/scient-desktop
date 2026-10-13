@@ -24,6 +24,7 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const forkCases = (["codex", "claudeAgent"] as const).map((driverName) => {
@@ -526,7 +527,13 @@ it.effect.each(
       assert.equal(target.contextTransfers[0]?.resolution?.strategy, "portable_context");
       assert.lengthOf(target.contextHandoffs, 1);
       const handoff = target.contextHandoffs[0]!;
-      const history = handoff.history?.messages.map((message) => message.text).join("\n") ?? "";
+      const retained = yield* (yield* ProjectionStoreV2).resolveContextHistory({
+        handoffs: [handoff],
+        coverage: handoff.history?.coverage ?? "Retained fork",
+        budget: 1_000_000,
+        alreadyDeliveredItemIds: new Set(),
+      });
+      const history = retained.messages.map((message) => message.text).join("\n");
       assert.include(`${handoff.summaryText}\n${history}`, "INCLUDED_SOURCE_MARKER");
       assert.notInclude(`${handoff.summaryText}\n${history}`, "EXCLUDED_LATER_MARKER");
       assert.isNull(target.providerThreads[0]?.forkedFrom);

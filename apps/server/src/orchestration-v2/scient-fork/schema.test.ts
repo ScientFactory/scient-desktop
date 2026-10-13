@@ -16,6 +16,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, it } from "@effect/vitest";
+import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -23,6 +24,8 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
+import * as ProjectionStore from "../ProjectionStore.ts";
+import { handoffMetadataSql } from "./ContextHistorySql.ts";
 import Migration013 from "./migrations/013_WorkspaceBindingRootFileSystemIdentity.ts";
 import { runScientMigrations, SCIENT_MIGRATIONS } from "./scientMigrator.ts";
 
@@ -67,7 +70,7 @@ const QuarantinePayloadEvidence = Schema.fromJsonString(
 const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
 const SCIENT_MIGRATION_IDS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
 ];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
@@ -94,8 +97,152 @@ const SCIENT_MIGRATION_NAMES = [
   "fork-history",
   "fork-history-lookups",
   "legacy-source-reconciliation",
+  "context-history-sources",
+  "compact-archived-projection-handoffs",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
+
+it.effect.each(["projection", "event"] as const)(
+  "upgrades context sources past malformed %s JSON without changing it",
+  (malformedOwner) =>
+    withMemory(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations();
+        yield* runScientMigrations(sql);
+        yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 25`;
+        for (const table of [
+          "scient_handoff_history",
+          "scient_handoff_projection_sources",
+          "scient_handoff_frozen_items",
+          "scient_handoff_legacy_sources",
+          "scient_handoff_legacy_messages",
+        ])
+          yield* sql.unsafe(`DROP TABLE ${table}`);
+        const valid = '{"summaryText":"Retained legacy text","history":{"messages":[]}}';
+        const malformed = '{"summaryText":';
+        const projection = malformedOwner === "projection" ? malformed : valid;
+        const event = malformedOwner === "event" ? malformed : valid;
+        yield* sql`INSERT INTO orchestration_v2_projection_context_handoffs
+          (context_handoff_id,thread_id,target_run_id,to_provider_thread_id,strategy,status,updated_at,payload_json)
+          VALUES ('upgrade-context','upgrade-thread','upgrade-run','upgrade-provider','full_thread_summary','ready','2026-10-13',${projection})`;
+        yield* sql`INSERT INTO orchestration_events
+          (event_id,aggregate_kind,stream_id,stream_version,event_type,occurred_at,actor_kind,payload_json,metadata_json,application_event_version)
+          VALUES ('upgrade-event','thread','upgrade-thread',1,'context-handoff.updated','2026-10-13','system',${event},'{}',2)`;
+        assert.deepEqual(yield* runScientMigrations(sql), [
+          [25, "context-history-sources"],
+          [26, "compact-archived-projection-handoffs"],
+        ]);
+        assert.deepEqual(yield* runScientMigrations(sql), []);
+        const kept = yield* sql<{ readonly payload_json: string }>`
+          SELECT payload_json FROM orchestration_v2_projection_context_handoffs WHERE context_handoff_id = 'upgrade-context'
+          UNION ALL SELECT payload_json FROM orchestration_events WHERE event_id = 'upgrade-event'`;
+        // Malformed rows are never rewritten; a valid archived projection body is compacted.
+        assert.strictEqual(kept[1]?.payload_json, event);
+        if (malformedOwner === "projection") assert.strictEqual(kept[0]?.payload_json, projection);
+        else
+          assert.deepEqual(JSON.parse(kept[0]!.payload_json), {
+            history: { messages: [] },
+            summaryText: "",
+            historySource: { id: "legacy-projection:upgrade-context", itemCount: 0 },
+          });
+        const sources = yield* sql<{ readonly source_id: string }>`
+          SELECT source_id FROM scient_handoff_legacy_sources ORDER BY source_id`;
+        assert.deepEqual(
+          sources.map((row) => row.source_id),
+          [
+            malformedOwner === "projection"
+              ? "legacy-event:upgrade-event"
+              : "legacy-projection:upgrade-context",
+          ],
+        );
+      }),
+    ),
+);
+
+it.effect("compacts archived legacy projection handoffs without changing what reads return", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations();
+      yield* runScientMigrations(sql);
+      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 25`;
+      for (const table of [
+        "scient_handoff_history",
+        "scient_handoff_projection_sources",
+        "scient_handoff_frozen_items",
+        "scient_handoff_legacy_sources",
+        "scient_handoff_legacy_messages",
+      ])
+        yield* sql.unsafe(`DROP TABLE ${table}`);
+      const message = { id: "m1", role: "user", text: "x".repeat(4096) };
+      const rows = {
+        structured: JSON.stringify({
+          status: "ready",
+          summaryText: "Full transcript ".repeat(256),
+          history: { coverage: "Earlier turns", messages: [message, { ...message, id: "m2" }] },
+        }),
+        summaryOnly: JSON.stringify({ status: "ready", summaryText: "Summary only ".repeat(256) }),
+        tampered: JSON.stringify({ status: "ready", summaryText: "Archive differs" }),
+        current: JSON.stringify({
+          status: "ready",
+          summaryText: "",
+          historySource: { id: "current-source", itemCount: 0 },
+        }),
+      };
+      for (const [id, payload] of Object.entries(rows))
+        yield* sql`INSERT INTO orchestration_v2_projection_context_handoffs
+        (context_handoff_id,thread_id,target_run_id,to_provider_thread_id,strategy,status,updated_at,payload_json)
+        VALUES (${id},'compact-thread',${`run-${id}`},'compact-provider','full_thread_summary','ready','2026-10-13',${payload})`;
+      const readSql = (id: string) => sql<{ readonly payload_json: string }>`
+        SELECT ${handoffMetadataSql(sql, sql`payload_json`, sql`'legacy-projection:' || context_handoff_id`)} AS payload_json
+        FROM orchestration_v2_projection_context_handoffs WHERE context_handoff_id = ${id}`;
+      const before = new Map<string, unknown>();
+      for (const id of Object.keys(rows))
+        before.set(id, JSON.parse((yield* readSql(id))[0]!.payload_json));
+
+      // Archive with 25, then make one archive differ from its projection before 26 runs.
+      assert.deepEqual(yield* runScientMigrations(sql), [
+        [25, "context-history-sources"],
+        [26, "compact-archived-projection-handoffs"],
+      ]);
+      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id = 26`;
+      for (const [id, payload] of Object.entries(rows))
+        yield* sql`UPDATE orchestration_v2_projection_context_handoffs SET payload_json = ${payload}
+          WHERE context_handoff_id = ${id}`;
+      yield* sql`UPDATE scient_handoff_legacy_sources SET payload_json = '{"summaryText":"other"}'
+        WHERE source_id = 'legacy-projection:tampered'`;
+      assert.deepEqual(yield* runScientMigrations(sql), [
+        [26, "compact-archived-projection-handoffs"],
+      ]);
+
+      const stored = new Map<string, string>();
+      for (const row of yield* sql<{ readonly id: string; readonly payload_json: string }>`
+        SELECT context_handoff_id AS id, payload_json FROM orchestration_v2_projection_context_handoffs
+        WHERE thread_id = 'compact-thread'`)
+        stored.set(row.id, row.payload_json);
+      for (const id of Object.keys(rows))
+        assert.deepEqual(JSON.parse((yield* readSql(id))[0]!.payload_json), before.get(id), id);
+      assert.deepEqual(JSON.parse(stored.get("structured")!), before.get("structured"));
+      assert.deepEqual(JSON.parse(stored.get("summaryOnly")!), before.get("summaryOnly"));
+      assert.strictEqual(stored.get("tampered"), rows.tampered);
+      assert.strictEqual(stored.get("current"), rows.current);
+      assert.ok(stored.get("structured")!.length < 512);
+      const archived = yield* sql<{ readonly source_id: string; readonly payload_json: string }>`
+        SELECT source_id, payload_json FROM scient_handoff_legacy_sources
+        WHERE source_id IN ('legacy-projection:structured', 'legacy-projection:summaryOnly')
+        ORDER BY source_id`;
+      assert.deepEqual(
+        archived.map((row) => row.payload_json),
+        [rows.structured, rows.summaryOnly],
+      );
+      const unreadable = yield* Effect.flatMap(ProjectionStore.ProjectionStoreV2, (store) =>
+        store.getUnreadableThreadIds(),
+      ).pipe(Effect.provide(ProjectionStore.layer));
+      assert.notInclude(unreadable, ThreadId.make("compact-thread"));
+    }),
+  ),
+);
 
 it.effect(
   "adds repair generation zero to completed upstream import rows without changing their completion",
@@ -645,6 +792,8 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [22, "fork-history"],
           [23, "fork-history-lookups"],
           [24, "legacy-source-reconciliation"],
+          [25, "context-history-sources"],
+          [26, "compact-archived-projection-handoffs"],
         ] as const,
       );
 
@@ -2078,6 +2227,8 @@ it.effect("migration 9 converges a development database that already recorded mi
         [22, "fork-history"],
         [23, "fork-history-lookups"],
         [24, "legacy-source-reconciliation"],
+        [25, "context-history-sources"],
+        [26, "compact-archived-projection-handoffs"],
       ]);
       const columns = yield* sql<{
         readonly name: string;
@@ -2120,6 +2271,8 @@ it.effect("reconciles only the exact former import-17 ledger without losing rece
         [22, "fork-history"],
         [23, "fork-history-lookups"],
         [24, "legacy-source-reconciliation"],
+        [25, "context-history-sources"],
+        [26, "compact-archived-projection-handoffs"],
       ]);
       const ledger = yield* sql<{
         readonly migration_id: number;
@@ -2234,7 +2387,9 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (22, 'fork-history')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (23, 'fork-history-lookups')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (24, 'legacy-source-reconciliation')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (25, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (25, 'context-history-sources')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (26, 'compact-archived-projection-handoffs')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (27, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -2242,7 +2397,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 25"),
+          error.message.includes("unknown migration 27"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -2253,7 +2408,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [...SCIENT_MIGRATION_IDS, 25],
+        [...SCIENT_MIGRATION_IDS, 27],
       );
     }),
   ),

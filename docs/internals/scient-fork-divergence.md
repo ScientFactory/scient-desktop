@@ -395,10 +395,39 @@ native thread before retry. A command receipt alone is not proof of native histo
 Portable delivery keeps eligible history items whole. Selection prioritizes the latest user item,
 latest assistant item, and original user item, then fills from newest to oldest; selected items
 are rendered in chronological order. Oversized items are omitted, never truncated into anchors.
-The default allowance is 16,000 tokens with a 64,000-byte ceiling, reduced for the target model
-window, current native occupancy, current input, attachments, and headroom. Cost includes encoded
-wrappers and attribution and uses a conservative byte estimate. This supersedes the V1 Settings
-preset/JSON-preamble/truncated-anchor algorithm. See [context handoffs](./context-handoffs.md).
+Generic provider switches retain T3's byte allowance. Scient fork, import and recovery history
+keeps the user's context preset and a three-byte token estimate, with the receiving model,
+occupancy, current input, attachments and headroom deciding the final allowance. Larger presets
+are not clamped to T3's 64 KB ceiling. Cost includes encoded wrappers and attribution.
+
+Keep this policy divergence while replacing transcript staging: handoffs retain immutable source
+membership, delivery/status records retain the source ID, and source edits preserve one shared
+old body before rewriting it. Frozen fork versions remain authoritative. Normal SQL reads remove
+legacy handoff bodies before hydration; bounded source readers preserve old embedded histories
+and summary-only text. The existing V2 event transaction, delivery receipts and pending-delivery
+uncertainty own execution. See [context handoffs](./context-handoffs.md).
+
+Cleanup acceptance must cover the actual default Scient composition and resource use, alongside
+native/portable continuity and frozen visibility. Testing an unused budget formula or forcing the
+generic fixture policy does not establish Scient's behavior. Check serialized bytes fetched,
+selected and persisted, peak allocation and disposal, plus restart/rebuild and old-source recovery.
+Generic accounting and selection import provider-core directly; only presets, provenance and
+inert historical-item eligibility belong in the Scient policy boundary.
+
+| Cleanup decision             | Retained guarantee                                                                     | Owner and deciding proof                                                                                               |
+| ---------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Keep policy, replace staging | Receiving-model presets and whole-item selection share one allowance                   | `ContextHistorySource`, `ScientContextHandoffPolicy`; default SQL budget and selector-parity tests                     |
+| Keep frozen references       | Ancestor changes and repeated forks cannot move a captured source                      | `ContextHistoryCandidates`, `ContextHistorySource`; exact-position and shared-body tests, native fork continuity       |
+| Compatibility reader         | Old embedded and summary-only history remains available without routine full hydration | `ContextHistorySql`, `JsonStringFieldPage`; large SQLite row, corrupt metadata, escape/offset and frozen-summary tests |
+| Adopt shared mechanics       | Generic priority, attribution and cost remain upstream-shaped                          | provider-core `handoffBudget`; production budget and provider-switch tests                                             |
+| Replace broad event reads    | Attachment publication proof retains receipt/currentness and locked recheck            | `AttachmentPublicationProof`; publication, receipt and rollback reconciliation tests                                   |
+
+The source resolver is required in the live projection-store composition. Native occupancy reads
+measure scalar bytes before hydration; export traverses retained summaries once in chunks and
+refuses beyond its declared in-memory capture allowance. Resource witnesses use large rows
+constructed in SQLite, measure JavaScript heap separately, and check single-source, shared-source,
+legacy startup and disposal-sensitive delivery behavior. These automated witnesses do not establish
+installed-build, hosted CI or real-provider acceptance.
 
 The retained app prefix can include reasoning and tool facts even when portable provider delivery
 cannot replay them. Historical callbacks and approvals never become active execution. The recovery
