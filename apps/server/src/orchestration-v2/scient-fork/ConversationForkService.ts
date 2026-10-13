@@ -542,18 +542,6 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
-      // The original worktree can also disappear while the fork is set up: a local
-      // fork then works in the project folder too, never in the missing folder.
-      const folderGone =
-        command.workspaceMode === "local" && !(yield* baseline.workspaceExists(cwd));
-      const movedToProjectFolder = folderGone && cwd !== inspected.projectRoot;
-      if (
-        folderGone &&
-        (!movedToProjectFolder || !(yield* baseline.workspaceExists(inspected.projectRoot)))
-      )
-        return yield* failure("The project folder is unavailable.");
-      const inProjectFolder = inspected.inProjectFolder || movedToProjectFolder;
-      const forkCwd = movedToProjectFolder ? inspected.projectRoot : cwd;
       const now = yield* DateTime.now;
       const nativeSource = freezeConversationForkNativeSource({
         projection,
@@ -594,6 +582,19 @@ const make = Effect.gen(function* () {
         "conversation-fork-titles",
         Effect.gen(function* () {
           const projectThreads = yield* projections.getProjectThreadTitles(projection.thread.id);
+          // Checked after every wait, just before the fork is built and committed: a
+          // local fork whose folder disappeared works in the project folder instead,
+          // never in the missing folder.
+          const folderGone =
+            command.workspaceMode === "local" && !(yield* baseline.workspaceExists(cwd));
+          const movedToProjectFolder = folderGone && cwd !== inspected.projectRoot;
+          if (
+            folderGone &&
+            (!movedToProjectFolder || !(yield* baseline.workspaceExists(inspected.projectRoot)))
+          )
+            return yield* failure("The project folder is unavailable.");
+          const inProjectFolder = inspected.inProjectFolder || movedToProjectFolder;
+          const forkCwd = movedToProjectFolder ? inspected.projectRoot : cwd;
           const thread: OrchestrationV2AppThread = {
             ...projection.thread,
             id: command.newThreadId,
