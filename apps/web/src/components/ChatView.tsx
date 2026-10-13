@@ -178,7 +178,7 @@ import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 // SCIENT-FORK:START — the Scroll to end control and its unread count (chat/useTimelineEndControl.ts).
-import { useTimelineEndControl } from "./chat/useTimelineEndControl";
+import { followModeAfterEndTransition, useTimelineEndControl } from "./chat/useTimelineEndControl";
 // SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
@@ -6707,7 +6707,9 @@ function ChatViewContent(props: ChatViewProps) {
       if (timelineScrollIntentRef.current === "toward-end") {
         composerRef.current?.restoreAfterTimelineReachedEnd();
       }
-      // The follow modes change once per transition, as in upstream's handler.
+      // The follow modes change once per transition, as in upstream's handler;
+      // a first send being placed keeps its own.
+      if (followModeAfterEndTransition(timelineScrollModeRef.current, "reached") === null) return;
       timelineScrollModeRef.current = "following-end";
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       setTimelineLiveFollowEnabled(true);
@@ -6715,6 +6717,7 @@ function ChatViewContent(props: ChatViewProps) {
       setTimelineAnchor(releaseChatTimelineAnchor);
     },
     onLeftEnd: () => {
+      if (followModeAfterEndTransition(timelineScrollModeRef.current, "left") === null) return;
       timelineScrollModeRef.current = "free-scrolling";
       liveFollowUserScrollGenerationRef.current = null;
     },

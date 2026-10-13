@@ -358,6 +358,28 @@ it("manual navigation cancels restoration while history is still loading", async
   await expect.poll(() => readTimelinePosition("geometry:cancel")?.messageId).not.toBe("message-1");
 });
 
+it("keeps the saved reading position while a send is being placed", async () => {
+  const entries = Array.from({ length: 20 }, (_, i) => entry(i));
+  render("geometry:single-writer", entries);
+  await expect.poll(() => readTimelinePosition("geometry:single-writer")?.messageId).toBeDefined();
+  await frames();
+  const saved = readTimelinePosition("geometry:single-writer")!;
+  // While the placement is in flight, scrolling saves nothing: the record that
+  // names its message stays (no raw record without one replaces it).
+  render("geometry:single-writer", entries, { timelinePositioningPending: true });
+  await listRef.current!.scrollToOffset({ offset: 300, animated: false });
+  listRef.current!.getScrollableNode()!.dispatchEvent(new Event("scroll"));
+  await frames(6);
+  expect(readTimelinePosition("geometry:single-writer")).toEqual(saved);
+  // Once it is done, the reader's place is saved again, by message.
+  render("geometry:single-writer", entries, { timelinePositioningPending: false });
+  listRef.current!.getScrollableNode()!.dispatchEvent(new Event("scroll"));
+  await expect
+    .poll(() => readTimelinePosition("geometry:single-writer")?.offsetWithinRow)
+    .not.toBe(saved.offsetWithinRow);
+  expect(readTimelinePosition("geometry:single-writer")?.messageId).toBeDefined();
+});
+
 it("keeps existing first-message framing and short-answer space through completion", async () => {
   const entries: ReturnType<typeof entry>[] = [];
   const followUp = entry(8, "Follow-up prompt");

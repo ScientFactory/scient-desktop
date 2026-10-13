@@ -1,6 +1,20 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { type RefObject, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { endTransition } from "./readerScrollPolicy";
+import type { TimelineScrollMode } from "./timelineScrollAnchoring";
+
+/**
+ * The follow mode after the reader reaches or leaves the end, or null to keep
+ * the current one: a first send being placed owns the mode until its placement
+ * ends or the reader navigates (which cancels it).
+ */
+export function followModeAfterEndTransition(
+  mode: TimelineScrollMode,
+  transition: "reached" | "left",
+): "following-end" | "free-scrolling" | null {
+  if (mode === "anchoring-new-turn") return null;
+  return transition === "reached" ? "following-end" : "free-scrolling";
+}
 
 /** How long the reader must stay away from the end before the Scroll to end control shows. */
 export const END_CONTROL_SHOW_DELAY_MS = 150;
