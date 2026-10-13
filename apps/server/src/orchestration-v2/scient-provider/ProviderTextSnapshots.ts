@@ -19,7 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
 
 import {
   ProviderTextSnapshotError,
@@ -32,6 +32,7 @@ import {
   type ProviderTextSnapshotConsumer,
   type ProviderTextSnapshotConsumerOwner,
   type ProviderTextSnapshotOwner,
+  type ProviderTextSnapshotSubscription,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextDeltaCoalescer } from "../Adapters/ProviderTextDeltaCoalescer.ts";
 
@@ -47,6 +48,33 @@ type SnapshotConsumerQueue = Queue.Enqueue<
   { readonly type: "event"; readonly event: ProviderAdapterV2InternalEvent },
   Cause.Done
 >;
+
+/** The session manager's running-fork text members. */
+export interface ProviderTextSnapshotManagerShape {
+  readonly captureRunningForkText?: (
+    owner: ProviderTextSnapshotOwner,
+  ) => Effect.Effect<CapturedProviderText, ProviderTextSnapshotError>;
+  readonly withCapturedForkText?: <A, E, R>(
+    capture: CapturedProviderText,
+    commit: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ProviderTextSnapshotError, R>;
+  readonly releaseCapturedForkText?: (capture: CapturedProviderText) => Effect.Effect<void>;
+}
+
+/** Run events without the internal running-fork text batches. */
+export const withoutTextSnapshots = <E, R>(
+  events: Stream.Stream<ProviderAdapterV2InternalEvent, E, R>,
+): Stream.Stream<ProviderAdapterV2Event, E, R> =>
+  events.pipe(
+    Stream.filter(
+      (event): event is ProviderAdapterV2Event => event.type !== "internal.text_snapshot",
+    ),
+  );
+
+/** The plain run subscription, without its snapshot stream and consumer. */
+export const plainEventSubscription = (
+  subscription: Effect.Effect<ProviderTextSnapshotSubscription>,
+) => subscription.pipe(Effect.map(({ events, close }) => ({ events, close })));
 
 /** Running-fork text capture: exact live owners, their run consumers and pending waiters. */
 export const makeProviderTextSnapshots = <Entry extends SnapshotSessionEntry>(input: {
@@ -104,6 +132,27 @@ export const makeProviderTextSnapshots = <Entry extends SnapshotSessionEntry>(in
         },
         { discard: true },
       );
+    /**
+     * Runs a live-map mutation under the snapshot permit, then retires the
+     * runtime's waiters (one thread's, if given) when `retires` accepts the
+     * result. A runtime without snapshots runs the mutation unchanged.
+     */
+    const mutateAndRetire = <A, E, R>(
+      runtime: ProviderAdapterV2SessionRuntime | undefined,
+      mutation: Effect.Effect<A, E, R>,
+      options: { readonly threadId?: ThreadId; readonly retires: (result: A) => boolean },
+    ): Effect.Effect<A, E, R> =>
+      runtime?.textSnapshots === undefined
+        ? mutation
+        : textSnapshotPermit.withPermit(
+            mutation.pipe(
+              Effect.tap((result) =>
+                options.retires(result)
+                  ? retireTextSnapshots(runtime, options.threadId)
+                  : Effect.void,
+              ),
+            ),
+          );
     const withTextSnapshotCurrent = <A, E, R>(
       token: symbol,
       watermark: number | undefined,
@@ -282,6 +331,33 @@ export const makeProviderTextSnapshots = <Entry extends SnapshotSessionEntry>(in
         }),
     });
 
+    /** Ends this subscriber's text consumer first, then removes the subscription. */
+    const closeSubscription = <E, R>(
+      subscriberId: number,
+      removeSubscription: Effect.Effect<void, E, R>,
+    ) =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          const endingSnapshots = endConsumer(subscriberId);
+          if (endingSnapshots !== undefined) yield* endingSnapshots;
+          yield* removeSubscription;
+        }),
+      );
+
+    /** A run subscription: its plain events, its snapshot stream and its own text consumer. */
+    const subscription = (input: {
+      readonly subscriberId: number;
+      readonly runtime: ProviderAdapterV2SessionRuntime;
+      readonly queue: SnapshotConsumerQueue;
+      readonly events: Stream.Stream<ProviderAdapterV2InternalEvent, ProviderAdapterV2Error>;
+      readonly close: Effect.Effect<void>;
+    }): ProviderTextSnapshotSubscription => ({
+      events: withoutTextSnapshots(input.events),
+      snapshotEvents: input.events,
+      textSnapshotConsumer: consumer(input.subscriberId, input.runtime, input.queue),
+      close: input.close,
+    });
+
     /** Routes a native snapshot batch from the session pump to its exact run consumer. */
     const route = (runtime: ProviderAdapterV2SessionRuntime, event: ProviderTextSnapshotBatch) =>
       Effect.gen(function* () {
@@ -304,14 +380,19 @@ export const makeProviderTextSnapshots = <Entry extends SnapshotSessionEntry>(in
         yield* Queue.offer(consumer.queue, { type: "event", event });
       });
 
+    const manager: ProviderTextSnapshotManagerShape = {
+      captureRunningForkText,
+      withCapturedForkText: (capture, commit) =>
+        withTextSnapshotCurrent(capture.token, undefined, commit),
+      releaseCapturedForkText: (capture) => releaseTextSnapshot(capture.token),
+    };
+
     return {
-      permit: textSnapshotPermit,
+      manager,
       retire: retireTextSnapshots,
-      withCurrent: withTextSnapshotCurrent,
-      release: releaseTextSnapshot,
-      capture: captureRunningForkText,
-      endConsumer,
-      consumer,
+      mutateAndRetire,
+      closeSubscription,
+      subscription,
       route,
     };
   });
@@ -336,6 +417,29 @@ type CodexSnapshotTurnContext = {
 type NodeUpdated = Extract<ProviderAdapterV2Event, { readonly type: "node.updated" }>;
 type MessageUpdated = Extract<ProviderAdapterV2Event, { readonly type: "message.updated" }>;
 type TurnItemUpdated = Extract<ProviderAdapterV2Event, { readonly type: "turn_item.updated" }>;
+
+/** Running-fork text capture ends when this Codex app-server process terminates. */
+export const makeCodexGenerationEnd = () =>
+  Effect.sync(() => {
+    const generationEnded = Deferred.makeUnsafe<never, ProviderTextSnapshotError>();
+    let ended = false;
+    return {
+      generationEnded,
+      isGenerationEnded: () => ended,
+      onTermination: (cause: unknown) =>
+        Effect.sync(() => {
+          ended = true;
+        }).pipe(
+          Effect.andThen(
+            Deferred.fail(
+              generationEnded,
+              new ProviderTextSnapshotError({ reason: "consumer-ended", cause }),
+            ),
+          ),
+          Effect.asVoid,
+        ),
+    };
+  });
 
 /** Running-fork text capture for one Codex app-server session. */
 export const makeCodexTextSnapshots = <Context extends CodexSnapshotTurnContext>(input: {
