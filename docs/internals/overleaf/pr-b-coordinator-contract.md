@@ -139,7 +139,8 @@ Select storage on the server. Use `stateDir/overleaf/retained` when it is on the
 
 **Owner decision, October 13, 2026: projects on another disk are supported in v1** through the sibling vault above, not refused. Requirements:
 
-- Persist the vault's identity (device and inode) in the connection record. When the disk is mounted under another name or path, find the vault through that record and re-verify ownership, permissions and same-device placement before use.
+- Persist the vault's identity in the connection record: the disk's volume UUID plus the vault folder's file ID. Do not rely on the device number, which macOS can reassign each time a disk is mounted. When the disk is mounted under another name or path, find the vault through that record and re-verify ownership, permissions and same-device placement before use.
+- The disk must support atomic exchange, or the declared move-aside fallback with hard links. Disks formatted as exFAT or FAT, common on USB drives shared with Windows, likely support neither and are then refused with a clear reason. Verify this in step 1; APFS and Mac OS Extended disks are the supported case.
 - An unplugged disk makes the connection unavailable. Pending recovery resumes when the same disk and vault return. Never create a fresh vault in place of a missing one while the connection still references retained copies or an apply intent.
 - When no protected sibling location can be created, refuse writable preflight with a clear, specific reason. Examples are a read-only or shared parent, or a checkout at the root of the disk, whose sibling would be on another device.
 - The vault is never inside the checkout and is never captured or published. Its name, and whether it is dot-prefixed like macOS's own `.Trashes` folder, are settled in step 1.
