@@ -115,6 +115,11 @@
         "latexSelection.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
         "src/scient/documentPage/main.tsx",
+        // The Visual performance benchmark: its production build configuration,
+        // page entry (latex-visual-benchmark.html) and Node runner.
+        "latexVisualBenchmark.config.ts",
+        "src/scient/latex/visualBenchmark/main.tsx",
+        "scripts/latex-visual-benchmark.ts",
         "src/scient/diagrams/mermaidRecovery.fixtures.ts",
         "public/scient-voice-worklet.js!",
       ],
