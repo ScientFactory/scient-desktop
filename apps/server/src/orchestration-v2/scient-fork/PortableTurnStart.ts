@@ -4,7 +4,6 @@ import type {
   OrchestrationV2ContextTransfer,
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
-  OrchestrationV2TurnItem,
   ProviderSessionId,
   RunId,
   ThreadId,
@@ -15,13 +14,14 @@ import * as Effect from "effect/Effect";
 import type { ContextHandoffServiceV2Shape } from "../ContextHandoffService.ts";
 import type { EventSinkV2Shape } from "../EventSink.ts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import type { ProjectionStoreV2Shape } from "../ProjectionStore.ts";
+import type { ProjectionStoreV2Shape, ProjectionStoreV2Error } from "../ProjectionStore.ts";
 import type {
   ProviderAdapterV2Error,
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTurnStartError } from "../ProviderTurnStartService.ts";
+import type { ContextHandoffItem } from "./ContextHistoryCandidates.ts";
 import { frozenForkPortableReason } from "./ConversationForkNativeSource.ts";
 
 /** Read turn-start history without rolled-back runs. A failed read on the last start
@@ -32,6 +32,7 @@ export const makeTurnStartHistory =
     readonly threadId: ThreadId;
     readonly runs: ReadonlyArray<OrchestrationV2Run>;
     readonly willRetry: boolean | undefined;
+    readonly referenceOnly?: boolean;
     readonly settleStartFailure: (failed: {
       readonly signal: string;
       readonly title: string;
@@ -40,9 +41,13 @@ export const makeTurnStartHistory =
   }) =>
   (runIds?: ReadonlyArray<RunId>) =>
     Effect.gen(function* () {
-      const history = yield* Effect.result(
-        input.projectionStore.getTurnStartHistory(input.threadId, runIds),
-      );
+      const read: Effect.Effect<
+        ReadonlyArray<ContextHandoffItem>,
+        ProjectionStoreV2Error
+      > = input.referenceOnly === true
+        ? input.projectionStore.getContextHistoryCandidates(input.threadId, runIds)
+        : input.projectionStore.getTurnStartHistory(input.threadId, runIds);
+      const history = yield* Effect.result(read);
       if (history._tag === "Success")
         return history.success.filter(
           (item) =>
@@ -75,7 +80,7 @@ export const startFrozenConversationFork = <ELoad, RLoad, EHistory, RHistory>(in
     load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>,
   ) => Effect.Effect<OrchestrationV2ProviderThread | undefined, ELoad, RLoad>;
   readonly prepareHistoryBeforeStart: () => Effect.Effect<
-    ReadonlyArray<OrchestrationV2TurnItem> | undefined,
+    ReadonlyArray<ContextHandoffItem> | undefined,
     EHistory,
     RHistory
   >;

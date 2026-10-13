@@ -641,6 +641,7 @@ it.live.each(
           assert.ok(prepared.textWithoutCatalogMarker);
           assert.include(prepared.text, "Scient skill scope");
           assert.notInclude(prepared.textWithoutCatalogMarker, "Scient skill scope");
+          const deliverySource = yield* ProjectionStoreV2;
           const deliveryAt = (window: number, userText: string) =>
             deliverContextHandoffs({
               handoffs: pending,
@@ -654,6 +655,7 @@ it.live.each(
                 modelContextWindow: window,
               }),
               alreadyDeliveredItemIds: new Set(),
+              resolveHistory: deliverySource.resolveContextHistory,
               persist: () => Effect.void,
             }).pipe(Effect.result);
           // Find a witness at the actual whole-header boundary, then let
@@ -693,8 +695,17 @@ it.live.each(
           const retained = prepared.contextHandoffs.find(
             (candidate) => candidate.targetRunId === prepared.runs.at(-1)?.id,
           );
+          assert.ok(retained);
+          const retainedSource = yield* ProjectionStoreV2.use((store) =>
+            store.resolveContextHistory({
+              handoffs: [retained],
+              coverage: retained.history?.coverage ?? "Retained source witness",
+              budget: Buffer.byteLength(historicalText) * 4 + 16_000,
+              alreadyDeliveredItemIds: new Set(),
+            }),
+          );
           assert.equal(
-            retained?.history?.messages.find((message) => message.text === historicalText)?.text,
+            retainedSource.messages.find((message) => message.text === historicalText)?.text,
             historicalText,
           );
           assert.deepEqual(retained?.history?.omittedItemIds, []);
@@ -773,9 +784,21 @@ it.live.each(
         const scientPolicy = test.path !== "ordinary-switch";
         const durablePolicy = scientPolicy && !test.olderAbsentPolicy ? "scient" : undefined;
         assert.equal(handoff.budgetPolicy, durablePolicy);
+        const sourceReader = yield* ProjectionStoreV2;
+        const retainedHistory = yield* sourceReader.resolveContextHistory({
+          handoffs: [handoff],
+          coverage: handoff.history?.coverage ?? "Retained source witness",
+          budget: Buffer.byteLength(historicalText) * 4 + 16_000,
+          alreadyDeliveredItemIds: new Set(),
+        });
         assert.equal(
-          handoff.history?.messages.find((message) => message.text === historicalText)?.text,
+          retainedHistory.messages.find((message) => message.text === historicalText)?.text,
           scientPolicy ? historicalText : undefined,
+        );
+        assert.deepEqual(
+          handoff.history?.messages,
+          [],
+          "The persisted record must not copy the retained transcript",
         );
         if (scientPolicy) assert.deepEqual(handoff.history?.omittedItemIds, []);
         else assert.isAbove(handoff.history?.omittedItems ?? 0, 0);
@@ -792,10 +815,17 @@ it.live.each(
         );
         yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
         const rebuilt = yield* orchestrator.getThreadProjection(target);
+        const rebuiltHandoff = rebuilt.contextHandoffs.find(
+          (candidate) => candidate.id === handoff.id,
+        )!;
+        const rebuiltHistory = yield* sourceReader.resolveContextHistory({
+          handoffs: [rebuiltHandoff],
+          coverage: rebuiltHandoff.history?.coverage ?? "Retained source witness",
+          budget: Buffer.byteLength(historicalText) * 4 + 16_000,
+          alreadyDeliveredItemIds: new Set(),
+        });
         assert.equal(
-          rebuilt.contextHandoffs
-            .find((candidate) => candidate.id === handoff.id)
-            ?.history?.messages.find((message) => message.text === historicalText)?.text,
+          rebuiltHistory.messages.find((message) => message.text === historicalText)?.text,
           scientPolicy ? historicalText : undefined,
         );
         if (test.refused) {
@@ -856,7 +886,7 @@ it.live.each(
             "WHOLE_HISTORY_START",
             "Never slice a historical item",
           );
-          const historicalId = handoff.history?.messages.find(
+          const historicalId = retainedHistory.messages.find(
             (message) => message.text === historicalText,
           )?.itemId;
           if (scientPolicy) {
@@ -983,9 +1013,9 @@ it.live.each(
                 const projections = yield* ProjectionStoreV2;
                 const prepareEntered = yield* Deferred.make<void>();
                 const releasePreparation = yield* Deferred.make<void>();
-                const originalHistory = projections.getTurnStartHistory;
+                const originalHistory = projections.getNativeHistoryEstimates;
                 const historySpy = vi
-                  .spyOn(projections, "getTurnStartHistory")
+                  .spyOn(projections, "getNativeHistoryEstimates")
                   .mockImplementation((threadId) =>
                     Effect.gen(function* () {
                       const live = yield* projections.getRuntimeRecoveryProjection(threadId);
@@ -1161,13 +1191,17 @@ it.live.each(
                 );
                 assert.ok(failure?.type === "error");
                 assert.include(failure.failure.message, "Insufficient context allowance");
+                const retainedDelta = yield* sourceReader.resolveContextHistory({
+                  handoffs: refused.contextHandoffs.filter(
+                    (candidate) => candidate.strategy === "fork_delta_summary",
+                  ),
+                  coverage: "Retained merge-back source witness",
+                  budget: 64_000,
+                  alreadyDeliveredItemIds: new Set(),
+                });
                 assert.isTrue(
-                  refused.contextHandoffs.some(
-                    (candidate) =>
-                      candidate.strategy === "fork_delta_summary" &&
-                      candidate.history?.messages.some(
-                        (message) => message.text === "NEW_DELTA_FOR_MERGE_BACK",
-                      ),
+                  retainedDelta.messages.some(
+                    (message) => message.text === "NEW_DELTA_FOR_MERGE_BACK",
                   ),
                 );
                 assert.isFalse(

@@ -2,6 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { MessageId } from "@t3tools/contracts";
+import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import {
   withDroid,
   waiting,
@@ -224,8 +225,14 @@ it.live(
             (handoff) => handoff.history !== undefined,
           )!;
           assert.ok(transfer);
+          const retained = yield* (yield* ProjectionStoreV2).resolveContextHistory({
+            handoffs: [transfer],
+            coverage: transfer.history!.coverage,
+            budget: 64_000,
+            alreadyDeliveredItemIds: new Set(),
+          });
           assert.deepEqual(
-            transfer.history!.messages.map((message) => message.text),
+            retained.messages.map((message) => message.text),
             [importedQuestion, importedAnswer],
           );
           assert.deepEqual(promptTexts(yield* h.log), []);

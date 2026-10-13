@@ -8,6 +8,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
+  ContextHandoffId,
   TrimmedNonEmptyString,
   TurnId,
 } from "@t3tools/contracts";
@@ -40,10 +41,16 @@ export const ScientThreadReadInput = Schema.Struct({
         "Read one item by its itemId, ignoring view and afterPosition. Combine with textOffset to continue long text.",
     }),
   ),
+  contextHandoffId: Schema.optional(
+    ContextHandoffId.annotate({
+      description:
+        "Read the retained text of one handoff in bounded chunks. Use its recorded handoff ID and textOffset=nextTextOffset.",
+    }),
+  ),
   textOffset: Schema.optional(
     NonNegativeInt.annotate({
       description:
-        "With itemId, start the text window at this UTF-16 code unit offset (use the previous nextTextOffset).",
+        "With itemId or contextHandoffId, start the text window at this UTF-16 code unit offset (use the previous nextTextOffset).",
     }),
   ),
   view: Schema.optional(

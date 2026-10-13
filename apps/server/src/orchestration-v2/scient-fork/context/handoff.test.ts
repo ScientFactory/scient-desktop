@@ -5,75 +5,10 @@ import {
   classifyTurnDispatchFailure,
   markTurnDispatchAttempted,
 } from "../../../provider/turnDispatchPhase.ts";
-import {
-  DEFAULT_MODEL_CONTEXT_WINDOW,
-  estimateTokens,
-  handoffBudget,
-  handoffTokenCap,
-} from "./handoffBudget.ts";
+import { handoffTokenCap } from "./handoffBudget.ts";
 import { nativeThreadKey } from "./nativeThreadKey.ts";
 
-describe("handoffBudget", () => {
-  it("applies V2's formula with an unknown window defaulting to 128k", () => {
-    const budget = handoffBudget({
-      tokenCap: null,
-      userText: "",
-      attachments: [],
-      usage: undefined,
-      nativeUsedTokens: 0,
-    });
-    const reserve = Math.ceil(DEFAULT_MODEL_CONTEXT_WINDOW / 4);
-    expect(budget).toBe(DEFAULT_MODEL_CONTEXT_WINDOW - estimateTokens("") - reserve);
-  });
-
-  it("is bounded by the preset cap, the compaction threshold and native usage", () => {
-    const usage = { maxTokens: 1_000_000, autoCompactThreshold: 200_000 };
-    expect(
-      handoffBudget({
-        tokenCap: 64_000,
-        userText: "hi",
-        attachments: [],
-        usage,
-        nativeUsedTokens: 0,
-      }),
-    ).toBe(64_000);
-    const nearlyFull = handoffBudget({
-      tokenCap: null,
-      userText: "hi",
-      attachments: [],
-      usage,
-      nativeUsedTokens: 140_000,
-    });
-    expect(nearlyFull).toBe(200_000 - 140_000 - estimateTokens("hi") - 50_000);
-    expect(
-      handoffBudget({
-        tokenCap: null,
-        userText: "",
-        attachments: [],
-        usage,
-        nativeUsedTokens: 190_000,
-      }),
-    ).toBe(0);
-  });
-
-  it("charges V2's attachment allowances against the current input", () => {
-    const withImage = handoffBudget({
-      tokenCap: null,
-      userText: "",
-      attachments: [{ type: "image", id: "i", name: "a.png", mimeType: "image/png", sizeBytes: 1 }],
-      usage: undefined,
-      nativeUsedTokens: 0,
-    });
-    const without = handoffBudget({
-      tokenCap: null,
-      userText: "",
-      attachments: [],
-      usage: undefined,
-      nativeUsedTokens: 0,
-    });
-    expect(without - withImage).toBe(8_192);
-  });
-
+describe("Scient handoff presets", () => {
   it("maps presets to caps and lets the environment override win", () => {
     expect(handoffTokenCap("compact", undefined)).toBe(16_000);
     expect(handoffTokenCap("standard", undefined)).toBe(64_000);

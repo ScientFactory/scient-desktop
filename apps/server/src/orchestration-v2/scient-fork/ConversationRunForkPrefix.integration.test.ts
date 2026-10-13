@@ -27,12 +27,12 @@ import {
   layer as makeCodexProviderAdapterRegistryReplayLayer,
 } from "../Adapters/CodexAdapterV2.testkit.ts";
 import { EventSinkV2 } from "../EventSink.ts";
+import { historicalMessage } from "../ScientHistoricalContext.ts";
 import {
   handoffCoverage,
-  historicalMessage,
   historyResponseItems,
   selectHistory,
-} from "../ScientHistoricalContext.ts";
+} from "@t3tools/provider-core/server/handoffBudget";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
@@ -398,7 +398,7 @@ it.live.each(
           const selected = selectHistory({
             messages,
             budget: 16000,
-            coverage: `Context handoff (full_thread_summary):\n${handoffCoverage({ threadId: childId, coveredRunOrdinals: { from: 1, to: 1 }, items: owned })}`,
+            coverage: `Context handoff (full_thread_summary):\n${handoffCoverage({ threadId: childId, coveredRunOrdinals: { from: 1, to: 1 }, items: owned.filter((item) => historicalMessage(item) !== null) })}`,
           });
           const sourceStart = full.entries.find(
             (entry) => entry.type === "emit_inbound" && entry.label === "thread/start/source",
@@ -658,7 +658,13 @@ it.live.each(
           );
         }
         if (nested) {
-          const answerContext = delivered.contextHandoffs[0]?.history?.messages.at(-1)?.text ?? "";
+          const retained = yield* projectionStore.resolveContextHistory({
+            handoffs: [delivered.contextHandoffs[0]!],
+            coverage: "Nested run-fork source witness",
+            budget: 64_000,
+            alreadyDeliveredItemIds: new Set(),
+          });
+          const answerContext = retained.messages.at(-1)?.text ?? "";
           assert.include(answerContext, "Which dataset?");
           assert.include(answerContext, "Measured dataset");
           assert.include(answerContext, "dataset.txt");

@@ -795,9 +795,25 @@ const layerBase: Layer.Layer<
             }
           }),
       );
+      // SCIENT-FORK:START — first and reused command receipts share the bounded read representation.
+      const returnedEvents = result.committed
+        ? yield* eventStore.readByCommandId({ commandId: input.commandId }).pipe(
+            Stream.runCollect,
+            Effect.map((events): ReadonlyArray<OrchestrationV2StoredEvent> => Array.from(events)),
+            Effect.mapError(
+              (cause) =>
+                new EventSinkWriteError({
+                  commandId: input.commandId,
+                  eventCount: input.events.length,
+                  cause,
+                }),
+            ),
+          )
+        : result.storedEvents;
+      // SCIENT-FORK:END
       return {
         receipt: result.receipt,
-        storedEvents: result.storedEvents,
+        storedEvents: returnedEvents,
         committed: result.committed,
         cancelledEffectCount: result.cancelledEffectIds.length,
       };

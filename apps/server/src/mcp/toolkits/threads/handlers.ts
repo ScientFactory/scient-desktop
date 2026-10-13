@@ -166,6 +166,40 @@ export const readScientThreadForInvocation = Effect.fn("ScientThreadsToolkit.rea
       );
     }
   }
+  if (input.contextHandoffId !== undefined) {
+    const page = yield* projections
+      .getContextHandoffSummaryPage(
+        input.threadId,
+        input.contextHandoffId,
+        input.textOffset ?? 0,
+        input.maxCharsPerItem ?? THREAD_READ_DEFAULT_MAX_CHARS_PER_ITEM,
+      )
+      .pipe(Effect.mapError(readFailed(input.threadId)));
+    if (page === null)
+      return yield* toolError("thread_not_found", "That handoff is not retained by this thread.");
+    return {
+      thread: nativeThreadSummary(target, target.itemCount),
+      items: [
+        {
+          itemId: page.handoff.id,
+          position: 0,
+          type: "activity" as const,
+          status: "completed" as const,
+          title: "Context handoff",
+          activityKind: "handoff",
+          messageId: null,
+          turnId: null,
+          text: page.text,
+          textTruncated: page.nextTextOffset !== null,
+          nextTextOffset: page.nextTextOffset,
+          createdAt: DateTime.formatIso(page.handoff.createdAt),
+          updatedAt: DateTime.formatIso(page.handoff.updatedAt),
+        },
+      ],
+      nextPosition: null,
+      hasMore: false,
+    };
+  }
   yield* importer
     .ensureTranscript(input.threadId)
     .pipe(Effect.mapError(readFailed(input.threadId)));

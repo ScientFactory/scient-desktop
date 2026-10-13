@@ -1,5 +1,8 @@
 import {
   EnvironmentId,
+  ContextHandoffId,
+  RunId,
+  ProviderThreadId,
   EventId,
   MessageId,
   PlanId,
@@ -175,6 +178,68 @@ const seedThread = Effect.fn("seedThreadReadFixture")(function* (
 const itemId = (suffix: string) => `${callerId}:${suffix}`;
 
 describe("scient_thread_read native SQLite timeline", () => {
+  it.effect(
+    "pages retained handoff text using the caller's capability and exact thread entitlement",
+    () =>
+      Effect.gen(function* () {
+        yield* seedThread();
+        yield* seedThread(siblingId);
+        yield* seedThread(foreignId, { projectId: ProjectId.make("other-project") });
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const handoffId = ContextHandoffId.make("read-summary");
+        const summary = 'Original summary 🧪\n\\" ' + "retained ".repeat(1_000);
+        yield* store.apply({
+          id: EventId.make("summary-created"),
+          type: "context-handoff.updated",
+          threadId: callerId,
+          occurredAt: now,
+          payload: {
+            id: handoffId,
+            threadId: callerId,
+            targetRunId: RunId.make("next"),
+            fromProviderThreadIds: [],
+            toProviderThreadId: ProviderThreadId.make("target"),
+            coveredRunOrdinals: { from: 1, to: 1 },
+            strategy: "manual_context",
+            status: "ready",
+            summaryMessageId: null,
+            summaryText: summary,
+            createdByProviderInstanceId: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        const first = yield* read({
+          threadId: callerId,
+          contextHandoffId: handoffId,
+          maxCharsPerItem: 31,
+        });
+        expect(first.items[0]).toMatchObject({
+          text: summary.slice(0, 31),
+          nextTextOffset: 31,
+          textTruncated: true,
+        });
+        const next = yield* read({
+          threadId: callerId,
+          contextHandoffId: handoffId,
+          textOffset: 31,
+          maxCharsPerItem: 41,
+        });
+        expect(next.items[0]?.text).toBe(summary.slice(31, 72));
+        expect(
+          yield* read({ threadId: siblingId, contextHandoffId: handoffId }).pipe(Effect.flip),
+        ).toMatchObject({ code: "thread_not_found" });
+        expect(
+          yield* read({ threadId: foreignId, contextHandoffId: handoffId }).pipe(Effect.flip),
+        ).toMatchObject({ code: "thread_outside_project" });
+        expect(
+          yield* read(
+            { threadId: callerId, contextHandoffId: handoffId },
+            new Set(["sources:read"]),
+          ).pipe(Effect.flip),
+        ).toMatchObject({ code: "capability_denied" });
+      }).pipe(Effect.provide(TestLayer)),
+  );
   it.effect("filters conversation rows while retaining full-timeline positions", () =>
     Effect.gen(function* () {
       yield* seedThread();
