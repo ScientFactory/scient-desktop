@@ -1,0 +1,223 @@
+# T3 upstream alignment — 2026-10-13
+
+## Exact boundaries and qualification status
+
+This is an interim review receipt. The history-preserving integration and
+complete local aggregate exist; native mobile acceptance and final app review
+remain incomplete. `upstream-state.json` and the current `UPSTREAM.md` pointer
+remain at the previous qualified official boundary. No merge or release is
+authorized by this receipt.
+
+- Original owned base: `43779ee83b358cb929e32cafa1a3e53f7eb147cd`.
+- Previous official integration: `f23d0084b6e023ffb1af9e332d8666affc99d542`.
+- Frozen official target: `b03534fa7b847e8403322e416189c6293e6846e0`.
+- Literal upstream merge: `3846a7fd443e0fc53d8ba520e7a82748cffcc67d`, tree
+  `db3c91dfbbe444bdac4962409e27c0b91d1b6855`. Its exact parents are the original
+  owned base and frozen official target. All 99 ordinary donor commits remain
+  ancestors; no replay, squash, cherry-picking, or selective donor omission.
+- Inventory: 779 incoming paths with renames disabled, 131 same-path overlaps,
+  42 initially unmerged paths and 90 marker regions. Clean overlaps and untouched
+  Scient consumers were included in the semantic review.
+- Branch: `codex/t3-sync-b03534fa7b-20261013`; upstream push URL: `DISABLED`.
+- The preceding alignment PR #530 actually landed as owned main
+  `deaa13dab54724a198a81cbbdd424f52e8c60e48`. Subsequent catch-up merge
+  `95159279b6be37efd7ccf9375242e93a6866bb63` retains that exact main as second
+  parent. It preserves the original upstream merge and includes the landed
+  project-initialization guide correction. No unlanded implementation lane was
+  imported. Public main was reverified at this exact commit during app review.
+- Runtime candidate: `e27a7107ca34c6fde564e754a1dd15ff2cc321cc`, tree
+  `a01c8016c9e126929f150b0806894a1ff6f38328`. Its change from aggregate-tested
+  `3fd6f9b513dab6cec3f1c9378c9f71b59469cd63` affects one browser-only test file;
+  production, aggregate-unit, build and desktop-smoke inputs are identical.
+
+## Integrated behavior and narrow Scient owners
+
+The complete official range includes native mobile pull-request browsing and
+reviews, Enriched Markdown, MCP app sandbox composition, Claude 5.1 assistant
+updates, Muse 1.4.6 native subagents, settings and provider configuration,
+reader/selection controls, server cleanup, telemetry authentication, dependency
+updates and faster type checking. Scient's product identity, compatibility
+storage and migration identities, enabled-provider policy, native authority,
+publication holds and privacy decisions remain owned.
+
+Settings retain upstream's single credential visitor and persistence loop.
+Scient's usage-accounting source and immutable key policy use the existing
+feature helper. Actual filesystem witnesses cover replacement/deletion and
+rollback. A narrow credential availability owner refuses unresolved saved
+secrets and schema-declared redaction placeholders before native construction.
+It does not reject ordinary nonempty credentials with redaction metadata or
+turn empty non-secret settings into errors. Reconciliation still applies
+authoritative disable/removal and retires existing scopes. A controlled
+production-composed watched-settings → hydration → registry → native-construction
+witness failed before repair and passed afterward; locator checks alone were
+not used as behavior proof.
+
+One identity-derived Scient renderer-origin list composes CORS and upstream
+cookie authentication. Scient schemes remain accepted and T3 schemes refused.
+The tested development-cookie exports accept the declared origin and refuse
+undeclared default and sibling origins before local or upstream delivery.
+Same-app-cookie negative cases distinguish origin refusal from bad credentials;
+canonical renderers, same-origin requests and configured allowed origins retain
+their separate existing policy. Signed assets
+retain immutable identity, bounded inline MCP HTML, Range, download and CSP
+behavior. Owned HTTP assertions accidentally omitted during initial composition
+were restored before the source merge and independently reviewed.
+
+Restart continuation remains disabled by default and limited to three calls
+when enabled. Settled/snoozed threads, outstanding requests, unavailable secrets,
+provider terminal outcomes, and existing queue holds remain blockers. Explicit
+Resume and captured attempts retain their existing authority. Claude 5.1 text
+conversion uses the current item and message without replacing Scient's workflow,
+member, usage, EOF, Stop, or replacement owners.
+
+The desktop bulk-update host calls existing Scient policy owners: providers,
+servers, then local install last, with fresh capability/identity/version checks
+and the existing ready notice. It does not introduce another update engine or
+change publication authority. Scientific reader/save/close ownership remains
+separate from generic host mechanics.
+
+Mobile adopts Enriched while retaining Scient's full/partial copy, UTF-16 ranges,
+occurrence identity, Windows/entity behavior, context actions, screenshot
+dependencies and Skills. Its projection moves to the existing
+`ScientMarkdownProjection` owner; generic `markdownDocument` shrinks from 430 to
+162 lines without asynchronous no-op work or a value cycle. The original pinned
+archive is unchanged. Only an unshipped Robolectric test SDK annotation changes
+36 → 35, supported by the pinned Robolectric 4.14.1; shipped migration bodies,
+identities, ledgers and loaders remain byte-identical to owned main.
+
+Four declared host files add 758 lines relative to the frozen official target,
+versus 1,171 at the original owned base. This measure includes generic upstream
+composition and is not wholly attributable to extraction. The separately pinned
+`43779ee83b` → `3846a7fd44` advisory inventory interval reduces scoped debt
+findings 138 → 96; it is neither
+a new ratchet nor behavior or speed proof. Scient comments/registry ownership
+were maintained at the touched seams, without a blanket marker rewrite.
+
+Publication guard coverage includes the actual new settings helper and affected
+provider consumers. Existing missing-qualification refusals remain strict. A
+tarball test now parses the exact generated patch metadata rather than assuming
+the old filename. Activation, signing, cloud, relay, updater and mobile-publication
+controls remain held. Package names, state paths, licenses and opaque protocol
+values remain compatibility boundaries.
+
+## Qualification and repair evidence
+
+One root owner coordinates heavy checks. Commands use Node 24.19.0, pnpm 11.10.0,
+the committed lockfile, isolated synthetic HOME and a fresh short private TMPDIR
+per command, scrubbed
+credentials and client URL overrides. Browser executable caches are shared;
+browser profiles and app data are not. Exact revision/diff hashes, commands,
+timestamps, exits, logs and failed/cancelled attempts are retained outside the
+product repository.
+
+| Check                                          | Observed result and scope                                                                                                                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| External Phase 1 affected-consumer bundle      | 45 files / 990 cases, 217.083 s; production-composed consumers, not just changed test files. PR #521 tooling remains external; no sibling ancestry import.                                                   |
+| Complete `pnpm run test`, aggregate05          | Exit 0, 2,206.897 s at clean `3fd6f9`; 47 workspace tasks, zero task cache hits.                                                                                                                             |
+| Server aggregate                               | 930 files passed / 40 skipped; 11,789 cases passed / 129 skipped. Three further not-run cases are nested under the existing disabled Scient Agent/OMP live suite. This does not qualify every real provider. |
+| Web aggregate unit                             | 970 files / 11,965 cases passed.                                                                                                                                                                             |
+| Complete Chromium browser gate                 | 50 files / 400 cases passed, 59.174 s at clean `e27a7107`, with this worktree's prior browser cache retained externally and a fresh cache used.                                                              |
+| Formatting, lint, workspace types, unused code | Complete gates passed; 49 type-check tasks. Subsequent fixture changes passed affected types/format/lint.                                                                                                    |
+| Build / desktop smoke                          | Exit 0, 37.550 / 8.786 s at production-identical `3fd6f9`.                                                                                                                                                   |
+| Brand, provenance and all five seams           | Passed on the exact composed candidate. Seam classification is not behavior proof.                                                                                                                           |
+| Electron SVG / Mermaid / PDF pagination        | Real Electron checks passed, 6.552 / 3.732 / 1.865 s.                                                                                                                                                        |
+| Native fork stress / V2 wire                   | Seven files / 27 cases passed, including enabled scale cases, 74.378 s; wire checks passed, 6.149 s.                                                                                                         |
+| Python bridge / actual kernel                  | 128 stdlib tests run, two skipped, 2.623 s; private Python 3.12 real-kernel four files / 14 cases passed, 45.274 s.                                                                                          |
+| Sealed managed Python product                  | Two real live cases passed, 750.367 s at clean `e27a7107`: all toolkit combinations, actual scientific work, updates, retained kernels and corruption rejection. No recipe seal was changed.                 |
+| Rust resource monitor                          | 17 tests passed, 6.638 s; all three Rust formatting checks passed.                                                                                                                                           |
+| Release smoke / frozen dependencies            | Passed, 30.136 / 1.388 s. These checks do not authorize publication.                                                                                                                                         |
+
+The full aggregate was not started while source was still being composed. Earlier
+aggregate attempts remain recorded: mobile fixtures (52.154 s), publication
+fixtures (55.323 s), Markdown editor fixtures (112.738 s), and a 445.821-second
+cancelled attempt after an explicit OTLP origin-fixture failure. Only proven
+owned executor processes were interrupted; unrelated apps remained running.
+
+Seven Markdown editor interaction promises moved faithfully from happy-dom to
+native Chromium after actual CodeMirror selection reentrancy prevented that
+environment from exercising them. Native pointer/edit/keyboard, undo, source and
+rich context menus, reopening identity, failed editor creation in write/read
+modes and same-slot retry remain covered.
+No editor runtime, selection shim, timeout or assertion was weakened.
+
+Browser qualification also exposed a citation fixture race: normal autosave can
+legitimately make the selected source saved rather than draft. The fixture now
+holds and acknowledges its actual write intent, checks draft origin while the
+write is pending, then saved origin after completion with the same native editor.
+Historical Playwright route-collection/transport failures remain unexplained.
+Bounded external instrumentation did not reproduce that error, and logging can
+perturb timing. Both an unchanged uninstrumented complete run and the final cold
+complete run passed; this is not a claim of a permanent framework fix.
+
+## App review and remaining gates
+
+The exact candidate runs in an isolated macOS Electron app with a distinct
+bundle ID, ports and fresh synthetic profile. The authenticated native
+`scient-next-dev://app/` window, actual bundled backend and listener ancestry
+were verified. Scient is first in onboarding; a fresh managed Scient Agent 0.1.0
+installs under the candidate's own state. No real account or credential was
+copied. Native Markdown math, Hebrew/Arabic text, tables, local images, Mermaid
+and Vega-Lite were inspected. Actual source edits survive save, Reload without
+Cmd-S, and a return to rendered mode; byte comparisons preserve all original
+source bytes. The ordinary Tectonic path compiled a two-page LaTeX fixture; native
+page navigation and page two at 60% zoom survived renderer reload in the PDF
+layout. This is automated interaction review, not Yaacov's visual acceptance.
+
+A controlled loopback model exercises the actual Scient Agent process and native
+app. Stop closes a streaming client connection and retains queued work; explicit
+Resume starts a new request. Completed fixed responses still leave the visible
+thread working, so queue consumption/return-to-idle remain under investigation.
+The actual native `agent_end` explicitly reports both `isTerminal=false` and
+`yielded=false`, without a terminal prompt result. The bridge retained that
+authority correctly. The involved adapter/runtime source is unchanged from
+owned main; the reason the native runtime chose continuation still needs
+investigation. This does not authorize treating nonterminal native signals as
+completion. A local
+model fixture initially returned Markdown where the title service requires JSON;
+that diagnostic fixture was corrected outside product code, after which the
+actual Scient connection-test RPC succeeded.
+
+Native mobile verification is blocked: the managed device host lacks its
+required AgentDevice version and does not recognize the owned simulator; Android
+is unavailable. The mobile skill requires stopping verification when its tools
+or selected device are unavailable. No foreign device, alternate automation
+system or native-build success is substituted. The six new native selection
+tests and physical iOS/Android copy/selection behavior remain unexecuted.
+
+Local KDE tests compile but five pass and six fail because `dbus-daemon` is absent
+on this macOS host; Hyprland tests were not run. These native crate inputs are
+byte-identical to owned main. Completed Linux CI at that exact main qualifies
+those unchanged Linux inputs only; it does not establish candidate CI or macOS
+D-Bus support.
+
+Final review must resolve the provider completion finding and applicable mobile
+qualification gap, refresh current main, record exact hosted PR-head checks and
+obtain user visual acceptance. Queue admission, auto-merge, actual MERGE delivery,
+public-main ancestry and release are separate milestones. No cursor advance,
+merge, release, app cleanup or qualification-policy exception has occurred.
+
+## Alignment improvement evidence
+
+Early production-composed checks gave useful feedback in about 3m37s and exposed
+a genuine credential composition defect with a before/after witness. Narrow
+owners reduced overlap without replacing product decisions. Neither result
+establishes a 5× end-to-end improvement or an under-ten-minute cold full suite.
+The successful aggregate still takes 36m47s, and managed Python adds a separately
+measured 12m30s. Server file intervals sum to 1,611.428 s within a 2,098.530-second
+server wall clock; residual time is not attributed by summing file durations.
+
+The next improvements should remain small and measured: maintain the existing
+affected-consumer mapping, move faithful native interaction checks to supported
+environments, refresh completed CI weights, attribute collection/import/setup and
+teardown costs, and pilot isolated extra CI shards without weakening serial
+integration ownership. A small receipt/resumption runner is a separate proposal.
+Exact-candidate CI replacing complete local qualification remains unadopted.
+
+Detailed local evidence is retained under the workspace review directory
+`reviews/alignment-owner-handoff-20261012/next-alignment-execution-20261013`:
+`frozen-plan.json`, `source-merge.json`, independent family reviews,
+`phase1-composed-bundle-summary.json`, `final-full-tests-05.json`,
+`final-layout-cold-10.json`, `final-managed-python-product-01.json`,
+`native-document-save-reload.json` and `native-stop-queue-before-resume.json`.
+These references preserve limits without copying transcripts or provider history
+into the product repository.
