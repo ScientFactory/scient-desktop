@@ -19,6 +19,7 @@
  * losing writable access for its lifetime. Reads need no lease.
  */
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -303,6 +304,17 @@ export const make = (options: {
           if (!(await privateDirectory(directory, userId)))
             throw new Error("Overleaf state directory is not private.");
       });
+      // Record which file SQLite is about to open. Create it first (never
+      // following a link) so there is an identity to record.
+      const before = yield* io("acquire-lease", async () => {
+        const handle = await NodeFSP.open(
+          leasePath,
+          NodeFS.constants.O_CREAT | NodeFS.constants.O_WRONLY | NodeFS.constants.O_NOFOLLOW,
+          0o600,
+        );
+        await handle.close();
+        return { root: await directoryIdentity(root), file: await leaseFileIdentity() };
+      });
       const scope = yield* Scope.make();
       yield* Effect.gen(function* () {
         const context = yield* Layer.buildWithScope(
@@ -325,9 +337,19 @@ export const make = (options: {
             : new OverleafStateIoError({ operation: "acquire-lease", cause: error }),
         ),
       );
+      // If the file was replaced while SQLite opened and locked it, the lock may
+      // be on a file nobody else will check; give it up rather than trust it.
       const identities = yield* io("acquire-lease", async () => {
         await NodeFSP.chmod(leasePath, 0o600);
-        return { root: await directoryIdentity(root), file: await leaseFileIdentity() };
+        const after = { root: await directoryIdentity(root), file: await leaseFileIdentity() };
+        if (
+          after.root.dev !== before.root.dev ||
+          after.root.ino !== before.root.ino ||
+          after.file.dev !== before.file.dev ||
+          after.file.ino !== before.file.ino
+        )
+          throw new Error("Overleaf lease file was replaced during acquisition.");
+        return after;
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       lease = { scope, ...identities };
       // Only this process writes here now: temporaries from a dead writer are orphans.
