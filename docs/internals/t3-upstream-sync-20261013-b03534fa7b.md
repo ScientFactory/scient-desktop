@@ -462,11 +462,15 @@ both inputs. The Muse account/generation concerns recorded by reviewers are
 unchanged from landed main, not demonstrated alignment regressions; they remain
 separate follow-ups, without a claim that every Muse flow is qualified.
 
-Qualification of this later composition is pending. The complete `72b423e9`
-gate remains evidence only for unchanged inputs; fresh shared-lifecycle,
-provider, schema/document and affected-client checks are required before the
-receipt/cursor can identify this main as qualified. The early full typecheck
-passed in 19.744 s. Evidence: `reviews/pr-merge-readiness-20261013/pr534-ff9-*`.
+The early full typecheck passed in 19.744 s. On clean `6349b9fc`, fresh
+qualification passed the maintained native/consumer mapper in 242.184 s,
+58 provider/schema/process consumer files and 775 cases in 113.988 s,
+all workspace/script tests in 47.994 s and all client suites in 110.884 s.
+Three existing opt-in server files/12 cases skipped. The server restart then
+cancelled the browser step without an exit receipt; its partial log and
+cancellation remain preserved. This composition is retained beneath the later
+qualified fork catch-up. Evidence: `reviews/pr-merge-readiness-20261013/pr534-ff9-*`
+and `pr534-composed-6349-*`.
 No unrelated feature fix, test weakening, publication or profile access is
 part of this catch-up. The isolated app remains verified stopped.
 
@@ -485,12 +489,62 @@ Replaced refusal assertions now check acknowledged text, saved prompts, frozen
 SQL reopen results, source continuation, and receipt/outbox ownership.
 
 The full shared/app typecheck passed on unchanged staged inputs in 24.635 s.
-Further affected qualification is pending, including native fork/lifecycle
-witnesses, execution/session/event consumers, packages, clients and browser
-coverage. The cancelled prior-head browser run has no success receipt; its
+Further affected qualification was pending at source review; the receiving
+composition and its native, execution/session/event, package/client and browser
+results are recorded below. The cancelled prior-head browser run has no success receipt; its
 partial log and cancellation remain preserved. Earlier completed checks are
 evidence only for inputs they actually qualify. The notice is an options
 snapshot retained on retry, without a claim that every later workspace-loss UI
 race has a deciding fixture. No cursor advance, new official target, independent
 feature fix, gate waiver, live-profile use or publication is performed here.
 Evidence: `reviews/pr-merge-readiness-20261013/pr534-ad35-*`.
+
+### Qualified receiving composition `e5ace01e4cc4`
+
+Receiving merge `e5ace01e4cc46a761094b8384f5fea22204b1e05` has exact parents
+`6349b9fc5334398c25834baf00a82ba0598d5541` and landed main `ad35cc25320e`,
+and tree `181067025c75c5659741fcf77ba32709cabdf686`. It differs from the
+independently reviewed raw tree only in this maintainer receipt. The complete
+`72b423e9` local gate remains evidence for unchanged, unaffected inputs; the
+exact-input audit and fresh affected requalification follow the existing
+subsequent-change rule without substituting CI for local checks. The earlier
+shared/app typecheck remains valid for identical runtime inputs.
+
+All 14 affected gate receipts passed on clean, unchanged `e5ace01e`: the
+maintained six-boundary selector including five actual Pi witnesses passed
+49 files/1,020 cases in 272.587 s; 143 additional execution/session/event,
+all enabled adapter and fork/native files passed 2,114 cases in 609.385 s.
+Two existing opt-in stress/benchmark files/three cases skipped. All workspace
+and script suites passed in 42.473 s; full web/mobile/desktop unit suites
+passed in 85.473 s (web 981 files/12,011 cases; desktop 283/2,530; mobile
+144/1,784 with four files/47 existing skips). All 50 browser files/406 cases
+passed in 184.943 s with serial files, original assertions/timeouts and only
+the external owned-port override. Formatting, lint, unused-code checks, build,
+desktop smoke, branding, provenance, all five seams and diff checks passed.
+
+The exact native app used newly bundled server code, its existing synthetic
+profile and one loopback model. A native `/fork` of a running Scient turn
+created a ready idle child retaining saved history, current prompt and the
+scientific reader/PDF. The parent continued its physical stream. Stop closed
+that connection, showed the stopping acknowledgement and held its queued
+message. Explicit Resume completed continuation and queued requests, then
+settled the composer and live controls. The child still lacked that later
+queued message and any live execution controls. This is controlled Scient/Pi
+interaction, not authenticated Codex fork capture; fresh native SQL/transport
+suites separately cover snapshot identity and races. Both screenshots were
+reviewed without inventing renewed user visual acceptance. The app, fixture,
+five captured PIDs, four ports and exact service were verified stopped.
+
+Native platform/resource inputs remain unchanged from the earlier recorded
+SDK27.0 iOS and Android checks and synthetic helper resource-layout proof.
+Mobile visual review remains explicitly deferred. All other completed
+`e5ace01e` hosted jobs passed; the sole mobile static job failed during Git
+checkout (connection reset/early EOF before analysis), and only that job was
+retried. Its original failure is retained. Transfer ceilings passed on this
+exact head. Final metadata-only pushed-head CI, merge-group checks and actual
+public-main delivery remain separate. No signed release, every-provider
+qualification or measured cold/full-suite/end-to-end speedup is claimed.
+
+Evidence: `reviews/pr-merge-readiness-20261013/pr534-e5ace-final-qualification-summary.json`,
+`pr534-ad35-reuse-audit.json`, `pr534-composed-e5ace-*`, `pr534-native-e5ace-*`
+and `pr534-e5ace-mobile-static-*`.
