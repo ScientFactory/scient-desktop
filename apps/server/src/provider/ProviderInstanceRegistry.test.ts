@@ -68,6 +68,9 @@ import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCod
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import type { BuiltInDriversEnv } from "./builtInDrivers.ts";
 import { DroidDriver } from "./Drivers/DroidDriver.ts";
+import type { DroidDriverEnv } from "./Drivers/DroidDriver.ts";
+import { MuseDriver, type MuseCompositionEnv } from "./MuseDriverComposition.ts";
+import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as OmpExecutableGate from "./omp/OmpExecutableGate.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -665,6 +668,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
   const layerWithAcpRegistry = AcpRegistrySupport.layerFromHost.pipe(Layer.provideMerge(layerBase));
   const testLayer = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
     Layer.provideMerge(layerWithAcpRegistry),
+    Layer.provideMerge(ProviderLifecycleCoordinator.layer),
   );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
@@ -675,6 +679,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       const droidId = ProviderInstanceId.make("droid_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
+      const museId = ProviderInstanceId.make("muse_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
@@ -682,8 +687,10 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       const droidDriverKind = ProviderDriverKind.make("droid");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
+      const museDriverKind = ProviderDriverKind.make("muse");
 
       const configMap: ProviderInstanceConfigMap = {
+        [museId]: { driver: museDriverKind, displayName: "Muse", enabled: false, config: {} },
         [codexId]: {
           driver: codexDriverKind,
           displayName: "Codex",
@@ -726,14 +733,23 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       };
 
       const { registry } = yield* makeProviderInstanceRegistry<
-        | BuiltInDriversEnv
         | CodexDriverEnv
         | ClaudeDriverEnv
         | CursorDriverEnv
         | GrokCompositionRequirements
         | OpenCodeCompositionEnv
+        | DroidDriverEnv
+        | MuseCompositionEnv
       >({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, DroidDriver, GrokDriver, OpenCodeDriver],
+        drivers: [
+          CodexDriver,
+          ClaudeDriver,
+          CursorDriver,
+          DroidDriver,
+          GrokDriver,
+          OpenCodeDriver,
+          MuseDriver,
+        ],
         configMap,
       });
 
@@ -743,9 +759,9 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(6);
+      expect(instances).toHaveLength(7);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, droidId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, droidId, grokId, openCodeId, museId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -757,6 +773,14 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       const droid = yield* registry.getInstance(droidId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
+      const muse = yield* registry.getInstance(museId);
+      expect(muse?.driverKind).toBe(museDriverKind);
+      expect(muse?.auth?.credentialBinding?.key).toBe("muse:native-host-account");
+      expect(muse?.managedRuntimeActions).toBeDefined();
+      const museSnapshot = yield* muse!.snapshot.getSnapshot;
+      expect(museSnapshot.instanceId).toBe(museId);
+      expect(museSnapshot.enabled).toBe(false);
+      expect(museSnapshot.setup?.canAuthenticate).toBe(false);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);

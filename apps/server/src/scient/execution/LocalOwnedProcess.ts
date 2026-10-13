@@ -1,6 +1,7 @@
 import { ChildProcess } from "effect/process";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 export interface LocalOwnedProcessRequest {
   readonly executable: string;
@@ -32,6 +33,26 @@ export class LocalOwnedProcessTreeExitError extends Data.TaggedError(
   readonly pid: number;
   readonly message: string;
 }> {}
+
+/** Cached cancellation shared by owned execution and account-command adapters. */
+export const makeLocalOwnedProcessCleanup = Effect.fnUntraced(function* (
+  child: Pick<ChildProcessSpawner.ChildProcessHandle, "pid" | "kill" | "isRunning">,
+  platform: NodeJS.Platform,
+) {
+  const close = yield* Effect.cached(
+    child.kill(LOCAL_OWNED_PROCESS_KILL_OPTIONS).pipe(
+      Effect.catch((cause) =>
+        child.isRunning.pipe(
+          Effect.catchCause(() => Effect.succeed(true)),
+          Effect.flatMap((running) => (running ? Effect.fail(cause) : Effect.void)),
+        ),
+      ),
+      Effect.andThen(ensureLocalOwnedProcessTreeExit(Number(child.pid), platform)),
+    ),
+  );
+  yield* Effect.addFinalizer(() => close.pipe(Effect.ignore));
+  return close;
+});
 
 /**
  * Ensure the detached Unix process group owned by a Scient launch is gone.

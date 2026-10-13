@@ -20,6 +20,7 @@ import { GrokInlineSetup } from "./GrokInlineSetup";
 import { OmpInlineSetup } from "./OmpInlineSetup";
 import { ScientAgentInlineSetup } from "./ScientAgentInlineSetup";
 import { PiInlineSetup } from "./PiInlineSetup";
+import { MuseInlineSetup } from "./MuseInlineSetup";
 import {
   isProviderAccountPresentedAsConnected,
   providerLifecycleFailureMessage,
@@ -43,6 +44,7 @@ export function supportsAssistedProviderSetupSurface(
     case "omp":
     case "scient":
     case "pi":
+    case "muse":
       return true;
     default:
       return false;
@@ -160,6 +162,17 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
 
   let setup: ReactNode;
   switch (props.provider.driver) {
+    case "muse":
+      setup = (
+        <MuseInlineSetup
+          {...managementProps}
+          controller={controller}
+          environmentId={props.environmentId}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
     case "omp":
       setup = (
         <OmpInlineSetup

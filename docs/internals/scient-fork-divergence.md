@@ -338,7 +338,13 @@ The shared provider packages retain their generic defaults and first-run, slash-
 mode-change gates. The app compositions inject Scient copy through optional hooks; Pi's generated
 extension receives the same app-owned wording without changing its canonical tool projection.
 [`MuseDriverComposition.ts`](../../apps/server/src/provider/MuseDriverComposition.ts) supplies
-Muse's runtime copy while retaining the package's single native driver.
+Muse's runtime copy, managed executable, native account controller and lifecycle presentation
+through the package's optional `resolveRuntime` hook, while retaining its single native driver.
+The shared auth flow's one marked seam, `accountVerified: false`, settles a native credential
+write to idle instead of a verified sign-in; shared Settings, onboarding and mobile read it through
+[`providerAuthPresentation.ts`](../../packages/client-runtime/src/providerAuthPresentation.ts).
+Muse's account lease, native session close and background-generation admission stay in
+[`MuseAuth.ts`](../../apps/server/src/scient/providerLifecycle/MuseAuth.ts).
 
 [`ProviderHostLive.ts`](../../apps/server/src/provider/ProviderHostLive.ts) supplies server paths,
 settings, background demand, attachments, and credentials; the provider packages do not read the
