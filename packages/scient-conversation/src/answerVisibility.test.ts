@@ -24,6 +24,7 @@ describe("isSubstantiveAnswer", () => {
   it("keeps headings", () => {
     expect(isSubstantiveAnswer("## Diagnosis\nThe cache is stale.")).toBe(true);
     expect(isSubstantiveAnswer("Diagnosis\n=========\nThe cache is stale.")).toBe(true);
+    expect(isSubstantiveAnswer("Diagnosis\n---------\nThe cache is stale.")).toBe(true);
     // A hash tag or an empty heading is not a heading.
     expect(isSubstantiveAnswer("#478 is merged.")).toBe(false);
     expect(isSubstantiveAnswer("#\nDone.")).toBe(false);
@@ -41,15 +42,26 @@ describe("isSubstantiveAnswer", () => {
     expect(isSubstantiveAnswer("~~~mermaid\ngraph TD; A-->B\n~~~")).toBe(true);
     expect(isSubstantiveAnswer("The energy is\n$$E = mc^2$$")).toBe(true);
     expect(isSubstantiveAnswer("\\[\nx^2\n\\]")).toBe(true);
+    expect(isSubstantiveAnswer("Consider \\[E = mc^2\\] within a sentence.")).toBe(true);
     expect(isSubstantiveAnswer("\\begin{align*}\nx &= 1\n\\end{align*}")).toBe(true);
     expect(isSubstantiveAnswer("Here: ![plot](plot.png)")).toBe(true);
+    expect(isSubstantiveAnswer("![plot][chart]\n\n[chart]: ./plot.png")).toBe(true);
+    expect(isSubstantiveAnswer("![chart]\n\n[chart]: ./plot.png")).toBe(true);
     expect(isSubstantiveAnswer("Done.", { hasImages: true })).toBe(true);
   });
 
   it("does not mistake prose for structure", () => {
     expect(isSubstantiveAnswer("It costs $5 and $6.")).toBe(false);
     expect(isSubstantiveAnswer("a | b, and --- then more")).toBe(false);
-    expect(isSubstantiveAnswer("Choose A | B\n---")).toBe(false);
+    // A list item's underline is a rule, not a heading.
+    expect(isSubstantiveAnswer("- one item\n---")).toBe(false);
+    // Syntax inside inline code is shown literally.
+    expect(isSubstantiveAnswer("Checking the `$$` parser next.")).toBe(false);
+    expect(isSubstantiveAnswer("Checking the `<img>` handler next.")).toBe(false);
+    expect(isSubstantiveAnswer("Checking `![a](b)` and `\\[x\\]` next.")).toBe(false);
+    // An unclosed opener is not display math; a bare shortcut reference is not an image.
+    expect(isSubstantiveAnswer("The $$ sign and \\[ bracket.")).toBe(false);
+    expect(isSubstantiveAnswer("See ![note] later.")).toBe(false);
     expect(isSubstantiveAnswer("See [the docs](https://example.com).")).toBe(false);
   });
 });
