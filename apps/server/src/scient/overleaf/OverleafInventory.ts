@@ -227,24 +227,32 @@ export async function captureOverleafInventory(
     const stat = await NodeFSP.lstat(absolute(path), { bigint: true }).catch(() => null);
     return stat !== null && stat.isDirectory() ? { dev: stat.dev, ino: stat.ino } : null;
   };
-  /** Every walked folder above `path`, and `path` itself when it is a folder, is unchanged. */
-  const verifyFolders = async (path: string) => {
-    for (const folder of folders.has(path) ? [...ancestorsOf(path), path] : ancestorsOf(path)) {
-      const expected = folders.get(folder);
-      const now = await folderIdentity(folder);
-      if (
-        expected === undefined ||
-        now === null ||
-        now.dev !== expected.dev ||
-        now.ino !== expected.ino
-      )
-        throw new Refused({ reason: "unstable", path });
-    }
+  /** The walked folder `folder` is still the folder that was listed; `path` names the refusal. */
+  const verifyFolder = async (folder: string, path: string) => {
+    const expected = folders.get(folder);
+    const now = await folderIdentity(folder);
+    if (
+      expected === undefined ||
+      now === null ||
+      now.dev !== expected.dev ||
+      now.ino !== expected.ino
+    )
+      throw new Refused({ reason: "unstable", path });
+  };
+  const parentOf = (path: string) =>
+    path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+  /**
+   * Each check looks at one or two folders; a sweep after the walk and another
+   * after the reads covers every walked folder once, so work grows with the
+   * number of folders, not with their depth.
+   */
+  const sweep = async () => {
+    for (const folder of folders.keys()) await verifyFolder(folder, folder);
   };
 
   /** Reads one regular file without following links, failing if it or its folders change. */
   const readStable = async (path: string, onSize: (size: number) => void) => {
-    await verifyFolders(path);
+    await verifyFolder(parentOf(path), path);
     let handle: NodeFSP.FileHandle;
     try {
       handle = await NodeFSP.open(
@@ -281,8 +289,8 @@ export async function captureOverleafInventory(
         after.ctimeNs !== before.ctimeNs
       )
         throw new Refused({ reason: "unstable", path });
-      // The bytes came from the file the path still names, under the folders walked.
-      await verifyFolders(path);
+      // The bytes came from the file the path still names, in the folder walked.
+      await verifyFolder(parentOf(path), path);
       const named = await NodeFSP.lstat(absolute(path), { bigint: true }).catch(() => null);
       if (named === null || named.dev !== after.dev || named.ino !== after.ino)
         throw new Refused({ reason: "unstable", path });
@@ -345,7 +353,11 @@ export async function captureOverleafInventory(
       // A folder swapped for a link would be listed through it, and its managed files
       // would look deleted; the listing counts only if the folder kept its identity.
       await input.beforeList?.(next.relative);
-      await verifyFolders(next.relative);
+      const listing = async () => {
+        await verifyFolder(next.relative, next.relative);
+        if (next.relative !== "") await verifyFolder(parentOf(next.relative), next.relative);
+      };
+      await listing();
       try {
         // Iterated, not read whole, so a huge folder costs no more than the walk allows.
         for await (const entry of await NodeFSP.opendir(absolute(next.relative))) {
@@ -357,7 +369,7 @@ export async function captureOverleafInventory(
         if (error instanceof Refused) throw error;
         throw new Refused({ reason: "unreadable", path: next.relative || "." });
       }
-      await verifyFolders(next.relative);
+      await listing();
       for (const entry of entries.toSorted((left, right) => byPath(left.name, right.name))) {
         const path = next.relative === "" ? entry.name : `${next.relative}/${entry.name}`;
         if (staging.has(path) || isStaging(entry.name)) {
@@ -391,7 +403,7 @@ export async function captureOverleafInventory(
     }
 
     // Absence is only evidence while every folder walked is still the folder that was listed.
-    for (const folder of folders.keys()) await verifyFolders(folder);
+    await sweep();
 
     // A managed or selected path that the walk did not find as a file is reported, not guessed.
     const present = new Set(files.map((file) => file.path));
@@ -449,6 +461,8 @@ export async function captureOverleafInventory(
       }
     }
 
+    // A folder swapped while files were read would have supplied bytes from elsewhere.
+    await sweep();
     return {
       _tag: "captured",
       inventory: {
