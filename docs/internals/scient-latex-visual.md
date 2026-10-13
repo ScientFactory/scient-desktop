@@ -1566,13 +1566,9 @@ recursive, multi-argument, or executable definitions stay source-owned. Edits
 change the call argument without expanding or rewriting its definition.
 The standard two-column class option and one/two-column transitions group content
 into source-owned columns. Balanced optional full-width titles stay outside those
-columns. `latexSourceColumns.ts` fills each printable column in order, using the
-space below a full-width title on the first sheet and full printable height on
-subsequent sheets. The pagination extension places the existing editable blocks
-through decorations and adds their positions to the local page map. It retains
-heading groups and indivisible objects. A paragraph crossing the first column's
-bottom continues in the second through CSS fragmentation of its existing node;
-paragraphs crossing sheets currently travel as complete blocks. No generated
+columns. Two-column pages need pages to fill, so on continuous paper the group's
+blocks are shown in one column at the full text width, and the compatibility
+notes say the two-column pages appear only in the compiled PDF. No generated
 breaks enter source. `multicols` retains its separate balanced
 layout. TeX line splitting, float placement, microtypography, and exact page breaks
 remain approximations.
@@ -1612,9 +1608,14 @@ The forced `[4]` form uses the same distinction. A source newline alone never
 promotes an inline command to a paragraph-boundary break.
 CSS columns balance the layout body (`column-fill: balance`), and a
 paragraph-boundary `\columnbreak` forces the next block into a new column
-(`break-before: column`). An inline `\columnbreak` is a zero-width atom; Visual
-does not break the column there, and the compiled PDF places that break (see the
+(`break-before: column`). An inline `\columnbreak` is a zero-width atom; as in
+TeX, the column breaks after the line it ends (see the
 [multicol manual](https://tug.ctan.org/macros/latex/required/tools/multicol.pdf)).
+`latexColumnBreaks.ts` keeps the positions of these commands (mapped through
+edits, searched for only in changed ranges), measures with the breaks hidden
+where the next line begins, and places a `break-after: column` widget there. It
+measures again after changes and resizes, only in documents that contain such a
+command; their top-level blocks stay uncontained so they can be measured.
 Footnotes inside a column layout or minipage appear in the band beneath the
 containing top-level block; minipage footnote numbering and placement remain
 unsupported.
@@ -1749,9 +1750,9 @@ timed-out preview shows its exact formula source and remains editable. The worke
 is released after thirty idle seconds. These bounds isolate reading-mode rendering;
 they do not preempt an active native MathLive editing operation.
 
-Preview layout uses a shared constructed stylesheet inside each preview's shadow
-root. Its CSS text is prepared once; browsers without constructed sheets reuse
-that text in local style nodes. Prose styling does not enter mathematical boxes, and source edits do not
+Preview layout uses one local style element inside each preview's shadow root,
+with CSS text prepared once (a constructed stylesheet shared by thousands of
+roots made every later style update slower). Prose styling does not enter mathematical boxes, and source edits do not
 invalidate their internal style trees. `LatexDocumentAuthoring` supplies a
 separate, stable action-notice context; formulas that only report action failures
 do not subscribe to the full changing source just to obtain that callback.
@@ -1959,7 +1960,7 @@ handoff to the action retains the quote; a source change requires a new selectio
 In Split with Visual, a source double-click reverses the project's include spans
 for the exact displayed draft. It reveals the first mapped Visual block at the
 current zoom and briefly outlines it without changing editing selection or focus.
-The reveal measures after pagination, scrolls only Visual's own pane, and refuses
+The reveal measures after layout, scrolls only Visual's own pane, and refuses
 stale or unmapped source rather than navigating to unrelated content. Visual's
 double-click uses the same ownership mapping to reveal Source,
 including an included file while keeping the document editor mounted.

@@ -87,14 +87,10 @@ Unsupported nested content remains visible as source;
 surrounding supported text stays editable. Custom heading macros, formatting
 groups, paragraph boxes, and supported float contents retain their original
 commands when edited. Columns and float placement use browser layout, so rebuild
-and inspect PDF for the final page and column breaks. Standard `twocolumn`
-documents fill the first column before the second on each sheet, leaving the
-last column shorter when appropriate. `multicols` regions keep balanced columns.
-Visual follows those source layouts; it does not impose one column-filling style
-on every document. Browser line wrapping and TeX float placement can still differ.
-An explicit `\vfill` before trailing content uses the remaining printable space
-in the current source-derived column, so a concluding notice stays at its bottom
-when there is room. Its source is retained when editing the notice.
+and inspect PDF for the final page and column breaks. Visual is continuous paper,
+so a standard `twocolumn` document is shown in one column; its two-column pages
+appear in the compiled PDF. `multicols` regions keep balanced columns. Browser
+line wrapping and TeX float placement can still differ.
 
 Write is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. The canvas uses a document workspace
@@ -488,8 +484,7 @@ private visual-only state. Saving required root changes must finish before PDF
 build or export becomes available. A failed root save remains visible for resolution.
 
 Math and object fields retain the exact text and caret locally. Source updates
-are coalesced during typing and flushed when leaving the field; page measurement
-waits briefly for typing to pause. **Settings → Documents → LaTeX → PDF compilation**
+are coalesced during typing and flushed when leaving the field. **Settings → Documents → LaTeX → PDF compilation**
 controls when source changes rebuild the PDF.
 **Document > Keyboard shortcuts** opens **All writing shortcuts**, a searchable list covering
 Write, Math and Tables. Filter by area when needed; shortcut editing, custom math
@@ -563,7 +558,7 @@ the shared duplicate checks and single-file reference renaming; references navig
 to the listing. Literal `verbatim` blocks remain editable without listing controls.
 
 `multicols` regions render editable text in the requested columns, including
-explicit `\columnbreak` commands and page footnotes. Supported `minipage` widths
+explicit `\columnbreak` commands; their footnotes appear beneath the region. Supported `minipage` widths
 and top/center/bottom alignment are reflected on the page; adjacent minipages
 joined by `\hfill`, literal `\hspace`, or ordinary spaces stay side by side.
 Comment joins preserve zero spacing, and blank lines start a separate row.

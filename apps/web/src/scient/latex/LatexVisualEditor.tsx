@@ -74,6 +74,7 @@ import {
   type LatexSourcePageAnchors,
 } from "./latexPageMarkers";
 import { LatexReadingAnchor } from "./latexReadingAnchor";
+import { LatexColumnBreaks } from "./latexColumnBreaks";
 import { LatexFootnotes } from "./latexFootnotes";
 import { latexLayoutLength } from "./latexPageLayouts";
 import { observeResize } from "~/lib/observeResize";
@@ -4554,20 +4555,17 @@ function LatexScientificView(props: NodeViewProps) {
   const root = useRef<HTMLDivElement | null>(null);
   const inheritedLanguage = useContext(LatexLanguageContext);
   const languageLabels = latexLanguageLabels(inheritedLanguage);
-  const figurePresentation = useEditorState({
-    editor: ["framedFigure", "contentFloat"].includes(String(node.attrs.layout?.kind))
-      ? editor
-      : null,
-    selector: ({ editor: current }) => {
+  const figurePresentation = useLatexReferenceState(
+    ["framedFigure", "contentFloat"].includes(String(node.attrs.layout?.kind)) ? editor : null,
+    (current) => {
       const at = getPos();
       return typeof at === "number"
-        ? current &&
-            latexEquationReferencesKey
-              .getState(current.state)
-              ?.[node.attrs.layout?.floatType === "table" ? "tables" : "figures"].get(at)
+        ? latexEquationReferencesKey
+            .getState(current.state)
+            ?.[node.attrs.layout?.floatType === "table" ? "tables" : "figures"].get(at)
         : undefined;
     },
-  });
+  );
   const documentEditing = useContext(LatexMathEditingContext);
   const editable = useEditorEditable(editor);
   const environment = String(node.attrs.environment);
@@ -6423,6 +6421,7 @@ function LatexVisualEditorReady(
         ],
       }),
       LatexFootnotes,
+      LatexColumnBreaks,
       Extension.create({
         name: "latexImageUploads",
         addProseMirrorPlugins: () => [latexImageUploads()],

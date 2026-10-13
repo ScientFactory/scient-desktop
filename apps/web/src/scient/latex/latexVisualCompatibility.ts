@@ -22,10 +22,17 @@ export function latexVisualCompatibility(source: string, projection: LatexVisual
       );
     if (node.type === "latexRawBlock")
       add("source", String(node.attrs?.reason ?? "This content requires Source or PDF."), at);
-    if (layout?.kind === "sourceColumns" || layout?.kind === "fullWidthTitle")
+    // Visual is continuous paper: two-column pages need pages to fill.
+    if (layout?.kind === "sourceColumns")
       add(
         "approximate",
-        "Columns and the full-width title use browser layout. Compare column breaks and pagination with PDF.",
+        "Two-column pages appear only in the compiled PDF. Visual shows the text in one column.",
+        at,
+      );
+    if (layout?.kind === "fullWidthTitle")
+      add(
+        "approximate",
+        "The full-width title uses browser layout. Compare its spacing with PDF.",
         at,
       );
     if (["macroHeading", "contentFloat"].includes(String(layout?.kind)))

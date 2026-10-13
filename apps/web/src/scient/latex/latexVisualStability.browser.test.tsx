@@ -774,3 +774,134 @@ ${"Text that follows the run-in heading on the same line. ".repeat(8)}
   expect(getComputedStyle(heading).float).toBe(floated);
   expect(floated).toBe("left");
 }, 30000);
+
+it.each([String.raw`\columnbreak`, String.raw`\columnbreak[4]`])(
+  "breaks the column after the line an inline %s ends, and again after typing",
+  async (command) => {
+    const words = (prefix: string) =>
+      Array.from({ length: 40 }, (_, index) => `${prefix}${index}`).join(" ");
+    const editor = await open(
+      `visual-stability-column-break-${command.length}`,
+      String.raw`\documentclass{article}
+\usepackage{multicol}
+\begin{document}
+\begin{multicols}{2}
+${words("first")} ${command} ${words("later")}
+
+Closing paragraph.
+\end{multicols}
+\end{document}
+`,
+    );
+    const content = () =>
+      editor.view.dom.querySelector<HTMLElement>(
+        '.scient-latex-page-layout[data-layout="columns"] > .scient-latex-page-layout-body > [data-node-view-content-react]',
+      )!;
+    const marker = () =>
+      editor.view.dom.querySelector<HTMLElement>(".scient-latex-inline-column-break")!;
+    /** Whether the word's first character is in the second column. */
+    const inSecondColumn = (word: string) => {
+      const walker = document.createTreeWalker(content(), NodeFilter.SHOW_TEXT);
+      let text: Node | null;
+      while ((text = walker.nextNode())) {
+        const at = text.textContent!.indexOf(word);
+        if (at < 0) continue;
+        const range = document.createRange();
+        range.setStart(text, at);
+        range.setEnd(text, at + 1);
+        const bounds = content().getBoundingClientRect();
+        return range.getBoundingClientRect().left > bounds.left + bounds.width / 2;
+      }
+      throw new Error(`${word} not found`);
+    };
+    await expect
+      .poll(() => editor.view.dom.querySelectorAll(".scient-latex-column-break-gap").length)
+      .toBe(1);
+    // The command's own line stays in the first column; everything after it moves.
+    expect(
+      marker().getBoundingClientRect().left <
+        content().getBoundingClientRect().left + content().getBoundingClientRect().width / 2,
+    ).toBe(true);
+    await expect.poll(() => inSecondColumn("later39")).toBe(true);
+    expect(inSecondColumn("first0")).toBe(false);
+    // Typing before the command rewraps its paragraph; the break follows the new line.
+    let start = 0;
+    editor.state.doc.descendants((node, position) => {
+      if (node.isText && node.text!.startsWith("first0")) start = position;
+    });
+    editor.chain().setTextSelection(start).insertContent("inserted words ".repeat(8)).run();
+    await expect.poll(() => published).toContain("inserted words");
+    await expect
+      .poll(() => editor.view.dom.querySelectorAll(".scient-latex-column-break-gap").length)
+      .toBe(1);
+    await expect.poll(() => inSecondColumn("later39")).toBe(true);
+    expect(inSecondColumn("first0")).toBe(false);
+    expect(published).toContain(command);
+  },
+);
+
+it("keeps a list uncontained while a footnote inside it is being edited", async () => {
+  const filler = Array.from({ length: 30 }, (_, index) => `Filler paragraph ${index}.`).join(
+    "\n\n",
+  );
+  const editor = await open(
+    "visual-stability-nested-footnote",
+    String.raw`\documentclass{article}
+\begin{document}
+${filler}
+
+\begin{itemize}
+\item First item.
+\item Last item\footnote{A note long enough to wrap over several lines in its editor, so that it reaches past the bottom of the list it belongs to and would be clipped by containment.}.
+\end{itemize}
+
+After the list.
+\end{document}
+`,
+  );
+  const list = () =>
+    [...editor.view.dom.children].find((child) => child.querySelector("li")) as HTMLElement;
+  expect(getComputedStyle(list()).contentVisibility).toBe("auto");
+  await page
+    .getByRole("button", { name: "Return to footnote 1 marker", exact: true })
+    .nth(0)
+    .click();
+  await page.getByRole("button", { name: "Edit text", exact: true }).click();
+  await expect
+    .poll(() => editor.view.dom.querySelector('[aria-label="Footnote text"]'))
+    .toBeTruthy();
+  expect(list().querySelector("[data-footnote-editor]")).toBeTruthy();
+  expect(getComputedStyle(list()).contentVisibility).toBe("visible");
+});
+
+it("shows a two-column document as one continuous column", async () => {
+  const paragraph = (name: string) =>
+    `${name} ${Array.from({ length: 60 }, (_, index) => `word${index}`).join(" ")}`;
+  const editor = await open(
+    "visual-stability-twocolumn",
+    String.raw`\documentclass[twocolumn]{article}
+\begin{document}
+${paragraph("Opening")}
+
+${paragraph("Following")}
+\end{document}
+`,
+  );
+  const paragraphs = [
+    ...editor.view.dom.querySelectorAll<HTMLElement>(
+      '.scient-latex-content-layout[data-layout="sourceColumns"] p',
+    ),
+  ];
+  expect(paragraphs).toHaveLength(2);
+  const [first, second] = paragraphs.map((element) => element.getBoundingClientRect());
+  const body = editor.view.dom.getBoundingClientRect();
+  const style = getComputedStyle(editor.view.dom);
+  const scale = body.width / editor.view.dom.offsetWidth;
+  const textWidth =
+    body.width -
+    (Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight)) * scale;
+  // Full text width, one after the other, nothing positioned into a second column.
+  expect(first!.width).toBeGreaterThan(textWidth * 0.95);
+  expect(Math.abs(second!.left - first!.left)).toBeLessThan(1);
+  expect(second!.top).toBeGreaterThanOrEqual(first!.bottom - 1);
+});

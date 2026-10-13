@@ -519,7 +519,7 @@
   content: "";
 }
 .scient-latex-footnote {
-  padding-left: 1.8em;
+  padding-inline-start: 1.8em;
   text-indent: -1.8em;
   cursor: pointer;
 }
@@ -529,8 +529,8 @@
   background: #e9f2ff;
 }
 .scient-latex-footnote sup {
-  padding-left: 1em;
-  margin-right: 0.2em;
+  padding-inline-start: 1em;
+  margin-inline-end: 0.2em;
   font-size: 0.7em;
   vertical-align: super;
 }
@@ -554,60 +554,6 @@
 .scient-latex-content-layout-body > div > p:first-child {
   margin-block-start: 0;
   text-indent: 0;
-}
-.scient-latex-content-layout[data-layout="sourceColumns"]
-  > .scient-latex-content-layout-body
-  > div {
-  position: relative;
-  height: var(--scient-latex-source-column-height, auto);
-  --scient-latex-source-column-width: calc(
-    (100% - var(--scient-latex-column-gap, calc(10 * 96px / 72.27))) / 2
-  );
-}
-.scient-latex-content-layout[data-layout="sourceColumns"]
-  > .scient-latex-content-layout-body
-  > div
-  > * {
-  display: flow-root;
-  width: var(--scient-latex-source-column-part-width, var(--scient-latex-source-column-width));
-}
-[data-latex-source-column-part] {
-  position: absolute;
-  top: var(--scient-latex-source-column-top);
-  inset-inline-start: var(--scient-latex-source-column-left);
-  width: var(--scient-latex-source-column-part-width, var(--scient-latex-source-column-width));
-  box-sizing: border-box;
-}
-[data-latex-source-column-span] {
-  height: var(--scient-latex-source-column-span-height);
-  column-count: 2;
-  column-gap: var(--scient-latex-column-gap);
-  column-fill: auto;
-  orphans: 2;
-  widows: 2;
-}
-p[data-latex-source-column-span]::before {
-  content: "";
-  display: block;
-  height: var(--scient-latex-source-column-leading-space);
-  break-inside: avoid;
-}
-[data-latex-measuring] [data-latex-source-column-span] {
-  --scient-latex-source-column-part-width: var(--scient-latex-source-column-width) !important;
-  height: auto;
-  column-count: auto;
-}
-[data-latex-measuring] p[data-latex-source-column-span]::before {
-  display: none;
-}
-[data-latex-measuring] [data-latex-source-column-part] {
-  position: static;
-}
-[data-latex-measuring]
-  .scient-latex-content-layout[data-layout="sourceColumns"]
-  > .scient-latex-content-layout-body
-  > div {
-  height: auto;
 }
 .scient-latex-content-layout[data-layout="contentFloat"] {
   margin-block: calc(12 * 96px / 72.27);
@@ -717,6 +663,20 @@ p[data-latex-source-column-span]::before {
   pointer-events: none;
 }
 
+/* The column breaks after the line an inline \columnbreak ends (latexColumnBreaks.ts). */
+.scient-latex-column-break-gap {
+  display: block;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  font-size: 0;
+  line-height: 0;
+  break-after: column;
+  pointer-events: none;
+}
+[data-latex-column-measuring] .scient-latex-column-break-gap {
+  display: none;
+}
 .scient-latex-visual-document p:has(.scient-latex-inline-column-break) {
   text-indent: 0;
 }
@@ -1120,14 +1080,16 @@ tr[data-latex-longtable-band] {
    (latexReadingAnchor.ts renders them all once while idle). Containment moves
    no block (checked on a 104-page thesis); the clip margin keeps outlines and
    highlights visible. A run-in heading floats beside the next paragraph, so
-   both stay uncontained. */
+   both stay uncontained, as do columns with an inline column break, which is
+   placed by measuring their lines. */
 .scient-latex-visual-document
   > :not(
     .scient-latex-page-marker,
     h4,
     h5,
     :is(h4, h5) + p,
-    :is(h4, h5) + .scient-latex-page-marker + p
+    :is(h4, h5) + .scient-latex-page-marker + p,
+    :has(.scient-latex-inline-column-break)
   ) {
   content-visibility: auto;
   contain-intrinsic-block-size: auto 6em;
@@ -1142,20 +1104,16 @@ tr[data-latex-longtable-band] {
   content-visibility: visible;
 }
 /* Active guides and footnote editors extend past the line's ink box: a block
-   being edited or used through a menu is never contained, so nothing clips them. */
+   containing one being edited or used through a menu is never contained, at
+   any depth (a list item, a theorem), so nothing clips them. */
 .scient-latex-visual-document
-  > :is(
-    p:has(.scient-latex-mathfield math-field:is(:focus-within, [data-scient-selection-held])),
-    p:has(.scient-latex-visual-command[data-footnote-editor]),
-    .node-latexDisplayMath:has(
-      > .scient-latex-visual-display-math:is(
-        :focus-within,
-        [data-selected],
-        [data-document-selected]
-      )
-    ),
+  > :has(
+    .scient-latex-mathfield math-field:is(:focus-within, [data-scient-selection-held]),
+    .scient-latex-visual-command[data-footnote-editor],
     .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected])
-  ) {
+  ),
+.scient-latex-visual-document
+  > .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]) {
   content-visibility: visible;
 }
 @media print {

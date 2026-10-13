@@ -39,7 +39,7 @@ describe("complete source-owned content layouts", () => {
     );
     expect(
       latexVisualCompatibility(template, projection).some((issue) =>
-        issue.message.includes("Columns"),
+        issue.message.includes("Two-column pages appear only in the compiled PDF"),
       ),
     ).toBe(true);
   });
