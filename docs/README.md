@@ -112,6 +112,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Devices architecture](./internals/devices.md)
 - [Scient product analytics](./internals/product-analytics.md)
 - [Environment auth](./internals/environment-auth.md)
+- [Overleaf manual sync: plan and handoff](./internals/overleaf/README.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [Scient project initialization](./internals/scient-project-initialization.md)
 - [Scient workspace binding](./internals/scient-workspace-binding.md)
