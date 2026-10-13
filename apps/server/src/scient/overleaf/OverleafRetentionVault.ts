@@ -151,9 +151,74 @@ async function probeCapability(directory: string, exchangeHelper: string | null)
   }
 }
 
+type Stat = Awaited<ReturnType<typeof statOrRefuse>>;
+
+/** stat that turns disappearance and denial into refusals instead of I/O errors. */
+async function statOrRefuse(path: string, missing: OverleafRetentionRefusal) {
+  try {
+    return await NodeFSP.stat(path, { bigint: true });
+  } catch (error) {
+    const code = errorCode(error) ?? "";
+    if (["ENOENT", "ENOTDIR"].includes(code)) throw new Refused(missing);
+    if (["EACCES", "EPERM"].includes(code)) throw new Refused("unsafe-directory");
+    throw error;
+  }
+}
+
 /**
- * Chooses, creates (first time) or verifies (recorded) the connection's
- * retention folder. Returns its real path and identity, or why it cannot be used.
+ * Whether `path` is physically inside (or is) the checkout. Compares device and
+ * inode of each ancestor, so macOS firmlink aliases (`/Users` and
+ * `/System/Volumes/Data/Users`), whose real paths differ, are still caught.
+ */
+async function physicallyInside(path: string, checkout: Stat): Promise<boolean> {
+  for (let current = path; ; current = NodePath.dirname(current)) {
+    const stat = await NodeFSP.stat(current, { bigint: true });
+    if (stat.dev === checkout.dev && stat.ino === checkout.ino) return true;
+    if (NodePath.dirname(current) === current) return false;
+  }
+}
+
+/** The folder beside the checkout, after checking it can be on the same disk and is ours. */
+async function siblingLevels(
+  checkout: string,
+  checkoutStat: Stat,
+  userId: number | undefined,
+  environmentId: string,
+  connectionId: string,
+) {
+  const parent = NodePath.dirname(checkout);
+  if (parent === checkout) throw new Refused("disk-root-checkout");
+  const parentStat = await statOrRefuse(parent, "volume-unavailable");
+  if (parentStat.dev !== checkoutStat.dev) throw new Refused("disk-root-checkout");
+  // Checked on every use, not only the first: whoever owns the parent can replace its entries.
+  if (userId !== undefined && Number(parentStat.uid) !== userId) throw new Refused("shared-parent");
+  const base = NodePath.join(parent, OVERLEAF_VAULT_DIRECTORY);
+  return [
+    base,
+    NodePath.join(base, environmentId),
+    NodePath.join(base, environmentId, connectionId),
+  ];
+}
+
+/** Real path and identity of a verified candidate folder. */
+async function verifiedFolder(
+  levels: ReadonlyArray<string>,
+  checkoutStat: Stat,
+  userId: number | undefined,
+  volume: string,
+  create: boolean,
+) {
+  for (const level of levels) await ensurePrivate(level, userId, create);
+  const directory = await NodeFSP.realpath(levels.at(-1)!);
+  const stat = await statOrRefuse(directory, "vault-missing");
+  if (stat.dev !== checkoutStat.dev || (await physicallyInside(directory, checkoutStat)))
+    throw new Refused("unsafe-directory");
+  return { directory, identity: { volume, fileId: String(stat.ino) } };
+}
+
+/**
+ * Chooses, creates (first time) or finds (recorded) the connection's retention
+ * folder. Returns its real path and identity, or why it cannot be used.
  */
 export async function locateOverleafRetention(input: {
   /** `stateDir/overleaf/retained`; its parent already exists and is private. */
@@ -179,56 +244,97 @@ export async function locateOverleafRetention(input: {
     try {
       checkout = await NodeFSP.realpath(input.checkoutRoot);
     } catch (error) {
-      if (["ENOENT", "ENOTDIR"].includes(errorCode(error) ?? ""))
-        throw new Refused("volume-unavailable");
+      const code = errorCode(error) ?? "";
+      if (["ENOENT", "ENOTDIR"].includes(code)) throw new Refused("volume-unavailable");
+      if (["EACCES", "EPERM"].includes(code)) throw new Refused("unsafe-directory");
       throw error;
     }
-    const checkoutStat = await NodeFSP.stat(checkout, { bigint: true });
+    const checkoutStat = await statOrRefuse(checkout, "volume-unavailable");
     const volume = await input.volumeUuid(checkout);
     if (volume === null) throw new Refused("no-volume-identity");
 
-    const create = input.expected === null;
+    const stateLevels = [
+      input.stateRetained,
+      NodePath.join(input.stateRetained, input.connectionId),
+    ];
     const stateRoot = await NodeFSP.realpath(NodePath.dirname(input.stateRetained));
     const stateUsable =
-      (await NodeFSP.stat(stateRoot, { bigint: true })).dev === checkoutStat.dev &&
-      stateRoot !== checkout &&
-      !stateRoot.startsWith(`${checkout}${NodePath.sep}`);
-    let levels: ReadonlyArray<string>;
-    if (stateUsable) {
-      // The state directory already belongs to one server environment.
-      levels = [input.stateRetained, NodePath.join(input.stateRetained, input.connectionId)];
-    } else {
-      const parent = NodePath.dirname(checkout);
-      if (parent === checkout) throw new Refused("disk-root-checkout");
-      const parentStat = await NodeFSP.stat(parent, { bigint: true });
-      if (parentStat.dev !== checkoutStat.dev) throw new Refused("disk-root-checkout");
-      if (create && input.userId !== undefined && Number(parentStat.uid) !== input.userId)
-        throw new Refused("shared-parent");
-      const base = NodePath.join(parent, OVERLEAF_VAULT_DIRECTORY);
-      levels = [
-        base,
-        NodePath.join(base, input.environmentId),
-        NodePath.join(base, input.environmentId, input.connectionId),
-      ];
-    }
-    for (const level of levels) await ensurePrivate(level, input.userId, create);
+      (await statOrRefuse(stateRoot, "unsafe-directory")).dev === checkoutStat.dev &&
+      !(await physicallyInside(stateRoot, checkoutStat));
 
-    const directory = await NodeFSP.realpath(levels.at(-1)!);
-    const directoryStat = await NodeFSP.stat(directory, { bigint: true });
-    if (
-      directoryStat.dev !== checkoutStat.dev ||
-      directory === checkout ||
-      directory.startsWith(`${checkout}${NodePath.sep}`)
-    )
-      throw new Refused("unsafe-directory");
-    const identity = { volume, fileId: String(directoryStat.ino) };
-    if (
-      input.expected !== null &&
-      (input.expected.volume !== identity.volume || input.expected.fileId !== identity.fileId)
-    )
-      throw new Refused("vault-replaced");
-    await probeCapability(directory, input.exchangeHelper);
-    return { _tag: "ready", directory, identity };
+    let found: { directory: string; identity: OverleafVolumeFileIdentity };
+    if (input.expected === null) {
+      const levels = stateUsable
+        ? stateLevels
+        : await siblingLevels(
+            checkout,
+            checkoutStat,
+            input.userId,
+            input.environmentId,
+            input.connectionId,
+          );
+      found = await verifiedFolder(levels, checkoutStat, input.userId, volume, true);
+    } else {
+      // Find the recorded folder wherever it was placed; never create one.
+      // Where it is placed can change (state moved, checkout remounted), its identity cannot.
+      const expected = input.expected;
+      const candidates: Array<() => Promise<ReadonlyArray<string>>> = [
+        async () => stateLevels,
+        () =>
+          siblingLevels(
+            checkout,
+            checkoutStat,
+            input.userId,
+            input.environmentId,
+            input.connectionId,
+          ),
+      ];
+      let replaced = false;
+      let refusal: Refused | null = null;
+      let match: typeof found | null = null;
+      for (const candidate of candidates) {
+        try {
+          const folder = await verifiedFolder(
+            await candidate(),
+            checkoutStat,
+            input.userId,
+            volume,
+            false,
+          );
+          if (
+            folder.identity.volume === expected.volume &&
+            folder.identity.fileId === expected.fileId
+          ) {
+            match = folder;
+            break;
+          }
+          replaced = true;
+        } catch (error) {
+          if (!(error instanceof Refused)) throw error;
+          // A location that cannot exist for this checkout is simply not a candidate.
+          if (error.reason !== "vault-missing" && error.reason !== "disk-root-checkout")
+            refusal ??= error;
+        }
+      }
+      if (match === null) {
+        if (replaced) throw new Refused("vault-replaced");
+        throw refusal ?? new Refused("vault-missing");
+      }
+      found = match;
+    }
+    await probeCapability(found.directory, input.exchangeHelper);
+    // Another process may have swapped the folder while it was probed. This closes
+    // the window up to here; the coordinator (step 3) must re-verify the identity
+    // before each later use, because nothing below this module does.
+    const after = await verifiedFolder(
+      [found.directory],
+      checkoutStat,
+      input.userId,
+      volume,
+      false,
+    );
+    if (after.identity.fileId !== found.identity.fileId) throw new Refused("vault-replaced");
+    return { _tag: "ready", ...found };
   } catch (error) {
     if (error instanceof Refused) return { _tag: "refused", reason: error.reason };
     throw error;

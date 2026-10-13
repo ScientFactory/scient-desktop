@@ -713,6 +713,59 @@ describe("OverleafStateStore", () => {
         ),
     );
 
+    it.live("finds a recorded folder after Scient's state moves elsewhere on the same disk", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* temporaryRoot();
+          const checkout = NodePath.join(root, "paper");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+          const first = yield* openStore(
+            NodePath.join(checkout, ".state", "overleaf"),
+            undefined,
+            fakeVolume,
+          );
+          const prepared = yield* prepare(first.store, checkout);
+          yield* first.close;
+          // The state directory is now outside the checkout and would be chosen for a
+          // new connection, but the recorded folder beside the checkout is still found.
+          const moved = yield* openStore(NodePath.join(root, "state"), undefined, fakeVolume);
+          expect(yield* prepare(moved.store, checkout, prepared.identity)).toEqual(prepared);
+        }),
+      ),
+    );
+
+    // macOS firmlinks give one folder two real paths; containment must not trust strings.
+    const firmlinkAlias = (path: string) => NodePath.join("/System/Volumes/Data", path);
+    it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
+      "treats state inside the checkout as inside even through a firmlink alias",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* Effect.flatMap(temporaryRoot(), (directory) =>
+              Effect.promise(() => NodeFSP.realpath(directory)),
+            );
+            const checkout = NodePath.join(root, "paper");
+            yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+            const aliased = firmlinkAlias(checkout);
+            const usable = yield* Effect.promise(async () => {
+              try {
+                return (await NodeFSP.realpath(aliased)) !== checkout;
+              } catch {
+                return false;
+              }
+            });
+            if (!usable) return;
+            const { store } = yield* openStore(
+              NodePath.join(checkout, ".state", "overleaf"),
+              undefined,
+              fakeVolume,
+            );
+            const prepared = yield* prepare(store, aliased);
+            expect(prepared.directory).toContain(`${NodePath.sep}.scient-overleaf${NodePath.sep}`);
+          }),
+        ),
+    );
+
     it.live("refuses a disk without a volume identity, never using the device number", () =>
       Effect.scoped(
         Effect.gen(function* () {
