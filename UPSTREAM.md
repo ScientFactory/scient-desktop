@@ -25,10 +25,12 @@ measurements hold), and the "Working for" header carries a small breathing dot (
 appears. Live activity (Scient): only the current activity row sweeps (`currentLiveActivityRowId`:
 Thinking, the running-tool bar, an active compaction, a running setup stage), with a wider light looping continuously
 at one pace per label (`--live-activity-duration`) over text resting at 55%
-(`scient/presentation/scient-live-activity.css` refines the upstream live-activity utilities); the
+(`scient/presentation/scient-live-activity.css` refines the upstream live-activity utilities; the
+sweep stays smooth (linear) over upstream #18191's `steps(30)`, an owner decision of 2026-10-13); the
 upstream stepped `live-tool-shine` is no longer applied, and other live rows stay still
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
-answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal`):
+answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal` in
+`scient/presentation/scient-streamed-reveal.css`):
 after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with
 the full tone one line behind, crossing blank space between blocks 5x faster; the answer is
 clipped to its revealed lines, so the follow scroll simply goes to the real end. The live

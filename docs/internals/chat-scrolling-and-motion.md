@@ -179,7 +179,8 @@ Owners: `chat/timelineWorkingState.ts`, `chat/workingRowExit.ts`,
 
 ## How an answer appears
 
-`chat/useStreamingBlockEntrance.ts`, the `.streamed-reveal` rule in `index.css`.
+`chat/useStreamingBlockEntrance.ts`, the `.streamed-reveal` rule in
+`scient/presentation/scient-streamed-reveal.css`.
 
 Providers send an answer a paragraph at a time. It is shown as one continuous
 flow:
