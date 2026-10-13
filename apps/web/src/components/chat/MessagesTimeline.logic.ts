@@ -85,6 +85,9 @@ import { computeElapsedMs } from "@scientfactory/conversation/work-log-grouping"
 // SCIENT-FORK:START — historical turns group inert presentation.
 import { timelineEntryHistoryKey } from "../../scient/fork/historicalTimelineTurns";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — real answers stay visible when their turn folds.
+import { keepsSettledAnswerVisible } from "../../scient/threadTimeline/keptAnswers";
+// SCIENT-FORK:END
 
 /** The later of two ISO timestamps, ignoring unparseable ones. */
 function maxIsoTimestamp(a: string | null, b: string | null): string | null {
@@ -669,6 +672,9 @@ type MessagesTimelineRowContent =
       revertTurnCount?: number | undefined;
       canForkConversation?: boolean | undefined;
       assistantDirectionHint?: FixedContentDirection | null | undefined;
+      // SCIENT-FORK:START — a settled earlier answer of its turn, kept visible with its copy row.
+      keptAnswer?: boolean | undefined;
+      // SCIENT-FORK:END
     }
   | {
       kind: "fork-marker";
@@ -1198,6 +1204,9 @@ function deriveTurnFolds(input: {
       if (entry.id === group.terminalEntry?.id) {
         continue;
       }
+      // SCIENT-FORK:START — a real answer stays visible; progress notes fold with the work.
+      if (entry.kind === "message" && keepsSettledAnswerVisible(entry.message)) continue;
+      // SCIENT-FORK:END
       const isCompaction =
         entry.kind === "work" && entry.entry.sourceActivityKind === "context-compaction";
       const isFoldableTrailingActivity =
@@ -2044,6 +2053,12 @@ export function deriveMessagesTimelineRows(input: {
       timelineEntry.message.role === "assistant" &&
       terminalAssistantMessageIds.has(timelineEntry.message.id) &&
       !assistantResponseStillInProgress;
+    // SCIENT-FORK:START — an earlier real answer of a settled turn gets the answer's copy row.
+    const keptAnswer =
+      !showAssistantMeta &&
+      !assistantResponseStillInProgress &&
+      keepsSettledAnswerVisible(timelineEntry.message);
+    // SCIENT-FORK:END
 
     nextRows.push({
       kind: "message",
@@ -2082,6 +2097,9 @@ export function deriveMessagesTimelineRows(input: {
             : undefined,
       assistantDirectionHint:
         timelineEntry.message.role === "assistant" ? latestUserDirectionHint : undefined,
+      // SCIENT-FORK:START
+      ...(keptAnswer ? { keptAnswer, showAssistantCopyButton: true } : {}),
+      // SCIENT-FORK:END
     });
 
     if (
@@ -2575,6 +2593,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.assistantTurnChangedFiles === bm.assistantTurnChangedFiles &&
         a.revertTurnCount === bm.revertTurnCount &&
         a.canForkConversation === bm.canForkConversation &&
+        // SCIENT-FORK:START
+        a.keptAnswer === bm.keptAnswer &&
+        // SCIENT-FORK:END
         a.assistantDirectionHint === bm.assistantDirectionHint
       );
     }

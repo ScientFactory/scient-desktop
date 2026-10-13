@@ -2736,6 +2736,38 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("<element_context");
   });
 
+  // SCIENT-FORK:START — an earlier real answer of a settled turn stays visible.
+  it("gives a kept earlier answer the final answer's copy button and spacing", () => {
+    const assistant = (id: string, text: string, second: number) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt: `2026-01-01T00:00:0${second}Z`,
+      message: {
+        id: MessageId.make(id),
+        role: "assistant" as const,
+        text,
+        runId: RunId.make("run-kept"),
+        createdAt: `2026-01-01T00:00:0${second}Z`,
+        updatedAt: `2026-01-01T00:00:0${second}Z`,
+        streaming: false,
+      },
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          assistant("note", "Let me check the tests…", 1),
+          assistant("answer", "## Diagnosis\nThe cache key ignores the locale.", 2),
+          assistant("final", "Done.", 3),
+        ]}
+      />,
+    );
+    expect(markup.match(/aria-label="Copy message"/g)).toHaveLength(2);
+    expect(markup).toMatch(/class="pb-4[^"]*"[^>]*data-timeline-row-id="answer-entry"/);
+    expect(markup).not.toContain('data-timeline-row-id="note-entry"');
+  });
+  // SCIENT-FORK:END
+
   it("keeps the copy button for collapsed long user messages", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

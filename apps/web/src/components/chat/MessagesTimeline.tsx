@@ -2533,7 +2533,10 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                 ? "pb-1.5"
                 : (row.kind === "message" &&
                       row.message.role === "assistant" &&
-                      !row.showAssistantMeta) ||
+                      // SCIENT-FORK:START — a kept answer is spaced like the final answer.
+                      !row.showAssistantMeta &&
+                      row.keptAnswer !== true) ||
+                    // SCIENT-FORK:END
                     row.kind === "worktree-setup" ||
                     row.kind === "event" ||
                     row.kind === "attempt-fold" ||
@@ -3355,7 +3358,9 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           resolvedTheme={ctx.resolvedTheme}
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
-        {row.showAssistantMeta ? (
+        {/* SCIENT-FORK:START — a kept answer shows its copy button and time like the final answer. */}
+        {row.showAssistantMeta || row.keptAnswer === true ? (
+          // SCIENT-FORK:END
           <AssistantMessageMeta
             className="mt-1.5"
             projectedItem={row.projectedItem}
