@@ -26,6 +26,21 @@ describe("provider credential responses", () => {
 });
 
 describe("provider auth state", () => {
+  it("preserves an explicit unverified native completion without changing older messages", () => {
+    const state = {
+      instanceId: "muse",
+      phase: "succeeded",
+      flowId: "native-flow",
+      authorizationUrl: null,
+      expiresAt: null,
+      message: "Native setup finished.",
+    };
+    expect(decodeState({ ...state, accountVerified: false })).toEqual({
+      ...state,
+      accountVerified: false,
+    });
+    expect(decodeState(state)).toEqual(state);
+  });
   it("drops auth variants from newer servers instead of rejecting the state", () => {
     const method = { id: "browser", name: "Browser", description: null, type: "agent" };
     expect(

@@ -45,6 +45,7 @@ it.effect("registers the read-only Scient thread reader contract", () =>
     expect(inputSchema.type).toBe("object");
     expect(Object.keys(inputSchema.properties ?? {}).sort()).toEqual([
       "afterPosition",
+      "contextHandoffId",
       "itemId",
       "limit",
       "maxCharsPerItem",

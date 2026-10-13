@@ -13,6 +13,8 @@ import {
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
   SCIENT_AGENT_TARGETS,
+  MUSE_TARGETS,
+  resolveMuseArtifactPolicy,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
   type ManagedRuntimeTarget,
@@ -267,6 +269,58 @@ describe("Cursor qualified replacement delivery", () => {
 });
 
 describe("managed runtime catalog resolution", () => {
+  it("installs bundled Muse under compiled policy, updates numerically and repairs offline", () => {
+    const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG.providers.muse!;
+    const release = (version: string): ManagedRuntimeCatalogData => ({
+      schemaVersion: 1,
+      providers: {
+        muse: {
+          ...bundled,
+          version,
+          artifacts: Object.fromEntries(
+            Object.entries(bundled.artifacts).map(([key, artifact]) => [
+              key,
+              { ...artifact, url: artifact.url.replace(bundled.version, version) },
+            ]),
+          ),
+        },
+      },
+    });
+    const resolve = (catalog: ManagedRuntimeCatalogData, target: ManagedRuntimeTarget) =>
+      resolveManagedRuntimeCatalogCandidate({
+        catalog,
+        bundledArtifact: undefined,
+        artifactPolicy: resolveMuseArtifactPolicy(target)!,
+        contractRevision: MANAGED_RUNTIME_POLICY.muse.revision,
+      });
+    for (const target of MUSE_TARGETS) {
+      assert.strictEqual(
+        resolve(BUNDLED_MANAGED_RUNTIME_CATALOG, target)?.version,
+        bundled.version,
+      );
+    }
+    const [major, minor, patch, revision] = bundled.version.split(/[.-]R?/u).map(Number);
+    const newer = release(`${major}.${minor}.${patch}-R${revision! * 10}.1`);
+    assert.deepStrictEqual(
+      resolveFetchedManagedRuntimeCatalog(newer).providers.muse,
+      newer.providers.muse,
+    );
+    assert.deepStrictEqual(
+      resolveFetchedManagedRuntimeCatalog(release("1.4.6-R6000.1")).providers.muse,
+      bundled,
+    );
+    const darwin = { platform: "darwin", arch: "arm64" } as const;
+    const artifact = resolve(BUNDLED_MANAGED_RUNTIME_CATALOG, darwin)!;
+    assert.deepStrictEqual(
+      resolveManagedRuntimeRepairArtifact({
+        bundledArtifact: undefined,
+        artifactPolicy: resolveMuseArtifactPolicy(darwin)!,
+        candidateArtifact: undefined,
+        activeArtifact: managedRuntimeArtifactReceipt(artifact),
+      }),
+      artifact,
+    );
+  });
   it("admits Scient's first qualified release using compiled policy without a bundled artifact", () => {
     const policy = resolveScientAgentArtifactPolicy({ platform: "darwin", arch: "arm64" })!;
     const release = scientCatalog("0.1.0");

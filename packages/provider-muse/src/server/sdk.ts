@@ -53,6 +53,8 @@ export interface MuseSdkHostOptions {
   readonly sessionLogging?: boolean;
   readonly signal?: AbortSignal;
   readonly startupTimeoutMs?: number;
+  /** Called only after this host's native shutdown is confirmed, including failed initialization. */
+  readonly onClosed?: () => void;
 }
 
 /** Preserve the host's CLI login while excluding the API-key override before copying values. */
@@ -182,7 +184,9 @@ export async function createMuseSdkHost(
   let closePromise: Promise<void> | undefined;
   const close = () => {
     options.signal?.removeEventListener("abort", onAbort);
-    return (closePromise ??= handshake.close().then(() => undefined));
+    return (closePromise ??= handshake.close().then(() => {
+      options.onClosed?.();
+    }));
   };
   let rejectStartup: (reason: unknown) => void = () => {};
   const onAbort = () => {

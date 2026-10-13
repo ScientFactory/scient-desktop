@@ -534,6 +534,15 @@ function stableChannelFetch(codexVersion = bundledCatalogJson.providers.codex.ve
       });
     if (url === "https://api.github.com/repos/ScientFactory/scient-agent/releases/latest")
       return new Response(null, { status: 404 });
+    if (url === "https://api.meta.ai/muse-code/channels/muse-stable") {
+      const version = bundledCatalogJson.providers.muse.version;
+      return Response.json({
+        channel: "muse-stable",
+        state: "public",
+        version,
+        manifest_url: `https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${version}&file=manifest.json`,
+      });
+    }
     throw new Error(`Unexpected release request: ${url}`);
   };
   return { fetch_, requested };
@@ -859,7 +868,7 @@ describe("managed runtime release discovery", () => {
     const result = await refreshManagedRuntimeCatalog(currentCatalog, fetch_);
     expect(result.changedProviders).toEqual([]);
     expect(result.catalog).toEqual(currentCatalog);
-    expect(requested).toHaveLength(10);
+    expect(requested).toHaveLength(11);
   });
 
   it("discovers one provider without coupling it to another provider channel", async () => {

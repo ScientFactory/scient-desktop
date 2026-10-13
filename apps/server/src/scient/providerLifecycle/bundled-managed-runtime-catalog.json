@@ -601,6 +601,67 @@
           "size": 218729472
         }
       }
+    },
+    "muse": {
+      "contractRevision": 1,
+      "channel": "stable",
+      "version": "1.4.7-R6101.1",
+      "artifacts": {
+        "darwin-arm64": {
+          "artifactName": "muse-aarch64-macos",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-aarch64-macos",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "87ff5a31b63e30b6ac04d3e8298285517e753c126fb6f3aee80accf28c4562f1"
+          },
+          "size": 358892272
+        },
+        "darwin-x64": {
+          "artifactName": "muse-x86-macos",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-macos",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "6d766da6601a0aae8bd22294c0854970286e1b9ade3009f0d0289b7875a10c58"
+          },
+          "size": 380381680
+        },
+        "linux-arm64-glibc": {
+          "artifactName": "muse-aarch64-linux",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-aarch64-linux",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "48db3c7468cd4f401eff9b415fb7e0cdfe0351fb1730649ceae2a0f766e23b85"
+          },
+          "size": 325916776
+        },
+        "linux-x64-glibc": {
+          "artifactName": "muse-x86-linux",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-linux",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "36e3dac91f56c15572b95be55d70ee9fd9685cd9ab49f747bab4746c8d7c2518"
+          },
+          "size": 363518168
+        },
+        "win32-arm64": {
+          "artifactName": "muse-aarch64-windows.exe",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-aarch64-windows.exe",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "6580be6e5ab03b7a1e3ebe427b50693f6adce4e52ea808c5ea87ba07ccac2b9f"
+          },
+          "size": 427460856
+        },
+        "win32-x64": {
+          "artifactName": "muse-x86-windows.exe",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-windows.exe",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "2d1ac7af0a9ea77643cb8690eee70f52f0f8476c46b194f143c831f481aea59d"
+          },
+          "size": 467174136
+        }
+      }
     }
   }
 }

@@ -178,6 +178,29 @@ an opener; completion is observed through the canonical server provider snapshot
 
 ## Capability contract
 
+Muse retains the upstream MSP driver behind one optional host runtime-composition
+hook. Scient owns its private runtime, native account adapter, maintenance policy
+and lifecycle presentation. Status, MSP sessions, discovery, background
+generation and account commands use the same selected executable and instance
+environment; no second credential store or model catalog is introduced.
+
+Muse's current CLI has no supported passive account-status interface. Its shared
+auth state explicitly sets `accountVerified: false`: native credential-save
+completion is not a `Signed in` label, model availability, or entitlement proof.
+It settles back to idle rather than `succeeded`, so older clients that do not
+understand the added flag also cannot infer a signed-in account.
+Settings, onboarding and mobile preserve that distinction and still offer
+Sign out, without inventing a verified account. Credential
+bindings conservatively cover all native host-login instances, even when their
+homes differ; explicit environment-key instances keep separate billing ownership.
+After the shared auth flow stops routed sessions, a native account write takes
+a provider-wide lifecycle lease and closes the instance's native sessions before
+invoking Muse. Muse sessions and background generation are admitted only while
+no account or runtime change holds that lease. Background processes also belong
+to their configured instance's lifetime, so retirement awaits their teardown.
+Failed native shutdown retains the lease and blocks further admission rather
+than permitting runtime/account mutation.
+
 The additive lifecycle contract is defined in
 [`providerLifecycle.ts`](../../packages/contracts/src/providerLifecycle.ts). A materialized provider
 instance may expose two optional seams through
@@ -218,10 +241,10 @@ scanner never guesses that a newline ended terminal metadata and exposes a URL f
 | Update             | One explicit click runs preflight, then replaces an active Scient-managed runtime with a strictly newer qualified stable release through the safe replacement path.                                                                                                  |
 | Repair             | Refreshes the qualified catalog and installs/restores its latest release, even at the current version. A compatible newer installed receipt is the offline floor.                                                                                                    |
 | Remove             | After confirmation, deletes only Scient's app-private runtime. It preserves provider credentials, custom paths, and system installations, then re-probes the provider.                                                                                               |
-| Sign in            | Starts one official provider-owned account flow and verifies the resulting provider state before reporting success.                                                                                                                                                  |
+| Sign in            | Starts one official provider-owned account flow. Providers with a supported verifier report verified state; native-only completion explicitly remains unverified.                                                                                                    |
 | Submit code        | Sends a bounded transient code only to the matching live provider operation when that operation explicitly advertises support. It is not persisted.                                                                                                                  |
 | Cancel             | Requests cancellation of the exact live operation. Final connection verification and committed runtime finalization finish authoritatively instead of being relabeled cancelled.                                                                                     |
-| Sign out           | Delegates credential revocation to the provider and verifies the resulting state. It preserves every runtime.                                                                                                                                                        |
+| Sign out           | Delegates credential revocation to the provider. For a native-only provider it removes locally saved credentials; Scient does not claim remote revocation. Every runtime is preserved.                                                                               |
 
 Account creation and subscription purchase remain on the provider's official page. Scient can explain
 that eligible access is missing, but it does not create a parallel signup or billing flow.
@@ -239,8 +262,8 @@ The generic source order is:
 5. missing or unknown.
 
 Codex keeps a bespoke capability-health resolver because its complete package and app-server
-companion requirements differ from a simple version probe. Claude, Antigravity, Grok, Droid, and
-Cursor use the shared resolver while retaining provider-specific package and environment policy.
+companion requirements differ from a simple version probe. Claude, Antigravity, Grok, Droid,
+Cursor and Muse use the shared resolver while retaining provider-specific package and environment policy.
 
 ACP Registry agents use their recorded installation rather than this generic source order.
 `AcpRegistryManagedRuntimeActions` reports verified app-owned binary, npm and uvx installations

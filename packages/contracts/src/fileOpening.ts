@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 export const EnvironmentFilePath = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(4_096),
-  Schema.isPattern(/^[^\0]+$/u),
+  Schema.isPattern(/^[^\x00]+$/u),
 ).pipe(Schema.brand("EnvironmentFilePath"));
 export type EnvironmentFilePath = typeof EnvironmentFilePath.Type;
 

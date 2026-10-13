@@ -310,7 +310,7 @@ export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): Orchest
 export function projectContextHandoffForWire(
   handoff: OrchestrationV2ContextHandoff,
 ): OrchestrationV2ContextHandoff {
-  const { history: _history, delivery: _delivery, ...projected } = handoff;
+  const { history: _history, historySource: _source, delivery: _delivery, ...projected } = handoff;
   return { ...projected, summaryText: "" };
 }
 

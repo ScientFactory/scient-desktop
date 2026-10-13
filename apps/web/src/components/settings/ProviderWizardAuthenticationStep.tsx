@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+// SCIENT-FORK:START — native account writes that cannot verify sign-in.
+import { providerAuthPresentation } from "@t3tools/client-runtime/provider-auth-presentation";
+// SCIENT-FORK:END
 
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
@@ -34,6 +37,9 @@ export function ProviderWizardAuthenticationStep({
     provider?.auth.status === "authenticated" ||
     (provider?.auth.status === "unknown" && auth?.phase === "succeeded");
   const isDiscovering = !signedIn && !query.error && auth?.methods === undefined;
+  // SCIENT-FORK:START — a completed native account write also finishes this step.
+  const finished = signedIn || providerAuthPresentation(provider, auth).finished;
+  // SCIENT-FORK:END
   const canAuthenticate = (auth?.methods?.length ?? 0) > 0;
 
   return (
@@ -89,11 +95,11 @@ export function ProviderWizardAuthenticationStep({
       <WizardFooter>
         <Button
           size="sm"
-          variant={signedIn ? "default" : "outline"}
+          variant={finished ? "default" : "outline"}
           disabled={active}
           onClick={onFinish}
         >
-          {signedIn ? "Done" : "Skip for now"}
+          {finished ? "Done" : "Skip for now"}
         </Button>
       </WizardFooter>
     </>

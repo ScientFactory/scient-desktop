@@ -135,6 +135,7 @@ const prepareHistory = Effect.fn("ImportTest.prepareHistory")(function* (threadI
     providerThread,
     budget,
     alreadyDeliveredItemIds: new Set(),
+    resolveHistory: (yield* ProjectionStore.ProjectionStoreV2).resolveContextHistory,
     sourceOmissions:
       projection.thread.conversationImport?.omissions ??
       projection.thread.forkLineage?.sourceImport?.omissions ??

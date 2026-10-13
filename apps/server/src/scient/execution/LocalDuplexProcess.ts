@@ -11,11 +11,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
-import {
-  ensureLocalOwnedProcessTreeExit,
-  LOCAL_OWNED_PROCESS_KILL_OPTIONS,
-  makeLocalOwnedProcess,
-} from "./LocalOwnedProcess.ts";
+import { makeLocalOwnedProcessCleanup, makeLocalOwnedProcess } from "./LocalOwnedProcess.ts";
 
 export class DuplexProcess extends Context.Service<DuplexProcess, DuplexProcessPort>()(
   "t3/scient/execution/LocalDuplexProcess/DuplexProcess",
@@ -118,34 +114,12 @@ const make = Effect.gen(function* () {
       // (`ESRCH` once reaped, `EPERM` for an unreaped macOS zombie, a non-zero
       // taskkill exit on Windows), so the child's own liveness, not the signal
       // result, decides whether cancellation actually failed.
-      const cancelProcessTree = yield* Effect.cached(
-        child.kill(LOCAL_OWNED_PROCESS_KILL_OPTIONS).pipe(
-          Effect.catch((cause) =>
-            child.isRunning.pipe(
-              Effect.catchCause(() => Effect.succeed(true)),
-              Effect.flatMap((isRunning) =>
-                isRunning
-                  ? Effect.fail(
-                      processError("cancel", "Unable to stop the duplex process tree.", cause),
-                    )
-                  : Effect.void,
-              ),
-            ),
-          ),
-          Effect.andThen(
-            ensureLocalOwnedProcessTreeExit(Number(child.pid), platform).pipe(
-              Effect.mapError((cause) =>
-                processError(
-                  "cancel",
-                  "The duplex process tree remained alive after cancellation.",
-                  cause,
-                ),
-              ),
-            ),
-          ),
+      const closeOwnedProcess = yield* makeLocalOwnedProcessCleanup(child, platform);
+      const cancelProcessTree = closeOwnedProcess.pipe(
+        Effect.mapError((cause) =>
+          processError("cancel", "Unable to stop the duplex process tree.", cause),
         ),
       );
-      yield* Effect.addFinalizer(() => cancelProcessTree.pipe(Effect.ignore));
 
       // A normal direct-child exit does not transfer ownership of surviving
       // descendants to the host. Keep the same cleanup guarantee as the

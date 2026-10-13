@@ -1,3 +1,4 @@
+import { turnItemMetadataSql } from "./ContextHistorySql.ts";
 /**
  * A fork's inherited history: a frozen, ordered list of the items it shows
  * from the conversations it was forked from.
@@ -276,7 +277,7 @@ export const readForkHistoryRows = Effect.fn("ForkHistory.readRows")(function* (
   const scattered = last - first + 1 !== index.length;
   const byPosition = new Map(
     (yield* sql<{ readonly position: number; readonly payload_json: string | null }>`
-      SELECT history.position, COALESCE(frozen.item_json, item.payload_json) AS payload_json
+      SELECT history.position, ${turnItemMetadataSql(sql, sql`COALESCE(frozen.item_json, item.payload_json)`)} AS payload_json
       FROM scient_fork_history AS history
       LEFT JOIN scient_fork_frozen_items AS frozen
         ON frozen.thread_id = history.thread_id AND frozen.position = history.position

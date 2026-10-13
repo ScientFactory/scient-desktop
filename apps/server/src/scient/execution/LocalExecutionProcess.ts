@@ -10,11 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
-import {
-  ensureLocalOwnedProcessTreeExit,
-  LOCAL_OWNED_PROCESS_KILL_OPTIONS,
-  makeLocalOwnedProcess,
-} from "./LocalOwnedProcess.ts";
+import { makeLocalOwnedProcessCleanup, makeLocalOwnedProcess } from "./LocalOwnedProcess.ts";
 
 export class ExecutionProcess extends Context.Service<ExecutionProcess, ExecutionProcessPort>()(
   "t3/scient/execution/LocalExecutionProcess/ExecutionProcess",
@@ -41,15 +37,6 @@ const make = Effect.gen(function* () {
             processError("spawn", "Unable to start the execution process.", cause),
           ),
         );
-      const ensureOwnedTreeExit = ensureLocalOwnedProcessTreeExit(Number(child.pid), platform).pipe(
-        Effect.mapError((cause) =>
-          processError(
-            "cancel",
-            "The execution process tree remained alive after cancellation.",
-            cause,
-          ),
-        ),
-      );
       const output = Stream.merge(
         child.stdout.pipe(
           Stream.decodeText(),
@@ -69,24 +56,12 @@ const make = Effect.gen(function* () {
       // differently on each platform, so the direct child's liveness decides
       // whether the failure matters. This is also run after ordinary success:
       // the direct parent may exit zero while a subprocess it created remains.
-      const cancel = yield* Effect.cached(
-        child.kill(LOCAL_OWNED_PROCESS_KILL_OPTIONS).pipe(
-          Effect.catch((cause) =>
-            child.isRunning.pipe(
-              Effect.catchCause(() => Effect.succeed(true)),
-              Effect.flatMap((isRunning) =>
-                isRunning
-                  ? Effect.fail(
-                      processError("cancel", "Unable to stop the execution process tree.", cause),
-                    )
-                  : Effect.void,
-              ),
-            ),
-          ),
-          Effect.andThen(ensureOwnedTreeExit),
+      const closeOwnedProcess = yield* makeLocalOwnedProcessCleanup(child, platform);
+      const cancel = closeOwnedProcess.pipe(
+        Effect.mapError((cause) =>
+          processError("cancel", "Unable to stop the execution process tree.", cause),
         ),
       );
-      yield* Effect.addFinalizer(() => cancel.pipe(Effect.ignore));
       const exitCode = child.exitCode.pipe(
         Effect.map(Number),
         Effect.mapError((cause) =>

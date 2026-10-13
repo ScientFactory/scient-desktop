@@ -69,6 +69,72 @@ authenticated.
 - `node apps/server/scripts/t3-sqlite-state.ts <query|exec> --base-dir <path> ...`: Inspects or seeds
   an isolated T3 SQLite database; writes create a private backup first.
 
+## Alignment consumer checks
+
+`pnpm alignment:checks` selects existing consumer suites for early composition feedback.
+The maintained [boundary map](../../scripts/scient-alignment-checks.json) records affected
+owners and untouched consumers, deciding assertions, commands, prerequisites and limits
+for provider guidance/skills/MCP/native input, Stop/Resume ownership, queue admission and
+restart, settings precedence and instance identity, immutable persistence, and chat reader
+interaction. Maintain the assertions and consumer triggers together when those contracts move.
+This is a bounded impact map, not an exhaustive dependency graph or a qualification policy.
+
+Print a plan before executing it:
+
+```sh
+pnpm alignment:checks --base <owned-base-sha>
+pnpm alignment:checks --path apps/server/src/provider/PiDriverComposition.ts
+pnpm alignment:checks --boundary queue --boundary stop
+pnpm alignment:checks --all --run
+SCIENT_PI_TEST_BINARY=/absolute/path/to/pi pnpm alignment:checks --all --native --run
+```
+
+`--base` includes committed, staged, working changes and non-ignored untracked paths
+by unioning base-to-HEAD, HEAD-to-index, index-to-working-tree and untracked inputs.
+A later restoration cannot cancel an earlier staged or committed impact. Deletes and
+renames retain their paths, including both rename sides. `--path` is repeatable and describes
+repository-relative consumer impact; it need not be an existing file. Choose exactly one
+selection mode. Unknown paths and shared contracts, client runtime, execution/provider
+cores, mobile surfaces, shared ChatComposer/ComposerPrimaryActions hosts, dependencies
+or test setup select all six boundaries. Recognized chat reader owners select reader
+checks; other chat paths retain the unknown-path fallback. ChatView also selects settings;
+queuedRunShortcuts selects the queue boundary and its existing client dispatch witnesses. Maintainer prose under `docs/internals/` and
+`docs/operations/`, and read-only `.repos/` references, are explicit exclusions; runtime
+instructions such as `AGENTS.md` are not. Review all exclusions for the actual range.
+
+For an independent unlanded lane, run its absolute selector against another checkout:
+
+```sh
+node /absolute/phase1-worktree/scripts/scient-alignment-checks.mjs \
+  --cwd /absolute/composed-worktree --base <owned-base-sha>
+```
+
+The selector and map remain in the implementation lane. `--run` executes the target
+checkout's own suites with its installed dependencies; it never copies test or product
+source into the target or changes its index. Missing/moved suites or an unresolved index
+refuse execution (exit 2) instead of silently producing an empty pass. Printed plans can
+still be reviewed before conflicts are resolved. Commands run serially with the existing
+package configurations and stop at the first failure. Execution is synchronous and does
+not cache, resume, install dependencies, coordinate other lanes or launch an app.
+Shared model curation and project/settings reducers run before server integration checks.
+Affected compilation and static checks remain separate required composition checks.
+For older target revisions, review the actual assertion bodies too: an existing suite
+may predate a deciding assertion in this map. Run a reviewed external witness for that gap.
+
+Install from the committed lockfile with the repository Node/pnpm versions. The reader
+geometry checks use the separate Playwright Chromium `layout` project, even though normal
+web tests run only `unit`. Native Pi is opt-in: set `SCIENT_PI_TEST_BINARY` explicitly and
+pass `--native`. The real RPC process uses a fresh synthetic profile and loopback model/MCP
+endpoint; this proves instruction delivery and transport, not authenticated model quality.
+Without `--native`, the plan reports that group's exclusion; no native pass is claimed.
+
+Preserve the printed plan, exact candidate revision/diff, environment, commands, exits,
+elapsed times and suite-reported skips externally. A zero exit with only excluded paths
+means no behavioral checks were selected. Coordinate expensive checks with the owning
+alignment integrator. These checks do not replace any complete local, hosted, native,
+migration, provenance, protected-seam, or visual qualification required by
+[AGENTS.md](../../AGENTS.md) and the [alignment protocol](./upstream-alignment-protocol.md).
+
 ## Desktop artifacts
 
 - `vp run dist:desktop:artifact --platform <mac|linux|win> --target <target> --arch <arch>`: Builds a desktop artifact for a specific platform/target/arch.

@@ -11,6 +11,47 @@ const previewEntitlements = NodePath.resolve(
   "../native/conversation-preview/macos/ScientConversationQuickLook.entitlements",
 );
 const previewExecutableName = "ScientConversationQuickLook";
+const exchangeEntitlements = NodePath.resolve(
+  import.meta.dirname,
+  "../native/file-exchange/entitlements.mac.plist",
+);
+
+function exchangePath(app: string): string {
+  return NodePath.resolve(app, "Contents/Resources/file-exchange/scient-file-exchange");
+}
+
+export function fileExchangeSignOptions(options: SignOptions): SignOptions {
+  const helper = exchangePath(options.app);
+  if (!NodeFS.existsSync(helper)) {
+    if (process.env.SCIENT_FILE_EXCHANGE_EXPECTED === "1")
+      throw new Error("Missing required file exchange helper in packaged app.");
+    return options;
+  }
+  const prior = options.optionsForFile;
+  return {
+    ...options,
+    binaries: [...new Set([...(options.binaries ?? []), helper])],
+    optionsForFile: (file, context) =>
+      NodePath.resolve(file) === helper
+        ? { entitlements: exchangeEntitlements, hardenedRuntime: true }
+        : (prior?.(file, context) ?? {}),
+  };
+}
+
+export function verifySignedFileExchange(app: string): void {
+  const helper = exchangePath(app);
+  if (!NodeFS.existsSync(helper)) {
+    if (process.env.SCIENT_FILE_EXCHANGE_EXPECTED === "1")
+      throw new Error("Missing required file exchange helper in packaged app.");
+    return;
+  }
+  const result = NodeChildProcess.spawnSync("codesign", ["--verify", "--strict", helper], {
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  if (result.status !== 0 || signingTeam(helper) !== signingTeam(app))
+    throw new Error("File exchange helper signature does not match the app.");
+}
 
 function previewPaths(app: string): { extension: string; executable: string } {
   const extension = NodePath.resolve(app, "Contents", "PlugIns", MAC_PREVIEW_BUNDLE);
@@ -152,6 +193,10 @@ export function verifySignedConversationPreview(app: string): void {
 
 /** Sign files with matching options together instead of spawning codesign for each file. */
 export default async function sign(options: SignOptions): Promise<void> {
-  await signApplication({ ...conversationPreviewSignOptions(options), batchCodesignCalls: true });
+  await signApplication({
+    ...fileExchangeSignOptions(conversationPreviewSignOptions(options)),
+    batchCodesignCalls: true,
+  });
   verifySignedConversationPreview(options.app);
+  verifySignedFileExchange(options.app);
 }

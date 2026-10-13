@@ -130,6 +130,36 @@ export function scientHistoricalItemText(item: OrchestrationV2TurnItem): string 
   }
 }
 
+/** Eligibility does not format or serialize the body. Preparation stores only membership. */
+export function hasHistoricalContext(item: OrchestrationV2TurnItem): boolean {
+  switch (item.type) {
+    case "user_message":
+    case "assistant_message":
+    case "command_execution":
+    case "error":
+    case "run_interrupt_result":
+    case "file_change":
+    case "proposed_plan":
+      return true;
+    case "reasoning":
+      return !hasArtifactExecutionAuthority(item) && hasPortableArtifactOwner(item);
+    case "dynamic_tool":
+      return (
+        !hasArtifactExecutionAuthority(item) &&
+        ((hasPortableArtifactOwner(item) && isImportedActivity(item.input)) ||
+          item.inheritedFrom?.runId != null)
+      );
+    case "user_input_request":
+      return (
+        item.status === "completed" &&
+        item.questionAnswer !== undefined &&
+        item.responseMode !== "message"
+      );
+    default:
+      return false;
+  }
+}
+
 /** Labels activity copied from an unfinished turn at a fork boundary. */
 export function partialSnapshotText(item: OrchestrationV2TurnItem, text: string): string {
   if (

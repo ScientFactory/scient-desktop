@@ -16,8 +16,8 @@ afterEach(() => {
 it("restores semantic identity after a renderer reload without persisting a bare scroll offset", async () => {
   const values = storage();
   vi.resetModules();
-  const { rememberTimelinePosition, flushTimelinePositions } =
-    await import("./timelineScrollAnchoring");
+  const { rememberTimelinePosition } = await import("./timelineScrollAnchoring");
+  const { flushTimelinePositions } = await import("./readingPositionStore");
   rememberTimelinePosition("environment:thread", {
     rowId: "message:answer",
     messageId: "answer",
@@ -42,8 +42,9 @@ it("restores semantic identity after a renderer reload without persisting a bare
 it("ignores corrupt records and bounds retained thread positions", async () => {
   storage(JSON.stringify([["broken", { rowId: "row", offsetWithinRow: "bad", atEnd: false }]]));
   vi.resetModules();
-  const { readTimelinePosition, rememberTimelinePosition, flushTimelinePositions } =
+  const { readTimelinePosition, rememberTimelinePosition } =
     await import("./timelineScrollAnchoring");
+  const { flushTimelinePositions } = await import("./readingPositionStore");
   expect(readTimelinePosition("broken")).toBeUndefined();
   for (let i = 0; i < 105; i++)
     rememberTimelinePosition(`thread-${i}`, {
@@ -63,8 +64,9 @@ it("ignores corrupt records and bounds retained thread positions", async () => {
 it("captures immediately, coalesces storage writes, and flushes before page exit", async () => {
   vi.useFakeTimers();
   const values = storage();
-  const { readTimelinePosition, rememberTimelinePosition, flushTimelinePositions } =
+  const { readTimelinePosition, rememberTimelinePosition } =
     await import("./timelineScrollAnchoring");
+  const { flushTimelinePositions } = await import("./readingPositionStore");
   const position = { rowId: "answer", offsetWithinRow: 10, scrollOffset: 500, atEnd: false };
   rememberTimelinePosition("quick", position);
   expect(readTimelinePosition("quick")).toEqual(position);

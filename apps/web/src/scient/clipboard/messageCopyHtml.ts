@@ -4,7 +4,7 @@
  * paragraph's direction. Other messages keep their Markdown-only copy.
  *
  * The HTML is rendered from the message's Markdown, the same text the plain
- * flavour carries, with chat's own Markdown pipeline (`chatMarkdownPipeline`)
+ * flavour carries, with chat's own Markdown pipeline (`chatMarkdownPipeline.ts`)
  * and direction transform. The live
  * row is not the source: it may be unmounted by the virtualized timeline, and
  * a collapsed details block has no body in the DOM. When the row is mounted,
@@ -17,18 +17,18 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 
-import {
-  chatMarkdownAlertLabel,
-  chatMarkdownCodeBoxDirection,
-  chatMarkdownNodeText,
-  chatMarkdownPipeline,
-} from "~/components/ChatMarkdown";
 import { getClientSettings } from "~/hooks/useSettings";
 import { renderedMarkdownClipboardHtml } from "../../markdown-clipboard";
 import { resolveMarkdownDirection, type FixedContentDirection } from "../bidi/contentDirection";
 import { rehypeScientBidi } from "../bidi/rehypeScientBidi";
 import { isScientMathCodeClassName } from "../math/remarkScientMath";
 import { mathMarkdownCopySource } from "../math/ScientMath";
+import {
+  chatMarkdownAlertLabel,
+  chatMarkdownCodeBoxDirection,
+  chatMarkdownNodeText,
+  chatMarkdownPipeline,
+} from "./chatMarkdownPipeline";
 import { hasStrongRtl } from "./clipboardDirection";
 import { MESSAGE_COPY_ATTRIBUTE } from "./messageCopyMarker";
 

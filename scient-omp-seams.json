@@ -40,7 +40,8 @@
     "apps/server/src/scient/providerLifecycle/CustomModelRpcHandlers.ts",
     "apps/web/src/components/ScientProviderIcons.tsx",
     "packages/shared/src/scientTextGenerationSelection.ts",
-    "packages/shared/src/scientTextGenerationSelection.test.ts"
+    "packages/shared/src/scientTextGenerationSelection.test.ts",
+    "scripts/scient-alignment-checks.json"
   ],
   "upstreamMounts": [
     {

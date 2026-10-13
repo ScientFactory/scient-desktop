@@ -65,6 +65,8 @@ export const ForkOptions = Schema.Struct({
   sourceRunningTurnId: Schema.optional(Schema.NullOr(TurnId)),
   sourceRunningRunId: Schema.optional(Schema.NullOr(RunId)),
   newWorktree: Schema.Boolean,
+  /** Where a local fork works when that differs from the original, e.g. a removed worktree. */
+  workspaceNotice: Schema.optional(Schema.String),
 });
 export type ForkOptions = typeof ForkOptions.Type;
 

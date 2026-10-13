@@ -93,7 +93,10 @@ export const heldSteerStopCancellation = {
 /** SCIENT: held user rows are accepted intents, not previously delivered native history.
  * Keep the source's actual input, but do not replay older or current held intents. */
 export const isReplayableBesideAdmittedSteer = (
-  item: OrchestrationV2TurnItem,
+  item: Pick<OrchestrationV2TurnItem, "type" | "runId" | "nodeId"> & {
+    readonly inputIntent?: string;
+    readonly messageId?: string;
+  },
   admittedDroidSteer: HeldDroidSteer | undefined,
   targetRun: OrchestrationV2Run,
   rootNodeId: OrchestrationV2ExecutionNode["id"],

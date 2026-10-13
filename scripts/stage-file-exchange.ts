@@ -1,9 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Standalone host compiler invocation, no server runtime.
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as NodeChildProcess from "node:child_process";
-import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
+import { buildFileExchange } from "./lib/scient-file-exchange-build.ts";
 
 if (
   HostProcess.Platform.defaultValue() !== "darwin" &&
@@ -11,24 +9,15 @@ if (
 ) {
   throw new Error("File exchange is available on macOS and Linux only.");
 }
-const root = NodeURL.fileURLToPath(new URL("..", import.meta.url));
-const destination = NodePath.join(
-  root,
-  "native/file-exchange",
-  `${HostProcess.Platform.defaultValue()}-${HostProcess.Architecture.defaultValue()}`,
-);
-await NodeFSP.mkdir(destination, { recursive: true });
-NodeChildProcess.execFileSync(
-  "cc",
-  [
-    "-O2",
-    "-Wall",
-    "-Wextra",
-    "-Werror",
-    "-fstack-protector-strong",
-    NodePath.join(root, "native/file-exchange/exchange.c"),
-    "-o",
-    NodePath.join(destination, "scient-file-exchange"),
-  ],
-  { stdio: "inherit" },
-);
+const repoRoot = NodePath.resolve(import.meta.dirname, "..");
+const platform = HostProcess.Platform.defaultValue();
+const arch = HostProcess.Architecture.defaultValue();
+if ((platform !== "darwin" && platform !== "linux") || (arch !== "arm64" && arch !== "x64")) {
+  throw new Error("File exchange requires a macOS/Linux arm64/x64 build host.");
+}
+await buildFileExchange({
+  repoRoot,
+  platform,
+  arch,
+  outputDirectory: NodePath.join(repoRoot, "native/file-exchange", `${platform}-${arch}`),
+});
