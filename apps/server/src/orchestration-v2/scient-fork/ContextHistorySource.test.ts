@@ -28,7 +28,7 @@ import * as EventStore from "../EventStore.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import { historicalMessage } from "../ScientHistoricalContext.ts";
 import { deliverContextHandoffs } from "../ContextHandoffDelivery.ts";
-import { selectContextHistory } from "./ContextHistorySource.ts";
+import { isLegacyContextHistoryReadable, selectContextHistory } from "./ContextHistorySource.ts";
 import { nativeHistoryEstimate } from "./NativeHistoryEstimate.ts";
 
 const StoreLayer = Layer.mergeAll(ProjectionStore.layer, EventStore.layer).pipe(
@@ -349,6 +349,45 @@ it.layer(TestLayer)("bounded immutable context sources", (it) => {
           "Failure",
         );
       }
+    }),
+  );
+
+  it.effect("records a legacy body's shape once and still detects a changed body", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { handoff } = yield* fixture([item(0, "Retained original")]);
+      const { historySource: _source, ...legacy } = handoff;
+      const message = historicalMessage(item(0, "Retained original"))!;
+      yield* sql`UPDATE orchestration_v2_projection_context_handoffs SET payload_json =
+        json_set(${encodeHandoff(legacy)}, '$.history.messages', json(${JSON.stringify([message])}))
+        WHERE context_handoff_id = ${handoff.id}`;
+      yield* sql`INSERT OR REPLACE INTO scient_handoff_legacy_sources (source_id, payload_json)
+        SELECT 'legacy-projection:' || context_handoff_id, payload_json
+        FROM orchestration_v2_projection_context_handoffs WHERE context_handoff_id = ${handoff.id}`;
+      const recorded = () =>
+        sql<{
+          readonly shape_json: string | null;
+        }>`SELECT shape_json FROM scient_handoff_legacy_sources
+          WHERE source_id = ${`legacy-projection:${handoff.id}`}`.pipe(
+          Effect.map((rows) => rows[0]?.shape_json ?? null),
+        );
+
+      const sourceId = ContextHandoffId.make(`legacy-projection:${handoff.id}`);
+      const readable = () => isLegacyContextHistoryReadable(sql, sourceId, 1, false);
+      assert.isTrue(yield* readable());
+      const first = yield* recorded();
+      assert.isNotNull(first);
+      assert.isTrue(yield* readable());
+      assert.strictEqual(yield* recorded(), first);
+
+      for (const changed of ['{"summaryText":"Replaced body"}', '{"summaryText":']) {
+        yield* sql`UPDATE scient_handoff_legacy_sources SET payload_json = ${changed}
+          WHERE source_id = ${`legacy-projection:${handoff.id}`}`;
+        assert.isFalse(yield* readable());
+      }
+      // Invalid JSON is never recorded; the last recorded shape belongs to the replaced body.
+      assert.notStrictEqual(yield* recorded(), first);
+      assert.include((yield* recorded())!, '"messagesArray":0');
     }),
   );
 

@@ -70,7 +70,7 @@ const QuarantinePayloadEvidence = Schema.fromJsonString(
 const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
 const SCIENT_MIGRATION_IDS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 ];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
@@ -99,6 +99,7 @@ const SCIENT_MIGRATION_NAMES = [
   "legacy-source-reconciliation",
   "context-history-sources",
   "compact-archived-projection-handoffs",
+  "legacy-source-shape-cache",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
 
@@ -132,6 +133,7 @@ it.effect.each(["projection", "event"] as const)(
         assert.deepEqual(yield* runScientMigrations(sql), [
           [25, "context-history-sources"],
           [26, "compact-archived-projection-handoffs"],
+          [27, "legacy-source-shape-cache"],
         ]);
         assert.deepEqual(yield* runScientMigrations(sql), []);
         const kept = yield* sql<{ readonly payload_json: string }>`
@@ -205,8 +207,9 @@ it.effect("compacts archived legacy projection handoffs without changing what re
       assert.deepEqual(yield* runScientMigrations(sql), [
         [25, "context-history-sources"],
         [26, "compact-archived-projection-handoffs"],
+        [27, "legacy-source-shape-cache"],
       ]);
-      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id = 26`;
+      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 26`;
       for (const [id, payload] of Object.entries(rows))
         yield* sql`UPDATE orchestration_v2_projection_context_handoffs SET payload_json = ${payload}
           WHERE context_handoff_id = ${id}`;
@@ -214,6 +217,7 @@ it.effect("compacts archived legacy projection handoffs without changing what re
         WHERE source_id = 'legacy-projection:tampered'`;
       assert.deepEqual(yield* runScientMigrations(sql), [
         [26, "compact-archived-projection-handoffs"],
+        [27, "legacy-source-shape-cache"],
       ]);
 
       const stored = new Map<string, string>();
@@ -794,6 +798,7 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [24, "legacy-source-reconciliation"],
           [25, "context-history-sources"],
           [26, "compact-archived-projection-handoffs"],
+          [27, "legacy-source-shape-cache"],
         ] as const,
       );
 
@@ -2229,6 +2234,7 @@ it.effect("migration 9 converges a development database that already recorded mi
         [24, "legacy-source-reconciliation"],
         [25, "context-history-sources"],
         [26, "compact-archived-projection-handoffs"],
+        [27, "legacy-source-shape-cache"],
       ]);
       const columns = yield* sql<{
         readonly name: string;
@@ -2273,6 +2279,7 @@ it.effect("reconciles only the exact former import-17 ledger without losing rece
         [24, "legacy-source-reconciliation"],
         [25, "context-history-sources"],
         [26, "compact-archived-projection-handoffs"],
+        [27, "legacy-source-shape-cache"],
       ]);
       const ledger = yield* sql<{
         readonly migration_id: number;
@@ -2389,7 +2396,8 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (24, 'legacy-source-reconciliation')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (25, 'context-history-sources')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (26, 'compact-archived-projection-handoffs')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (27, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (27, 'legacy-source-shape-cache')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (28, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -2397,7 +2405,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 27"),
+          error.message.includes("unknown migration 28"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -2408,7 +2416,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [...SCIENT_MIGRATION_IDS, 27],
+        [...SCIENT_MIGRATION_IDS, 28],
       );
     }),
   ),

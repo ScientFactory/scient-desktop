@@ -59,6 +59,51 @@ const indexLegacyContextHistory = Effect.fn("ContextHistory.indexLegacy")(functi
   yield* sql`UPDATE scient_handoff_legacy_sources SET messages_indexed = 1 WHERE source_id = ${sourceId}`;
 });
 
+const LegacySourceShape = Schema.Struct({
+  bytes: Schema.Number,
+  summaryText: Schema.Number,
+  historyNull: Schema.Number,
+  messagesArray: Schema.Number,
+  count: Schema.Number,
+});
+const decodeLegacySourceShape = Schema.decodeUnknownOption(
+  Schema.fromJsonString(LegacySourceShape),
+);
+
+/** Archived bodies are write-once, so a parsed shape is recorded against the body's
+ * byte length (read from the record header without loading the body) and startup
+ * checks it without re-parsing. Bodies that are not valid JSON are never recorded. */
+const legacySourceShape = Effect.fn("ContextHistory.legacyShape")(function* (
+  sql: SqlClient.SqlClient,
+  sourceId: ContextHandoffId,
+) {
+  const bytes = sql`CASE WHEN source.payload_json IS NOT NULL THEN octet_length(source.payload_json)
+    ELSE octet_length(event.payload_json) END`;
+  const cached = yield* sql<{ readonly shape: string | null; readonly bytes: number | null }>`
+    SELECT source.shape_json AS shape, ${bytes} AS bytes
+    FROM scient_handoff_legacy_sources AS source
+    LEFT JOIN orchestration_events AS event ON event.event_id = source.event_id
+    WHERE source.source_id = ${sourceId}`;
+  if (cached[0] === undefined || cached[0].bytes === null) return undefined;
+  const recorded = cached[0].shape === null ? undefined : decodeLegacySourceShape(cached[0].shape);
+  if (recorded?._tag === "Some" && recorded.value.bytes === cached[0].bytes) return recorded.value;
+  const parsed = yield* sql<{ readonly shape: string | null }>`
+    SELECT CASE WHEN json_valid(body) THEN json_object('bytes', bytes,
+      'summaryText', COALESCE(json_type(body, '$.summaryText') = 'text', 0),
+      'historyNull', json_type(body, '$.history') IS NULL,
+      'messagesArray', COALESCE(json_type(body, '$.history.messages') = 'array', 0),
+      'count', COALESCE(json_array_length(body, '$.history.messages'), 0)) END AS shape
+    FROM (SELECT COALESCE(source.payload_json, event.payload_json) AS body, ${bytes} AS bytes
+      FROM scient_handoff_legacy_sources AS source
+      LEFT JOIN orchestration_events AS event ON event.event_id = source.event_id
+      WHERE source.source_id = ${sourceId})`;
+  const shape = parsed[0]?.shape ?? null;
+  if (shape === null) return undefined;
+  yield* sql`UPDATE scient_handoff_legacy_sources SET shape_json = ${shape} WHERE source_id = ${sourceId}`;
+  const decoded = decodeLegacySourceShape(shape);
+  return decoded._tag === "Some" ? decoded.value : undefined;
+});
+
 /** Validate legacy message metadata before removing bodies from normal reads.
  * SQLite checks the text type; the public schema checks every other field.
  * Neither the transcript nor an oversized metadata row crosses the driver. */
@@ -68,23 +113,14 @@ export const isLegacyContextHistoryReadable = Effect.fn("ContextHistory.validate
   itemCount: number,
   summaryOnly: boolean,
 ) {
-  const shape = yield* sql<{ readonly valid: number; readonly count: number }>`
-    SELECT CASE WHEN json_valid(COALESCE(source.payload_json, event.payload_json)) THEN
-      json_type(COALESCE(source.payload_json, event.payload_json), '$.summaryText') = 'text'
-      AND ${
-        summaryOnly
-          ? sql`json_type(COALESCE(source.payload_json, event.payload_json), '$.history') IS NULL`
-          : sql`json_type(COALESCE(source.payload_json, event.payload_json), '$.history.messages') = 'array'`
-      }
-      ELSE 0 END AS valid,
-      CASE WHEN json_valid(COALESCE(source.payload_json, event.payload_json))
-        THEN COALESCE(json_array_length(COALESCE(source.payload_json, event.payload_json), '$.history.messages'), 0)
-        ELSE -1 END AS count
-    FROM scient_handoff_legacy_sources AS source
-    LEFT JOIN orchestration_events AS event ON event.event_id = source.event_id
-    WHERE source.source_id = ${sourceId}
-  `;
-  if (shape[0]?.valid !== 1 || shape[0].count !== itemCount) return false;
+  const shape = yield* legacySourceShape(sql, sourceId);
+  if (
+    shape === undefined ||
+    shape.summaryText !== 1 ||
+    (summaryOnly ? shape.historyNull : shape.messagesArray) !== 1 ||
+    shape.count !== itemCount
+  )
+    return false;
   if (summaryOnly) return true;
   yield* indexLegacyContextHistory(sql, sourceId).pipe(sql.withTransaction);
   const count = yield* sql<{ readonly count: number }>`SELECT COUNT(*) AS count
