@@ -784,11 +784,7 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
-// SCIENT-FORK:START — fork checkpoint message lookups, kept importable from here.
-export {
-  findLatestCompletedAssistantMessageId,
-  findPrecedingCompletedAssistantMessageId,
-} from "../../scient/fork/forkCheckpointMessages";
+// SCIENT-FORK:START — fork checkpoint lookups (scient/fork/forkCheckpointMessages.ts) read this.
 export { deriveUnsettledRunId };
 // SCIENT-FORK:END
 

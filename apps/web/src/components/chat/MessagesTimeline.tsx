@@ -152,7 +152,7 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
-import { ScientTraceSymbol, ScientTraceSymbolMono } from "./ScientTraceSymbol";
+import { ScientTraceSymbol } from "./ScientTraceSymbol";
 import "../../scient/presentation/scient-reasoning-trace.css";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -404,10 +404,8 @@ interface TimelineRowSharedState {
   displayThreadKey?: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
-  onForkFromRun: (input: {
-    readonly sourceThreadId: ThreadId;
-    readonly runId: RunId;
-  }) => Promise<void>;
+  // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+  // SCIENT-FORK:END
   onRollbackCheckpoint: (input: {
     readonly checkpointId: string;
     readonly scopeId: string;
@@ -546,10 +544,8 @@ interface MessagesTimelineProps {
     readonly threadId: ThreadId;
     readonly title: string;
   } | null;
-  onForkFromRun: (input: {
-    readonly sourceThreadId: ThreadId;
-    readonly runId: RunId;
-  }) => Promise<void>;
+  // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+  // SCIENT-FORK:END
   onRollbackCheckpoint: (input: {
     readonly checkpointId: string;
     readonly scopeId: string;
@@ -679,7 +675,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onOpenTurnDiff,
   onOpenThread,
   parentThreadLink = null,
-  onForkFromRun,
+  // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+  // SCIENT-FORK:END
   onRollbackCheckpoint,
   supportsConversationRollback,
   onRevertToTurnCount,
@@ -1795,7 +1792,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       openPullRequest,
       onOpenTurnDiff,
       onOpenThread,
-      onForkFromRun,
+      // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+      // SCIENT-FORK:END
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,
@@ -1844,7 +1842,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       openPullRequest,
       onOpenTurnDiff,
       onOpenThread,
-      onForkFromRun,
+      // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+      // SCIENT-FORK:END
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,
@@ -5642,7 +5641,6 @@ type WorkEntryIconName =
   | "square-pen"
   | "terminal"
   | "pull-request"
-  | "scient-mono"
   | "scient"
   | "t3-code"
   | "wrench"
@@ -5824,8 +5822,6 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "t3-code":
     case "scient":
       return <ScientTraceSymbol className={className} />;
-    case "scient-mono":
-      return <ScientTraceSymbolMono className={className} />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":

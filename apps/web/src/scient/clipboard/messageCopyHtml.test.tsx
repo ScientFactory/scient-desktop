@@ -116,7 +116,6 @@ function timelineProps() {
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
-    onForkFromRun: async () => {},
     onRollbackCheckpoint: () => {},
     providerStatuses: [],
     runs: [],
