@@ -2233,6 +2233,8 @@ describe("MessagesTimeline", () => {
           completedAt: null,
         }}
         anchorMessageId={firstEntry.message.id}
+        // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+        // SCIENT-FORK:END
         timelineEntries={[
           firstEntry,
           {
@@ -2289,6 +2291,19 @@ describe("MessagesTimeline", () => {
         <MessagesTimeline
           {...buildProps()}
           anchorMessageId={null}
+          timelineEntries={timelineEntries}
+        />,
+      ),
+    ).not.toContain('data-maintain-scroll-at-end="enabled"');
+
+    // Reading history still wins over both.
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={null}
+          // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+          // SCIENT-FORK:END
           timelineEntries={timelineEntries}
         />,
       ),
