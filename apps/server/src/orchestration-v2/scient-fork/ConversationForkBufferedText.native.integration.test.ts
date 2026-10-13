@@ -39,6 +39,8 @@ import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testk
 import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
 import { EffectOutboxV2 } from "../EffectOutbox.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
+import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
+import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
@@ -403,6 +405,13 @@ it.live.each(
         control: "workspace",
         title:
           "forks saved history when the captured workspace branch changes during slow planning",
+      },
+      {
+        mode: "workspace-new-worktree",
+        streaming: "turn",
+        clean: false,
+        control: "workspace",
+        title: "releases a discarded new-worktree attempt's snapshot before forking saved history",
       },
       {
         mode: "workspace-resource",
@@ -1098,7 +1107,8 @@ it.live.each(
             originThreadId: threadId,
             newThreadId: forkId,
             sourceRunningTurnId: TurnId.make(source.runs[0]!.id),
-            workspaceMode: "local" as const,
+            workspaceMode:
+              mode === "workspace-new-worktree" ? ("new-worktree" as const) : ("local" as const),
           } as const;
           const sql = yield* SqlClient.SqlClient;
           const manager = yield* ProviderSessionManagerV2;
@@ -1116,12 +1126,22 @@ it.live.each(
             assert.isTrue(
               Option.isSome(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
             );
-            assert.equal(
+            // The saved prompt is kept, in the timeline and as a message.
+            assert.isTrue(
               child.visibleTurnItems.some(
-                ({ item }) => item.type === "assistant_message" && item.text.startsWith(prefix),
+                ({ item }) => item.type === "user_message" && item.text === prompt,
               ),
-              prefixSaved,
             );
+            assert.isTrue(child.messages.some((message) => message.text === prompt));
+            const answers = child.visibleTurnItems.flatMap(({ item }) =>
+              item.type === "assistant_message" ? [item.text] : [],
+            );
+            if (prefixSaved) assert.isTrue(answers.some((text) => text.startsWith(prefix)));
+            else {
+              // Nothing the source had not saved: no answer at all, in either form.
+              assert.isEmpty(answers);
+              assert.isFalse(child.messages.some((message) => message.text.includes(prefix)));
+            }
             savedHistoryChild = child;
             return child;
           });
@@ -1668,11 +1688,57 @@ it.live.each(
               }
             }
             yield* Deferred.succeed(releasePlan, undefined);
+            if (mode === "workspace-new-worktree") {
+              // The discarded attempt releases its reservation and ref when it fails,
+              // not when the fork finishes: only the accepted snapshot remains.
+              const pending =
+                (yield* Stream.fromPull(Effect.succeed(forkEvents)).pipe(
+                  Stream.filter((event) => event.event.type === "thread.created"),
+                  Stream.runHead,
+                  Effect.timeout("15 seconds"),
+                ),
+                yield* orchestrator.getThreadProjection(forkId));
+              const accepted = pending.thread.conversationFork?.checkpointRef;
+              assert.equal(pending.thread.conversationFork?.status, "pending");
+              assert.ok(accepted);
+              const snapshots = () =>
+                VcsProcess.VcsProcess.use((vcs) =>
+                  vcs.run({
+                    operation: "NativeForkBufferedText.test",
+                    command: "git",
+                    cwd,
+                    args: [
+                      "for-each-ref",
+                      "--format=%(refname)",
+                      `${checkpointRefForThreadTurn(forkId, 0)}*`,
+                    ],
+                  }),
+                ).pipe(
+                  Effect.map((result) => result.stdout.trim().split("\n").filter(Boolean)),
+                  Effect.provide(VcsProcess.layer.pipe(Layer.provide(NodeServices.layer))),
+                );
+              let released = false;
+              for (let poll = 0; poll < 300 && !released; poll++) {
+                const reservations = yield* sql`SELECT * FROM scient_fork_checkpoint_ownership`;
+                released =
+                  reservations.length === 0 &&
+                  JSON.stringify(yield* snapshots()) === JSON.stringify([accepted]);
+                if (!released) yield* Effect.sleep("50 millis");
+              }
+              assert.isTrue(released, "only the accepted snapshot may remain");
+              yield* Fiber.interrupt(forking);
+              assert.isTrue(
+                Option.isSome(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
+              );
+            }
             if (scenario.control !== "healthy") {
-              const forked = yield* Fiber.join(forking).pipe(Effect.exit);
+              const forked =
+                mode === "workspace-new-worktree"
+                  ? null
+                  : yield* Fiber.join(forking).pipe(Effect.exit);
               if (scenario.control === "resource") {
                 // A missing workspace is a real reason: the saved-history retry refuses too.
-                assert.equal(forked._tag, "Failure");
+                assert.equal(forked?._tag, "Failure");
                 yield* fs.rename(cwd + "-retired", cwd);
                 assert.equal(
                   (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
@@ -1686,8 +1752,12 @@ it.live.each(
               }
               // The source moved on after the capture: the fork keeps the history
               // saved now, which already holds the captured prefix.
-              else yield* expectSavedHistoryFork(forked, true);
-              assert.isEmpty(yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId));
+              else if (forked !== null) yield* expectSavedHistoryFork(forked, true);
+              // A new worktree still has its setup queued.
+              assert.lengthOf(
+                yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId),
+                forked === null ? 1 : 0,
+              );
               if (["close", "eof-final"].includes(scenario.control)) {
                 assert.isTrue(
                   (yield* orchestrator.getThreadProjection(threadId)).messages.some(
@@ -1742,6 +1812,9 @@ it.live.each(
               }).pipe(Effect.provide(layerMemory));
               assert.deepEqual(rebuilt.messages, completed.messages);
               assert.deepEqual(rebuilt.turnItems, completed.turnItems);
+              // The new-worktree child as its queued setup left it.
+              if (forked === null)
+                savedHistoryChild = yield* orchestrator.getThreadProjection(forkId);
               yield* capture("refusedAfterCapture", { completed, stored });
               yield* manager.closeInstance(modelSelection.instanceId);
               return {

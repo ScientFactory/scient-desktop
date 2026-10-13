@@ -384,7 +384,6 @@ const make = Effect.gen(function* () {
           : (snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void),
       { interruptible: true },
     );
-    // Resolves null when a captured running source changed before the save.
     const accept = Effect.fnUntraced(function* (capture: CapturedProviderText | null) {
       const receipt = yield* receipts.getByCommandId(command.commandId);
       if (Option.isSome(receipt)) {
@@ -706,34 +705,41 @@ const make = Effect.gen(function* () {
                     return yield* failure("The captured workspace is unavailable. Retry the fork.");
                   return yield* commit;
                 }).pipe(attachmentArbitration.withPermit);
-          if (capture === null) return (yield* guardedCommit).receipt.resultSequence;
-          return yield* (
-            Option.isSome(snapshots) && snapshots.value.withCapturedForkText !== undefined
+          const committed = yield* capture === null
+            ? guardedCommit
+            : Option.isSome(snapshots) && snapshots.value.withCapturedForkText !== undefined
               ? snapshots.value.withCapturedForkText(capture, guardedCommit)
-              : Effect.fail(new ProviderTextSnapshotError({ reason: "owner-lost" }))
-          ).pipe(
-            Effect.map((result) => result.receipt.resultSequence),
-            Effect.catch((cause) =>
-              Effect.logWarning("Running fork source changed after capture", { cause }).pipe(
-                Effect.as(null),
-              ),
-            ),
-          );
+              : Effect.fail(new ProviderTextSnapshotError({ reason: "owner-lost" }));
+          return committed.receipt.resultSequence;
         }),
       );
     });
     // Consistent lock order prevents forks in opposite directions deadlocking.
-    const locked = (capture: CapturedProviderText | null) =>
-      [...new Set([command.originThreadId, command.newThreadId])]
-        .sort()
-        .reduceRight((effect, id) => executor.withLock(id, effect), accept(capture));
-    // A captured source that moved on (its turn finished, say) forks the saved
-    // history as it is now, rather than refusing. Without a capture there is
-    // nothing to change, so the second attempt always resolves.
-    const sequence = (yield* locked(captured)) ?? (yield* locked(null));
-    if (sequence === null) return yield* failure("The fork could not be saved. Retry the fork.");
-    if (captured !== null && Option.isSome(snapshots))
-      yield* snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void;
+    // Each attempt owns its checkpoint reservation, released when it ends.
+    const attempt = (capture: CapturedProviderText | null) =>
+      Effect.scoped(
+        [...new Set([command.originThreadId, command.newThreadId])]
+          .sort()
+          .reduceRight((effect, id) => executor.withLock(id, effect), accept(capture)),
+      );
+    const releaseCapture =
+      captured === null || Option.isNone(snapshots)
+        ? Effect.void
+        : (snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void);
+    // An attempt built on the capture can fail because the source moved on after
+    // it (its turn finished, its worktree changed). Release the capture and fork
+    // the saved history as it is now, rather than refusing.
+    const sequence =
+      captured === null
+        ? yield* attempt(null)
+        : yield* attempt(captured).pipe(
+            Effect.ensuring(releaseCapture),
+            Effect.catch((cause) =>
+              Effect.logWarning("Running fork forks saved history after its source moved on", {
+                cause,
+              }).pipe(Effect.andThen(attempt(null))),
+            ),
+          );
     const forkAttachmentIdMap = yield* awaitReady(command.newThreadId).pipe(
       Effect.mapError((cause) =>
         isDispatchError(cause)
