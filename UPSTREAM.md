@@ -103,6 +103,14 @@ The Scient-owned `useScientDownloadProgress` hook smooths only the displayed
 percentage and ring, bounded by confirmed progress. It must not drive updater
 actions, completion, or shared state; reduced motion uses direct readings.
 
+Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
+and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
+`SCIENT-FORK` mounts in upstream hosts. Local checkpoint preparation observes the
+committed Stop directly and releases its scope before declined-start finalization;
+native offering and adopted provider work retain their receipt-aware control.
+Preserve upstream's effect ordering and transaction/cancellation machinery.
+The maintained boundaries are in [the separation map](docs/internals/scient-fork-divergence.md#extracted-owners-and-host-mounts).
+
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
 policy, identity, scientific behavior, release decisions, and every deliberate
