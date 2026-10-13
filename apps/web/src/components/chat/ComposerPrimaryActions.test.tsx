@@ -46,7 +46,11 @@ function renderPendingActions(isRunning: boolean) {
   );
 }
 
-function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent: boolean) {
+function renderRunningActions(
+  showSendWhileRunning: boolean,
+  hasSendableContent: boolean,
+  isStopping = false,
+) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
@@ -54,6 +58,7 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
       pendingAction: null,
       isRunning: true,
       canInterrupt: true,
+      isStopping,
       showPlanFollowUpPrompt: false,
       promptHasText: hasSendableContent,
       isSendBusy: false,
@@ -100,6 +105,14 @@ afterEach(() => {
 });
 
 describe("ComposerPrimaryActions", () => {
+  it("acknowledges Stop visibly while keeping its retry button available", () => {
+    const markup = renderRunningActions(false, false, true);
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("Stopping…");
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).not.toContain("disabled");
+    expect(renderRunningActions(false, false)).not.toContain("Stopping…");
+  });
   it("disables and labels the send button while feedback is uploading", () => {
     const markup = renderSendButton("Sending feedback");
 
