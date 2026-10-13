@@ -1,7 +1,9 @@
 # Overleaf manuscript engine
 
 This is an unmounted server foundation, not an available product feature. No
-routes, UI, automatic synchronization or network publication coordinator uses it.
+routes, UI, automatic synchronization or network publication coordinator uses
+it; the coordinator is being built in steps per its
+[contract](./scient-overleaf-coordinator-contract.md).
 The planned workflow is manual, folder-first synchronization through a private
 bare Git repository. The workspace's repository and checkpoint index do not
 participate in its merge protocol.
@@ -87,15 +89,60 @@ planner represent alias moves consistently.
 Marker detection is conservative and runs only on the recorded conflict paths;
 ordinary Markdown underline headings are not publication failures.
 
+## Connection state
+
+`OverleafStateStore` keeps each manual connection's durable state under
+`stateDir/overleaf`, outside every workspace. A connection document changes
+only by compare-and-set on its revision, through a synced temporary file, a
+rename and a directory sync, so a crash or a full disk leaves the previous or
+the next complete document, never a partial one. Orphaned temporaries are
+removed when a process takes the lease. An unreadable or newer-schema document
+is reported as such, never treated as missing or reset; it can only be moved
+to `quarantine/` with its bytes intact.
+
+`OverleafConnectionState` defines what a replacement must keep, and the store
+refuses violations: the base never moves backwards or changes without a new
+generation; publication attempts take fresh numbers and are recorded unknown
+before any send; an unknown or superseded attempt is kept unchanged until
+positive evidence resolves it; a resolved attempt is never reopened; a pending
+apply intent cannot be swapped for another; and a retained copy is dropped
+only once it is releasable, seven days old and followed by a completed sync.
+`not-sent` is a definite outcome for a push Scient refused to start;
+`superseded-unresolved` marks an unknown attempt overtaken by a later reviewed
+base, which is not evidence of rejection.
+
+Request receipts are created once per request ID. A repeat with the same
+payload returns the original receipt instead of running again; reuse with a
+different payload, or a second different terminal status, is refused.
+
+Writes require a process lease: an exclusive lock on `lease.sqlite`, held by
+a dedicated SQLite connection for the store's lifetime and released by the
+kernel if the process dies. Another server sharing the directory gets
+`OverleafStateLockedError` instead of waiting or stealing. The lease is taken
+at the first write rather than at startup, so a server that started while an
+older one was still exiting gains write access once the older one is gone.
+Reads need no lease.
+
+The applier's application directory (displaced copies and journals) is
+`stateDir/overleaf/retained/<connection>`: private, owned by the server user,
+not a symlink, outside the checkout so checkout cleanup cannot erase it, and on
+the checkout's volume. A checkout on another volume is refused rather than
+given storage beside it.
+
 ## Remaining integration gates
 
+The [coordinator contract](./scient-overleaf-coordinator-contract.md) defines
+the remaining work and tracks each step's status; the
+[sync plan](./scient-overleaf-sync-plan.md) is the feature's planning owner.
 Before exposing operations, implement connection ownership/binding checks,
 prepare/apply/publish recovery, bounded inventory and repository retention,
 checkout suspension for checkpoint restores and worktree/VCS operations, and
 the editor-flush bridge. The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
-in the development app. Real Overleaf Cloud protocol behavior and packaged,
-signed macOS helper behavior are separate gates. A local bare Git remote does
-not establish the Cloud bridge's commit/history or publication-acknowledgement
-semantics. Server Pro, Windows and Linux remain unverified product environments.
+in the development app. The exercised Cloud protocol behavior is recorded in
+[the Cloud qualification](../reports/overleaf-cloud-qualification-20261009.md);
+packaged, signed macOS helper behavior is a separate gate. A local bare Git
+remote does not establish the Cloud bridge's commit/history or
+publication-acknowledgement semantics. Server Pro, Windows and Linux remain
+unverified product environments.
