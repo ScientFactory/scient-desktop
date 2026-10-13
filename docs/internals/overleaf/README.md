@@ -26,17 +26,26 @@ usable in the app.
 | PR C: client, settings, review sheet, Sync button                                             | Not started.                                                                                                                                                                                                        |
 | [#121](https://github.com/ScientFactory/scient-desktop/pull/121), the original implementation | Open draft, conflicting. Superseded by this approach because of demonstrated correctness defects (see [plan section 7](implementation-plan.md#7-pr-121s-confirmed-defects)). Its UI is a useful reference for PR C. |
 
+## Decided
+
+- **Projects on another disk are supported in v1** (owner, October 13, 2026).
+  When a project is on a different physical disk from Scient's data, such as an
+  external SSD or USB drive, Scient keeps its retained file copies in a private
+  Scient folder beside the project on that same disk. It refuses, with a clear
+  message, only when no such folder can be created there. This replaces the
+  earlier recommendation to refuse all such projects. Details are in
+  [contract section 8](pr-b-coordinator-contract.md#8-retention-disk-failures-and-inventory-budgets).
+
 ## Open decisions
 
 These must be answered before the step that needs them. Record the answer here
 and in the contract.
 
-| #   | Question                                                                                   | Recommendation                                                                                                                                                                  | Needed for |
-| --- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| 1   | Where retained file copies go when the project is on a different volume from Scient's data | **Refuse in v1**, with a clear message. The contract's section 8 currently describes a fallback vault next to the checkout; adopting this recommendation removes that fallback. | Step 1     |
-| 2   | How to record a push Scient refused before sending it (for example, the checkout changed)  | Record it as `not-sent`, not `unknown`. A crash before that record is written still leaves it unknown.                                                                          | Step 4     |
-| 3   | What a checkpoint restore does when an Overleaf apply was left unfinished                  | Finish the local recovery inside the restore, under the restore's checkout lock; refuse only if that fails.                                                                     | Step 3     |
-| 4   | How to deliver PR B                                                                        | Stacked PRs. Step 1 is its own internal-only PR from main, not yet wired into the server, like #486.                                                                            | Delivery   |
+| #   | Question                                                                                  | Recommendation                                                                                              | Needed for |
+| --- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------- |
+| 2   | How to record a push Scient refused before sending it (for example, the checkout changed) | Record it as `not-sent`, not `unknown`. A crash before that record is written still leaves it unknown.      | Step 4     |
+| 3   | What a checkpoint restore does when an Overleaf apply was left unfinished                 | Finish the local recovery inside the restore, under the restore's checkout lock; refuse only if that fails. | Step 3     |
+| 4   | How to deliver PR B                                                                       | Stacked PRs. Step 1 is its own internal-only PR from main, not yet wired into the server, like #486.        | Delivery   |
 
 The contract also proposes new defaults that need the owner's approval: a
 15-minute review lifetime, a SQLite process lease for the Overleaf state folder,
