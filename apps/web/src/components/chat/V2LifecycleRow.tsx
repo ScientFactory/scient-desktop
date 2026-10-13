@@ -45,7 +45,9 @@ import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon"
 import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { Button, InlineButton } from "../ui/button";
-import { ScientTraceSymbolMono } from "./ScientTraceSymbol";
+// SCIENT-FORK:START — Scient's mark on lifecycle rows.
+import { ScientTraceSymbolMono } from "~/scient/presentation/ScientTraceSymbol";
+// SCIENT-FORK:END
 
 const LIFECYCLE_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "run_interrupt_request",

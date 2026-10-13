@@ -1,4 +1,3 @@
-import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 // SCIENT-FORK:START — send motion, and the send follow ChatView owns (chat/responseFollow.ts).
 import { returnToLiveFollow } from "./liveFollowOffset";
@@ -29,11 +28,12 @@ import {
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
+// SCIENT-FORK:START — T3's computer-use drawing is not in Scient (scient/presentation/traceIconSet.ts).
+// SCIENT-FORK:END
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
-import { TracePathLabel } from "./TracePathLabel";
-import { TracePathTooltipEnabled } from "./TracePathLabel.context";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
@@ -54,7 +54,6 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
-  type OrchestrationV2ContextTransfer,
   type RunAttemptId,
   type ScopedThreadRef,
   type ServerProvider,
@@ -62,13 +61,14 @@ import {
   type RunId,
   ThreadId,
   type ToolActivityIcon,
-  type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
+// SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+// SCIENT-FORK:END
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
@@ -83,19 +83,22 @@ import {
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+// SCIENT-FORK:START — agent-spawn rows read the agent panel model.
 import {
   emptyAgentPanelModel,
   type AgentPanelModel,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+// SCIENT-FORK:END
 import {
   subagentGroupSummary,
   summarizeSubagentStatuses,
 } from "@t3tools/client-runtime/state/subagent-display";
 import { observeResize } from "~/lib/observeResize";
 
+// SCIENT-FORK:START
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
-
+// SCIENT-FORK:END
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 
@@ -152,42 +155,39 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
-import { ScientTraceSymbol, ScientTraceSymbolMono } from "./ScientTraceSymbol";
+// SCIENT-FORK:START — reasoning trace styling.
 import "../../scient/presentation/scient-reasoning-trace.css";
+// SCIENT-FORK:END
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
-
+// SCIENT-FORK:START — Scient's mark replaces T3's wordmark (scient/presentation/traceIconSet.ts).
+// SCIENT-FORK:END
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
-  BookOpenIcon,
   BotIcon,
+  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ChevronUpIcon,
   CircleAlertIcon,
-  CircleXIcon,
-  CloudIcon,
   DownloadIcon,
   EyeIcon,
-  FolderOpenIcon,
   GitForkIcon,
   GlobeIcon,
-  ImageIcon,
-  LayersIcon,
   type LucideIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
   Redo2Icon,
-  PencilIcon,
-  ScanTextIcon,
+  // SCIENT-FORK:START — compaction shows ScanTextIcon (imported with the Scient trace icons).
+  // SCIENT-FORK:END
   SearchIcon,
-  ShieldCheckIcon,
   SmartphoneIcon,
-  SquareMousePointerIcon,
+  SquarePenIcon,
+  TerminalIcon,
   Undo2Icon,
   HammerIcon,
   WrenchIcon,
@@ -195,11 +195,6 @@ import {
   ZapIcon,
   RotateCcwIcon,
 } from "lucide-react";
-import {
-  SquareTerminalLowered,
-  TRACE_ICON_STROKE,
-  traceIconOverride,
-} from "../../scient/presentation/traceIcons";
 import { ChevronDown, ChevronRight } from "lucide";
 import type {
   ComposerContextId,
@@ -217,6 +212,8 @@ import {
   buildExpandedImagePreview,
   ExpandedImagePreview,
 } from "./ExpandedImagePreview";
+// SCIENT-FORK:START — message images show in Scient's gallery (scient/images/ScientChatImageGallery.tsx).
+// SCIENT-FORK:END
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
@@ -270,7 +267,9 @@ import {
   threadReadTargetTitle,
   toolGroupAction,
   workEntryDisplayLabel,
+  // SCIENT-FORK:START
   workEntryPathPresentation,
+  // SCIENT-FORK:END
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   worktreeSetupAgentStarted,
@@ -288,8 +287,10 @@ import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
+// SCIENT-FORK:START — Scient fork V2: message fork buttons and the landing fork's list.
 import { ScientForkMessageButton } from "./scient-fork/ScientForkMessageButton";
 import { settledListThreadKey } from "../scient-fork/forkLanding";
+// SCIENT-FORK:END
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import {
   ContextChipPopover as UserMessageContextPopover,
@@ -333,7 +334,8 @@ import {
   formatUpcomingTimestamp,
 } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
-
+// SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+// SCIENT-FORK:END
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import {
   isV2LifecycleItem,
@@ -346,7 +348,15 @@ import {
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 // SCIENT-FORK:START — fork-only renderers and helpers.
+import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
+import type { OrchestrationV2ContextTransfer } from "@t3tools/contracts";
+import { CircleXIcon, ScanTextIcon } from "lucide-react";
+import { ForkMarkerSeparator } from "~/scient/fork/ForkMarkerSeparator";
 import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
+import { TracePathLabel } from "~/scient/presentation/TracePathLabel";
+import { TracePathTooltipEnabled } from "~/scient/presentation/TracePathLabel.context";
+import { TRACE_ICON_STROKE, traceIconOverride } from "~/scient/presentation/traceIcons";
+import { scientTraceIcon, type ScientTraceIconName } from "~/scient/presentation/traceIconSet";
 // Website tool icons never fetch a web favicon.
 import { remoteImageAddress } from "~/scient/presentation/remoteImageAddress";
 import {
@@ -432,7 +442,6 @@ interface TimelineRowSharedState {
   expandedSpawnEntryIds: ReadonlySet<string>;
   onOpenAgents: () => void;
   // SCIENT-FORK:END
-
   workGroupViewState: WorkGroupViewState;
 }
 
@@ -513,8 +522,10 @@ interface MessagesTimelineProps {
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
   ) => boolean;
+  // SCIENT-FORK:START — agent-spawn rows read the agent panel model.
   agentPanelModel?: AgentPanelModel;
   onOpenAgents?: () => void;
+  // SCIENT-FORK:END
   isWorking: boolean;
   /** The live work belongs to a runless root turn (a provider-native subagent). */
   runlessWorkActive?: boolean;
@@ -536,7 +547,9 @@ interface MessagesTimelineProps {
 
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  // SCIENT-FORK:START — hides the fork-initialization handoff event.
   contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
+  // SCIENT-FORK:END
   latestRun: TimelineLatestRun | null;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
@@ -558,10 +571,10 @@ interface MessagesTimelineProps {
   }) => void;
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
+  // SCIENT-FORK:START — Scient fork V2: separators and fork buttons.
   hasForkBaseline?: boolean;
   forkBaselineAssistantMessageId?: MessageId | null;
   forkOriginThreadId?: ThreadId | undefined;
-  // SCIENT-FORK:START
   onForkAssistantMessage?: (messageId: MessageId) => void;
   onForkUserMessage?: (message: ChatMessage) => void;
   // SCIENT-FORK:END
@@ -649,8 +662,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
+  // SCIENT-FORK:START
   agentPanelModel,
   onOpenAgents = NOOP_OPEN_AGENTS,
+  // SCIENT-FORK:END
   isWorking,
   runlessWorkActive = false,
   activeTurnInProgress,
@@ -667,7 +682,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   awaitingUser = false,
   listRef,
   timelineEntries,
+  // SCIENT-FORK:START
   contextTransfers,
+  // SCIENT-FORK:END
   findExpanded = false,
   findQuery = "",
   activeFindMatch = null,
@@ -685,10 +702,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onRollbackCheckpoint,
   supportsConversationRollback,
   onRevertToTurnCount,
+  // SCIENT-FORK:START
   hasForkBaseline,
   forkBaselineAssistantMessageId,
   forkOriginThreadId,
-  // SCIENT-FORK:START
   onForkAssistantMessage,
   onForkUserMessage,
   // SCIENT-FORK:END
@@ -809,6 +826,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const expandCitedRun = useCallback((runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   }, []);
+  // SCIENT-FORK:START — agent-spawn rows expand in place (scient/presentation/AgentSpawnRow.tsx).
   const onToggleSpawnRow = useCallback((entryId: string, expanded: boolean, runId?: RunId) => {
     setExpandedSpawnEntryIds((current) => {
       if (current.has(entryId) === expanded) return current;
@@ -822,6 +840,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
     }
   }, []);
+  // SCIENT-FORK:END
   // Nested tool state shares the bounded thread-position cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
     () =>
@@ -1049,7 +1068,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const projection = deriveMessagesTimelineRowsWithState(
       {
         timelineEntries,
+        // SCIENT-FORK:START
         contextTransfers,
+        // SCIENT-FORK:END
         latestRun,
         runningRunId,
         expandedRunIds: visibleExpandedRunIds,
@@ -1060,10 +1081,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
         activeTurnStartedAt,
         turnDiffSummaries,
         supportsConversationRollback,
+        // SCIENT-FORK:START — fork separators and subagent workflow groups.
         hasForkBaseline,
         forkBaselineAssistantMessageId,
         subagentWorkflowIds,
-
+        // SCIENT-FORK:END
         worktreeSetup,
       },
       previous?.threadKey === listIdentityKey && previous.workspaceRoot === workspaceRoot
@@ -1074,12 +1096,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return projection.rows;
   }, [
     rowsProjectionRef,
-    hasForkBaseline,
-    forkBaselineAssistantMessageId,
     listIdentityKey,
     workspaceRoot,
     timelineEntries,
-    contextTransfers,
     latestRun,
     runningRunId,
     visibleExpandedRunIds,
@@ -1090,7 +1109,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     activeTurnStartedAt,
     turnDiffSummaries,
     supportsConversationRollback,
+    // SCIENT-FORK:START
+    hasForkBaseline,
+    forkBaselineAssistantMessageId,
+    contextTransfers,
     subagentWorkflowIds,
+    // SCIENT-FORK:END
     worktreeSetup,
   ]);
   // SCIENT-FORK:START — a finished turn's working header closes its space (chat/workingRowExit.ts).
@@ -2509,25 +2533,21 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         // they sit closer to the work that follows them.
         isWorkLogRow || isSubagentGroup
           ? undefined
-          : isExpandedToolGroup
-            ? "pb-1"
-            : isExpandedToolGroupHeader
-              ? "pb-0"
-              : row.kind === "turn-fold" || row.kind === "working"
-                ? "pb-1.5"
-                : (row.kind === "message" &&
-                      row.message.role === "assistant" &&
-                      // SCIENT-FORK:START — a kept answer is spaced like the final answer.
-                      !row.showAssistantMeta &&
-                      row.keptAnswer !== true) ||
-                    // SCIENT-FORK:END
-                    row.kind === "worktree-setup" ||
-                    row.kind === "event" ||
-                    row.kind === "attempt-fold" ||
-                    row.kind === "html-render" ||
-                    row.kind === "mcp-app"
-                  ? "pb-2"
-                  : "pb-4",
+          : row.kind === "turn-fold" || row.kind === "working"
+            ? "pb-1.5"
+            : (row.kind === "message" &&
+                  row.message.role === "assistant" &&
+                  // SCIENT-FORK:START — a kept answer is spaced like the final answer.
+                  !row.showAssistantMeta &&
+                  row.keptAnswer !== true) ||
+                // SCIENT-FORK:END
+                row.kind === "worktree-setup" ||
+                row.kind === "event" ||
+                row.kind === "attempt-fold" ||
+                row.kind === "html-render" ||
+                row.kind === "mcp-app"
+              ? "pb-2"
+              : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"
@@ -2565,7 +2585,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         </WorkLogBlock>
       ) : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {/* SCIENT-FORK:START — "Conversation forked here" (scient/fork/ForkMarkerSeparator.tsx). */}
       {row.kind === "fork-marker" ? <ForkMarkerTimelineRow row={row} /> : null}
+      {/* SCIENT-FORK:END */}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
@@ -2583,39 +2605,21 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   );
 });
 
+// SCIENT-FORK:START — an earlier fork point links to the conversation it came from.
 function ForkMarkerTimelineRow({
   row,
 }: {
   row: Extract<MessagesTimelineRow, { kind: "fork-marker" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  // SCIENT-FORK: an earlier fork point links to the conversation it came from.
-  const originThreadId = row.originThreadId ?? ctx.forkOriginThreadId;
   return (
-    <div className="flex items-center gap-3 px-1 py-3 text-xs text-muted-foreground">
-      <div className="h-px flex-1 bg-border/60" />
-      <span className="shrink-0 rounded-full border border-border/70 bg-muted/35 px-2.5 py-1">
-        {originThreadId ? (
-          <Link
-            to="/$environmentId/$threadId"
-            params={{
-              environmentId: ctx.activeThreadEnvironmentId,
-              threadId: originThreadId,
-            }}
-            className="hover:text-foreground hover:underline"
-            aria-label="Open original conversation"
-          >
-            Conversation forked here
-          </Link>
-        ) : (
-          "Conversation forked here"
-        )}
-      </span>
-      <div className="h-px flex-1 bg-border/60" />
-    </div>
+    <ForkMarkerSeparator
+      environmentId={ctx.activeThreadEnvironmentId}
+      originThreadId={row.originThreadId ?? ctx.forkOriginThreadId}
+    />
   );
 }
-
+// SCIENT-FORK:END
 function WorktreeSetupTimelineRow({
   row,
 }: {
@@ -2933,7 +2937,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           className="me-1 text-2xs text-muted-foreground/70"
           data-user-message-attribution="t3code"
         >
+          {/* SCIENT-FORK:START — Scient product label. */}
           Sent by Scient
+          {/* SCIENT-FORK:END */}
         </p>
       ) : userMessage.attribution === "agent" ? (
         <p className="me-1 text-2xs text-muted-foreground/70" data-user-message-attribution="agent">
@@ -2955,6 +2961,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         <MessageAuthorHeading>You</MessageAuthorHeading>
+        {/* SCIENT-FORK:START — images show in Scient's gallery (scient/images/ScientChatImageGallery.tsx);
+            videos keep their own grid. */}
         <ScientChatImageGallery
           className="mb-2 max-w-[420px]"
           images={regularImages}
@@ -2970,6 +2978,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         )}
+        {/* SCIENT-FORK:END */}
         {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
           <div className="mb-2 flex flex-col gap-1">
             {unchippedFiles.map((file) => {
@@ -3058,12 +3067,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
+            {/* SCIENT-FORK:START — Scient fork V2 from a prompt. */}
             {row.canForkConversation === true && ctx.onForkUserMessage ? (
               <ScientForkMessageButton
                 label="Fork conversation from this message"
                 onFork={() => ctx.onForkUserMessage?.(row.message)}
               />
             ) : null}
+            {/* SCIENT-FORK:END */}
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
             )}
@@ -3290,15 +3301,19 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  // SCIENT-FORK:START — an answer that is only images is not empty.
   const assistantImages = (row.message.attachments ?? []).filter(isImageAttachment);
   const messageText =
     row.message.text ||
     (row.message.streaming || assistantImages.length > 0 ? "" : "(empty response)");
+  // SCIENT-FORK:END
 
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
+        {/* SCIENT-FORK:START — Scient product label. */}
         <MessageAuthorHeading>Scient</MessageAuthorHeading>
+        {/* SCIENT-FORK:END */}
         <div data-thread-find-text="true">
           <AssistantCitationSource
             messageId={row.message.id}
@@ -3307,6 +3322,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
+            {/* SCIENT-FORK:START — the answer's file links, content direction and images
+                (scient/images/ScientChatImageGallery.tsx). */}
             <>
               <ChatMarkdown
                 text={messageText}
@@ -3334,6 +3351,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               {/* SCIENT-FORK: the end of the answer's readable content (withReadingEnd). */}
               <span data-reading-end="true" aria-hidden="true" className="block h-0" />
             </>
+            {/* SCIENT-FORK:END */}
           </AssistantCitationSource>
         </div>
         <AssistantChangedFilesSection
@@ -3351,13 +3369,18 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             message={row.message}
             showCopyButton={row.showAssistantCopyButton}
             copyStreaming={row.assistantCopyStreaming}
+            // SCIENT-FORK:START — Scient fork V2 from the final answer.
             canForkConversation={row.canForkConversation}
+            // SCIENT-FORK:END
           />
         ) : null}
       </div>
     </>
   );
 }
+
+// SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
+// SCIENT-FORK:END
 
 function AssistantMetaTimelineRow({
   row,
@@ -3372,7 +3395,9 @@ function AssistantMetaTimelineRow({
         message={row.message}
         showCopyButton={row.showAssistantCopyButton}
         copyStreaming={row.assistantCopyStreaming}
+        // SCIENT-FORK:START
         canForkConversation={row.canForkConversation}
+        // SCIENT-FORK:END
         alwaysVisible
       />
     </div>
@@ -3385,7 +3410,9 @@ function AssistantMessageMeta({
   message,
   showCopyButton,
   copyStreaming,
+  // SCIENT-FORK:START
   canForkConversation,
+  // SCIENT-FORK:END
   alwaysVisible = false,
 }: {
   className?: string;
@@ -3393,7 +3420,9 @@ function AssistantMessageMeta({
   message: ChatMessage;
   showCopyButton: boolean;
   copyStreaming: boolean;
+  // SCIENT-FORK:START
   canForkConversation?: boolean | undefined;
+  // SCIENT-FORK:END
   alwaysVisible?: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
@@ -3418,9 +3447,11 @@ function AssistantMessageMeta({
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
       />
+      {/* SCIENT-FORK:START — Scient fork V2 replaces upstream's "Fork from this response". */}
       {canForkConversation === true && ctx.onForkAssistantMessage ? (
         <ScientForkMessageButton onFork={() => ctx.onForkAssistantMessage?.(message.id)} />
       ) : null}
+      {/* SCIENT-FORK:END */}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -3619,11 +3650,13 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility, sourceThreadId } = row.projectedItem;
+  // SCIENT-FORK:START — a workflow the agent panel knows renders as its group, even alone.
   if (
     item.type === "subagent" &&
     ((row.subagents?.length ?? 1) > 1 ||
       ctx.agentPanelModel.workflows.some((group) => group.workflow.id === item.subagentId))
   ) {
+    // SCIENT-FORK:END
     return <V2SubagentGroup key={row.id} row={row} />;
   }
   if (item.type === "secret_request") {
@@ -3978,34 +4011,6 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
   );
 });
 
-// ---------------------------------------------------------------------------
-// Self-ticking labels — update their own text nodes so elapsed-time display
-// does not create a React commit every second while a response is streaming.
-// ---------------------------------------------------------------------------
-
-/** Live elapsed time for the "Working for" label. */
-function WorkingTimer({ createdAt }: { createdAt: string }) {
-  const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = formatWorkingTimerNow(createdAt);
-
-  useEffect(() => {
-    const updateText = () => {
-      if (textRef.current) {
-        textRef.current.textContent = formatWorkingTimerNow(createdAt);
-      }
-    };
-    updateText();
-    const id = setInterval(updateText, 1000);
-    return () => clearInterval(id);
-  }, [createdAt]);
-
-  return (
-    <span ref={textRef} className="tabular-nums">
-      {initialText}
-    </span>
-  );
-}
-
 /** A step this young shows no timer: only one that runs long needs to prove it is alive. */
 const LIVE_STEP_TIMER_AFTER_MS = 10_000;
 
@@ -4119,6 +4124,28 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
 
 function formatWorkingTimerNow(startIso: string): string {
   return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
+}
+
+function WorkingTimer({ createdAt }: { createdAt: string }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = formatWorkingTimerNow(createdAt);
+
+  useEffect(() => {
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = formatWorkingTimerNow(createdAt);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
+    return () => clearInterval(id);
+  }, [createdAt]);
+
+  return (
+    <span ref={textRef} className="tabular-nums">
+      {initialText}
+    </span>
+  );
 }
 
 // Matches the grouped WorkLog row's min-h-6.
@@ -4406,7 +4433,9 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
 function CompactingLabel() {
   return (
     <span className="inline-flex items-center gap-1.5">
+      {/* SCIENT-FORK:START — Scient's compaction icon and trace line weight. */}
       <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
+      {/* SCIENT-FORK:END */}
       Compacting…
     </span>
   );
@@ -4532,7 +4561,9 @@ function LiveActivityContent({
             <ToolActivityIconView
               icon={toolIcon}
               fallbackName={iconName}
+              // SCIENT-FORK:START — trace icon line weight.
               className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
+              // SCIENT-FORK:END
               muted={!highlighted}
             />
           </span>
@@ -4551,11 +4582,13 @@ function LiveActivityContent({
       }
       trailing={
         showTrailingFailureMark ? (
+          // SCIENT-FORK:START — failures show a circled X at trace line weight.
           <CircleXIcon
             aria-hidden
             className={cn("size-3 shrink-0", TRACE_ICON_STROKE, failedToolIconClassName)}
           />
         ) : null
+        // SCIENT-FORK:END
       }
     />
   );
@@ -4616,9 +4649,11 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     ? getQuestionTextPreview(row.entry.questionAnswer)
     : "";
   const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  // SCIENT-FORK:START — the path shows compactly, with its full path on hover.
   const pathLabel = (
     <TracePathLabel text={label} path={workEntryPathPresentation(row.entry, ctx.workspaceRoot)} />
   );
+  // SCIENT-FORK:END
   const threadLabel = threadReadLabel(label, threadTarget);
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
@@ -4696,7 +4731,9 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
               linked={false}
             />
           ) : (
+            // SCIENT-FORK:START
             pathLabel
+            // SCIENT-FORK:END
           )
         }
         iconName={workEntryIconName(row.entry)}
@@ -4729,7 +4766,9 @@ function toolGroupSummaryIconName(
     case "command":
       return "terminal";
     case "thread-create":
+      // SCIENT-FORK:START — Scient's mark for a created thread.
       return "scient";
+    // SCIENT-FORK:END
     case "browser":
       return "browser";
     case "device":
@@ -4741,7 +4780,9 @@ function toolGroupSummaryIconName(
     case "other":
       return "wrench";
     case "dynamic-tool":
+      // SCIENT-FORK:START
       return "wrench";
+    // SCIENT-FORK:END
     case "reasoning":
       return "brain";
     case "agent-tool":
@@ -4763,12 +4804,14 @@ function WorkGroupToggleTimelineRow({
   return (
     <WorkGroupHeader
       label={row.summary}
+      // SCIENT-FORK:START — a group sharing a Scient trace icon shows it.
       iconName={
         row.summaryTraceIcon ??
         row.summaryToolIcon ??
         row.toolSurface ??
         toolGroupSummaryIconName(row.summaryKind)
       }
+      // SCIENT-FORK:END
       toolIcon={row.toolIcon}
       failed={row.hasFailure}
       expanded={row.expanded}
@@ -4800,7 +4843,9 @@ function WorkGroupHeader(props: {
         <ToolActivityIconView
           icon={props.toolIcon}
           fallbackName={props.iconName}
+          // SCIENT-FORK:START — trace icon line weight (scient/presentation/traceIcons.ts).
           className={cn("size-4 shrink-0 text-icon-muted", TRACE_ICON_STROKE)}
+          // SCIENT-FORK:END
           muted
         />
       }
@@ -5012,7 +5057,9 @@ function UserMessagePreviewAnnotationDetails(props: {
             src={props.image.previewUrl}
             alt="Annotated preview crop"
             className="max-h-64 w-full object-contain"
+            // SCIENT-FORK:START — the crop loads CORS-clean so it can be copied.
             crossOrigin="anonymous"
+            // SCIENT-FORK:END
           />
         </button>
       ) : (
@@ -5607,6 +5654,9 @@ function useStableRows(rows: MessagesTimelineRow[], identity: string): MessagesT
 // ---------------------------------------------------------------------------
 
 type WorkEntryIconName =
+  // SCIENT-FORK:START — names only Scient draws (scient/presentation/traceIconSet.ts).
+  | ScientTraceIconName
+  // SCIENT-FORK:END
   | "bot"
   | "brain"
   | "browser"
@@ -5615,23 +5665,37 @@ type WorkEntryIconName =
   | "computer"
   | "device"
   | "eye"
-  | "folder"
   | "globe"
   | "hammer"
-  | "image"
   | "message-circle"
   | "search"
-  | "shield"
-  | "skill"
   | "square-pen"
   | "terminal"
   | "pull-request"
-  | "scient-mono"
-  | "scient"
   | "t3-code"
   | "wrench"
   | "x"
   | "zap";
+
+function BrowserAppIcon({ className }: { className: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M8.5 19H7.2C4.4 19 3 17.5 3 14.6V7.4C3 4.5 4.5 3 7.4 3h8.2C18.5 3 20 4.5 20 7.4v2.4" />
+      <circle cx="7.4" cy="7.2" r="0.75" fill="currentColor" stroke="none" />
+      <path d="M11.2 7.2h4.3" />
+      <path d="m12.4 11.4 7.5 2.6-3.4 1.6-1.5 3.6z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
 
 function ToolActivityIconView(props: {
   icon: ToolActivityIcon | undefined;
@@ -5640,7 +5704,9 @@ function ToolActivityIconView(props: {
   muted: boolean;
 }) {
   const { resolvedTheme } = use(TimelineRowCtx);
+  // SCIENT-FORK:START — muted trace icons sit one step darker in light theme.
   const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-50");
+  // SCIENT-FORK:END
   if (!props.icon) {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
@@ -5704,7 +5770,9 @@ function NativeAppToolActivityIcon(props: {
     return (
       <WorkEntryIcon
         name={props.fallbackName}
+        // SCIENT-FORK:START
         className={cn(props.className, props.muted && "opacity-70 light:brightness-50")}
+        // SCIENT-FORK:END
       />
     );
   }
@@ -5749,7 +5817,9 @@ function ToolActivityImageIcon(props: {
       {displayedSrc === null ? (
         <WorkEntryIcon
           name={props.fallbackName}
+          // SCIENT-FORK:START
           className={cn(props.className, props.muted && "opacity-70 light:brightness-50")}
+          // SCIENT-FORK:END
         />
       ) : null}
       {displayedSrc ? (
@@ -5766,7 +5836,9 @@ function ToolActivityImageIcon(props: {
             aria-hidden
             decoding="async"
             referrerPolicy="no-referrer"
+            // SCIENT-FORK:START
             className={cn("block size-full object-contain", props.muted && "light:brightness-50")}
+            // SCIENT-FORK:END
             onError={() => handleLoadError(displayedSrc)}
           />
         </span>
@@ -5790,40 +5862,32 @@ function ToolActivityImageIcon(props: {
   );
 }
 
-/** Scient's trace icon set: each action name maps to its Lucide drawing. */
 function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className: string }) {
+  // SCIENT-FORK:START — Scient's trace icon set draws its names first (scient/presentation/traceIconSet.ts).
+  const scientIcon = scientTraceIcon(name, className);
+  if (scientIcon) return scientIcon;
+  // SCIENT-FORK:END
   switch (name) {
     case "pull-request":
       return <PullRequestGlyph.pullRequest className={className} aria-hidden />;
     case "bot":
       return <BotIcon className={className} aria-hidden />;
     case "brain":
-      return <CloudIcon className={className} aria-hidden />;
+      return <BrainIcon className={className} aria-hidden />;
     case "browser":
-      return <SquareMousePointerIcon className={className} aria-hidden />;
-    case "computer":
-      return <MousePointerClickIcon className={className} aria-hidden />;
+      return <BrowserAppIcon className={className} />;
+    // SCIENT-FORK:START — T3's computer-use drawing is not in Scient; the set above draws it.
+    // SCIENT-FORK:END
     case "device":
       return <SmartphoneIcon className={className} aria-hidden />;
-    case "t3-code":
-    case "scient":
-      return <ScientTraceSymbol className={className} />;
-    case "scient-mono":
-      return <ScientTraceSymbolMono className={className} />;
+    // SCIENT-FORK:START — T3's wordmark is not in Scient; the set above draws Scient's mark.
+    // SCIENT-FORK:END
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":
       return <CircleAlertIcon className={className} aria-hidden />;
     case "eye":
-      return <BookOpenIcon className={className} aria-hidden />;
-    case "folder":
-      return <FolderOpenIcon className={className} aria-hidden />;
-    case "image":
-      return <ImageIcon className={className} aria-hidden />;
-    case "shield":
-      return <ShieldCheckIcon className={className} aria-hidden />;
-    case "skill":
-      return <LayersIcon className={className} aria-hidden />;
+      return <EyeIcon className={className} aria-hidden />;
     case "globe":
       return <GlobeIcon className={className} aria-hidden />;
     case "hammer":
@@ -5833,13 +5897,13 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "message-circle":
       return <MessageCircleIcon className={className} aria-hidden />;
     case "square-pen":
-      return <PencilIcon className={className} aria-hidden />;
+      return <SquarePenIcon className={className} aria-hidden />;
     case "terminal":
-      return <SquareTerminalLowered className={className} aria-hidden />;
+      return <TerminalIcon className={className} aria-hidden />;
     case "wrench":
       return <WrenchIcon className={className} aria-hidden />;
     case "x":
-      return <CircleXIcon className={className} aria-hidden />;
+      return <XIcon className={className} aria-hidden />;
     case "zap":
       return <ZapIcon className={className} aria-hidden />;
   }
@@ -5858,7 +5922,9 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   if (tone === "thinking") {
     return {
       iconName: "brain",
+      // SCIENT-FORK:START — trace text and icons sit one step lighter (scient-trace.css).
       className: "text-trace-icon",
+      // SCIENT-FORK:END
     };
   }
   if (tone === "info") {
@@ -5939,8 +6005,10 @@ function buildToolCallExpandedBody(
   return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
+// SCIENT-FORK:START — expanded tool output keeps a fixed text-2xs (arrived with the #369 sync).
 const toolCallExpandedBodyClassName =
   "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-2xs leading-relaxed select-text";
+// SCIENT-FORK:END
 
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (workEntry.structuredPayload?.type === "notification") {
@@ -5954,11 +6022,15 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
         return "terminal";
       case "monitor":
         return "eye";
+      // SCIENT-FORK:START — Scient's provider-work and truncated-output notifications.
       case "provider_work":
+      // SCIENT-FORK:END
       case "background_task":
         return "zap";
+      // SCIENT-FORK:START
       case "output_truncated":
         return "circle-alert";
+      // SCIENT-FORK:END
       case "system":
         return "t3-code";
       default:
@@ -5966,11 +6038,15 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
         return "zap";
     }
   }
+  // SCIENT-FORK:START — approvals show a shield; questions keep the speech bubble.
   if (workEntry.itemType === "approval_request") return "shield";
   if (workEntry.itemType === "user_input_request") return "message-circle";
+  // SCIENT-FORK:END
   if (workEntry.toolSurface) return workEntry.toolSurface;
+  // SCIENT-FORK:START — an icon from what the action did (scient/presentation/traceIcons.ts).
   const override = traceIconOverride(workEntry);
   if (override) return override;
+  // SCIENT-FORK:END
   const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
   if (toolPresentation) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
@@ -6014,7 +6090,9 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
   return (
+    // SCIENT-FORK:START — reasoning details get Scient's reasoning trace styling.
     <WorkLogDetails kind="reasoning">
+      {/* SCIENT-FORK:END */}
       {entries.map((entry) => (
         <ChatMarkdown
           key={entry.id}
@@ -6213,7 +6291,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       workEntryRawCommand(workEntry) ||
       workEntry.command?.trim() ||
       workEntry.detail?.trim() ||
+      // SCIENT-FORK:START — a row with a web address expands to "Open in browser".
       workEntry.externalUrl ||
+      // SCIENT-FORK:END
       workEntry.changedFiles?.length ||
       viewedImage,
     );
@@ -6248,6 +6328,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               turnItemHasDetail(workEntry.projectedItem.item),
             );
   // Reserve destructive row styling for severe failures, not routine tool errors.
+  // SCIENT-FORK:START — tool icons sit one step lighter (scient-trace.css).
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
     showWarningIndicator
@@ -6260,6 +6341,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             ? "text-trace-icon"
             : iconConfig.className,
   );
+  // SCIENT-FORK:END
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"
     : showDestructiveRowStyle
@@ -6302,12 +6384,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <span
           className={iconWrapperClass}
           role={showFailedIndicator ? "img" : undefined}
+          // SCIENT-FORK:START — activity issues read "Operation failed".
           aria-label={showFailedIndicator ? failureLabel : undefined}
+          // SCIENT-FORK:END
         >
           <ToolActivityIconView
             icon={entryToolIcon}
             fallbackName={entryIconName}
+            // SCIENT-FORK:START — trace icon line weight.
             className={cn("block size-4 shrink-0", TRACE_ICON_STROKE)}
+            // SCIENT-FORK:END
             muted
           />
         </span>
@@ -6337,10 +6423,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   linked
                 />
               ) : (
+                // SCIENT-FORK:START — the path shows compactly, with its full path on hover.
                 <TracePathLabel
                   text={previewText}
                   path={workEntryPathPresentation(workEntry, workspaceRoot)}
                 />
+                // SCIENT-FORK:END
               )}
             </span>
             {answerPreview ? (
@@ -6391,11 +6479,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
+            // SCIENT-FORK:START — failures show a circled X at trace line weight.
             <CircleXIcon
               aria-hidden
               className={cn("size-3 shrink-0", TRACE_ICON_STROKE, failedToolIconClassName)}
             />
           ) : null}
+          {/* SCIENT-FORK:END */}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
           <span
             className={cn(
@@ -6430,6 +6520,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       {expanded && workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
+      {/* SCIENT-FORK:START — a row with a web address opens it in the browser. */}
       {expanded && workEntry.externalUrl ? (
         <div className="mt-1 ms-7 cursor-default" onClick={stopRowToggle}>
           <a
@@ -6443,6 +6534,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           </a>
         </div>
       ) : null}
+      {/* SCIENT-FORK:END */}
       {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
       {expanded &&
       !isReasoning &&
