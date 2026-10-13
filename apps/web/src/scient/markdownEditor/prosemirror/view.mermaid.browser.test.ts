@@ -1,17 +1,17 @@
-// @vitest-environment happy-dom
+import "../../../index.css";
 
 import { EditorView as CodeMirrorEditorView } from "@codemirror/view";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vitest/browser";
 
 import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
 import { createScientNestedCodeEditor } from "../nodes/codeMirrorCodeEditor";
 import { ScientMarkdownEditorView } from "./view";
 
-vi.mock("~/scient/diagrams/mermaidRuntime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/scient/diagrams/mermaidRuntime")>()),
-  renderMermaidDiagram: vi.fn(),
-}));
+// Browser ESM retains the real exports without awaiting an importOriginal
+// factory across mermaidRuntime <-> isolatedMermaid's module cycle.
+vi.mock("~/scient/diagrams/mermaidRuntime", { spy: true });
 vi.mock("../nodes/codeMirrorCodeEditor", { spy: true });
 
 const broken = "flowchart LR\n  Source --> Editor --> Save ---";
@@ -22,7 +22,6 @@ const mounted: ScientMarkdownEditorView[] = [];
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("IntersectionObserver", undefined);
   vi.mocked(renderMermaidDiagram).mockImplementation(async (source) => {
     if (source.endsWith("---")) throw new Error("Parse error on line 3");
     return { svg: '<svg aria-label="Repaired diagram" />', diagramType: "flowchart" };
@@ -49,6 +48,7 @@ async function fixture(mode: "write" | "read" = "write", source = broken) {
   });
   mounted.push(controller);
   const host = document.createElement("div");
+  host.style.cssText = "width:380px;margin:20px";
   document.body.append(host);
   await act(() => {
     controller.mount(host);
@@ -72,38 +72,40 @@ function nestedEditor(host: HTMLElement) {
 }
 
 async function clickText(editor: CodeMirrorEditorView, position: number) {
-  // Happy DOM has no layout hit-testing. Supply only the coordinate result;
-  // CodeMirror's real mouse handler still owns focus and cursor placement.
-  const hitTest = vi
-    .spyOn(editor, "posAndSideAtCoords")
-    .mockReturnValue({ pos: position, assoc: 1 });
-  await act(() => {
-    editor.contentDOM.dispatchEvent(
-      new MouseEvent("mousedown", {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 1,
-        detail: 1,
-        clientX: 100,
-        clientY: 80,
-      }),
-    );
-    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+  await expect.poll(() => editor.coordsAtPos(position)).not.toBeNull();
+  const cursor = editor.coordsAtPos(position)!;
+  const content = editor.contentDOM.getBoundingClientRect();
+  await act(async () => {
+    await userEvent.click(editor.contentDOM, {
+      position: {
+        x: cursor.left - content.left,
+        y: (cursor.top + cursor.bottom) / 2 - content.top,
+      },
+    });
   });
-  hitTest.mockRestore();
 }
 
-async function escape(editor: CodeMirrorEditorView) {
-  await act(() =>
-    editor.contentDOM.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "Escape",
-        bubbles: true,
-        cancelable: true,
-      }),
-    ),
-  );
+async function escape(_editor: CodeMirrorEditorView) {
+  await act(async () => {
+    await userEvent.keyboard("{Escape}");
+  });
+}
+
+async function key(editor: CodeMirrorEditorView, name: string, gesture: string) {
+  let event: KeyboardEvent | undefined;
+  const record = (received: KeyboardEvent) => {
+    if (received.key === name) event = received;
+  };
+  editor.contentDOM.addEventListener("keydown", record);
+  try {
+    await act(async () => {
+      await userEvent.keyboard(gesture);
+    });
+    expect(event).toBeDefined();
+    return event!;
+  } finally {
+    editor.contentDOM.removeEventListener("keydown", record);
+  }
 }
 
 describe("persistent Mermaid source editing", () => {
@@ -126,7 +128,9 @@ describe("persistent Mermaid source editing", () => {
     expect(box.parentElement).toBe(parent);
     expect(wrapper.className).toBe(wrapperClass);
     expect(onUserSourceChange).not.toHaveBeenCalled();
-    await act(() => editor.dispatch(editor.state.replaceSelection("X")));
+    await act(async () => {
+      await userEvent.keyboard("X");
+    });
     expect(controller.session.session.draftSource).toBe(
       markdown(broken.slice(0, position) + "X" + broken.slice(position)),
     );
@@ -145,9 +149,9 @@ describe("persistent Mermaid source editing", () => {
     const parent = box.parentElement;
     const editor = nestedEditor(host);
     await clickText(editor, broken.length);
-    await act(() =>
-      editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: repaired } }),
-    );
+    await act(async () => {
+      await userEvent.keyboard("{Backspace}{Backspace}{Backspace}{Backspace}");
+    });
     expect(controller.session.session.draftSource).toBe(markdown(repaired));
     await vi.waitFor(() =>
       expect(host.querySelector('svg[aria-label="Repaired diagram"]')).not.toBeNull(),
@@ -156,16 +160,8 @@ describe("persistent Mermaid source editing", () => {
     expect(nestedEditor(host)).toBe(editor);
     expect(box.parentElement).toBe(parent);
     expect(host.querySelectorAll(".cm-editor")).toHaveLength(1);
-    await act(() => {
-      const event = new KeyboardEvent("keydown", {
-        key: "z",
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      });
-      editor.contentDOM.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(true);
-    });
+    const undo = await key(editor, "z", "{ControlOrMeta>}z{/ControlOrMeta}");
+    expect(undo.defaultPrevented).toBe(true);
     expect(controller.session.session.draftSource).toBe(markdown(broken));
     await vi.waitFor(() =>
       expect(host.textContent).toContain("Preview kept at the last valid version"),
@@ -180,11 +176,10 @@ describe("persistent Mermaid source editing", () => {
     const editor = nestedEditor(host);
     expect(editor.contentDOM.getAttribute("contenteditable")).toBe("false");
     await act(() => controller.setMode("write"));
-    await act(() => editor.contentDOM.focus());
+    await clickText(editor, 0);
     expect(editor.hasFocus).toBe(true);
     expect(editor.contentDOM.getAttribute("contenteditable")).toBe("true");
-    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
-    await act(() => editor.contentDOM.dispatchEvent(enter));
+    const enter = await key(editor, "Enter", "{Enter}");
     expect(enter.defaultPrevented).toBe(true);
     expect(editor.state.doc.toString()).toBe("\n" + broken);
     await escape(editor);
@@ -199,15 +194,22 @@ describe("persistent Mermaid source editing", () => {
   it("keeps the native text context menu inside the source editor", async () => {
     const { host, showRichFenceContextMenu } = await fixture();
     const editor = nestedEditor(host);
-    const nativeContext = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
-    await act(() => editor.contentDOM.dispatchEvent(nativeContext));
-    expect(nativeContext.defaultPrevented).toBe(false);
+    let nativeContext: MouseEvent | undefined;
+    const record = (event: MouseEvent) => {
+      nativeContext = event;
+    };
+    editor.contentDOM.addEventListener("contextmenu", record);
+    await userEvent.click(editor.contentDOM, { button: "right" });
+    editor.contentDOM.removeEventListener("contextmenu", record);
+    expect(nativeContext).toBeDefined();
+    expect(nativeContext!.defaultPrevented).toBe(false);
     expect(showRichFenceContextMenu).not.toHaveBeenCalled();
-    await act(() =>
-      host
-        .querySelector(".scient-mermaid-card")!
-        .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
-    );
+    await act(async () => {
+      await userEvent.click(host.querySelector<HTMLElement>(".scient-mermaid-card")!, {
+        button: "right",
+        position: { x: 10, y: 10 },
+      });
+    });
     expect(showRichFenceContextMenu).toHaveBeenCalledOnce();
   });
 
@@ -215,14 +217,18 @@ describe("persistent Mermaid source editing", () => {
     const { host, onUserSourceChange } = await fixture("write", repaired);
     expect(host.querySelector(".cm-editor")).toBeNull();
     const openFromMenu = async () => {
-      await act(() =>
-        host.querySelector<HTMLButtonElement>('[aria-label="More diagram actions"]')!.click(),
-      );
-      await act(() =>
-        [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-          .find((item) => item.textContent === "Edit source")!
-          .click(),
-      );
+      await act(async () => {
+        await userEvent.click(
+          host.querySelector<HTMLButtonElement>('[aria-label="More diagram actions"]')!,
+        );
+      });
+      await act(async () => {
+        await userEvent.click(
+          [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+            (item) => item.textContent === "Edit source",
+          )!,
+        );
+      });
     };
     await openFromMenu();
     const editor = nestedEditor(host);
@@ -247,9 +253,11 @@ describe("persistent Mermaid source editing", () => {
       const parent = box.parentElement;
       expect(box.hidden).toBe(false);
       expect(box.textContent).toBe(broken);
-      await act(() =>
-        host.querySelector<HTMLButtonElement>('[aria-label="Retry code editor"]')!.click(),
-      );
+      await act(async () => {
+        await userEvent.click(
+          host.querySelector<HTMLButtonElement>('[aria-label="Retry code editor"]')!,
+        );
+      });
       expect(sourceBox(host)).toBe(box);
       expect(box.parentElement).toBe(parent);
       expect(nestedEditor(host).state.doc.toString()).toBe(broken);
