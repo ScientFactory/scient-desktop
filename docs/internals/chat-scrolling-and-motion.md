@@ -192,7 +192,9 @@ flow:
 3. **The blank space between paragraphs is crossed 5× faster,** so there's no
    pause at a paragraph break.
 4. **If more than 8 lines are waiting,** the pace rises gently to catch up.
-   When the answer finishes, the rest plays out; nothing is cut off.
+   When the answer finishes, the rest plays out; nothing is cut off. When
+   the reader presses Stop, everything that has arrived shows at once
+   (`showStreamedAnswersNow`, called by `scient/chat/useStopGeneration.ts`).
 5. **The answer is clipped to the lines shown so far.** It grows line by line,
    and whatever follows it stays right below the newest line.
 6. **No replays:**

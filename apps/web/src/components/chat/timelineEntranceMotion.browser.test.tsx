@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { motionClock } from "./motionClock";
-import { streamingTextAppearing } from "./useStreamingBlockEntrance";
+import { showStreamedAnswersNow, streamingTextAppearing } from "./useStreamingBlockEntrance";
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -204,6 +204,27 @@ it("reveals a streaming answer line by line after a short wait, once, and nothin
     isWorking: false,
     activeTurnInProgress: false,
   });
+  await play(64);
+  expect(text()?.classList.contains("streamed-reveal")).toBe(false);
+});
+
+it("shows what arrived at once when the reader presses Stop, instead of typing it out", async () => {
+  const prompt = entry(1, "Question");
+  const long = Array.from({ length: 12 }, (_, i) => `Paragraph ${i}. ${"Words ".repeat(30)}`);
+  const answer = (streaming: boolean) => reply(44, long.join("\n\n"), streaming);
+  const text = () =>
+    host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
+  const front = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
+  render("motion:stop", [prompt, answer(true)], working);
+  await playUntil(() => text()?.classList.contains("streamed-reveal") === true);
+  await playUntil(() => front() > 10, 2000);
+  // Well short of the whole answer, then Stop: everything shows on the next frame.
+  expect(front()).toBeLessThan(text()!.scrollHeight / 2);
+  showStreamedAnswersNow();
+  await play(64);
+  expect(front()).toBeGreaterThanOrEqual(text()!.scrollHeight);
+  // The cut-off answer settles with nothing left to play out.
+  render("motion:stop", [prompt, answer(false)], { isWorking: false, activeTurnInProgress: false });
   await play(64);
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
 });
