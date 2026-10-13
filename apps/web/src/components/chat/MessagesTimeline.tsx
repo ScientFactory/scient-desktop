@@ -2574,7 +2574,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           ) : null}
           {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
           {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
-          {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
+          {/* SCIENT-FORK:START — Thinking steps aside while the answer above it appears. */}
+          {row.kind === "thinking" ? <FadingThinkingTimelineRow row={row} /> : null}
+          {/* SCIENT-FORK:END */}
         </WorkLogBlock>
       ) : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
@@ -4258,6 +4260,7 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
+  // SCIENT-FORK:START — the light's copy of a label shows no path tooltip of its own.
   return (
     <TracePathTooltipEnabled value={false}>
       <span
@@ -4270,6 +4273,7 @@ function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
       </span>
     </TracePathTooltipEnabled>
   );
+  // SCIENT-FORK:END
 }
 
 const failedToolIconClassName = "text-tool-error-icon/40";
@@ -4381,7 +4385,9 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
 function CompactingLabel() {
   return (
     <span className="inline-flex items-center gap-1.5">
+      {/* SCIENT-FORK:START — compaction carries Scient's trace icon. */}
       <ScanTextIcon aria-hidden="true" className={cn("size-3", TRACE_ICON_STROKE)} />
+      {/* SCIENT-FORK:END */}
       Compacting…
     </span>
   );
@@ -4390,40 +4396,45 @@ function CompactingLabel() {
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
-  // SCIENT-FORK:START — Thinking steps aside while the answer above it appears (chat/ThinkingRowFade.tsx),
-  // and sweeps only as the current activity (chat/liveActivity.tsx).
+  // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).
   const { sendMotion } = use(TimelineRowActivityCtx);
-  // Reserve the activity row during setup so the handoff keeps the same height.
-  const activity =
-    isPreparingWorktree || isCompacting ? (
-      <WorkLogRow label="" />
-    ) : (
-      // Only the current activity sweeps (chat/liveActivity.tsx).
-      <LiveActivityRow
-        label="Thinking"
-        iconName="brain"
-        active
-        shimmer={sendMotion.currentActivityRowId === row.id}
-      />
-    );
-  const { groupId } = row;
-  const content =
-    groupId === undefined || isPreparingWorktree || isCompacting ? (
-      activity
-    ) : (
-      <button
-        type="button"
-        className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-        aria-expanded={row.expanded === true}
-        onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
-      >
-        {activity}
-      </button>
-    );
-  return <ThinkingRowFade answerId={sendMotion.thinkingFollowsAnswerId}>{content}</ThinkingRowFade>;
   // SCIENT-FORK:END
+  // Reserve the activity row during setup so the handoff keeps the same height.
+  if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
+  // SCIENT-FORK:START — only the current activity sweeps (chat/liveActivity.tsx).
+  const activity = (
+    <LiveActivityRow
+      label="Thinking"
+      iconName="brain"
+      active
+      shimmer={sendMotion.currentActivityRowId === row.id}
+    />
+  );
+  // SCIENT-FORK:END
+  const { groupId } = row;
+  if (groupId === undefined) return activity;
+  return (
+    <button
+      type="button"
+      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      aria-expanded={row.expanded === true}
+      onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
+    >
+      {activity}
+    </button>
+  );
 }
 
+// SCIENT-FORK:START — Thinking steps aside while the answer above it appears (chat/ThinkingRowFade.tsx).
+function FadingThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
+  const { sendMotion } = use(TimelineRowActivityCtx);
+  return (
+    <ThinkingRowFade answerId={sendMotion.thinkingFollowsAnswerId}>
+      <ThinkingTimelineRow row={row} />
+    </ThinkingRowFade>
+  );
+}
+// SCIENT-FORK:END
 function LiveActivityRow({
   label,
   iconName,
@@ -4441,13 +4452,15 @@ function LiveActivityRow({
 }) {
   const animated = active && !failed;
   const showShimmer = animated && shimmer;
-  // SCIENT-FORK:START — one smooth sweep, on the current activity only; its text rests
-  // lighter under the light; other live rows stay still (no stepped shine).
   return (
     <div
+      // SCIENT-FORK:START — one smooth sweep, on the current activity only (chat/liveActivity.tsx).
       ref={showShimmer ? observeLiveActivitySweep : undefined}
+      // SCIENT-FORK:END
       className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed"
     >
+      {/* SCIENT-FORK:START — its text rests lighter under the light; other live rows stay still
+          (no stepped shine). */}
       <div className={showShimmer ? "live-activity-rest" : undefined}>
         <LiveActivityContent
           label={label}
