@@ -1081,15 +1081,19 @@ tr[data-latex-longtable-band] {
    no block (checked on a 104-page thesis); the clip margin keeps outlines and
    highlights visible. A run-in heading floats beside the next paragraph, so
    both stay uncontained, as do columns with an inline column break, which is
-   placed by measuring their lines. */
+   placed by measuring their lines. The selector list sits in :where(), so the
+   rule keeps one class's specificity and the overrides below (measuring,
+   editing, print) always win, however specific its exclusions become. */
 .scient-latex-visual-document
-  > :not(
-    .scient-latex-page-marker,
-    h4,
-    h5,
-    :is(h4, h5) + p,
-    :is(h4, h5) + .scient-latex-page-marker + p,
-    :has(.scient-latex-inline-column-break)
+  > :where(
+    :not(
+      .scient-latex-page-marker,
+      h4,
+      h5,
+      :is(h4, h5) + p,
+      :is(h4, h5) + .scient-latex-page-marker + p,
+      :has(.scient-latex-inline-column-break)
+    )
   ) {
   content-visibility: auto;
   contain-intrinsic-block-size: auto 6em;

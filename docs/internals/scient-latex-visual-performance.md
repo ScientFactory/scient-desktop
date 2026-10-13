@@ -78,16 +78,24 @@ On the thesis (104 pages, about 3,600 rendered formulas):
 
 On the synthetic 300-page manuscript:
 
-|                                         | Result                 |
-| --------------------------------------- | ---------------------- |
-| Loaded and editable                     | 4.9 s                  |
-| Longest frame while loading             | 183 ms                 |
-| Jump ready / drift                      | 48–73 ms / 0 px        |
-| Typing p50 / p95                        | 24 / 32 ms             |
-| Enter, Backspace, undo p95              | 0.5 s                  |
-| JS heap / renderer memory, one document | 231 MB / 2.7 GB steady |
+|                                         | Result                  |
+| --------------------------------------- | ----------------------- |
+| Loaded and editable                     | 7.3–8.6 s               |
+| Every block rendered once (settled)     | 26–29 s, ~10 s blocking |
+| Longest frame while loading             | 218 ms                  |
+| Jump ready / drift                      | 58–83 ms / 0 px         |
+| Typing p50 / p95                        | 24 / 32–40 ms           |
+| Enter, Backspace, undo p95              | 0.7 s                   |
+| JS heap / renderer memory, one document | 254 MB / 1.5 GB steady  |
 
 ## Known limits
+
+- **Rendering every block once costs more since PR #353's editor work was
+  merged.** On 300 pages the idle pass that renders each block once (so jumps
+  land exactly) now keeps the main thread busy for about 10 s over 26–29 s
+  after opening, in short frames, against 1.4 s before; opening is 7–8.5 s
+  against 4.9 s. The 104-page thesis is unaffected in practice (editable
+  0.8 s, settled 1.9 s). The cause is not yet profiled.
 
 - **Per-transaction cost still grows with length.** Tiptap's React node-view
   registry copies every renderer when one mounts and re-renders every portal,

@@ -905,3 +905,24 @@ ${paragraph("Following")}
   expect(Math.abs(second!.left - first!.left)).toBeLessThan(1);
   expect(second!.top).toBeGreaterThanOrEqual(first!.bottom - 1);
 });
+
+it("renders a block marked for measuring, however specific the containment rule is", async () => {
+  const editor = await open(
+    "visual-stability-measure-marker",
+    String.raw`\documentclass{article}
+\begin{document}
+\paragraph{Run-in} Text after a run-in heading.
+
+An ordinary paragraph.
+\end{document}
+`,
+  );
+  const paragraph = [...editor.view.dom.children].find((child) =>
+    child.textContent?.startsWith("An ordinary"),
+  ) as HTMLElement;
+  expect(getComputedStyle(paragraph).contentVisibility).toBe("auto");
+  // The idle pass renders each block once so its real height is remembered.
+  paragraph.setAttribute("data-latex-measure", "");
+  expect(getComputedStyle(paragraph).contentVisibility).toBe("visible");
+  paragraph.removeAttribute("data-latex-measure");
+});
