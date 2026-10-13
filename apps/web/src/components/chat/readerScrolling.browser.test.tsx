@@ -8,11 +8,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { readerAtReadingEnd, withReadingEnd } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
-import {
-  readTimelinePosition,
-  rememberTimelinePosition,
-  withRealTimelineEnd,
-} from "./timelineScrollAnchoring";
+import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;

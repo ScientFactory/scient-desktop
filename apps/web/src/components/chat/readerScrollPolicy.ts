@@ -3,9 +3,18 @@ import {
   getRowBottom,
   type RememberedTimelinePosition,
   type TimelineListMeasurementState,
-  withRealTimelineEnd,
 } from "./timelineScrollAnchoring";
 import type { RunId } from "@t3tools/contracts";
+
+/** Exclude reserved anchor padding when deciding whether real content is below the reader. */
+export function withRealTimelineEnd<T extends TimelineListMeasurementState>(
+  state: T | undefined,
+  composerInset: number,
+): T | undefined {
+  if (!state) return state;
+  const bottom = getRowBottom(state, state.data.length - 1);
+  return bottom === null ? state : { ...state, contentLength: bottom + composerInset };
+}
 
 /** Where a row's readable content ends; trailing file lists and controls come after it. */
 const READING_END_SELECTOR = '[data-reading-end], [data-user-message-body="true"]';

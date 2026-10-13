@@ -4,8 +4,8 @@ import type { MessageId, RunId } from "@t3tools/contracts";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { readerAtReadingEnd, readingEndGapOnScreen, readingIdentity } from "./readerScrollPolicy";
+import { flushTimelinePositions } from "./readingPositionStore";
 import {
-  flushTimelinePositions,
   rememberTimelinePosition,
   type RememberedTimelinePosition,
 } from "./timelineScrollAnchoring";
