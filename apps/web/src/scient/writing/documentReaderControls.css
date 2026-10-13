@@ -80,7 +80,11 @@
   outline: none;
 }
 
-.scient-pdf-page-control input:focus,
+.scient-pdf-page-control input:focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+
 /* Zoom out and in: slightly smaller, and close to the percentage between them. */
 .scient-pdf-toolbar-button.scient-pdf-action-zoom-step {
   width: 22px;
