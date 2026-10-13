@@ -91,7 +91,7 @@ A supported edit passes from the canvas transaction to the source adapter, then
 to the project/file save path. Accepted source is projected back into the editor;
 an unsupported edit retains its pending input or uses the exact-source editor.
 Navigation, zoom and search do not rewrite LaTeX. A PDF build consumes saved
-source and publishes a separate artifact; CSS page layout is never proof of
+source and publishes a separate artifact; the CSS paper is never proof of
 compiled output.
 
 ### Basic inline text
@@ -177,8 +177,8 @@ owned by each feature.
 | Visual                                | Open the supported visual editing canvas.                                                                                                                                                                                                                                                                                                                                                                                 |
 | PDF                                   | Show the compiled artifact; opening an absent/stale PDF requests a build when prerequisites permit.                                                                                                                                                                                                                                                                                                                       |
 | Error / warning counts                | Toggle the build messages card. A failed build also shows "Build failed · View details", which toggles the same card.                                                                                                                                                                                                                                                                                                     |
-| Sidebar                               | Toggle Pages/Outline navigation for Visual. PDF supplies its own sidebar content.                                                                                                                                                                                                                                                                                                                                         |
-| Previous / page number / total / Next | Navigate the local Visual page map or compiled PDF page map. Page input uses shared validation. Previous/Next remain in More when hidden to make room.                                                                                                                                                                                                                                                                    |
+| Sidebar                               | Toggle the document outline for Visual. PDF supplies its own sidebar content.                                                                                                                                                                                                                                                                                                                                             |
+| Previous / page number / total / Next | Navigate the compiled PDF's pages. Visual uses the page markers of the last matching build and hides these controls without one. Page input uses shared validation. Previous/Next remain in More when hidden to make room.                                                                                                                                                                                                |
 | Minus / percentage / Plus             | Shared PDF zoom stepping and range. The percentage displays a whole number; clicking it fits the page to the pane width.                                                                                                                                                                                                                                                                                                  |
 | Split preview: PDF / Visual           | Choose the right-hand view; sits before Rebuild, and moves into More when the row runs out of room.                                                                                                                                                                                                                                                                                                                       |
 | Search                                | A quiet field before the view switch (`ReaderSearchField`): type to search, Enter and the arrows move, Escape clears. Visual searches supported prose; Document > Find and replace opens the full bar with Replace. PDF uses its own search engine.                                                                                                                                                                       |
@@ -277,7 +277,7 @@ remain in pickers. Merge is disabled for a single cell. Object action failures
 use `useLatexActionNotice` and the document's existing notice area instead of
 placing explanations in the menu; field validation remains beside its input.
 The current object takes precedence over the heading fallback. Selecting an
-object never adds controls to the paper or changes the page layout. Recovery shares the line and collapses to a comparison button
+object never adds controls to the paper or changes its layout. Recovery shares the line and collapses to a comparison button
 or dot as the pane narrows. Its comparison opens above the footer. The word count comes from
 `latexWordCount.ts`: it reads the source after `\begin{document}` and leaves out
 comments, math, literal code, commands and reference keys. The selected count
@@ -326,27 +326,19 @@ For the CSS surface, derive page size, margins, font family and size, line
 spacing, paragraph spacing/indent, headings, lists, math sizing, and supported
 table rules from the actual document/build configuration. Prefer build evidence
 to source-text guesses when available. Bundle or resolve compatible fonts and
-calibrate line breaking, hyphenation, and pagination against representative
-compiled PDFs. Keep this evidence revision-scoped so a changed preamble or
-dependency cannot silently style a new source revision using an old profile.
-
-Before measuring pagination, `latexParagraphSpacing.ts` fits short justified
-text paragraphs that exceed one line only by shrinkable interword space.
-It measures the rendered fonts and applies the smallest spacing reduction,
-bounded to one third of the normal space advance. Node decorations keep this
-adjustment out of source and undo history; glyph sizes, margins and indentation
-remain unchanged. Results are cached by paragraph and typography, and refreshed
-after font loading. Longer paragraphs, explicit line breaks, inline objects and
-unsupported font features retain browser wrapping. This is a bounded fit rule,
-not TeX's full paragraph optimization.
+calibrate line breaking and hyphenation against representative compiled PDFs.
+Visual does not paginate: page boundaries come only from the compiled PDF (see
+[Continuous paper and reading](#continuous-paper-and-reading)). Keep this
+evidence revision-scoped so a changed preamble or dependency cannot silently
+style a new source revision using an old profile.
 
 Classify edits by their layout reach. Prose and edits inside supported math or
-table objects can update the CSS document immediately; local pagination is a
-best-effort preview. Macros, packages, document class, global style, references,
-floats, and page-breaking commands can affect distant content and need a TeX
-rebuild to settle. Keep the current PDF available as the exact last-built
-revision, indicate when the source is newer, and adopt a successful rebuilt PDF
-without losing the editor's focus or scroll position. Do not compile per
+table objects can update the CSS document immediately; page markers from the
+last build become stale hints after any edit. Macros, packages, document class,
+global style, references, floats, and page-breaking commands can affect distant
+content and need a TeX rebuild to settle. Keep the current PDF available as the
+exact last-built revision, indicate when the source is newer, and adopt a
+successful rebuilt PDF without losing the editor's focus or scroll position. Do not compile per
 keystroke; any background rebuild policy should coalesce edits and preserve the
 last good artifact while it runs or fails.
 
@@ -494,8 +486,7 @@ The live reference index keeps citation keys separate from cross-reference label
 derives default numeric and literal optional entry labels, suppresses duplicate
 targets, and supports individual links in multi-key `\cite` commands. A bounded
 optional-note parser retains the original note when citation keys are edited.
-Bibliography entries participate in pagination at entry boundaries. Document's
-References action opens an adjacent panel; a narrow pane docks it over the right
+Document's References action opens an adjacent panel; a narrow pane docks it over the right
 edge. Citation footer actions open the same panel at the selected key, with known
 entry details kept in the footer. Entry controls never appear on the paper, and
 selection does not change the top writing bar. Insert's citation and cross-reference
@@ -562,7 +553,7 @@ header. Visual's controls use the same page input validation, five-percent
 zoom steps, 25–500% manual range, percentage button that fits the width, and
 keyboard interactions as PDF. Fit width is in More only while the percentage is
 hidden. Each uses `pdfFitWidthScale` with the same 40 CSS-pixel total page inset and a stable
-scrollbar gutter. Visual's physical page width is inches times 96; PDF's page view
+scrollbar gutter. Visual's paper width is inches times 96; PDF's page view
 uses the same CSS-pixel baseline. Navigation sidebars use matching widths and
 breakpoints, so matching paper and pane geometry produce matching fit percentages.
 The inset belongs to the fit calculation, not fixed horizontal scroll padding.
@@ -575,14 +566,10 @@ observer; Visual also measures its initial fit before the first paint. Hidden
 panes retain their last usable dimensions.
 Explicit Fit width still measures the current pane immediately. Without
 ResizeObserver, the compatibility measurement runs after an editor paint.
-Each surface supplies its own navigation/search adapter. Visual's sidebar contains Pages and
-Outline; its pages follow the local editor page map and can differ from PDF.
-Both readers use `ReaderPageThumbnail` for page navigation. Visual previews
-snapshot only rendered blocks intersecting nearby pages, including running
-headers, footers and MathLive's formula markup. Snapshots live in inert shadow
-roots, without additional editors, selection overlays or interactive targets.
-They refresh after input settles, and disappear outside the sidebar's nearby
-viewport; opening Pages does not compile the document or change its source.
+Each surface supplies its own navigation/search adapter. Visual's sidebar holds
+only the document outline; there are no page thumbnails. Visual's page input,
+Previous/Next and total appear only while page markers from a matching build
+exist; they navigate to those markers.
 MathLive's compact content allows glyph overflow. Display equations retain their
 natural size and placement when inactive; an overfull equation starts at the text
 boundary and can extend into the margin.
@@ -605,7 +592,7 @@ Viewport state is local to the mounted field and never enters LaTeX or history.
 Resize observation and coalesced post-paint work handle edits, zoom and column-width
 changes without continuous polling. Vertical overflow is explicitly hidden only
 in the active viewport. Formula struts retain the height of braces, limits and
-matrices; no fixed height is imposed. Page thumbnails omit active viewport state.
+matrices; no fixed height is imposed.
 Display fields reserve at least eight local pixels around their ink, with matching
 negative margins preserving its paper position. This accommodates the guide's
 seven-pixel maximum inset while the active horizontal viewport clips overflow.
@@ -667,7 +654,7 @@ overpainting actual borders. The SVG viewBox uses screen coordinates so strokes
 and dash spacing stay thin and consistent at every zoom. Bounded mutation/resize observers refresh geometry,
 including page-stage transform changes that do not trigger a layout resize;
 the guide's own changes are ignored. Real rules and cell dimensions remain
-unchanged. Print and page previews omit the layer. New tables use the
+unchanged. Print omits the layer. New tables use the
 grid preset and focus their first inline cell after mounting.
 Empty caption editors do not create source caption commands until edited.
 Caption markers follow the centered text position within the caption field.
@@ -847,30 +834,151 @@ unchanged failed source is not retried in a loop. Explicit Rebuild remains avail
 root resolution, cancellation, bounded compile stabilization, immutable
 artifacts and PDF navigation remain owned by the existing build/reader path.
 
-Visual uses browser-rendered paper with CSS pagination; PDF and Split with PDF use the
+Visual uses continuous browser-rendered paper; PDF and Split with PDF use the
 actual PDF with navigation. Supported tables and selected scientific structures
 have structured editors. Browser output remains approximate: a successful build
 does not make the browser execute arbitrary macros or guarantee compiler-identical
-typography and pagination. Macro/preamble changes produce rebuild guidance.
-Incremental TeX, arbitrary macro rendering, and a general TeX-to-editable-content
-adapter are not implemented.
+typography. Page breaking belongs to the compiler. Macro/preamble changes produce
+rebuild guidance. Incremental TeX, arbitrary macro rendering, and a general
+TeX-to-editable-content adapter are not implemented.
 
-### CSS page layout
+### Continuous paper and reading
+
+Visual is one continuous white sheet (`.scient-latex-visual-paper` in
+`scient-latex.css`) at the document's paper width and margins, at least one page
+tall. Only the compiled PDF has pages. `\newpage` and `\clearpage` render as a
+labelled dashed "Page break" rule (`.scient-latex-page-break`). `multicols`
+bodies are plain CSS columns; a paragraph-boundary `\columnbreak` starts the next
+column. Performance gates and the production benchmark
+(`apps/web/scripts/latex-visual-benchmark.ts`) are described in
+[LaTeX Visual performance](./scient-latex-visual-performance.md).
+
+**Mounting and progressive loading.** Once loaded, the whole document stays
+mounted; no block is swapped for a placeholder while reading.
+`latexProgressiveLoading.ts` controls opening. `latexOpeningPlan` creates the
+editor with the blocks from the remembered reading block forward, up to about
+8,000 characters of parsed JSON. `loadLatexVisualDocument` then adds the
+remaining blocks one slice per animation frame, alternating below and above the
+opening blocks. A slice takes as many blocks as fit an 8 ms budget, estimated
+from the measured cost of earlier slices, and at least one sixty-fourth of what
+is already loaded: every transaction also costs time in proportion to the blocks
+already mounted, so a long document loads in a bounded number of slices rather
+than one block per frame. Loading transactions
+carry the `scientLatexVisualLoading` meta, stay out of history, and bypass the
+source guard and source publication. Until loading completes the editor refuses
+edits and the writing toolbar is disabled; focus cannot enter nested fields and
+formulas cannot be activated. The reference plugin
+(`latexEquationReferences.ts`) numbers the whole parsed document at
+initialisation, shifted to the opening's positions, so numbers in the first
+blocks do not change while the rest arrives. Blocks prepended above the opening
+shift every reference position by their size, so the not-yet-loaded part keeps
+correct positions; the final slice renumbers once and keeps an equal
+presentation (`settleReferences`). Installing a projection (a newer source)
+ends loading first, so the full document replaces the partial one and nothing
+derived later reads the old opening plan; any other document change also stops
+loading and installs the full projection before editing is allowed.
+
+**Reading position.** `latexReadingPosition.ts` remembers, for the app session
+and up to 32 documents, the first top-level block visible at the top of the
+reading area and its offset. Reopening a document loads from that block first
+and restores the offset, once more after the first frames, when blocks have
+their real height.
+
+**Reading anchor.** The scroll container sets `overflow-anchor: none`, because
+the browser's anchoring follows the caret while editing and Enter would scroll
+the page. `latexReadingAnchor.ts` keeps the line at the top of the reading area
+still instead. After the reader scrolls it records the document position under
+the top of the reading area (its block when there is none) and that line's
+offset; the position is mapped through every transaction. A ResizeObserver on
+the top-level children, and every document change, correct `scrollTop` when
+content changes size: a formula or image finishing (also within the same
+paragraph, above the line), fonts, an edit, or blocks added above during
+loading. Blocks appended below by loading cannot move the reading position and
+are skipped. When ProseMirror scrolls the caret into view, that position becomes
+the new anchor; a zoom change re-captures rather than corrects.
+
+**PDF page markers.** When the PDF matches the open file's buffer,
+`ScientLatexSurface.tsx` requests the build's page anchors
+(`POST /api/scient/latex/synctex/pages`; `ScientLatexPageAnchorsRequest` in
+`packages/contracts/src/scientLatex.ts`), and aborts the request when the build or
+file changes. `LatexSyncTex.pageAnchors` checks the build's sources against the
+workspace, counts pages from the SyncTeX index (decompressed asynchronously, at
+most 256 MiB), keeps the real page count and locates at most the first
+2,000 pages, and runs SyncTeX `edit` at one point near the top
+of each page's text. For every page it returns the workspace file, the revision
+of that file the build compiled, and the line; pages beginning outside the
+workspace are omitted, and any failed query makes the whole answer unavailable.
+Answers are cached per build revision; one batch runs per build, detached
+from the requests that await it, within an eight-minute budget. `placeBuildPageAnchors`
+(`latexProjectVisual.ts`) translates the anchors into offsets of the assembled
+document through its source spans, so pages beginning in `\input` files are
+placed too, but only when every file of the document hashes to the revision
+the build compiled. Several pages may begin on one source line; a page in a
+file included more than once is left without a marker, since its occurrence is
+ambiguous. `latexPageMarkers.ts` places
+each page's marker at the start of the top-level block containing its offset,
+only while the editor source equals the assembled source; a page that begins
+inside the previous page's block shares its position. Markers are zero-height
+dashed rules labelled with the page number: they take no space and never move
+text. They stay with their block when content is inserted before it, and are
+dropped when the block's opening (all of a one-token block such as an equation)
+is deleted. After any edit the set is stale
+(`data-latex-pages-stale`) and drawn fainter; the next matching build replaces
+it. Page count, the current page (read under the top of the reading area while
+scrolling), go-to-page, `\pageref` and contents page numbers come from these
+markers (`latexPageAt`, `latexPagesAt`, `latexPageCount`); pages that begin inside
+the same block share its marker, labelled as a range, and go-to-page passes over
+pages without a marker. Without markers
+Visual shows no page controls, `\pageref` shows `[label]`, and contents entries
+show no page number. Markers are navigation hints, not a reproduction of TeX's
+page breaking.
+
+**Footnotes.** `latexFootnotes.ts` shows a top-level block's footnotes in a band
+directly beneath that block; the PDF sets them at the foot of the page. Bands are
+widget decorations keyed by their numbers and text, so an unchanged band keeps
+its DOM; typing elsewhere only maps them, and they are regrouped only when the
+notes change. `navigateToFootnote` in `latexEquationReferences.ts` moves from a
+marker to its note in the band and back.
+
+**Cost in proportion to the document.** With every block mounted, any work that
+visits every block on each transaction, or on each frame, makes long documents
+slow. These rules keep it out:
+
+- Top-level blocks use `content-visibility: auto` with a remembered intrinsic
+  height, so blocks off screen skip style, layout and paint. Containment moves no
+  block; a run-in heading and the paragraph beside it stay uncontained, and
+  `overflow-clip-margin` keeps outlines visible. After loading,
+  `latexReadingAnchor.ts` renders every block once while idle, a chunk per
+  frame, so the browser remembers its real height; a block is measured again
+  when one of its formulas or images finishes. Jumps and the scrollbar then land
+  exactly and content does not change size under the reader. The measuring
+  marker is written with ProseMirror's DOM observer paused, since it redraws a
+  block whose attributes change under it.
+- Each formula preview is a shadow root with its own `<style>` element holding
+  the same text. A constructed stylesheet adopted by every preview made each
+  later style update cost time in proportion to all formulas.
+- Object toolbars share one set of editor, document and window listeners per
+  editor (`useLatexObjectContext.ts`), and look up the footer slot only while
+  their object is active.
+- Node views read their numbers with `useLatexReferenceState`, which recomputes
+  only when references are counted again (`latexReferenceRevision`), not on
+  every transaction; typing and loading only move positions.
+
+### CSS paper layout
 
 Paragraph and subparagraph headings run into the following editable paragraph.
-Pagination measures their shared leading space once when moving the pair to a
-new page. Nested lists use the standard class's second-level spacing and indent,
+Nested lists use the standard class's second-level spacing and indent,
 with the existing supported list overrides retained. Contents reserve distinct
 number widths for subsections and subsubsections; an unnumbered entry has no
 empty number column. Abstract text follows the class's small-font baseline.
 
-The pagination plugin publishes a derived position-to-page map alongside its
-decorations. Contents entries and `\pageref` read that local map, never claiming
-compiled TeX page evidence. The live reference index supplies current heading
-titles, numbering and targets; explicit contents metadata retains its source
-block target. Contents buttons and internal links share the existing navigation
-and temporary highlight behavior. The source adapter separates `\newpage` and
-`\clearpage` from preceding prose even without a blank line.
+Contents entries and `\pageref` read their page numbers from the PDF page
+markers above, never from a Visual layout. The live reference index supplies
+current heading titles, numbering and targets; explicit contents metadata
+retains its source block target. Contents buttons and internal links share the
+existing navigation and temporary highlight behavior. The source adapter
+separates `\newpage` and `\clearpage` from preceding prose even without a blank
+line.
 
 The adapter recognizes the two-argument `\hyperlink`/`\hypertarget` forms and
 the optional-label `\hyperref[label]{text}` form from the
@@ -880,11 +988,9 @@ use a bounded read-only prose projection, preserving source formatting and
 displaying unsupported content exactly. Attribute serialization retains the
 optional-label syntax; footer editing never converts it to `\href`.
 
-Standard footnote markers are numbered by the shared live index. Pagination
-measures their prose, reserves space with the containing line, and places
-non-source footnote widgets at the page's text-area bottom.
-The separator starts at the document's inline start: right for Hebrew/RTL and
-left for English/LTR.
+Standard footnote markers are numbered by the shared live index, and their notes
+appear in the band beneath the containing block. The band's separator starts at
+the document's inline start: right for Hebrew/RTL and left for English/LTR.
 Notes and markers select the same existing footer editor.
 Edit text uses the shared inline editor for supported prose, formatting, language
 wrappers, inline math and references, preserving their LaTeX while editing.
@@ -893,15 +999,14 @@ The field keeps focus while opening and stays open through writing menus;
 Enter, Tab, Escape or a click outside the editor exits it.
 Its position and width stay inside the visible paper/pane at either text direction
 and zoom level, including narrow Split panes.
-While the field is open, its owning paragraph releases paint containment so the
-editor below the line stays visible and receives pointer input.
+While the field is open, its block is not contained, so the editor below the
+line stays visible and receives pointer input.
 Marker clicks navigate to the note; note clicks return to the marker.
-Navigation uses the shared temporary highlight
-and respects reduced motion without automatically focusing the footer. The bounded prose renderer shares the
+Navigation uses the shared temporary highlight and respects reduced motion
+without automatically focusing the footer. The bounded prose renderer shares the
 source parser and constructs DOM text and mark elements without injecting HTML.
-Custom counters suppress inferred numbers, and long or unsupported footnotes
-remain subject to the compiler's authoritative layout. These widgets do not
-enter source or generated page-break commands.
+Custom counters suppress inferred numbers, and footnote placement on the page
+remains the compiler's. Bands do not enter source or history.
 
 `latexVisualLayout.ts` owns the supported layout profile. It reads top-level
 class/package options and explicit geometry and spacing commands, ignoring
@@ -915,17 +1020,7 @@ presentation reads standard font-size switches and literal paragraph-column
 widths from preserved source, including empty outer `@{}` separators. Captions
 remain at the surrounding text size and wrap independently of cell text.
 
-`latexVisualPaginationExtension.ts` owns view pagination. It measures browser
-text lines, keeps headings with following content and pairs lines at paragraph
-boundaries, and supplies ProseMirror decorations for page spacing. A paragraph
-can continue on another sheet without splitting its source block. Tall supported
-tables receive presentation gaps between rows through node-view decorations;
-their cell editors retain stable row identities. Ordinary tables and equations
-stay together when they fit on a sheet. A single object or table row taller than
-the printable area is still an overflow limitation; this does not reproduce
-TeX's float algorithm or exact longtable break positions.
-Description lists and contents lists can break between entries. Description
-labels and bodies use the document baseline; `nextline` wraps the body only
+Description labels and bodies use the document baseline; `nextline` wraps the body only
 when the label cannot fit beside it, following
 [enumitem's description styles](https://github.com/jbezos/enumitem/blob/master/enumitem.tex).
 The symbol palette uses `mathSymbolCatalog.json` for command membership and
@@ -1142,11 +1237,10 @@ that can reopen an obsolete popup. Rows have a fixed height and stable scrollbar
 spacing. Both development and production browser exports use the patched readable
 bundles; the application bundler handles production minification.
 
-Pagination metadata never enters document JSON, the recovery journal, undo, or
-source serialization. Measurement caches unchanged paragraphs, responds to font
-and object resizing, waits for composition to end, and preserves a visible text
-anchor during reflow. `LatexTableToolbar.tsx` keeps row, column, and table actions
-in footer menus, including caption and label fields. Activation spans the table
+Page markers, footnote bands and loading state never enter document JSON, the
+recovery journal, undo, or source serialization. The reading anchor keeps the
+visible text still while content resizes. `LatexTableToolbar.tsx` keeps row,
+column, and table actions in footer menus, including caption and label fields. Activation spans the table
 and its portaled controls, so moving focus between them retains the active cell.
 Table cell selection uses a background highlight without adding controls or changing geometry.
 Whole-table highlights include the caption; document ranges use node decorations
@@ -1198,9 +1292,8 @@ slots and selections expand to full merged cells. Cell edits patch only their
 inner source ranges. The serializer rejects generic structural normalization for
 these tables; the source-owned operations below handle supported color, rule,
 merge/split and grid edits. Unsupported span reordering remains disabled while
-content editing, selection, copying and deletion stay available. Their pagination stays atomic so
-presentation gaps cannot split a rowspan. Unsupported spans, colors or cell
-bodies retain exact-source fallback.
+content editing, selection, copying and deletion stay available. Unsupported
+spans, colors or cell bodies retain exact-source fallback.
 The shared live reference index registers captioned table labels after their
 caption and derives standard article/book/report table numbers conservatively.
 Nonfloating tabulars do not increment that counter. Clicks scroll and highlight
@@ -1217,7 +1310,8 @@ separator after TeX rule commands, and cell/caption round trips normalize TeX
 whitespace while retaining the user's exact text in the editing session.
 The long-lived ProseMirror guard calls the current source adapter through a
 ref so renderer hot updates do not retain obsolete validation logic.
-The outline starts collapsed, and the header's page number follows the visible page.
+The outline starts collapsed. With page markers, the header's page number
+follows the marker above the top of the reading area.
 The canvas has no ruler above the paper. Automated source regressions and native
 interaction checks qualify editing separately from human visual acceptance.
 
@@ -1385,17 +1479,14 @@ checkpoint before retiring the raw copy. A failed checkpoint keeps the source
 field read-only and its recovery intact; retrying completion does not publish
 the edit again.
 
-Pagination waits 220 ms after input and maps existing decorations while waiting;
-measurements and resize-observer refreshes run after painting, not on every input.
-The current-page indicator also defers its initial geometry read until after
-paint, then coalesces scroll updates and cancels pending reads when unmounted.
-Responsive header fitting follows the same scheduling rule: size and content
-notifications share one pending fit, retaining the existing control-compaction
-order without forcing paper layout during the initial React commit.
-It never replaces the editable DOM. Plain paragraph edits map reference positions
-without rebuilding counters, captions or citations, and retain cached layout
-measurements. Heading text edits update only their contents titles; heading
-structure and other structural edits still rebuild reference presentation.
+The current-page indicator runs only while page markers exist; it reads the
+position under the top of the reading area at most once per animation frame
+while scrolling and cancels a pending read when unmounted. Responsive header
+fitting coalesces size and content notifications into one pending fit, retaining
+the existing control-compaction order without forcing paper layout during the
+initial React commit. Plain paragraph edits map reference positions without
+rebuilding counters, captions or citations. Heading text edits update only their
+contents titles; heading structure and other structural edits still rebuild reference presentation.
 Reference previews redraw only when presentation changes; navigation resolves the
 current target when clicked. Bibliography catalogs publish only when their keys,
 titles, paths or order change, or when a new listener needs the current catalog.
@@ -1407,7 +1498,7 @@ The toolbar subscribes to formatting availability, active marks and the selected
 word count rather than the complete EditorState. Ordinary typing at a collapsed
 caret does not refresh unchanged controls. Selection, formatting, editability
 and inline-editor ownership changes publish immediately; commands still use the
-live editor state. Layout/reference metadata has independent subscriptions.
+live editor state. Reference metadata and page markers have independent subscriptions.
 Consumers that need a complete deferred caret snapshot do not publish pending
 typing state on metadata-only transactions. Editability is part of both snapshots
 even when Tiptap retains the same EditorState. These subscription boundaries are
@@ -1420,10 +1511,8 @@ node per character. Runs stop before TeX syntax, whitespace, quote/dash transfor
 and Unicode grapheme boundaries; literal combining characters remain unchanged.
 This reduces projection allocations without expanding unsupported macros or
 changing exact-source fallback. Parser timings do not measure visible input latency.
-Physical page lookup uses binary search after checking each immutable page map's
-position order; unusual line order retains the sequential lookup. Printed page
-labels are reused while the document, page map and title-page setting are unchanged.
-Weak caches release discarded documents/maps. Heading decorations are reused until
+Page lookup (`latexPageAt`) uses binary search over the position-sorted page
+markers. Heading decorations are reused until
 the document or reference index changes, including preamble-only index refreshes.
 
 Unescaped percent comments are hidden in Visual, including standalone comment lines
@@ -1453,20 +1542,17 @@ call; all other calls and the preamble definition remain unchanged. The existing
 native text-field, transaction, undo, draft and source-acceptance paths own edits.
 Structural row/column actions are disabled for these imported tables.
 
-`LatexLongTableBand.tsx` paints read-only continuation rows using projected spans,
-rules, sizes and the live table number. Pagination measures hidden header/footer
-bands at the body's actual column widths, reserves their heights, and inserts
-them around its existing row gaps. During measurement the rendered continuation
-rows collapse vertically while retaining their contribution to column widths.
-Page-gap decorations survive content-only atom replacements with the same
-source identity and row/column or item identities. Structural changes discard
-that map and require new measurements. Node views track position changes so
-derived table numbers continue to resolve after edits above them.
-Final footers use `endlastfoot`, falling back to `endfoot` when absent. Continuation
-definitions remain in Source. Oversized rows, advanced column specifications,
-recursive row macros and exact TeX page breaking remain limitations.
+`LatexLongTableBand.tsx` paints read-only band rows using projected spans, rules,
+sizes and the live table number. On continuous paper the table shows its rows
+once and paints the final footer after the last row; final footers use
+`endlastfoot`, falling back to `endfoot` when absent. Continuation headers and
+footers are not repeated in Visual. Table numbers are read through editor-state
+selectors at the node's current position, so they resolve after edits above the
+table without re-rendering every preview below an edit. Continuation
+definitions remain in Source. Advanced column specifications, recursive row
+macros and TeX page breaking remain limitations.
 
-### Columns, minipages and page furniture
+### Columns and minipages
 
 `latexContentLayouts.ts` composes balanced formatting groups, literal font/color
 declarations, paragraph boxes, and floats with text surrounding their grids or
@@ -1497,8 +1583,7 @@ claim that all class/package settings or PDF geometry have been reproduced.
 Local list spacing options retain their source when numbering changes.
 
 `latexPageLayouts.ts` bounds literal `multicols` counts, `minipage` widths,
-literal fixed heights and inner/outer alignment, and common root-preamble
-`fancyhdr` slots and running fields.
+literal fixed heights and inner/outer alignment.
 The source adapter projects editable layout bodies through the existing nested
 `latexScientific` container schema, distinguished by layout attributes. They
 do not acquire statement headings, counters or statement controls. Minipages
@@ -1525,45 +1610,21 @@ preview node with a spacing kind. Inline `\columnbreak` is an existing inline
 command atom, preserving paragraph continuity and its original source.
 The forced `[4]` form uses the same distinction. A source newline alone never
 promotes an inline command to a paragraph-boundary break.
-`latexColumnBreaks.ts` measures the line containing each inline command and
-places a presentation-only break at that line's end, following the
-[multicol manual](https://tug.ctan.org/macros/latex/required/tools/multicol.pdf).
-The pagination plugin owns these decorations without adding source or undo
-steps. It hides previous column-break widgets during line measurement, then
-measures the actual column layout for page placement. A leading indentation
-spacer keeps the continuation in the next column from receiving a new paragraph
-indent. CSS handles balanced columns and forced column starts. Pagination
-measures each layout region as one indivisible object so side-by-side contents
-are not mistaken for sequential full-width lines. Column footnotes use the
-existing page-footnote path; minipage footnotes remain unsupported because they
-need a separate counter and local placement.
+CSS columns balance the layout body (`column-fill: balance`), and a
+paragraph-boundary `\columnbreak` forces the next block into a new column
+(`break-before: column`). An inline `\columnbreak` is a zero-width atom; Visual
+does not break the column there, and the compiled PDF places that break (see the
+[multicol manual](https://tug.ctan.org/macros/latex/required/tools/multicol.pdf)).
+Footnotes inside a column layout or minipage appear in the band beneath the
+containing top-level block; minipage footnote numbering and placement remain
+unsupported.
 
-Root-level `\vfill` contributes stretch to the existing pure pagination planner.
-It divides remaining printable space among fills before the next explicit page
-break, reserving room for following content and footnotes. Existing gap widgets
-apply this space and disappear during natural-flow measurement; source is never
-rewritten to implement the stretch.
-Source-derived `twocolumn` regions use the same vertical-fill classification.
-Their planner reserves the natural heights and margins of following content and
-divides the current column's free space among remaining fills when that tail
-fits. A fill before a concluding notice therefore places it at the printable
-column bottom. Overflowing tails leave the fill at natural size and retain
-normal column flow. The positions remain presentation-only and source-owned.
-Column decoration styles are retained by React node-view attributes during
-content updates and undo; a node-view render must not clear its mapped position
-or its parent region's measured height.
+`\smallskip`, `\medskip` and `\bigskip` take their standard-class heights.
+Root-level `\vfill` keeps its place as a source-owned spacing node but takes no
+height on continuous paper. Source is never rewritten to implement spacing.
 
-The paper sheets render running fields behind the editable DOM. Common fancyhdr
-left/center/right and odd/even assignments, cleared slots, numeric page fields
-and standard article section/subsection marks are supported. Geometry and literal
-length assignments supply header height, separation and footer baseline offsets.
-The default fancyhdr slots share the full printable header/footer width and
-align left, center or right within it, rather than occupying three separate
-columns. Text wraps within that width; the header's last baseline stays above
-its rule. Custom field widths and collision handling remain source-owned.
-These fields are display-only and use Visual's local page map. Custom page styles,
-mark redefinitions, multipage columns and exact TeX
-balancing remain outside this approximation.
+Running headers and footers (`fancyhdr` fields, `\thepage`) are not drawn in
+Visual; the compiled PDF shows them.
 
 `fixtures/layouts.tex` exercises two/three columns, lists, math, tables, theorem
 blocks, color boxes, nested panels, explicit gaps and fixed-height alignment.
@@ -1631,11 +1692,9 @@ Statement headings run into the first prose paragraph instead of introducing
 an extra line. Standard theorem/proof spacing uses the document's base font size;
 quote wrappers use the standard 2.5em inset. Optional theorem notes remain upright
 and normal weight, and a proof's optional argument replaces its heading.
-The heading and the first paragraph share uncontained inline flow, including in
-windowed reading and measurement. Headings float at the local inline start, so
-Hebrew statements begin on the right and English statements begin on the left.
-Subsequent lines regain the full body width;
-the remaining paragraphs and formulas retain viewport containment. Normal-weight
+The heading and the first paragraph share uncontained inline flow. Headings float
+at the local inline start, so Hebrew statements begin on the right and English
+statements begin on the left. Subsequent lines regain the full body width. Normal-weight
 notes use a tight inline strut so differing bold/regular font metrics cannot make
 a one-line heading indent the second body line. Titles keep the same overlay
 container when editing and use the available width without a fixed character cap.
@@ -1647,7 +1706,7 @@ gap. Quotes and other layout containers retain their separate spacing rules.
 Default amsthm proofs show an open square at the inline end of the final paragraph
 (right for LTR, left for RTL),
 or on a following line after a final display/list. This CSS marker does not become
-an editor node, copied content or LaTeX source. Pagination includes its height.
+an editor node, copied content or LaTeX source.
 Custom proof definitions and preamble QED overrides disable this inferred marker.
 The layout follows the [AMS package conventions](https://texdoc.org/serve/amsthm/0);
 custom styles and exact TeX line/page breaking still belong to the compiler.
@@ -1721,9 +1780,7 @@ outside source adoption does not revive obsolete state. Preview DOM updates yiel
 after a four-millisecond batch and pending input takes priority. The preview
 worker receives shared document dictionaries once per context, retaining at most
 sixteen contexts until its existing idle termination. Equation numbers measure both
-reading previews and native fields. Pagination coalesces preview, font and resize
-bursts after 180 ms quiet with a 1200 ms maximum wait, retaining the typing quiet
-interval and composition protection.
+reading previews and native fields.
 
 Equivalent immutable macro/color contexts share a preview identity, so ordinary
 source reparsing does not rebuild unchanged formula DOM. Releasing an unchanged
@@ -1732,9 +1789,13 @@ macro and color changes still regenerate the affected previews.
 
 Formula requests start without waiting for a browser paint. Identical in-flight
 requests share conversion but retain independent cancellation and viewport
-priority. Successful markup is cached by source, display mode and immutable
-macro/color identity, bounded to 512 entries and 16 MiB of estimated string data;
-failures are not cached. Reopening unchanged formulas reuses that markup. DOM
+priority. Markup is cached by source, display mode and immutable macro/color
+identity in `latexReadingCache.ts`, under a 24 MiB estimated byte budget that
+counts keys and entry overhead; there is no entry-count ceiling. Results for
+visible formulas may evict older background entries first; background results
+are admitted only while space is available. A preview that failed is remembered
+as a source fallback for the same context. Reopening unchanged formulas reuses
+that markup. DOM
 installation uses cancellable background tasks, with a short timer fallback when
 the browser task scheduler is unavailable. Four-millisecond batches yield to
 input and browser rendering, and continue when animation frames are sparse.
@@ -1749,25 +1810,6 @@ subsequent configuration changes retain their debounce. After the drawing canvas
 is painted, its temporary PDF document, worker and blob URL are released. TeX
 compilation remains asynchronous and is not covered by the formula markup cache:
 project dependencies can affect artwork even when its picture source is unchanged.
-
-Pagination reuses measured units for unchanged top-level blocks and translates
-their positions as preceding content moves. Source changes, native input,
-preview completion and size changes dirty the owning block and its neighbors.
-Ordinary top-level prose edits measure only changed paragraphs in inert hidden
-copies outside the editable DOM, omitting presentation page gaps and retaining
-resolved fonts, marks and indentation. Natural units for unchanged blocks are
-translated by preceding paragraph height changes; distant content stays under
-browser content visibility. Changes to inline atoms, empty paragraphs, run-in
-headings, structure, fonts, dimensions or reference presentation retain the full
-measurement path. The first resize-observer report establishes a baseline for
-an already measured, unchanged DOM/node rather than dirtying it. Later resize-only
-notifications can reuse unchanged blocks after confirming their natural dimensions;
-objects with repeated table bands or separate object gaps retain full measurement.
-Actual preview/load events still invalidate these blocks. Paragraph spacing changes invalidate corresponding
-measurements rather than the whole line cache. The inexpensive pagination plan
-still runs over all units. Cached footnote heights avoid repeating hidden layout for unchanged notes.
-Page-gap height lookup uses indexed prefix sums rather than rescanning all gaps
-for every paragraph. This does not yet make planning incremental from the edit.
 
 Large initial document projections, quiet ordinary-text source conversions, and
 large reference/bibliography indexes use a shared serial worker. Initial preparation
@@ -1795,66 +1837,12 @@ colors and environment declarations share the real source-level document boundar
 Changing that input refreshes setup; declaration-only fragments use their complete
 input. Commented or nested document markers do not truncate color declarations.
 
-Pagination yields between spacing, measurement and planning, restores its temporary
-measurement flags before yielding, and discards superseded work. Each individual
-DOM measurement stage still runs atomically. Formula preview queues prioritize the
-viewport through one observer without scanning bounding boxes for every queued job.
-When an active conversion loses its last subscriber, its worker is terminated and
-the remaining formulas resume in a fresh worker. Canceling one of several views of
-the same formula retains their shared conversion; obsolete worker replies are ignored.
-The main-canvas viewport adapter retains the complete ProseMirror model while
-mounting nearby paragraphs and display equations in documents with more than 24
-eligible blocks. Distant blocks retain opaque node views, source positions and
-measured natural heights, including internal page gaps. Selection endpoints, the
-active search match, live math fields and visible sidebar thumbnail pages stay
-mounted. Print preparation mounts all eligible content. Geometry is published only
-after a current natural-flow pass, and a bounded cache reuses it across openings
-with matching source, typography, references and math setup. Cold unmeasured blocks
-use temporary height estimates while small background batches establish geometry.
-Opening readiness is independent of document-wide preparation. The paper is
-revealed after the intended viewport's reading fonts, previews and measured layout
-are ready. A new document starts at its first page; reopening during the renderer
-session restores the last compatible source-block anchor. Navigation during
-preparation supersedes that opening target. Parsing still prepares the complete
-source-backed model; far page numbers remain provisional until preceding geometry
-is known. Static opening feedback does not expose an estimated page as finished.
-
-The bundled reading font pool and the resolved prose family are prepared before
-accepting geometry. A failed or stalled font admits fallback metrics after a bounded
-two-second wait. Only relevant font dependencies enter the geometry key; unrelated
-UI font completion does not invalidate the editor. Later real metrics, source,
-macro, reference, ancestor or typography changes still invalidate incompatible
-geometry. Retention never grants validity to an old measurement.
-
-Completed passive reading blocks remain mounted under a 64 MiB estimated
-source/DOM admission budget, without a time expiry or independent block-count
-ceiling. Idle completions use spare capacity; new reading demand evicts background
-views before recently visited ones. The estimate includes source attributes,
-light and mathematical shadow elements, text and DOM attributes. Immutable source
-weights and context-compatible DOM weights are reused until resource/preview/input
-view changes. Visible, selected and active
-blocks retain their separate admission rules. Geometry and passive formula markup
-share a 24 MiB estimated byte budget, including keys and entry overhead, with
-idle admission declining new results when full instead of evicting completed
-preparation. Reading demand can replace entries, evicting background results first.
-Capacity-paused owners do no idle polling and resume when retained bytes are released,
-source/layout changes, or navigation demands a page. Oversized/invalid entries do not
-report capacity pressure. Terminal math fallback also retains a weak model/context
-marker so an oversized formula key cannot create a remount loop. Exact layout-context
-identities avoid repeating the full document reference/font setup in each key.
-There is no independent 512-formula ceiling; many small results can remain
-available within the byte budget. DOM eviction preserves compatible geometry and markup.
-Scroll direction and velocity enlarge forward overscan temporarily. Visible demand
-preempts idle preparation, admitting at most eight blocks per paint and measuring
-up to 32 required units separately from background cohorts of up to 64. Typing,
-composition and active scrolling defer background admission. Reading feedback
-reflects missing visible content rather than distant unfinished work.
-Compatible geometry can already exist for a block which has never mounted its
-reading content. When preparation completes or pauses at reusable-cache capacity,
-idle admission also mounts those blocks: up to eight known-weight views with a
-cumulative byte reservation, or one exploratory view whose complete DOM estimate
-is charged on the next paint. Completed passive DOM does not own interactive
-MathLive input models.
+Formula preview queues prioritize formulas near the viewport through one
+IntersectionObserver (`mathFieldMountQueue.ts`) without scanning bounding boxes
+for every queued job. When an active conversion loses its last subscriber, its
+worker is terminated and the remaining formulas resume in a fresh worker.
+Canceling one of several views of the same formula retains their shared
+conversion; obsolete worker replies are ignored.
 
 Equation activation keeps the original passive wrapper and equation numbers in
 normal flow while the existing interactive React view initializes in an absolute,
@@ -1868,154 +1856,26 @@ typing, IME, paste and drop remain blocked until publication. New source, contex
 selection, readonly, outside focus/pointer intent or disposal cancels admission.
 Failure after a bounded deadline retains readable ink and exposes local Retry.
 
-Scrolling uses one preparation mask per sheet, outside the editable DOM. Complete
-visible pages and one page ahead are admitted independently of thumbnail demand.
-The mask is installed before DOM admission and readiness updates run before paint.
-A paint-only clip admits settled physical sheets, keeping unfinished ink and page
-gaps hidden without changing source or measurement geometry. Compatible idle-prepared pages mount behind a silent paint fence and are admitted
-as soon as their live geometry/resources are ready; they do not repeat the cold-page
-preparation label or an unconditional two-frame wait. Live complete previews remain
-ready even if their reusable markup is evicted. Closed units require compatible
-geometry and retained formula results or terminal fallbacks. Completion events only
-queue one coalesced readiness pass; actual pending transitions use cached source-page
-membership for the synchronous paint fence. The cover occupies the content area,
-leaving running headers, footers and page numbers visible. The mask preserves page geometry, hides intermediate block labels and
-reveals a settled page together. Active caret/selection pages retain interaction priority.
-Document and page preparation share a spinner, removed when preparation settles
-and static when the reader requests reduced motion.
-After five seconds, pending math/image dependencies resolve into localized source
-or unavailable-preview fallbacks with Retry, rather than holding the page indefinitely.
-Failed math fallbacks are reusable until an explicit retry or changed math context.
-Retry discards fallback geometry and waits for a new measurement of settled
-content before revealing the page again.
-No native TeX compilation is initiated by page preparation.
-
-Ready math markup appears immediately on cache hits. Prepared geometry remains
-in force while a cache miss renders, and unchanged remounts reuse natural units
-without triggering a full measurement pass. Viewport metadata changes and page-map
-publication preserve the latest visible source-block anchor, including an opaque
-block about to be mounted. A guarded correction after paint accounts for delayed
-browser layout without overriding newer navigation, selection or source changes.
-Cold mounted blocks reserve estimated boxes until geometry is ready; clicking a
-prose placeholder reveals it before native caret hit testing. Active prose and math
-editors retain natural layout. Measurement, thumbnails and print use natural
-content. Snapshot construction yields by time and operation count, never moving
-the editable document or its native selection.
-Run-in heading pairs and multi-column/minipage layouts retain their existing DOM.
-Complex containers and individual browser layout calls are not yet bounded by this
-adapter; production opening/typing targets still require qualification. Passive
-main-canvas formulas do not allocate React portals.
-Scientific statements keep a native ProseMirror body container for their lifetime.
-React portals render the heading and existing contextual footer without moving
+Passive main-canvas formulas do not allocate React portals. Scientific
+statements keep a native ProseMirror body container for their lifetime. React
+portals render the heading and existing contextual footer without moving
 editable body content. Heading, numbering and type updates retain the body DOM;
 switching to a different layout recreates the appropriate node view. Complex
-layout containers retain their existing React renderer. This removes statement
-body relocation during mounting, but does not bound full-document layout cost.
-Measurement reads finish before updating display-math intrinsic heights, and
-unchanged heights do not cause style writes.
-Ordinary full passes read an inert offscreen snapshot, retaining the paper's
-semantic attributes, typography, nested flow and mathematical shadow styles.
-Snapshot construction yields between individual nodes and cancels when the
-owning source/layout generation changes. Text positions and geometry identities
-map to the original editor; no source node or native selection moves. One copy
-exists per pass and is removed on completion or cancellation. Active custom
-editors and multi-column flow retain the existing measurement path; no second
-live editor is constructed. Its temporary switches live on the editor's outer
-container, outside ProseMirror's observed DOM, and are removed before yielding.
-Mounted paragraphs and display bodies use natural browser layout under the
-bounded viewport admission adapter. There is no second `content-visibility:auto`
-viewport cache: it can change predecessor sizes during anchor restoration. Opaque
-views alone represent distant content using compatible measured heights or cold
-estimates. Layout containment remains identical between reading and measurement.
-Cold viewport preparation prioritizes required content and nearby overscan before
-idle source-order work. Required content does not wait for an unrelated background
-cohort. The final smaller cohort is measured without waiting for nonexistent units.
-Geometry context lookup reuses the immutable document and position within the
-current layout generation. Changes to ancestors, first-child roles, source
-setup or typography invalidate that lookup; only the current document is held.
-Source and PDF retain the hidden Visual editor. Viewport preparation pauses
-while its pane has no visible dimensions, preserving its last valid geometry
-instead of treating an unresolved hidden width as a layout change. Resize
-observation resumes preparation and validates current typography/source setup
-when the pane becomes visible; source synchronization and recovery remain active.
-Natural measurement overrides the more specific prepared-unit selectors for
-both paragraphs and display bodies. Otherwise an offscreen snapshot can reuse
-the reading fallback, including existing page gaps, and contaminate the next
-natural measurement. Viewport fidelity checks cover mounting and the return
-to the reading viewport after eager presentation.
-Geometry and footnote caches identify typography through resolved font
-longhands, including ligatures, numeric variants and variable-font settings.
-The computed font shorthand can be empty and cannot identify a font-family
-change by itself. Isolated paragraph and footnote measurement copy the same
-resolved properties; built-in font changes invalidate distant geometry without
-depending on a font download event.
-Document height, the reading-state attribute and the pending preparation count
-are plugin-owned root attributes. Geometry changes refresh node views during
-the next viewport transaction, alongside admission and visibility changes.
-Background measurement does not mutate those node-view attributes directly:
-even ignored mutations make ProseMirror compare native selection and can force
-an otherwise unnecessary layout. Source, selection and undo remain unchanged
-by these presentation transactions.
-Only units with changed geometry receive a geometry refresh. Identical line
-measurements retain their identity, and unchanged accessible text is not replaced.
-Viewport display heights use that same refresh; legacy nonviewport views retain
-their existing intrinsic-height writes.
-Horizontal paragraph fitting keeps the displayed page gaps and distant-block
-visibility in place; the natural-flow switch belongs only to page-break measurement.
-Text-run measurement checks whether its current start already lies on the
-requested rendered line before searching for another character boundary. Ordinary
-single-line runs need one character-boundary read; wrapped runs retain native
-geometry and source offsets, including leading whitespace and empty lines.
-The paragraph text walker rejects entire noneditable atom and pagination-widget
-subtrees before visiting their descendants. Marked prose remains in DOM order;
-math and other inline atoms contribute their separately measured outer bounds.
-Local paragraph measurement also retains unchanged passive inline formulas. Its
-offscreen copy preserves their rendered markup and shadow styles, maps formula
-bounds and prose offsets back to the live document, and creates no math editors.
-Changed formulas, active math fields, other inline objects and unsupported flow
-still use the full measurement path. Preview, font and intrinsic-size changes
-invalidate geometry independently of ordinary prose edits.
-Full natural-flow measurement advances through blocks, nested scientific content,
-lists and table/bibliography rows in cancellable batches. Snapshot batches leave
-the displayed page gaps untouched while yielding to input and paint; fallback
-batches restore them before yielding. Distant content remains
-measurable for that pass instead of repeating subtree visibility changes at every
-yield; cancellation and completion restore ordinary content visibility. Resuming after a scroll
-updates the viewport origin while retaining document coordinates. The batch aims
-to yield after eight milliseconds or pending input, at the next measurement boundary.
-An individual paragraph read or browser layout can exceed that interval. Generation
-checks discard a pass interrupted by editing, preview changes or disposal before
-publishing its page map. The ordinary local paragraph path remains unchanged.
-Resize reports from temporary measurement visibility are deferred until the pass
-validates the affected containers' final natural sizes. This prevents measurement
-from repeatedly cancelling itself, while unexpected geometry, root width changes
-and explicit input/font/preview invalidation still discard stale measurements.
-Windowed paragraphs and display formulas retain the same layout, style and paint
-containment from the first natural pass and while measurement forces visibility.
-Run-in headings and inline-field paragraphs retain their uncontained flow.
-Changing that formatting context
-would change collapsed margins in math wrappers and nested scientific blocks,
-causing their own resize reports to restart pagination. Print restores ordinary
-uncontained flow.
-Resize observation also ignores height changes of at most one eighth of a CSS
-pixel and width changes below one tenth of a pixel when both are within tolerance.
-The comparison retains the last accepted size, so accumulated changes still
-invalidate layout. Explicit content, font and preview events bypass this filter.
-Resize targets follow the current source block elements when node-view admission
-or editing context replaces DOM without changing the document node. A shallow
-child-list observer detects those replacements; pagination widgets do not become
-resize targets, and unchanged source elements keep their existing observation.
+layout containers retain their existing React renderer.
+Source and PDF retain the hidden Visual editor once it has opened; source
+synchronization and recovery remain active while it is hidden.
 Selection painting collects native ink, guide geometry and resolved colors
 before changing presentation attributes or overlay styles. Unchanged overlay
 variables are not rewritten. Scope notifications follow the painted overlay;
 menu retention and the existing scrolling layer still own selection behavior.
-Thumbnails share CSS-variable reads and wait for typing to become quiet.
 
 Node views subscribe only to presentation state used by their object type. Reference
 presentation omits changing source positions; clicking resolves the current target.
 Source acknowledgements recheck reference and bibliography data but retain the
-existing presentation identity when their complete values are unchanged, preserving
-layout caches through ordinary writing. Narrow marked-text source patches include
+existing presentation identity when their complete values are unchanged, so
+formula and statement views do not refresh during ordinary writing. When only
+positions changed, a recomputed index keeps the previous presentation identity
+(`settleReferences`). Narrow marked-text source patches include
 snapshot-owned trailing spaces, so undo can retain original command spelling.
 Preamble-stable authoring context and the memoized file surface reduce surrounding
 UI updates. These changes do not establish LyX-equivalent latency; thesis captures
@@ -2024,7 +1884,9 @@ and preservation checks are recorded separately from native LyX import coverage.
 Projection reconciliation skips identical canvas content and replaces only the
 changed ProseMirror range for genuine replacements. It retains unaffected node
 views, maps the caret and restores scrolling, and releases its applying guard in
-`finally`. Local source lineage guards still distinguish acknowledgements from
+`finally`. Accepted metadata repairs compare reparsed attributes by value
+(`sameAttribute`), so an equal attribute held in a new object produces no
+attribute step. Local source lineage guards still distinguish acknowledgements from
 outside edits; external-source adoption still clears obsolete document history.
 
 Typing snapshots, source checkpoints and individual text/math/object-field
@@ -2124,8 +1986,8 @@ bound iterations (100), template size and total expanded source. Nested loops,
 dynamic definitions and subsequent register uses retain the source fallback.
 
 The projected document contains ordinary flat blocks, so contents links,
-numbering, selections and explicit page breaks use the existing editor and
-pagination paths. Physical source locations point back to the owning loop.
+numbering, selections and explicit page breaks use the existing editor paths.
+Physical source locations point back to the owning loop.
 Edits are validated against the virtual projection; an unchanged expansion is
 collapsed back to its original loop. Editing generated content materializes the
 loop, retaining the preamble definitions and normal source/history pipeline.
@@ -2140,8 +2002,8 @@ indentation and line numbering; generated keywords are outside editable text.
 Caption and line edits patch their original ranges. Enter and the footer's Add
 step create a State line; row count changes serialize only the algorithmic body.
 The reference index maintains an independent algorithm counter and clickable
-labels. Unsupported pseudocode commands retain the source fallback. The float
-stays together in Visual; placement remains a TeX approximation.
+labels. Unsupported pseudocode commands retain the source fallback. Float
+placement belongs to TeX.
 
 Literal `textcolor`, `colorbox`, `fcolorbox` and `fbox` use an attributed inline mark;
 serialization retains the color expression. Document-scoped CSS variables resolve
@@ -2156,8 +2018,8 @@ paragraph boxes retain their argument boundaries and length declarations.
 `tcblisting` with the listings engine uses the existing literal code editor and
 patches its code/title ranges without rewriting the frame options. Source-only
 fields have fixed sizing and a one-line minimum, with scrollable content.
-Breakable boxes participate in nested
-pagination; the CSS frame and continuation are an approximation of TeX output.
+On continuous paper a breakable box is one unbroken frame; the CSS frame is an
+approximation of TeX output.
 
 A bounded literal newcount/advance/ifnum loop can project up to 100 repetitions.
 It is not a TeX interpreter. Unchanged generated text retains its exact loop;
@@ -2258,12 +2120,14 @@ preview. There are no drawing-editing controls in Visual.
 Standard report/book structure uses the existing rich-preview nodes for literal
 document controls (`title`, `author`, `date`, `pagenumbering`, `appendix`) and
 generated contents/figure/table lists. Controls retain their exact source and
-occupy zero-height positions in the page map. Title edits replace the effective
-declaration before `maketitle`, including declarations inside `document`.
-The reference plugin derives chapter/appendix numbers, heading decorations,
-captions and list targets together. Pagination applies implicit chapter/list
-starts and title pages; printed page labels are derived separately from physical
-sheet indices. Contents indentation and leaders follow standard class levels.
+keep a zero-height place in the document without printing content. Title edits
+replace the effective declaration before `maketitle`, including declarations
+inside `document`. The reference plugin derives chapter/appendix numbers, heading
+decorations, captions and list targets together. With a title page (`titlepage`
+class option, or report/book without `notitlepage`) the title block fills one
+page's printable height. Chapters do not start new pages on continuous paper,
+and Visual prints no page labels. Contents indentation and leaders follow
+standard class levels.
 This remains a CSS approximation: TeX float placement, custom class counters and
 two-sided blank recto pages require the compiled PDF.
 
@@ -2408,8 +2272,8 @@ tables. `latexSelectionBetween` preserves included atoms at snapped text endpoin
 states. It measures visible text leaves, field text, math surfaces, table cells,
 images, SVGs and canvases without overlapping wrapper rectangles. Math and table
 CSS no longer paints a second background for a document-owned range. Native math
-and table participants retain their own local selection geometry. Hidden measures,
-page gaps and controls are excluded. `latexTextSelectionRects` shares field
+and table participants retain their own local selection geometry. Hidden measures
+and controls are excluded. `latexTextSelectionRects` shares field
 geometry between local native selection and document selection, including wrapping,
 scrolling and RTL. Browser selection in math shadow roots is suppressed; document
 participants suppress browser text paint using `data-scient-selection-overlay`.
@@ -2458,34 +2322,5 @@ the editing caret. Empty markers use zero-size DOM baseline anchors at the nativ
 insertion stop and the caret's computed stroke metrics, including accent scaling.
 Their centers and hit targets share that model offset; entering a slot does not
 translate the caret. Cell lookup excludes carets and measurement anchors, including
-bare empty equation rows. Page-preview snapshots omit the measurement anchors.
-Page-preview snapshots strip guide state. These visual changes
-have not been qualified with live interaction tests.
-
-### Measurement allocation and retention qualification
-
-Natural-flow snapshots can reuse the outer height and relative line positions of
-unchanged top-level viewport paragraphs under the last committed font generation,
-typography and width. These copies omit text and mathematical shadow contents and
-use closed-paragraph geometry. Nested lists/statements, changed paragraphs,
-columns, custom editors and protected embedded elements retain the full snapshot
-or live measurement fallback. One empty detached paragraph workspace per document
-is reused; nested calls receive a separate workspace, and cleanup runs after errors.
-
-The 24 MiB reusable cache and 64 MiB passive reading DOM admission limits remain
-conservative estimates rather than claims about total JavaScript heap. Source/model,
-node-local geometry, decoded images, active editors and transient rendering remain
-outside that reusable-cache estimate. Background-first LRU uses an ordered set,
-without constructing a full entry array for each eviction. Focused Chromium tests
-exercise cold entry, reverse after a pause, saved locations, font invalidation,
-source/caret/undo, snapshot parity/cancellation, fallback/Retry and a 64 KiB pressure
-budget with pause/live-readiness/free-space-resume assertions. This does not qualify
-native byte-changing persistence or production compilation.
-
-A reading anchor keeps one source-block identity throughout pending preparation;
-a newly exposed predecessor does not replace it. Incoming cold members participate
-before mounting. User scrolls, source/selection changes and explicit navigation
-choose a new anchor. Same-top navigation cancels delayed settlement, which also
-checks anchor identity, document, selection and expected scroll position. This
-closes the previously reproduced 443 px cold-preparation displacement without
-relaxing the stress test's one-pixel limit.
+bare empty equation rows. These visual changes have not been qualified with live
+interaction tests.

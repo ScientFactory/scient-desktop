@@ -153,16 +153,14 @@ The list footer has a **Numbering** menu for the format, starting number and
 continuing a previous list. Description lists have an **Items** menu for inserting
 or deleting the current item.
 
-Large Visual documents prepare nearby pages first and continue preparing later
-content while you read. A page that needs preparation shows one **Preparing page…**
-message with a spinner, then appears as a whole without exposing intermediate
-layout. The spinner stays still with reduced motion enabled. If a preview takes more than five seconds, the
-page shows the available content with a fallback and **Retry page**. Source remains
-available. Prepared results stay cached within a memory budget; a long reading pause
-alone does not expire them, but source, font or layout changes can require preparation.
-Page numbers remain visible while a page prepares. Idle preparation preserves results
-already in memory and pauses when its budget fills; it resumes when space becomes
-available. Scrolling to a new page takes priority over background work.
+Visual opens a document where you last read it during this session. The first
+screen appears at once and the rest of the document loads around it in small
+steps, so scrolling and the rest of the app stay responsive. Editing and the
+writing toolbar become available when the whole document has loaded, usually
+within a second or two. Formulas render in the background, visible ones first;
+a formula that cannot be rendered shows its LaTeX. The line at the top of the
+reading area stays where it is while content above or below it changes size,
+whether a formula finishes rendering, an image loads or you edit.
 
 PDF, Visual and Split use one header row. From the left it holds build status,
 search and the view switch; sidebar, page and zoom controls follow, with the
@@ -497,14 +495,15 @@ controls when source changes rebuild the PDF.
 Write, Math and Tables. Filter by area when needed; shortcut editing, custom math
 actions and the printable reference remain in the same dialog.
 
-The writing surface uses a vertical stack of pages. Paragraphs can continue
-across sheets, headings stay with following text when space allows, and tall
-supported tables continue at row boundaries. Description lists and the contents
-list can also continue between entries. These are live editor page breaks;
-the compiler still determines final PDF pagination. Clicking the zoom percentage
-fits the page to the available workspace using the same zoom percentage as PDF
-for the same paper size, pane width and navigation state. The page number in the
-header row shows the visible page. Choose **Outline** to open document navigation.
+The writing surface is one continuous sheet of paper at the document's page
+width and margins; only the compiled PDF has pages. After a build of the same
+source, thin dashed lines with page numbers mark where the PDF's pages begin,
+and the header row shows the page you are reading and the page count. The marks
+follow your edits and turn fainter once the source has changed since that build;
+the next build places them again. Without a matching build the header shows no
+page controls. Clicking the zoom percentage fits the paper to the available
+workspace using the same zoom percentage as PDF for the same paper size, pane
+width and navigation state. The sidebar holds the document outline.
 Table tools appear in the existing footer; selecting a table does not add
 controls, labels, or empty caption fields to the paper.
 The canvas also reads common `\geometry{...}` overrides, landscape paper, and
@@ -531,15 +530,15 @@ Plain abstract text is also shown and edited as an abstract
 rather than as a source card. Numbered sections, subsections, and subsubsections
 display their expected hierarchy in the canvas; starred headings remain
 unnumbered. `\tableofcontents` shows clickable entries with page numbers in Visual.
-Click a title to navigate to its heading. Titles follow heading edits, and page
-numbers follow Visual's local page map; the compiled PDF remains authoritative.
+Click a title to navigate to its heading. Titles follow heading edits; page
+numbers come from the last matching PDF build and are left out without one.
 An explicit
 `\addcontentsline{toc}{section}{Unnumbered section}` contributes an unnumbered
 entry to Visual's Contents without printing the command or creating a heading.
 The following paragraph remains editable, and the command stays in source.
-`\newpage` and `\clearpage` start a new Visual page, including when the command
-immediately follows prose without a blank line. They appear as compact page-break
-markers instead of raw-source cards.
+`\newpage` and `\clearpage` appear as a labelled page-break rule instead of a
+raw-source card, including when the command immediately follows prose without a
+blank line.
 
 Inline `\verb` text and `verbatim` blocks are editable directly on the page.
 Their contents remain literal: commands, percent signs and braces are printed,
@@ -581,18 +580,13 @@ paragraph before the command, using `\par\columnbreak` or a blank line before
 Visual preserves that distinction, including the equivalent forced form
 `\columnbreak[4]`; it does not insert paragraph breaks to change PDF behavior.
 Full-width prose resumes after a column region. `\noindent`, `\par`, the three
-standard skip commands and root-level `\vfill` affect layout without printing
-their source. Vertical fill pushes the following content toward the bottom of
-the current printable page when space is available.
+standard skip commands affect layout without printing their source. Root-level
+`\vfill` is kept in the source and takes no space in Visual; it fills the page
+in the compiled PDF.
 
-Visual also reads common root-preamble `fancyhdr` left/center/right fields,
-running section marks and `\thepage`, with header/footer offsets from geometry
-or literal length assignments. These running fields are display-only; edit their
-definitions in Source. Columns are currently kept together by Visual's local
-page planner. Default running fields align against the full header/footer width,
-and long text wraps within the page margins. Long regions, minipage-specific
-footnotes, custom page styles and TeX's page/column balancing still require the
-compiled PDF.
+Running headers and footers, such as `fancyhdr` fields, appear only in the
+compiled PDF; edit their definitions in Source. Minipage-specific footnotes,
+custom page styles and TeX's page/column balancing also require the compiled PDF.
 
 Description lists and common `tabular`, `tabularx`, `tabulary`, and `longtable`
 structures have visual editors. When inactive they read like document content;
@@ -718,8 +712,8 @@ boxes are also editable. Literal styles include square or rounded corners, shado
 dashed frames, a left accent strip, and separate upper/lower regions. Framed
 `tcblisting` blocks using `listings` show editable code with syntax colors and line
 numbers. Visual approximates these decorations; the compiled PDF remains authoritative.
-Breakable boxes can continue onto later Visual pages; exact splitting remains
-the compiler's responsibility.
+Where breakable boxes split across pages is decided by the compiler and shown
+in the PDF.
 
 The box footer shows **Appearance** and **Title**. Appearance groups background,
 border color and thickness, square/rounded corners, padding and **Allow page breaks**.
@@ -926,11 +920,12 @@ Formatted labels keep their exact
 LaTeX and are edited in Source. Imported `\hyperref[label]{text}` and
 `\hyperlink{name}{text}` navigate to a labelled section or other supported target,
 including a literal `\hypertarget{name}{text}`. Section references display their
-number, and `\pageref` displays the target's local Visual page number. These
+number, and `\pageref` displays the target's page in the last matching PDF
+build, or the label in brackets without one. These
 commands keep their original source syntax. Links read as ordinary document text.
 
-Standard footnotes show a numbered superscript and their text beneath a short
-rule at the bottom of the corresponding Visual page. Click the superscript to
+Standard footnotes show a numbered superscript, and their text appears beneath a
+short rule directly below the paragraph that contains them. Click the superscript to
 navigate to its note; click the note to return to its marker. Either action
 makes **Edit text** available in the footer. It opens a plain-text editor beside
 the marker without shifting the paragraph. Enter or Escape finishes editing and
@@ -1261,15 +1256,16 @@ Source; Write is a bounded editor, not a complete TeX interpreter. Using
 recovered changes follows normal save and conflict handling.
 
 Standard report documents show editable title metadata even when it is declared
-inside `document`, separate title/chapter pages, Roman front-matter page numbers,
-and lettered appendix chapters. Contents and lists of figures/tables have aligned
+inside `document`, and lettered appendix chapters. Contents and lists of figures/tables have aligned
 numbers, indented entries and clickable targets. Captions and references share
-chapter numbering (for example, Figure 1.1 and Table 2.1). Page numbers reflect the
-Visual layout; exact float placement and compiled page breaks remain PDF features.
+chapter numbering (for example, Figure 1.1 and Table 2.1). Page numbers, float
+placement and page breaks come from the compiled PDF.
 
-Visual prepares reading content in the background while you pause. Completed
-content stays mounted while its reading memory budget permits; recently visited
-pages take priority when space runs short. Interactive equation editors are created
+The whole document stays mounted once it has loaded, so scrolling never waits
+for content to be prepared. Rendered formulas are kept in a cache with a fixed
+memory budget; when it fills, formulas rendered in the background give way before
+ones you have read. Typing in a
+paragraph updates only that paragraph. Interactive equation editors are created
 on demand. Your formula stays visible while its editor prepares, with a small
 preparation hint. A stalled editor keeps readable content and offers **Retry**.
 

@@ -64,8 +64,13 @@ async function mount(input: string) {
           ?.editor,
     )
     .toBeTruthy();
-  return host.querySelector<HTMLElement & { editor: Editor }>(".scient-latex-visual-document")!
-    .editor;
+  const editor = host.querySelector<HTMLElement & { editor: Editor }>(
+    ".scient-latex-visual-document",
+  )!.editor;
+  await expect
+    .poll(() => editor.view.dom.hasAttribute("data-latex-loading"), { timeout: 15000 })
+    .toBe(false);
+  return editor;
 }
 const preamble = String.raw`\documentclass{article}
 \usepackage{amsmath,fontspec}

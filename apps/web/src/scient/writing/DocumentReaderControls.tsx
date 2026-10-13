@@ -170,6 +170,10 @@ export function DocumentReaderControls(props: {
   ready: boolean;
   page: number;
   pageCount: number;
+  /** False when the document has no known pages (Visual before a PDF build). */
+  pages?: boolean;
+  /** What the sidebar holds, for the overflow menu. */
+  sidebarContents?: string;
   scale: number;
   sidebarOpen: boolean;
   searchOpen: boolean;
@@ -221,39 +225,43 @@ export function DocumentReaderControls(props: {
       >
         {props.sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
       </ReaderButton>
-      <div className="scient-pdf-toolbar-separator" />
-      <ReaderButton
-        className="scient-pdf-action-page-step"
-        label="Previous page"
-        disabled={!props.ready || props.page <= 1}
-        onClick={() => props.onPage(props.page - 1)}
-      >
-        <ChevronLeft />
-      </ReaderButton>
-      <div className="scient-pdf-page-control">
-        <input
-          value={pageInput}
-          inputMode="numeric"
-          aria-label="Page number"
-          // As wide as the longest page number, with two digits as the minimum.
-          style={{ width: `calc(${Math.max(2, String(props.pageCount).length)}ch + 12px)` }}
-          disabled={!props.ready}
-          onChange={(event) => setPageInput(event.target.value)}
-          onBlur={commitPage}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") commitPage();
-          }}
-        />
-        <span aria-label={`${props.pageCount} pages`}>/ {props.pageCount || "–"}</span>
-      </div>
-      <ReaderButton
-        className="scient-pdf-action-page-step"
-        label="Next page"
-        disabled={!props.ready || props.page >= props.pageCount}
-        onClick={() => props.onPage(props.page + 1)}
-      >
-        <ChevronRight />
-      </ReaderButton>
+      {props.pages === false ? null : (
+        <>
+          <div className="scient-pdf-toolbar-separator" />
+          <ReaderButton
+            className="scient-pdf-action-page-step"
+            label="Previous page"
+            disabled={!props.ready || props.page <= 1}
+            onClick={() => props.onPage(props.page - 1)}
+          >
+            <ChevronLeft />
+          </ReaderButton>
+          <div className="scient-pdf-page-control">
+            <input
+              value={pageInput}
+              inputMode="numeric"
+              aria-label="Page number"
+              // As wide as the longest page number, with two digits as the minimum.
+              style={{ width: `calc(${Math.max(2, String(props.pageCount).length)}ch + 12px)` }}
+              disabled={!props.ready}
+              onChange={(event) => setPageInput(event.target.value)}
+              onBlur={commitPage}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitPage();
+              }}
+            />
+            <span aria-label={`${props.pageCount} pages`}>/ {props.pageCount || "–"}</span>
+          </div>
+          <ReaderButton
+            className="scient-pdf-action-page-step"
+            label="Next page"
+            disabled={!props.ready || props.page >= props.pageCount}
+            onClick={() => props.onPage(props.page + 1)}
+          >
+            <ChevronRight />
+          </ReaderButton>
+        </>
+      )}
     </>
   );
   const zoomControls = (
@@ -391,7 +399,10 @@ export function DocumentReaderControls(props: {
             </IfRowHidden>
             <IfRowHidden selector=".scient-pdf-action-sidebar">
               <DropdownMenuItem onClick={props.onToggleSidebar}>
-                <ListTree /> {props.sidebarOpen ? "Hide sidebar" : "Show pages and outline"}
+                <ListTree />{" "}
+                {props.sidebarOpen
+                  ? "Hide sidebar"
+                  : `Show ${props.sidebarContents ?? "pages and outline"}`}
               </DropdownMenuItem>
             </IfRowHidden>
             <IfRowHidden selector=".scient-reader-search, .scient-pdf-action-search">

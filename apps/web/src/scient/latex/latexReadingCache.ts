@@ -4,17 +4,11 @@
 export function createLatexReadingCacheBudget(maximumBytes: number) {
   const entries = new Map<string, { value: unknown; bytes: number; reading: boolean }>();
   const background = new Set<string>();
-  const spaceListeners = new Set<() => void>();
   let bytes = 0;
   let evictions = 0;
   let rejections = 0;
   let capacityRejections = 0;
-  let spaceGeneration = 0;
   let peakBytes = 0;
-  const freed = () => {
-    spaceGeneration++;
-    for (const listener of spaceListeners) listener();
-  };
   return {
     statistics: () => ({
       bytes,
@@ -23,15 +17,8 @@ export function createLatexReadingCacheBudget(maximumBytes: number) {
       evictions,
       rejections,
       capacityRejections,
-      spaceGeneration,
       peakBytes,
     }),
-    subscribeSpace(listener: () => void) {
-      spaceListeners.add(listener);
-      return () => {
-        spaceListeners.delete(listener);
-      };
-    },
     cache<T>(namespace: string) {
       const keyFor = (key: string) => `${namespace}:${key}`;
       const weightFor = (key: string, valueBytes: number) =>
@@ -51,7 +38,6 @@ export function createLatexReadingCacheBudget(maximumBytes: number) {
             bytes -= entry.bytes;
             entries.delete(id);
             background.delete(id);
-            freed();
           }
         },
         get(key: string, reading = false): T | undefined {
@@ -86,7 +72,6 @@ export function createLatexReadingCacheBudget(maximumBytes: number) {
             capacityRejections++;
             return false;
           }
-          const before = bytes;
           if (previous) bytes -= previous.bytes;
           entries.delete(id);
           background.delete(id);
@@ -102,7 +87,6 @@ export function createLatexReadingCacheBudget(maximumBytes: number) {
             evictions++;
           }
           peakBytes = Math.max(peakBytes, bytes);
-          if (bytes < before) freed();
           return true;
         },
       };
@@ -111,16 +95,3 @@ export function createLatexReadingCacheBudget(maximumBytes: number) {
 }
 
 export const latexReadingCacheBudget = createLatexReadingCacheBudget(24 * 1024 * 1024);
-const contexts = latexReadingCacheBudget.cache<number>("layout-context");
-let contextSequence = 0;
-
-/** Exact context interning avoids repeating the full reference/font setup in
- * every paragraph key. Eviction creates a new identity, never a false match.
- */
-export function latexReadingContextIdentity(context: string) {
-  const previous = contexts.get(context, true);
-  if (previous !== undefined) return previous;
-  const identity = ++contextSequence;
-  contexts.put(context, identity, 8, true);
-  return identity;
-}

@@ -38,6 +38,7 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { setLatexPageMarkers } from "./latexPageMarkers";
 import {
   createLatexVisualTestOwner,
   stubLatexReadingFonts,
@@ -482,8 +483,12 @@ Control & 1 \\\\
     expect(toolbar.querySelector('button[aria-label="Text"]')).not.toBeNull();
     expect(toolbar.querySelector('[aria-label="Hide formatting tools"]')).toBeNull();
     expect(toolbar.querySelector('input[aria-label="Page number"]')).toBeNull();
+    // Pages exist only in a compiled PDF; without one the footer has zoom, not paging.
     expect(
       container.querySelector('.scient-latex-reader-footer input[aria-label="Page number"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('.scient-latex-reader-footer button[aria-label^="Zoom in"]'),
     ).not.toBeNull();
     expect(container.querySelector(".scient-latex-document-tools")).toBeNull();
     const context = container.querySelector(".scient-latex-context-tools")!;
@@ -502,10 +507,20 @@ Control & 1 \\\\
     document.body.append(headerSlot);
     try {
       await mount("Hello brave new world", "", headerSlot);
-      // Page, zoom and search are in the header slot, once.
-      expect(headerSlot.querySelector('input[aria-label="Page number"]')).not.toBeNull();
+      // Zoom and search are in the header slot, once; paging appears with PDF pages.
+      expect(headerSlot.querySelector('button[aria-label^="Zoom in"]')).not.toBeNull();
       expect(headerSlot.querySelector(".scient-pdf-toolbar-hosted")).not.toBeNull();
-      expect(container.querySelector('input[aria-label="Page number"]')).toBeNull();
+      expect(container.querySelector('button[aria-label^="Zoom in"]')).toBeNull();
+      expect(document.body.querySelectorAll('input[aria-label="Page number"]')).toHaveLength(0);
+      await act(() =>
+        setLatexPageMarkers(editor().view, {
+          key: "build",
+          pageCount: 2,
+          anchors: [{ page: 1, position: 0 }],
+        }),
+      );
+      expect(headerSlot.querySelector('input[aria-label="Page number"]')).not.toBeNull();
+      expect(headerSlot.querySelector('[aria-label="2 pages"]')).not.toBeNull();
       expect(document.body.querySelectorAll('input[aria-label="Page number"]')).toHaveLength(1);
       expect(readerHosted).toHaveBeenLastCalledWith(true);
       // The footer holds the object options slot and what follows the caret.
@@ -2115,11 +2130,6 @@ Theory & Proofs \\\\
       "button[aria-label='Show Document sidebar']",
     )!;
     await act(() => outline.click());
-    await act(() =>
-      [...container.querySelectorAll<HTMLButtonElement>(".scient-latex-navigation-tabs button")]
-        .find((button) => button.textContent === "Outline")!
-        .click(),
-    );
     expect(container.querySelector("[aria-label='Document navigation']")?.textContent).toContain(
       "Methods",
     );

@@ -14,9 +14,13 @@ export function LatexObjectToolbar(props: {
   children: ReactNode;
 }) {
   const { active, bar } = useLatexObjectContext(props.editor, props.root, props.selected);
-  const host = props.editor.view.dom
-    .closest(".scient-latex-visual-workspace")
-    ?.querySelector(".scient-latex-context-tools-slot");
+  // Only the active object looks for the footer slot: every reference has a
+  // toolbar, and searching the workspace on each render scaled with the document.
+  const host = active
+    ? props.editor.view.dom
+        .closest(".scient-latex-visual-workspace")
+        ?.querySelector(".scient-latex-context-tools-slot")
+    : null;
   if (!active || !host || !props.editor.isEditable) return null;
   return createPortal(
     <div

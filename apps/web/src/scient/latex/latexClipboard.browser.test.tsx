@@ -79,8 +79,8 @@ async function mount(body: string, disabled = false) {
     ".scient-latex-visual-document",
   )!.editor;
   await expect
-    .poll(() => editor.view.dom.getAttribute("data-latex-opening"), { timeout: 15000 })
-    .toBe("false");
+    .poll(() => editor.view.dom.hasAttribute("data-latex-loading"), { timeout: 15000 })
+    .toBe(false);
   return editor;
 }
 

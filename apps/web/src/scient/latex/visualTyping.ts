@@ -1,15 +1,23 @@
 import type { JSONContent } from "@tiptap/core";
 import type { Node as DocumentNode } from "@tiptap/pm/model";
 import type { Transaction } from "@tiptap/pm/state";
-import { ReplaceStep } from "@tiptap/pm/transform";
+import { ReplaceStep, type Step } from "@tiptap/pm/transform";
+import { LatexSourceStep } from "./LatexSourceStep";
 import { serializedVisualDocument } from "./visualDocumentJson";
 import { latexVisualNodeSignature, projectLatexVisualDocument } from "./latexVisualDocument";
 
+/** Source history annotations have no content or positional effect. */
+export function isSourceHistoryAnnotation(step: Step): boolean {
+  return step instanceof LatexSourceStep && step.from === step.to && step.slice.size === 0;
+}
+
 /** Classify editor operations only. No source parsing, serialization or TeX checks. */
 export function isOrdinaryTyping(transaction: Transaction): boolean {
-  if (!transaction.steps.length) return false;
-  return transaction.steps.every((step, index) => {
+  let textChanged = false;
+  const ordinary = transaction.steps.every((step, index) => {
+    if (isSourceHistoryAnnotation(step)) return true;
     if (!(step instanceof ReplaceStep)) return false;
+    textChanged = true;
     const doc = transaction.docs[index]!;
     const from = doc.resolve(step.from);
     const to = doc.resolve(step.to);
@@ -30,6 +38,7 @@ export function isOrdinaryTyping(transaction: Transaction): boolean {
     });
     return textOnly;
   });
+  return ordinary && textChanged;
 }
 
 /** Reuse the projection's editing capabilities; inspect only the changed text slot. */
@@ -39,6 +48,7 @@ export function isSourceOwnedTyping(
 ): boolean {
   if (!isOrdinaryTyping(transaction)) return false;
   return transaction.steps.every((step, index) => {
+    if (isSourceHistoryAnnotation(step)) return true;
     if (!(step instanceof ReplaceStep)) return false;
     const from = transaction.docs[index]!.resolve(step.from);
     if (!editableBlock(from.index(0))) return false;

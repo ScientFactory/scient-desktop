@@ -63,13 +63,7 @@ export function installLatexTableEditingGuides(root: HTMLElement): () => void {
       }
     };
     for (const cell of table.querySelectorAll<HTMLElement>("td,th")) {
-      if (
-        cell.closest("table") !== table ||
-        cell.closest(
-          '.scient-latex-table-page-gap,[data-latex-longtable-band="measurement"],.scient-latex-longtable-rule',
-        )
-      )
-        continue;
+      if (cell.closest("table") !== table || cell.closest(".scient-latex-longtable-rule")) continue;
       add(cell);
     }
     // A border on the table itself also supplies the corresponding outer edge.

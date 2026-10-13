@@ -405,26 +405,6 @@
   background: var(--accent);
   color: var(--accent-foreground);
 }
-.scient-latex-navigation-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 6px;
-  border-bottom: 1px solid var(--border);
-}
-.scient-latex-navigation-tabs button {
-  flex: 1;
-  border: 0;
-  border-radius: 5px;
-  padding: 5px 7px;
-  background: transparent;
-  color: var(--muted-foreground);
-  font: 11px/1.4 var(--font-sans);
-}
-.scient-latex-navigation-tabs button:hover,
-.scient-latex-navigation-tabs button[aria-pressed="true"] {
-  background: var(--accent);
-  color: var(--accent-foreground);
-}
 
 .scient-latex-visual-scroll {
   position: relative;
@@ -437,6 +417,9 @@
   scrollbar-gutter: stable;
   scroll-padding-block: 40px 80px;
   overscroll-behavior: contain;
+  /* Native anchoring follows the caret while editing, so Enter would scroll
+     the page by a line. Content that resizes above the reading area keeps the
+     position still instead (latexReadingAnchor). */
   overflow-anchor: none;
 }
 
@@ -458,27 +441,12 @@
   margin: 0;
   transform-origin: top left;
 }
+/* Visual is one continuous sheet; real pages exist only in the compiled PDF. */
 .scient-latex-visual-paper {
   position: relative;
   width: 100%;
   min-height: var(--scient-latex-paper-height, 1056px);
   margin: 0 auto;
-  box-sizing: border-box;
-  color: #171717;
-  color-scheme: light;
-}
-
-.scient-latex-page-stack {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-
-.scient-latex-page-sheet {
-  position: absolute;
-  width: 100%;
-  height: var(--scient-latex-paper-height, 1056px);
   box-sizing: border-box;
   border: 1px solid #d4d6da;
   border-radius: 1px;
@@ -486,49 +454,85 @@
   box-shadow:
     0 1px 3px #00000012,
     0 4px 16px #00000008;
-}
-
-.scient-latex-page-sheet > span {
-  position: absolute;
-  bottom: calc(var(--scient-latex-margin-bottom, 1in) * 0.5);
-  right: 50%;
-  transform: translateX(50%);
   color: #171717;
-  font: var(--scient-latex-font-size, 13.2835px) / 1.2
-    var(--scient-latex-font-family, "KaTeX_Main", serif);
+  color-scheme: light;
 }
 
-.scient-latex-running-header,
-.scient-latex-running-footer {
+/* Where a page of the last compiled PDF began. Markers take no space, so they
+   never move text; the rule spans the paper, clipped by its content layer. */
+.scient-latex-page-marker {
+  position: relative;
+  display: inline;
+  pointer-events: none;
+  user-select: none;
+}
+.scient-latex-visual-document > .scient-latex-page-marker {
+  display: block;
+  height: 0;
+}
+.scient-latex-page-marker::before {
   position: absolute;
-  left: var(--scient-latex-margin-left, 1in);
-  right: var(--scient-latex-margin-right, 1in);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
-  align-items: end;
-  color: #111;
-  font: var(--scient-latex-font-size, 13.2835px) / 1.2
-    var(--scient-latex-font-family, "KaTeX_Main", serif);
-  border: 0 solid currentColor;
-  white-space: pre-wrap;
+  top: 0;
+  left: -100vw;
+  right: -100vw;
+  border-top: 1px dashed #c4c8ce;
+  content: "";
 }
-.scient-latex-running-header > span,
-.scient-latex-running-footer > span {
-  /* fancyhdr's default fields share the full headwidth, with distinct alignment. */
-  grid-area: 1 / 1;
-  min-width: 0;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  text-align: left;
+.scient-latex-page-marker::after {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #fff;
+  color: #8a9099;
+  content: attr(data-page);
+  font: 9px / 1.4 var(--font-sans);
+  text-indent: 0;
+  transform: translateY(-50%);
 }
-.scient-latex-running-header > :nth-child(2),
-.scient-latex-running-footer > :nth-child(2) {
-  text-align: center;
+[data-latex-pages-stale] .scient-latex-page-marker::before {
+  border-top-style: dotted;
+  opacity: 0.6;
 }
-.scient-latex-running-header > :nth-child(3),
-.scient-latex-running-footer > :nth-child(3) {
-  text-align: right;
+[data-latex-pages-stale] .scient-latex-page-marker::after {
+  opacity: 0.6;
+}
+
+/* A block's footnotes, beneath it; the PDF sets them at the foot of the page. */
+.scient-latex-footnotes {
+  position: relative;
+  margin: 0.5em 0 0.8em;
+  padding-top: 0.4em;
+  font-size: var(--scient-latex-size-footnotesize, 0.8em);
+  line-height: var(--scient-latex-baseline-footnotesize, 1.2);
+  text-align: justify;
+  text-indent: 0;
+  user-select: none;
+}
+.scient-latex-footnotes::before {
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+  width: 40%;
+  border-top: calc(0.4 * 96px / 72.27) solid currentColor;
+  content: "";
+}
+.scient-latex-footnote {
+  padding-left: 1.8em;
+  text-indent: -1.8em;
+  cursor: pointer;
+}
+.scient-latex-footnote[data-reference-highlight] {
+  outline: 2px solid #8aafda;
+  outline-offset: 2px;
+  background: #e9f2ff;
+}
+.scient-latex-footnote sup {
+  padding-left: 1em;
+  margin-right: 0.2em;
+  font-size: 0.7em;
+  vertical-align: super;
 }
 
 .scient-latex-visual-document p[data-latex-noindent] {
@@ -712,19 +716,7 @@ p[data-latex-source-column-span]::before {
   vertical-align: baseline;
   pointer-events: none;
 }
-.scient-latex-column-break-gap {
-  display: block;
-  height: 0;
-  margin: 0;
-  padding: 0;
-  font-size: 0;
-  line-height: 0;
-  break-after: column;
-  pointer-events: none;
-}
-[data-latex-column-measuring] .scient-latex-visual-document .scient-latex-column-break-gap {
-  display: none;
-}
+
 .scient-latex-visual-document p:has(.scient-latex-inline-column-break) {
   text-indent: 0;
 }
@@ -771,7 +763,7 @@ p[data-latex-source-column-span]::before {
 .scient-latex-visual-paper > .tiptap,
 .scient-latex-visual-paper > div:has(> .tiptap) {
   /* Overfull ink may enter the margins, but cannot widen the paper/canvas.
-     Clip the content layer only; page-sheet shadows remain outside it. */
+     Clip the content layer only; the paper's shadow remains outside it. */
   overflow-x: clip;
   overflow-y: visible;
 }
@@ -821,55 +813,7 @@ p[data-latex-source-column-span]::before {
 .scient-latex-visual-document [data-scient-selection-overlay] ::selection {
   background: transparent;
 }
-.scient-latex-pagination-gap {
-  position: relative;
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  line-height: 0;
-  font-size: 0;
-  pointer-events: none;
-  user-select: none;
-}
-/* A full-width float preserves a paragraph's single inline formatting context:
-   continuation lines keep their justification and do not acquire a new indent. */
-.scient-latex-pagination-gap[data-inline="true"] {
-  float: left;
-  clear: both;
-}
-.scient-latex-pagination-gap[data-explicit="true"]::after {
-  position: absolute;
-  top: calc(100% - var(--scient-latex-margin-top) - var(--scient-latex-page-gap) / 2);
-  left: 0;
-  right: 0;
-  content: "Page break";
-  color: var(--muted-foreground);
-  font: 9px/1 var(--font-sans);
-  text-align: center;
-  transform: translateY(-50%);
-}
-[data-latex-measuring] .scient-latex-visual-document .scient-latex-pagination-gap {
-  display: none;
-}
-[data-latex-measuring] .scient-latex-visual-document .scient-latex-table-page-gap {
-  display: none;
-}
-[data-latex-measuring] .scient-latex-visual-document tr[data-latex-longtable-band="head"],
-[data-latex-measuring] .scient-latex-visual-document tr[data-latex-longtable-band="foot"] {
-  /* Retain their contribution to column widths while removing their height. */
-  visibility: collapse;
-}
-.scient-latex-longtable-measurements {
-  position: absolute;
-  visibility: hidden;
-  pointer-events: none;
-  width: 100%;
-  height: 0;
-  overflow: hidden;
-}
+
 .scient-latex-rich-preview .scient-latex-longtable-rule {
   height: 0;
   padding: 0;
@@ -877,9 +821,6 @@ p[data-latex-source-column-span]::before {
 }
 tr[data-latex-longtable-band] {
   user-select: none;
-}
-[data-latex-measuring] .scient-latex-visual-document .scient-latex-object-page-gap {
-  display: none;
 }
 
 .scient-latex-visual-document p {
@@ -897,7 +838,7 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-paper[data-indent-after-heading="false"]
   .scient-latex-visual-document
   :is(h1, h2, h3, h4, h5, h6)[data-latex-command]
-  + .scient-latex-pagination-gap
+  + .scient-latex-page-marker
   + p {
   text-indent: 0;
 }
@@ -961,7 +902,9 @@ tr[data-latex-longtable-band] {
   margin-left: var(--scient-latex-par-indent);
 }
 /* Paragraph/subparagraph headings share the following paragraph's first line. */
-.scient-latex-visual-document :is(h4, h5)[data-latex-command]:has(+ p) {
+/* A PDF page marker between them is zero-height and does not break the run-in. */
+.scient-latex-visual-document
+  :is(h4, h5)[data-latex-command]:has(+ p, + .scient-latex-page-marker + p) {
   float: left;
   clear: left;
   max-width: calc(100% - 1em);
@@ -970,7 +913,8 @@ tr[data-latex-longtable-band] {
   margin-bottom: 0;
   line-height: var(--scient-latex-line-height, 1.2);
 }
-.scient-latex-visual-document :is(h4, h5)[data-latex-command] + p {
+.scient-latex-visual-document :is(h4, h5)[data-latex-command] + p,
+.scient-latex-visual-document :is(h4, h5)[data-latex-command] + .scient-latex-page-marker + p {
   padding-top: 3.25ex;
   text-indent: 0;
 }
@@ -1016,7 +960,7 @@ tr[data-latex-longtable-band] {
   color: inherit;
   font-style: normal;
 }
-.scient-latex-visual-document > :nth-child(1 of :not(.scient-latex-pagination-gap)) {
+.scient-latex-visual-document > :nth-child(1 of :not(.scient-latex-page-marker)) {
   margin-top: 0;
 }
 .scient-latex-visual-document ul {
@@ -1170,102 +1114,53 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-display-math[data-equation-numbered] {
   padding-inline: 3em;
 }
-/* Opaque offscreen node views retain source positions and measured page gaps. */
-.scient-latex-visual-document [data-latex-viewport-closed] {
-  position: relative;
-  box-sizing: border-box;
-  height: calc(
-    var(--scient-latex-viewport-natural-height) + var(--scient-latex-viewport-gap-height)
-  );
-  content-visibility: visible;
-}
-[data-latex-windowed].scient-latex-visual-document
-  [data-latex-viewport][data-latex-viewport-closed] {
-  content-visibility: visible;
-}
-[data-latex-measuring] .scient-latex-visual-document [data-latex-viewport-closed] {
-  height: var(--scient-latex-viewport-natural-height);
-}
-.scient-latex-visual-document .node-latexDisplayMath[data-latex-viewport-closed],
-[data-latex-measuring]
-  .scient-latex-visual-document
-  .node-latexDisplayMath[data-latex-viewport-closed] {
-  height: auto;
-}
+
+/* Blocks off screen skip style, layout and paint, and keep the height they
+   last rendered at; until each has rendered once, it reserves a few lines
+   (latexReadingAnchor.ts renders them all once while idle). Containment moves
+   no block (checked on a 104-page thesis); the clip margin keeps outlines and
+   highlights visible. A run-in heading floats beside the next paragraph, so
+   both stay uncontained. */
 .scient-latex-visual-document
-  .node-latexDisplayMath[data-latex-viewport-closed]
-  > .scient-latex-visual-display-math {
-  height: var(--scient-latex-viewport-display-height);
+  > :not(
+    .scient-latex-page-marker,
+    h4,
+    h5,
+    :is(h4, h5) + p,
+    :is(h4, h5) + .scient-latex-page-marker + p
+  ) {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 6em;
+  overflow-clip-margin: 2em;
+}
+/* While blocks are still arriving, formulas and fields cannot be activated. */
+.scient-latex-visual-document[data-latex-loading] [contenteditable="false"] {
+  pointer-events: none;
+}
+/* Rendered once while idle, so its real height is remembered. */
+.scient-latex-visual-document > [data-latex-measure] {
   content-visibility: visible;
 }
-.scient-latex-visual-document [data-latex-viewport-closed] > .scient-latex-pagination-gap {
-  position: absolute;
-  float: none;
-}
-.scient-latex-viewport-accessible {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-/* Keep document/selection ownership intact while skipping distant math paint. */
-.scient-latex-visual-document[data-latex-windowed] :is(p, .scient-latex-visual-display-math) {
-  /* Unprepared mounted units must obtain real geometry. The viewport bounds
-     their admission; only units with a measured fallback skip offscreen layout. */
-  content-visibility: visible;
-  contain-intrinsic-block-size: auto var(--scient-latex-block-height, 100px);
-}
-.scient-latex-visual-document p[data-latex-viewport="mounted"][data-latex-viewport-prepared="true"],
+/* Active guides and footnote editors extend past the line's ink box: a block
+   being edited or used through a menu is never contained, so nothing clips them. */
 .scient-latex-visual-document
-  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared="true"]
-  .scient-latex-visual-display-math {
-  /* Viewport admission already bounds live DOM. A second browser viewport
-     cache can change flow while an anchor is being restored. */
+  > :is(
+    p:has(.scient-latex-mathfield math-field:is(:focus-within, [data-scient-selection-held])),
+    p:has(.scient-latex-visual-command[data-footnote-editor]),
+    .node-latexDisplayMath:has(
+      > .scient-latex-visual-display-math:is(
+        :focus-within,
+        [data-selected],
+        [data-document-selected]
+      )
+    ),
+    .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected])
+  ) {
   content-visibility: visible;
-  contain-intrinsic-block-size: none;
-}
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  :is(p, .scient-latex-visual-display-math),
-.scient-latex-visual-document[data-latex-windowed] :is(p, .scient-latex-visual-display-math) {
-  /* The first natural pass must use the eventual reading formatting context. */
-  contain: content;
-}
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  :is(p, .scient-latex-visual-display-math),
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  p[data-latex-viewport="mounted"][data-latex-viewport-prepared="true"],
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared="true"]
-  .scient-latex-visual-display-math,
-.scient-latex-visual-document :is(h4, h5) + p,
-.scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p,
-.scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]),
-.scient-latex-page-preview .scient-latex-visual-display-math {
-  content-visibility: visible;
-}
-.scient-latex-visual-document :is(h4, h5) + p,
-.scient-latex-visual-document :is(.scient-latex-rich-preview, .scient-latex-inline-field) p,
-.scient-latex-visual-document
-  p:has(.scient-latex-mathfield math-field:is(:focus-within, [data-scient-selection-held])),
-.scient-latex-visual-document p:has(.scient-latex-visual-command[data-footnote-editor]),
-.scient-latex-visual-document
-  .scient-latex-visual-display-math:is(:focus-within, [data-selected], [data-document-selected]) {
-  /* Active guides and footnote editors extend past the line's ink box. Paint
-     containment must not clip them while editing or using a menu. */
-  content-visibility: visible;
-  contain: none;
 }
 @media print {
-  .scient-latex-visual-document :is(p, .scient-latex-visual-display-math) {
-    content-visibility: visible !important;
-    contain: none !important;
+  .scient-latex-visual-document > * {
+    content-visibility: visible;
   }
 }
 .scient-latex-equation-numbers {
@@ -1661,45 +1556,13 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-visual-command[data-prose-command] > button:is(:hover, :focus-visible) {
   text-decoration: underline;
 }
-.scient-latex-page-footnotes {
-  position: absolute;
-  padding-top: 0.6em;
-  box-sizing: border-box;
-  font-size: var(--scient-latex-size-footnotesize, 0.8em);
-  line-height: var(--scient-latex-baseline-footnotesize, 1.2);
-  text-align: justify;
-  text-indent: 0;
-}
-.scient-latex-page-footnotes::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  inset-inline-start: 0;
-  width: 40%;
-  border-top: calc(0.4 * 96px / 72.27) solid currentColor;
-}
-.scient-latex-page-footnote {
-  padding-left: 1.8em;
-  text-indent: -1.8em;
-  cursor: pointer;
-}
-.scient-latex-page-footnote[data-reference-highlight],
+
 .scient-latex-visual-command[data-prose-command][data-reference-highlight] {
   outline: 2px solid #8aafda;
   outline-offset: 2px;
   background: #e9f2ff;
 }
-.scient-latex-page-footnote sup {
-  padding-left: 1em;
-  margin-right: 0.2em;
-  font-size: 0.7em;
-  vertical-align: super;
-}
-[data-latex-measuring]
-  .scient-latex-visual-document
-  .scient-latex-page-footnotes.ProseMirror-widget {
-  display: none;
-}
+
 .scient-latex-visual-command[data-equation-reference] button {
   font: inherit;
   padding: 0;
@@ -1809,7 +1672,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   text-align: center;
 }
 .scient-latex-visual-document
-  > .scient-latex-title-preview:nth-child(1 of :not(.scient-latex-pagination-gap)) {
+  > .scient-latex-title-preview:nth-child(1 of :not(.scient-latex-page-marker)) {
   margin-top: 2em;
 }
 .scient-latex-title-preview textarea {
@@ -2182,7 +2045,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-toc-preview li[data-unnumbered] > button {
   grid-template-columns: 0 minmax(0, 1fr) 1.55em;
 }
-/* Source-owned controls occupy a position for pagination but print no content. */
+/* Source-owned controls keep their place in the document but print no content. */
 .scient-latex-document-command {
   display: block;
   height: 0;
@@ -2324,16 +2187,33 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   li[data-level="3"] {
   padding-inline-start: 7em;
 }
+/* \newpage and \clearpage on continuous paper: a quiet labelled rule. */
 .scient-latex-page-break {
   position: relative;
   display: block;
-  height: var(--scient-latex-page-break-space, 0);
-  min-height: 0;
+  height: 1.6em;
   margin: 0;
   color: #8290a1;
   font: 9px/1.4 var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+.scient-latex-page-break::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed #c4c8ce;
+  content: "";
+}
+.scient-latex-page-break::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 0 6px;
+  background: #fff;
+  content: "Page break";
+  transform: translate(-50%, -50%);
 }
 .scient-latex-rich-preview {
   position: relative;
@@ -2368,14 +2248,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-rich-preview dl > [data-latex-description-item] ~ [data-latex-description-item] {
   margin-top: var(--scient-latex-description-itemsep, 0.8em);
 }
-.scient-latex-rich-preview dl > .scient-latex-object-page-gap,
-.scient-latex-toc-preview ol > .scient-latex-object-page-gap {
-  flex: none;
-  margin: 0;
-  padding: 0;
-  pointer-events: none;
-  user-select: none;
-}
+
 .scient-latex-rich-preview dt {
   box-sizing: border-box;
   flex: 0 0 auto;
@@ -2500,17 +2373,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-rich-preview figure[data-table-kind="stretch"] table[data-mixed-columns] {
   table-layout: auto;
 }
-.scient-latex-rich-preview figure table tbody .scient-latex-table-page-gap > td {
-  height: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  line-height: 0;
-}
-.scient-latex-table-page-gap > td > div {
-  pointer-events: none;
-  user-select: none;
-}
+
 .scient-latex-rich-preview th,
 .scient-latex-rich-preview td {
   min-width: 0;
@@ -2926,20 +2789,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-algorithm-comment::before {
   content: "▷ ";
 }
-.scient-latex-color-box[data-breakable] .scient-latex-pagination-gap::before {
-  content: "";
-  position: absolute;
-  inset: 0 -5.5mm;
-  background: linear-gradient(
-    to top,
-    white var(--scient-latex-margin-top),
-    var(--background) var(--scient-latex-margin-top),
-    var(--background) calc(var(--scient-latex-margin-top) + var(--scient-latex-page-gap)),
-    white calc(var(--scient-latex-margin-top) + var(--scient-latex-page-gap))
-  );
-  border-block: 0.5mm solid var(--scient-box-frame);
-  box-sizing: border-box;
-}
+
 .scient-latex-subfigure-caption,
 .scient-latex-figure-preview .scient-latex-figure-numbered-caption {
   display: flex;
@@ -3048,7 +2898,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 /* The first paragraph shares its inline flow with the heading. Layout
    containment would indent every line beside the float, instead of only the
-   first line. Retain viewport mounting, but do not contain this shared flow. */
+   first line. Do not contain this shared flow. */
 .scient-latex-visual-document
   .scient-latex-scientific-structure[data-run-in]
   > .scient-latex-scientific-body
@@ -3128,7 +2978,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   + .node-latexScientific
   > .scient-latex-scientific-structure:not([data-quote-wrapper]),
 .node-latexScientific:has(> .scient-latex-scientific-structure:not([data-quote-wrapper]))
-  + .scient-latex-pagination-gap
+  + .scient-latex-page-marker
   + .node-latexScientific
   > .scient-latex-scientific-structure:not([data-quote-wrapper]) {
   --scient-latex-previous-statement-sep: var(--scient-latex-theorem-sep, 0.8em);
@@ -3145,7 +2995,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .node-latexScientific:has(
     > .scient-latex-scientific-structure[data-theorem-style="remark"]:not([data-quote-wrapper])
   )
-  + .scient-latex-pagination-gap
+  + .scient-latex-page-marker
   + .node-latexScientific
   > .scient-latex-scientific-structure:not([data-quote-wrapper]) {
   --scient-latex-previous-statement-sep: calc(var(--scient-latex-theorem-sep, 0.8em) / 2);
@@ -3154,7 +3004,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   + .node-latexScientific
   > .scient-latex-scientific-structure:not([data-quote-wrapper]),
 .node-latexScientific:has(> .scient-latex-scientific-structure[data-proof])
-  + .scient-latex-pagination-gap
+  + .scient-latex-page-marker
   + .node-latexScientific
   > .scient-latex-scientific-structure:not([data-quote-wrapper]) {
   --scient-latex-previous-statement-sep: var(--scient-latex-proof-sep, 0.6em);
@@ -4295,163 +4145,5 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 @media print {
   .scient-latex-selection-overlay {
     display: none !important;
-  }
-}
-
-/* Preparation state occupies no paper space and never continuously repaints. */
-@media screen {
-  .scient-latex-visual-scroll:has(.scient-latex-visual-document[data-latex-opening="true"]) {
-    overflow: hidden;
-  }
-  .scient-latex-visual-scroll:has(.scient-latex-visual-document[data-latex-opening="true"])
-    > .scient-latex-page-zoom-frame {
-    visibility: hidden;
-    opacity: 0;
-    pointer-events: none;
-  }
-}
-.scient-latex-viewport-status {
-  position: sticky;
-  top: 8px;
-  height: 0;
-  z-index: 8;
-  pointer-events: none;
-}
-.scient-latex-viewport-status[hidden] {
-  display: none;
-}
-.scient-latex-viewport-status > span {
-  position: absolute;
-  right: 8px;
-  max-width: calc(100% - 16px);
-  padding: 4px 8px;
-  border-radius: 4px;
-  background: var(--background);
-  color: var(--muted-foreground);
-  font-size: 11px;
-}
-.scient-latex-visual-document [data-latex-viewport-closed]::after {
-  content: "Preparing content…";
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline-start: 0;
-  color: var(--muted-foreground);
-  font-size: 10px;
-  line-height: 1.4;
-  pointer-events: none;
-}
-.scient-latex-visual-document
-  p[data-latex-viewport-prepared="true"][data-latex-viewport-rendering="true"]:not(
-    [data-latex-viewport-editing="true"]
-  ):not(:has(math-field)),
-.scient-latex-visual-document
-  .node-latexDisplayMath[data-latex-viewport-prepared="true"][data-latex-viewport-rendering="true"]:not(
-    :has(math-field)
-  )
-  > .scient-latex-visual-display-math {
-  height: var(--scient-latex-block-height);
-}
-@media print {
-  .scient-latex-viewport-status {
-    display: none;
-  }
-}
-
-/* Cold blocks reserve a stable box until their natural geometry is ready.
-   Formula arrivals must not move every later block between measurement passes. */
-.scient-latex-visual-document
-  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]:not(
-    [data-latex-viewport-editing="true"]
-  ):not(:has(math-field)) {
-  position: relative;
-  visibility: hidden;
-}
-.scient-latex-visual-document
-  p[data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]:not(
-    [data-latex-viewport-editing="true"]
-  ):not(:has(math-field)),
-.scient-latex-visual-document
-  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]:not(
-    :has(math-field)
-  )
-  > .scient-latex-visual-display-math {
-  height: var(--scient-latex-viewport-estimate);
-  overflow: hidden;
-}
-.scient-latex-visual-document
-  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]:not(
-    [data-latex-viewport-editing="true"]
-  ):not(:has(math-field))::after {
-  content: "Preparing content…";
-  visibility: visible;
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline-start: 0;
-  color: var(--muted-foreground);
-  font-size: 10px;
-  line-height: 1.4;
-  pointer-events: none;
-}
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"],
-.scient-latex-page-preview [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"] {
-  visibility: visible;
-}
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  p[data-latex-viewport="mounted"][data-latex-viewport-prepared="false"],
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]
-  > .scient-latex-visual-display-math {
-  height: auto;
-  overflow: visible;
-}
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]::after,
-.scient-latex-page-preview
-  [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]::after {
-  display: none;
-}
-
-/* The viewport owns source anchors; native anchoring must not apply a second
-   scroll correction after the same measured geometry publication. */
-.scient-latex-visual-scroll:has(.scient-latex-visual-document[data-latex-windowed]) {
-  overflow-anchor: none;
-}
-@media print {
-  .scient-latex-visual-document
-    [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"],
-  .scient-latex-visual-document
-    [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]
-    > .scient-latex-visual-display-math {
-    visibility: visible;
-    height: auto;
-    overflow: visible;
-  }
-  .scient-latex-visual-document
-    [data-latex-viewport="mounted"][data-latex-viewport-prepared="false"]::after {
-    display: none;
-  }
-}
-
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  p[data-latex-viewport="mounted"][data-latex-viewport-prepared],
-[data-latex-measure-visible]
-  .scient-latex-visual-document
-  .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared]
-  > .scient-latex-visual-display-math {
-  height: auto !important;
-  overflow: visible;
-}
-@media print {
-  .scient-latex-visual-document p[data-latex-viewport="mounted"][data-latex-viewport-prepared],
-  .scient-latex-visual-document
-    .node-latexDisplayMath[data-latex-viewport="mounted"][data-latex-viewport-prepared]
-    > .scient-latex-visual-display-math {
-    height: auto !important;
   }
 }

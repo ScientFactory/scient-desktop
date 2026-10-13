@@ -1,6 +1,12 @@
+import type { JSONContent } from "@tiptap/core";
 import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { isOrdinaryTyping } from "./visualTyping";
+import {
+  LATEX_VISUAL_LOADING,
+  isLatexVisualLoading,
+  latexWholeDocument,
+} from "./latexProgressiveLoading";
 import {
   compiledBibliographyItems,
   type CompiledBibliographyItem,
@@ -92,6 +98,8 @@ export const latexEquationReferencesKey = new PluginKey<EquationReferences>(
 );
 
 const referenceLayouts = new WeakMap<EquationReferences, EquationReferences>();
+// The counted state a mapped state came from. Mapping moves positions only.
+const referenceCounts = new WeakMap<EquationReferences, EquationReferences>();
 const referenceValues = new WeakMap<EquationReferences, string>();
 
 function referenceValue(references: EquationReferences): string {
@@ -105,18 +113,43 @@ function referenceValue(references: EquationReferences): string {
   return value;
 }
 
+/** What views display: numbers, titles and kinds in document order, without
+ * positions. Typing shifts positions consistently; that is not a new layout.
+ * Maps keyed by position keep only their values; maps keyed by label keep their
+ * keys, since which label names which number is what references display. */
+function presentationValue(references: EquationReferences): string {
+  return JSON.stringify(references, (key, item: unknown) => {
+    if (key === "position") return undefined;
+    if (!(item instanceof Map)) return item;
+    return typeof item.keys().next().value === "string" ? [...item] : [...item.values()];
+  });
+}
+
+/** A recomputed state keeps the previous presentation identity when only
+ * positions changed, so formula and statement views do not refresh. */
+function settleReferences(next: EquationReferences, previous: EquationReferences) {
+  if (referenceValue(next) === referenceValue(previous)) return previous;
+  if (presentationValue(next) === presentationValue(previous))
+    referenceLayouts.set(next, referenceLayouts.get(previous) ?? previous);
+  return next;
+}
+
+/**
+ * Changes whenever references are counted again (structural edits, source
+ * changes), and stays the same while edits and loading only move positions.
+ * Views whose numbers depend on their position recompute when it changes.
+ */
+export function latexReferenceRevision(state: EditorState): object | undefined {
+  const references = latexEquationReferencesKey.getState(state);
+  return references && (referenceCounts.get(references) ?? references);
+}
+
 export function latexReferencePresentation(state: EditorState) {
   const references = latexEquationReferencesKey.getState(state);
   return references && (referenceLayouts.get(references) ?? references);
 }
 
-/** Moving a target with typed text does not change its numbering or visual presentation. */
-export function latexReferenceLayoutChanged(before: EditorState, after: EditorState): boolean {
-  return latexReferencePresentation(before) !== latexReferencePresentation(after);
-}
-
 function mapReferences(previous: EquationReferences, transaction: Transaction): EquationReferences {
-  const position = (value: number) => transaction.mapping.map(value);
   const headingTitles = new Map<number, string>();
   for (const [index, step] of transaction.steps.entries()) {
     if (!("from" in step) || typeof step.from !== "number") continue;
@@ -126,6 +159,19 @@ function mapReferences(previous: EquationReferences, transaction: Transaction): 
     const heading = transaction.doc.nodeAt(mapped);
     if (heading?.type.name === "heading") headingTitles.set(mapped, referenceHeadingTitle(heading));
   }
+  return remapReferences(previous, (value) => transaction.mapping.map(value), headingTitles);
+}
+
+/** References for a document opened at a later block, in that opening's positions. */
+function shiftReferences(references: EquationReferences, delta: number): EquationReferences {
+  return remapReferences(references, (value) => value + delta, new Map());
+}
+
+function remapReferences(
+  previous: EquationReferences,
+  position: (value: number) => number,
+  headingTitles: ReadonlyMap<number, string>,
+): EquationReferences {
   const keyed = <T>(values: Map<number, T>) =>
     new Map([...values].map(([key, value]) => [position(key), value]));
   const targets = (values: Map<string, EquationTarget>) =>
@@ -162,6 +208,7 @@ function mapReferences(previous: EquationReferences, transaction: Transaction): 
     floatContents: entries(previous.floatContents),
   };
   referenceLayouts.set(next, referenceLayouts.get(previous) ?? previous);
+  referenceCounts.set(next, referenceCounts.get(previous) ?? previous);
   return next;
 }
 
@@ -240,11 +287,37 @@ function scrollToLatexTarget(view: EditorView, highlighted: HTMLElement, scroll 
   });
 }
 
+/** The footnote markers in `[from, to)`, in document order. */
+export function latexBlockFootnotes(state: EditorState, from: number, to: number): number[] {
+  const footnotes = latexEquationReferencesKey.getState(state)?.footnotes;
+  if (!footnotes) return [];
+  return [...footnotes.keys()]
+    .filter((position) => {
+      if (position < from || position >= to) return false;
+      const node = state.doc.nodeAt(position);
+      return node?.type.name === "latexInlineCommand" && node.attrs.name === "footnote";
+    })
+    .toSorted((a, b) => a - b);
+}
+
+/** The note of the marker at `position`, in the band beneath its top-level block. */
+function footnoteNote(view: EditorView, position: number): HTMLElement | null {
+  const $position = view.state.doc.resolve(position);
+  if ($position.depth < 1) return null;
+  const from = $position.before(1);
+  const index = latexBlockFootnotes(view.state, from, $position.after(1)).indexOf(position);
+  const block = view.nodeDOM(from);
+  const band = block instanceof HTMLElement ? block.nextElementSibling : null;
+  if (index < 0 || !band?.matches(".scient-latex-footnotes")) return null;
+  const note = band.children[index];
+  return note instanceof HTMLElement ? note : null;
+}
+
 /** Marker and note share selection for editing, but scroll in opposite directions. */
 export function navigateToFootnote(view: EditorView, position: number, toNote = true): boolean {
   const marker = view.nodeDOM(position);
   const target = toNote
-    ? view.dom.querySelector<HTMLElement>(`[data-latex-footnote-position="${position}"]`)
+    ? footnoteNote(view, position)
     : marker instanceof HTMLElement
       ? (marker.querySelector<HTMLElement>(".scient-latex-visual-command") ?? marker)
       : null;
@@ -838,6 +911,8 @@ function equationReferences(
 export function latexEquationReferences(
   source: () => string,
   compiledSource: () => string | null = () => null,
+  /** While a document loads progressively: the whole document and its opening block. */
+  opening: () => { readonly document: JSONContent; readonly start: number } | null = () => null,
 ) {
   let cachedSource: string | null | undefined;
   let compiled: CompiledBibliographyItem[] | null = null;
@@ -855,14 +930,48 @@ export function latexEquationReferences(
   return new Plugin({
     key: latexEquationReferencesKey,
     state: {
-      init: (_config, state) => equationReferences(state.doc, source(), bibliography()),
+      init: (_config, state) => {
+        const plan = opening();
+        if (!plan || (plan.document.content?.length ?? 0) === state.doc.childCount)
+          return equationReferences(state.doc, source(), bibliography());
+        // Number from the whole document at once, so references in the first
+        // blocks never change while the rest loads.
+        const whole = latexWholeDocument(state.schema, plan.document);
+        const references = equationReferences(whole, source(), bibliography());
+        if (plan.start === 0) return references;
+        let prefix = 0;
+        for (let index = 0; index < plan.start; index++) prefix += whole.child(index).nodeSize;
+        return shiftReferences(references, -prefix);
+      },
       apply: (transaction, previous, _oldState, state) => {
+        if (isLatexVisualLoading(transaction)) {
+          // The document is whole: number it once, keeping an equal presentation.
+          if (transaction.getMeta(LATEX_VISUAL_LOADING) === "done")
+            return settleReferences(
+              equationReferences(state.doc, source(), bibliography()),
+              previous,
+            );
+          // Appended blocks already have their positions. A prepend shifts
+          // every position by its size, including those of blocks not yet
+          // loaded before it (negative until then), which mapping would not move.
+          return transaction.steps.some((step) => (step as { from?: number }).from === 0)
+            ? shiftReferences(
+                previous,
+                transaction.doc.content.size - transaction.before.content.size,
+              )
+            : previous;
+        }
         if (transaction.getMeta(latexEquationReferencesKey)) {
-          const next = equationReferences(state.doc, source(), bibliography());
+          // While loading, the partial document would lose forward targets;
+          // completion renumbers the whole document.
+          if (opening()) return previous;
           // Source acknowledgements still recheck packages/counters and compiled
           // bibliography. An equal presentation retains its identity and layout
           // caches; positions have already been mapped by the typing transaction.
-          return referenceValue(next) === referenceValue(previous) ? previous : next;
+          return settleReferences(
+            equationReferences(state.doc, source(), bibliography()),
+            previous,
+          );
         }
         if (!transaction.docChanged) return previous;
         // Text edits preserve numbering and labels; heading edits update only their titles.
@@ -875,7 +984,8 @@ export function latexEquationReferences(
           }
           return mapped;
         }
-        return equationReferences(state.doc, source(), bibliography());
+        // Refreshing source attributes does not invalidate an equal layout.
+        return settleReferences(equationReferences(state.doc, source(), bibliography()), previous);
       },
     },
     view: (view) => ({ destroy: () => clearHighlight(view) }),
@@ -887,7 +997,11 @@ export function latexEquationReferences(
         headingDecorations = DecorationSet.create(
           state.doc,
           [...(references?.headings ?? [])].flatMap(([position, heading]) => {
-            const node = state.doc.nodeAt(position);
+            // While a document loads, headings beyond its loaded part wait.
+            const node =
+              position >= 0 && position < state.doc.content.size
+                ? state.doc.nodeAt(position)
+                : null;
             return node
               ? [
                   Decoration.node(position, position + node.nodeSize, {

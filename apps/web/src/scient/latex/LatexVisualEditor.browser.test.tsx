@@ -85,16 +85,17 @@ describe("visual LaTeX page layout", () => {
   let container: HTMLDivElement;
   let root: Root;
 
+  // The whole document is loaded and editable.
   const readingViewReady = () =>
     expect
       .poll(
-        () =>
-          container
-            .querySelector(".scient-latex-visual-document")
-            ?.getAttribute("data-latex-opening"),
+        () => {
+          const document = container.querySelector<HTMLElement>(".scient-latex-visual-document");
+          return !!document && document.dataset.latexLoading === undefined;
+        },
         { timeout: 5_000 },
       )
-      .toBe("false");
+      .toBe(true);
   const undoKeyboard = () =>
     userEvent.keyboard(isMacKeyboard() ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}");
   it.each(["english", "hebrew"] as const)(
@@ -751,7 +752,7 @@ Proof body.
     expect(current).toContain("$u_0 \\in L^2(\\Omega)$");
   });
 
-  it("keeps content out of gaps and honors the explicit break after Contents", async () => {
+  it("shows the explicit break after Contents on continuous paper", async () => {
     const owner = createLatexVisualTestOwner(source);
     root.render(
       <LatexVisualEditor
@@ -766,40 +767,23 @@ Proof body.
       />,
     );
     await expect
-      .poll(() =>
-        container
-          .querySelector<HTMLElement>(".scient-latex-page-break")
-          ?.style.getPropertyValue("--scient-latex-page-break-space"),
-      )
-      .not.toBe("");
-
-    await expect
       .poll(() => container.querySelector(".scient-latex-toc-preview li:last-child"))
       .toBeTruthy();
-    await document.fonts.ready;
-    const pageOf = (element: Element) => {
-      const sheets = [...container.querySelectorAll<HTMLElement>(".scient-latex-page-sheet")].map(
-        (sheet) => sheet.getBoundingClientRect(),
-      );
-      const bounds = element.getBoundingClientRect();
-      return sheets.findIndex(
-        (sheet) => bounds.top >= sheet.top - 1 && bounds.bottom <= sheet.bottom + 1,
-      );
-    };
     const contents = container.querySelector<HTMLElement>(".scient-latex-toc-preview")!;
+    const pageBreak = container.querySelector<HTMLElement>(".scient-latex-page-break")!;
     const firstSection = [...container.querySelectorAll<HTMLElement>("h1")].find((heading) =>
       heading.textContent?.includes("What Computer Science Research Involves"),
     )!;
-    // The compiled article puts the end of this long Contents on page two;
-    // its explicit newpage then starts the first section on page three.
-    await expect.poll(() => pageOf(firstSection)).toBe(2);
-    expect(pageOf(contents.querySelector("li:first-child")!)).toBe(0);
-    expect(pageOf(contents.querySelector("li:last-child")!)).toBe(1);
-
-    for (const element of container.querySelectorAll(
-      ".scient-latex-visual-document > p, .scient-latex-rich-preview dl > div",
-    ))
-      expect(pageOf(element), element.textContent ?? element.tagName).toBeGreaterThanOrEqual(0);
+    // Visual is continuous paper: the break is a visible rule between the
+    // Contents and the first section, not a simulated page.
+    expect(pageBreak.getBoundingClientRect().height).toBeGreaterThan(0);
+    expect(pageBreak.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      contents.getBoundingClientRect().bottom - 1,
+    );
+    expect(firstSection.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      pageBreak.getBoundingClientRect().bottom - 1,
+    );
+    expect(getComputedStyle(pageBreak, "::after").content).toContain("Page break");
 
     const preview = container.querySelector<HTMLElement>(".scient-latex-math-preview");
     expect(preview).not.toBeNull();

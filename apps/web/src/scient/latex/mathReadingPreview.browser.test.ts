@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, expect, it } from "vite-plus/test";
 import { installMathReadingPreview } from "./mathReadingPreview";
 
 const hosts: HTMLElement[] = [];
@@ -14,40 +14,50 @@ function preview() {
 
 afterEach(() => {
   hosts.splice(0).forEach((host) => host.remove());
-  vi.unstubAllGlobals();
 });
 
-it("shares layout CSS across formulas without duplicating content or changing its state", () => {
+it("styles each formula from the same text without duplicating content or changing its state", () => {
   const first = preview();
-  const sheet = first.root.adoptedStyleSheets[0]!;
-  expect(sheet).toBeDefined();
-  expect(first.root.querySelector("style")).toBeNull();
-  expect([...sheet.cssRules].some((rule) => rule.cssText.startsWith("@font-face"))).toBe(false);
+  const style = first.root.querySelector("style")!;
+  expect(first.root.adoptedStyleSheets).toHaveLength(0);
+  expect(style.textContent).not.toMatch(/@font-face/u);
+  expect(style.textContent).toContain("::selection");
   first.content.dataset.mathPreviewReady = "";
   for (let index = 0; index < 100; index++) {
     const next = preview();
-    expect(next.root.adoptedStyleSheets).toEqual([sheet]);
+    expect(next.root.querySelector("style")!.textContent).toBe(style.textContent);
     expect(next.content.textContent).toBe("x");
   }
   expect(installMathReadingPreview(first.host)).toBe(first.root);
+  expect(first.root.querySelectorAll("style")).toHaveLength(1);
   expect(first.root.querySelectorAll("[data-math-preview-content]")).toHaveLength(1);
   expect(first.content.hasAttribute("data-math-preview-ready")).toBe(true);
   expect(first.content.textContent).toBe("x");
 });
 
-it("keeps the same formula styling when constructed stylesheets are unavailable", () => {
-  const normal = preview();
-  const normalMath = normal.content.firstElementChild!;
-  const normalStyle = getComputedStyle(normalMath);
-  const expected = { font: normalStyle.fontFamily, display: normalStyle.display };
-  vi.stubGlobal("CSSStyleSheet", undefined);
-  const fallback = preview();
-  expect(fallback.root.adoptedStyleSheets).toHaveLength(0);
-  const style = fallback.root.querySelector("style")!;
-  expect(style.textContent).not.toMatch(/@font-face/u);
-  expect(style.textContent).toContain("::selection");
-  const fallbackStyle = getComputedStyle(fallback.content.firstElementChild!);
-  expect({ font: fallbackStyle.fontFamily, display: fallbackStyle.display }).toEqual(expected);
-  expect(installMathReadingPreview(fallback.host)).toBe(fallback.root);
-  expect(fallback.root.querySelectorAll("style")).toHaveLength(1);
+// A shared adopted stylesheet made every later style update cost time in
+// proportion to all formulas: 36 ms per update at 4,000 formulas.
+it("keeps adding a formula cheap in a document with thousands of them", () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  try {
+    const add = () => {
+      const paragraph = document.createElement("p");
+      const host = document.createElement("span");
+      paragraph.append(host);
+      container.append(paragraph);
+      installMathReadingPreview(host).querySelector("[data-math-preview-content]")!.textContent =
+        "x";
+    };
+    for (let index = 0; index < 3000; index++) add();
+    void container.offsetHeight;
+    const started = performance.now();
+    for (let update = 0; update < 10; update++) {
+      add();
+      void container.offsetHeight;
+    }
+    expect((performance.now() - started) / 10).toBeLessThan(10);
+  } finally {
+    container.remove();
+  }
 });

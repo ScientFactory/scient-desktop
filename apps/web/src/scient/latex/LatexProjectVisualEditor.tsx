@@ -20,9 +20,11 @@ import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { LatexVisualEditor, type LatexVisualEditorProps } from "./LatexVisualEditor";
+import type { LatexBuildPageAnchors } from "./latexPageMarkers";
 import { LatexDocumentPreparation } from "./latexOpeningPresentation";
 import {
   assembleVisualProject,
+  placeBuildPageAnchors,
   planVisualProjectEdit,
   type VisualProjectFile,
   type PhysicalLatexSourceEdit,
@@ -51,8 +53,10 @@ interface FileState {
   flush: () => Promise<boolean>;
   persistence?: MarkdownPersistenceLease | undefined;
 }
-interface Props extends LatexVisualEditorProps {
+interface Props extends Omit<LatexVisualEditorProps, "pageAnchors"> {
   sourceNavigation?: LatexSourceNavigation | null | undefined;
+  /** Where the pages of the last build begin, by file and line. */
+  buildPageAnchors?: LatexBuildPageAnchors | null;
   registerSaveProject?: (save: (() => Promise<boolean>) | null) => void;
   environmentId: EnvironmentId;
   cwd: string;
@@ -695,6 +699,11 @@ export function LatexProjectVisualEditor(props: Props) {
         <LatexVisualEditor
           {...props}
           sourceNavigationTarget={visualNavigation}
+          pageAnchors={
+            props.buildPageAnchors
+              ? placeBuildPageAnchors(props.buildPageAnchors, document, files)
+              : null
+          }
           compiledBibliography={compiledBibliography}
           key={props.editorInstanceKey ?? files.get(root!)?.owner?.documentId ?? root}
           source={document.source}

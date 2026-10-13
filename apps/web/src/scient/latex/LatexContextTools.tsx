@@ -8,6 +8,8 @@ import "./latexContextTools.css";
 export function LatexContextTools(props: {
   children: ReactNode;
   onPositionChange?: (position: string | null) => void;
+  /** Object tools are shown but cannot act. */
+  disabled?: boolean;
 }) {
   const { onPositionChange } = props;
   const root = useRef<HTMLDivElement>(null);
@@ -138,7 +140,9 @@ export function LatexContextTools(props: {
             <X aria-hidden="true" />
           </button>
         </div>
-        <div ref={slot} className="scient-latex-context-tools-slot">
+        {/* While editing is unavailable (the document is still loading, or
+            read-only), no object tool can act. */}
+        <div ref={slot} className="scient-latex-context-tools-slot" inert={props.disabled}>
           {props.children}
         </div>
       </div>

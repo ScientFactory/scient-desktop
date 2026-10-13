@@ -65,9 +65,11 @@ export function LatexTableToolbar(props: Props) {
     onActiveChange(active);
     return () => onActiveChange(false);
   }, [active, onActiveChange]);
-  const host = props.editor.view.dom
-    .closest(".scient-latex-visual-workspace")
-    ?.querySelector(".scient-latex-context-tools-slot");
+  const host = active
+    ? props.editor.view.dom
+        .closest(".scient-latex-visual-workspace")
+        ?.querySelector(".scient-latex-context-tools-slot")
+    : null;
   if (!active || !host) return null;
   const readOnly = !props.editor.isEditable ? "This document is read-only." : null;
   const contentReason =

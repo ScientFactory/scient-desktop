@@ -177,9 +177,11 @@ export function LatexFigureToolbar(props: {
       if (live.current) setUploading(false);
     }
   };
-  const host = props.editor.view.dom
-    .closest(".scient-latex-visual-workspace")
-    ?.querySelector(".scient-latex-context-tools-slot");
+  const host = active
+    ? props.editor.view.dom
+        .closest(".scient-latex-visual-workspace")
+        ?.querySelector(".scient-latex-context-tools-slot")
+    : null;
   if (!active || !host || !props.editor.isEditable) return null;
   const disabled = !props.editable || uploading;
   const placements = [

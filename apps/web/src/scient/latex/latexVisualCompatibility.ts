@@ -1,6 +1,5 @@
 import type { JSONContent } from "@tiptap/core";
-import { projectLatexVisualDocument, type LatexVisualDocument } from "./latexVisualDocument";
-import { latexRunningPageStyle, latexRunningPageFields } from "./latexPageLayouts";
+import type { LatexVisualDocument } from "./latexVisualDocument";
 import { latexWithoutComments, latexPreambleEnd } from "./latexSourceSyntax";
 
 /** Render acceptance is separate from typesetting fidelity and content coverage. */
@@ -45,23 +44,9 @@ export function latexVisualCompatibility(source: string, projection: LatexVisual
   };
   for (const block of projection.blocks) visit(block.node, block.from);
   const preamble = latexWithoutComments(source.slice(0, latexPreambleEnd(source)));
-  const furniture = latexRunningPageFields(latexRunningPageStyle(source), 1, "", "");
-  const readable = (node: JSONContent): boolean =>
-    ["text", "hardBreak"].includes(String(node.type)) ||
-    (node.type === "latexInlineCommand" && ["ref", "eqref"].includes(String(node.attrs?.name))) ||
-    ((node.type === "paragraph" ||
-      (node.type === "latexScientific" && node.attrs?.layout?.kind === "contentGroup")) &&
-      (node.content ?? []).every(readable));
-  if (
-    [...furniture.head, ...furniture.foot].some(
-      (field) => !projectLatexVisualDocument(field, 0, source).content.content?.every(readable),
-    )
-  )
-    add(
-      "source",
-      "A running header or footer contains unsupported formatting and is shown as source.",
-      0,
-    );
+  // Visual is continuous paper: it draws no running headers or footers.
+  if (/\\(?:pagestyle\s*\{\s*fancy\s*\}|fancy(?:head|foot)\b|[lcr](?:head|foot)\b)/u.test(preamble))
+    add("approximate", "Running headers and footers appear only in the compiled PDF.", 0);
   const classDeclaration = /\\documentclass\s*(?:\[([^\]]*)\])?\s*\{([^{}]+)\}/u.exec(preamble);
   if (
     classDeclaration &&

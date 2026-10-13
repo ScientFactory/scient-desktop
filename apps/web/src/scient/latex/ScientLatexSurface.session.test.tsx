@@ -73,7 +73,11 @@ const {
     version: 0,
     listeners: new Set<() => void>(),
   },
-  sync: { forward: vi.fn(), inverse: vi.fn() },
+  sync: {
+    forward: vi.fn(),
+    inverse: vi.fn(),
+    pages: vi.fn(async () => ({ _tag: "unavailable", message: "No page anchors." })),
+  },
   reader: {
     navigation: null as null | {
       readonly forwardTarget: unknown;
@@ -85,13 +89,14 @@ const {
 
 vi.mock("@effect/atom-react", async () => {
   const { AsyncResult } = await import("effect/reactivity");
-  return { useAtomValue: () => AsyncResult.initial() };
+  return { useAtomValue: () => AsyncResult.initial(), useAtomRefresh: () => () => {} };
 });
 vi.mock("~/components/files/FilePreviewPanel", () => ({
   MarkdownSourceSurface: (props: Record<string, unknown>) => {
     sourcePane.props = props;
     return <div data-testid="source-pane" data-line="3" />;
   },
+  useFileLineReveal: () => ({ onPostRender: () => {}, move: () => {} }),
 }));
 vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceTransport", () => ({
   createMarkdownPersistenceTransport: vi.fn(),
@@ -174,6 +179,7 @@ vi.mock("./client", () => ({
   readLatexToolchain: vi.fn().mockRejectedValue(new Error("Compiler availability not checked")),
   requestLatexForwardSync: sync.forward,
   requestLatexInverseSync: sync.inverse,
+  requestLatexPageAnchors: sync.pages,
 }));
 vi.mock("~/scient/wordExport/WordFileExportDialog", () => ({
   WordFileExportDialog: (props: { savedRevision: () => Promise<string | null> }) => {
@@ -1201,6 +1207,22 @@ describe("navigation between LaTeX source and its PDF", () => {
     expect(sync.forward).toHaveBeenCalledOnce();
     expect(sync.forward.mock.calls[0]![1]).toMatchObject({ line: 3 });
     expect(reader.navigation!.forwardTarget).toMatchObject({ page: 2 });
+  });
+
+  it("asks the build that compiled this exact source where its pages begin", async () => {
+    expect(sync.pages).toHaveBeenCalledWith(
+      environmentId,
+      expect.objectContaining({
+        workspaceRoot: cwd,
+        rootRelativePath: relativePath,
+        artifactId: "artifact-1",
+        revisionId: "revision-1",
+      }),
+      expect.any(AbortSignal),
+    );
+    sync.pages.mockClear();
+    await edit(lease, "One.\nTwo.");
+    expect(sync.pages).not.toHaveBeenCalled();
   });
 
   it("does not look up a line of an unsaved draft", async () => {

@@ -6,12 +6,10 @@ import staticMathStyles from "mathlive/static.css?inline";
 import { mathLanguageStyles } from "./mathTextFormatting";
 import type { MathPreviewContext, MathPreviewRequest } from "./mathReadingPreviewProtocol";
 
-let previewStyles: CSSStyleSheet | undefined;
 let previewStyleText: string | undefined;
 
 function mathReadingStyles() {
-  // Every formula uses the same CSS. Strip global font declarations once,
-  // including on browsers which need a separate style node per shadow root.
+  // Every formula uses the same CSS. Strip global font declarations once.
   return (previewStyleText ??= `${staticMathStyles.replace(/@font-face\s*\{[^}]*\}/gu, "")}
     ::selection { background: transparent; color: inherit; }
     ${mathLanguageStyles}
@@ -34,19 +32,13 @@ export function mathReadingPreviewReady(element: Element): boolean {
 export function installMathReadingPreview(element: HTMLElement): ShadowRoot {
   const root = element.shadowRoot ?? element.attachShadow({ mode: "open" });
   if (root.querySelector("[data-math-preview-content]")) return root;
-  // Fonts are already bundled globally by MathLive's fonts.css. Share one
-  // parsed layout sheet across previews instead of hundreds of style nodes.
-  if (typeof CSSStyleSheet !== "undefined" && "replaceSync" in CSSStyleSheet.prototype) {
-    if (!previewStyles) {
-      previewStyles = new CSSStyleSheet();
-      previewStyles.replaceSync(mathReadingStyles());
-    }
-    root.adoptedStyleSheets = [previewStyles];
-  } else {
-    const style = document.createElement("style");
-    style.textContent = mathReadingStyles();
-    root.append(style);
-  }
+  // Fonts are already bundled globally by MathLive's fonts.css. A style
+  // element per formula, not one shared adopted stylesheet: Chromium parses
+  // identical text once, while every adopter of a shared sheet made each later
+  // style update cost time in proportion to all formulas in the document.
+  const style = document.createElement("style");
+  style.textContent = mathReadingStyles();
+  root.append(style);
   const content = document.createElement("span");
   content.dataset.mathPreviewContent = "";
   root.append(content);
@@ -138,17 +130,13 @@ export function mathReadingPreviewContextId(
   return contextFor(macros, colors).id;
 }
 
-export function mathReadingPreviewKey(
+function mathReadingPreviewKey(
   source: string,
   display: boolean,
   macros: Readonly<Record<string, DocumentMathMacro>>,
   colors: Readonly<Record<string, string>> | undefined,
 ) {
   return JSON.stringify([contextFor(macros, colors).id, display, source]);
-}
-
-export function hasMathReadingPreview(key: string) {
-  return markupCache.peek(key) !== undefined;
 }
 
 function stopWorker() {
@@ -180,16 +168,6 @@ export function rememberMathReadingFallback(
 ) {
   const context = contextFor(macros, colors);
   remember(JSON.stringify([context.id, display, source]), null, true);
-}
-
-export function forgetMathReadingFallback(
-  source: string,
-  display: boolean,
-  macros: Readonly<Record<string, DocumentMathMacro>>,
-  colors: Readonly<Record<string, string>> | undefined,
-) {
-  const key = mathReadingPreviewKey(source, display, macros, colors);
-  if (markupCache.get(key) === null) markupCache.delete(key);
 }
 
 /** A previously offscreen result becomes a reading-cache entry when visited. */

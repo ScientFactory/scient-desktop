@@ -8,9 +8,12 @@ import {
 } from "./latexVisualDocument";
 import {
   assembleVisualProject,
+  placeBuildPageAnchors,
   planVisualProjectEdit,
   type VisualProjectFile,
 } from "./latexProjectVisual";
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex } from "@noble/hashes/utils";
 import { invertLatexSourcePatches, latexOwnedSourcePatch } from "./latexSourceEditPlan";
 
 const nativeFile = (contents: string, documentId: string, editVersion = 0): VisualProjectFile => ({
@@ -574,5 +577,100 @@ describe("generator composition preserves surrounding physical ownership", () =>
     expect([...plan.edits.keys()]).toEqual([]);
     expect(files.get("main.tex")!.contents).toBe(parent);
     expect(files.get("chapter.tex")!.contents).toBe(loop);
+  });
+});
+
+describe("PDF page anchors in a multi-file document", () => {
+  const revision = (contents: string) =>
+    `sha256:${bytesToHex(sha256(new TextEncoder().encode(contents)))}`;
+  const chapter = "First chapter line.\n\nSecond page starts here.\n";
+  const appendix = "An appendix that starts no page.\n";
+  const root = document("Opening.\n\n\\input{chapter}\n\n\\input{appendix}\n\nClosing.");
+  const compiled = {
+    "main.tex": revision(root),
+    "chapter.tex": revision(chapter),
+    "appendix.tex": revision(appendix),
+  };
+  const build = (key: string, anchors: { page: number; relativePath: string; line: number }[]) => ({
+    key,
+    pageCount: anchors.length,
+    anchors,
+    sourceRevisions: compiled,
+  });
+  const words = (source: string, offset: number) => source.slice(offset, offset + 8);
+
+  it("places a page that begins in an included file at its place in the document", () => {
+    const { files, assembled } = project(root, [
+      ["chapter.tex", chapter],
+      ["appendix.tex", appendix],
+    ]);
+    const pages = build("build-1", [
+      { page: 1, relativePath: "main.tex", line: 3 },
+      { page: 2, relativePath: "chapter.tex", line: 3 },
+    ]);
+    const placed = placeBuildPageAnchors(pages, assembled, files)!;
+    expect(placed.source).toBe(assembled.source);
+    expect(
+      placed.anchors.map(({ page, offset }) => [page, words(assembled.source, offset)]),
+    ).toEqual([
+      [1, "Opening."],
+      [2, "Second p"],
+    ]);
+    // Kept for the build.
+    expect(placeBuildPageAnchors(pages, assembled, files)).toBe(placed);
+  });
+
+  it("places nothing while any file of the document differs from what the build compiled", () => {
+    // The appendix begins no page, but its unsaved text moves everything after it.
+    const unsaved = project(root, [
+      ["chapter.tex", chapter],
+      ["appendix.tex", `${appendix}Unsaved.\n`],
+    ]);
+    const pages = build("build-2", [{ page: 1, relativePath: "chapter.tex", line: 1 }]);
+    expect(placeBuildPageAnchors(pages, unsaved.assembled, unsaved.files)).toBeNull();
+    // Saved back to the compiled text, the same build places its pages.
+    const saved = project(root, [
+      ["chapter.tex", chapter],
+      ["appendix.tex", appendix],
+    ]);
+    expect(placeBuildPageAnchors(pages, saved.assembled, saved.files)?.anchors).toHaveLength(1);
+  });
+
+  it("keeps several pages that begin on one long source line", () => {
+    const { files, assembled } = project(root, [
+      ["chapter.tex", chapter],
+      ["appendix.tex", appendix],
+    ]);
+    const placed = placeBuildPageAnchors(
+      build("build-3", [
+        { page: 1, relativePath: "chapter.tex", line: 3 },
+        { page: 2, relativePath: "chapter.tex", line: 3 },
+        { page: 3, relativePath: "chapter.tex", line: 3 },
+      ]),
+      assembled,
+      files,
+    )!;
+    expect(placed.anchors.map((anchor) => anchor.page)).toEqual([1, 2, 3]);
+    expect(new Set(placed.anchors.map((anchor) => anchor.offset)).size).toBe(1);
+  });
+
+  it("leaves pages in a file included twice without a marker: their place is ambiguous", () => {
+    const twice = document("Opening.\n\n\\input{chapter}\n\n\\newpage\n\n\\input{chapter}");
+    const { files, assembled } = project(twice, [["chapter.tex", chapter]]);
+    const placed = placeBuildPageAnchors(
+      {
+        key: "build-4",
+        pageCount: 3,
+        anchors: [
+          { page: 1, relativePath: "main.tex", line: 3 },
+          { page: 2, relativePath: "chapter.tex", line: 1 },
+          { page: 3, relativePath: "chapter.tex", line: 3 },
+        ],
+        sourceRevisions: { "main.tex": revision(twice), "chapter.tex": revision(chapter) },
+      },
+      assembled,
+      files,
+    )!;
+    expect(placed.anchors.map((anchor) => anchor.page)).toEqual([1]);
   });
 });

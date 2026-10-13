@@ -1,4 +1,4 @@
-import { lazy, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { lazy, useEffect, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
@@ -47,7 +47,6 @@ import { LatexProjectVisualEditor } from "./LatexProjectVisualEditor";
 import { createLatexEditorSourceSnapshot } from "./latexSourceEditPlan";
 import {
   LatexDocumentPreparation,
-  LatexOpeningPresentation,
   LATEX_DOCUMENT_PREPARATION_LABEL,
 } from "./latexOpeningPresentation";
 import { clearVisualDraft } from "./visualDrafts";
@@ -62,51 +61,7 @@ afterEach(() => {
   container = undefined;
 });
 
-it("hides cold preparation labels without changing their measurement boxes", async () => {
-  container = document.createElement("div");
-  container.style.cssText = "display:flex;height:500px;width:800px";
-  document.body.append(container);
-  root = createRoot(container);
-  function Fixture({ opening }: { opening: boolean }) {
-    return (
-      <LatexOpeningPresentation opening={opening} className="scient-latex-visual-workspace">
-        <div className="scient-latex-visual-scroll" style={{ height: 500, width: 800 }}>
-          <div className="scient-latex-page-zoom-frame">
-            <div className="scient-latex-visual-document" data-latex-opening={opening}>
-              <p
-                data-latex-viewport="mounted"
-                data-latex-viewport-prepared="false"
-                style={{ "--scient-latex-viewport-estimate": "40px" } as CSSProperties}
-              >
-                Hidden source
-              </p>
-            </div>
-          </div>
-        </div>
-      </LatexOpeningPresentation>
-    );
-  }
-  root.render(<Fixture opening />);
-  await expect.poll(() => container!.querySelector("p")).toBeTruthy();
-  const content = container.querySelector<HTMLElement>("[data-opening-content]")!;
-  const block = container.querySelector<HTMLElement>("p")!;
-  const before = block.getBoundingClientRect();
-  expect(getComputedStyle(block, "::after").visibility).toBe("visible");
-  expect(getComputedStyle(content).opacity).toBe("0");
-  expect(
-    getComputedStyle(container.querySelector<HTMLElement>(".scient-latex-page-zoom-frame")!)
-      .opacity,
-  ).toBe("0");
-  expect(content.inert).toBe(true);
-  expect(container.querySelectorAll(".scient-latex-document-preparation")).toHaveLength(1);
-  root.render(<Fixture opening={false} />);
-  await expect.poll(() => content.inert).toBe(false);
-  expect(getComputedStyle(content).opacity).toBe("1");
-  expect(block.getBoundingClientRect().height).toBe(before.height);
-  expect(container.querySelector(".scient-latex-document-preparation")).toBeNull();
-});
-
-it("keeps one centered message across admission, lazy loading, root resolution and real worker/layout preparation", async () => {
+it("keeps one centered message until the document is parsed, then shows it without a cover", async () => {
   await page.viewport(1200, 900);
   const source = String.raw`\documentclass{article}
 \usepackage{amsmath}
@@ -175,8 +130,7 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
   let center: number | undefined;
   const sample = () => {
     if (!sampling || !container) return;
-    const shell = container.querySelector<HTMLElement>(".scient-latex-opening-shell");
-    if (shell?.dataset.opening !== "false") {
+    if (!container.querySelector(".scient-latex-visual-document")) {
       const labels = container.querySelectorAll<HTMLElement>(
         '.scient-latex-document-preparation span:not([aria-hidden="true"])',
       );
@@ -198,11 +152,6 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
           failures.push(`Message moved ${middle - center}px`);
         center ??= middle;
       }
-      const content = container.querySelector<HTMLElement>("[data-opening-content]");
-      if (content && (getComputedStyle(content).opacity !== "0" || !content.inert))
-        failures.push("Intermediate content exposed");
-      const status = container.querySelector<HTMLElement>(".scient-latex-viewport-status");
-      if (status && !status.hidden) failures.push("Opening corner badge exposed");
       samples++;
     }
     requestAnimationFrame(sample);
@@ -222,40 +171,23 @@ ${Array.from({ length: 90 }, (_, index) => `Paragraph ${index}. ${"Source-backed
     await expect
       .poll(() => container!.querySelector(".scient-latex-visual-document"), { timeout: 15000 })
       .toBeTruthy();
-    await expect
-      .poll(
-        () => container!.querySelector<HTMLElement>(".scient-latex-opening-shell")?.dataset.opening,
-        { timeout: 15000 },
-      )
-      .toBe("false");
     sampling = false;
     expect(samples).toBeGreaterThan(2);
     expect(failures).toEqual([]);
+    // Parsed content appears directly: no cover, no busy page, even while a
+    // document font is still loading.
     expect(container.querySelector(".scient-latex-document-preparation")).toBeNull();
-    expect(container.querySelector<HTMLElement>("[data-opening-content]")!.inert).toBe(false);
-    expect(
-      container.querySelector<HTMLElement>(".scient-latex-visual-document")!.dataset.latexOpening,
-    ).toBe("false");
+    expect(container.querySelector("[aria-busy='true']")).toBeNull();
     const documentElement = container.querySelector<HTMLElement>(".scient-latex-visual-document")!;
+    await expect.poll(() => documentElement.textContent).toContain("Paragraph 0.");
     const scroll = container.querySelector<HTMLElement>(".scient-latex-visual-scroll")!;
-    const style = getComputedStyle(documentElement);
-    const scale = documentElement.getBoundingClientRect().width / Number.parseFloat(style.width);
-    const paperHeight =
-      Number.parseFloat(style.getPropertyValue("--scient-latex-paper-height")) * scale;
-    const box = scroll.getBoundingClientRect();
-    const preparedBottom =
-      box.top +
-      Math.max(box.height, paperHeight) +
-      paperHeight +
-      Number.parseFloat(style.getPropertyValue("--scient-latex-page-gap")) * scale +
-      200;
-    const coldNearby = [
-      ...documentElement.querySelectorAll<HTMLElement>("[data-latex-viewport-prepared='false']"),
-    ].filter((block) => {
-      const rect = block.getBoundingClientRect();
-      return rect.bottom > box.top && rect.top < preparedBottom;
-    });
-    expect(coldNearby).toEqual([]);
+    const first = [...documentElement.querySelectorAll("p")].find((paragraph) =>
+      paragraph.textContent?.startsWith("Paragraph 0."),
+    )!;
+    expect(getComputedStyle(first).visibility).toBe("visible");
+    expect(first.getBoundingClientRect().top).toBeLessThan(
+      scroll.getBoundingClientRect().bottom + 2000,
+    );
     expect(onEdit).not.toHaveBeenCalled();
   } finally {
     sampling = false;

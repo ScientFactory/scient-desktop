@@ -25,9 +25,11 @@ export function LatexStatementToolbar(props: {
   const { active, bar } = useLatexObjectContext(props.editor, props.root, props.selected);
   const { source, renameLabel } = useContext(LatexAuthoringContext);
   const inventory = useMemo(() => latexLabelInventory(source), [source]);
-  const host = props.editor.view.dom
-    .closest(".scient-latex-visual-workspace")
-    ?.querySelector(".scient-latex-context-tools-slot");
+  const host = active
+    ? props.editor.view.dom
+        .closest(".scient-latex-visual-workspace")
+        ?.querySelector(".scient-latex-context-tools-slot")
+    : null;
   if (!active || !host || !props.editor.isEditable) return null;
   return createPortal(
     <div

@@ -89,7 +89,13 @@ const LatexProjectVisualEditor = lazy(() =>
 );
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { isActiveLatexInstall } from "./latexToolchainSetupModel";
-import { readLatexBuildStatus, requestLatexForwardSync, requestLatexInverseSync } from "./client";
+import {
+  readLatexBuildStatus,
+  requestLatexForwardSync,
+  requestLatexInverseSync,
+  requestLatexPageAnchors,
+} from "./client";
+import type { LatexBuildPageAnchors } from "./latexPageMarkers";
 import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
 import { LatexDocumentPreparation } from "./latexOpeningPresentation";
 import {
@@ -916,6 +922,37 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const diagnosticRows = useMemo(() => latexDiagnosticRows(diagnostics), [diagnostics]);
   const descriptor = build.snapshot?.descriptor ?? null;
   const descriptorRevision = descriptor?._tag === "generated-pdf" ? descriptor.revisionId : null;
+  // Visual's page markers: where the pages of the last build begin, by file
+  // and line. Visual places them only in files holding exactly the revision
+  // that build compiled, then keeps them through edits as hints.
+  const [pageAnchors, setPageAnchors] = useState<LatexBuildPageAnchors | null>(null);
+  const buildRoot = build.snapshot?.rootRelativePath ?? null;
+  useEffect(() => {
+    if (!pdfMatchesBuffer || descriptor?._tag !== "generated-pdf" || buildRoot === null) return;
+    const key = `${descriptor.artifactId}:${descriptor.revisionId}`;
+    const request = new AbortController();
+    void requestLatexPageAnchors(
+      props.environmentId,
+      {
+        workspaceRoot: props.cwd,
+        rootRelativePath: buildRoot,
+        artifactId: descriptor.artifactId,
+        revisionId: descriptor.revisionId,
+      },
+      request.signal,
+    )
+      .then((result) => {
+        if (request.signal.aborted || result._tag !== "found") return;
+        setPageAnchors({
+          key,
+          pageCount: result.pageCount,
+          anchors: result.anchors,
+          sourceRevisions: result.sourceRevisions,
+        });
+      })
+      .catch(() => {});
+    return () => request.abort();
+  }, [pdfMatchesBuffer, descriptor, buildRoot, props.cwd, props.environmentId]);
   useEffect(() => {
     syncRequestRef.current += 1;
     pdfPageRef.current = null;
@@ -2241,6 +2278,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                       {...(documentId === null ? {} : { editorInstanceKey: documentId })}
                       source={workingSource}
                       sourceSnapshot={editorSourceSnapshot}
+                      buildPageAnchors={pageAnchors}
                       onLocalDraftChange={reportLocalVisualDraft}
                       draftKey={visualDraftKey}
                       fileRevision={workingSnapshot?.baselineRevision ?? props.revision}

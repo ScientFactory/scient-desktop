@@ -1,3 +1,6 @@
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex } from "@noble/hashes/utils";
+import type { LatexBuildPageAnchors, LatexSourcePageAnchors } from "./latexPageMarkers";
 import {
   validateDocumentSourcePatches,
   DocumentSourcePatchError,
@@ -371,4 +374,85 @@ export function planVisualProjectEdit(
       return refused(`This edit no longer matches a safe source range (${error.problem}).`);
     throw error;
   }
+}
+
+const placedAnchors = new WeakMap<LatexBuildPageAnchors, LatexSourcePageAnchors>();
+/** Per build and file: the contents last checked and whether they were compiled. */
+const checkedFiles = new WeakMap<
+  LatexBuildPageAnchors,
+  Map<string, { readonly contents: string; readonly compiled: boolean }>
+>();
+
+function contentRevisions(contents: string) {
+  const encoder = new TextEncoder();
+  return [contents, `\uFEFF${contents}`].map(
+    (text) => `sha256:${bytesToHex(sha256(encoder.encode(text)))}`,
+  );
+}
+
+/**
+ * Translates a build's page anchors into offsets of the assembled document,
+ * through its source spans. Only while every file the document shows holds
+ * exactly the revision the build compiled; otherwise the build's pages do not
+ * describe this document and nothing is placed. A file is hashed once per
+ * contents, and a placement, once made, is kept for the build.
+ */
+export function placeBuildPageAnchors(
+  build: LatexBuildPageAnchors,
+  document: VisualProjectDocument,
+  files: ReadonlyMap<string, VisualProjectFile>,
+): LatexSourcePageAnchors | null {
+  const placed = placedAnchors.get(build);
+  if (placed) return placed;
+  let checked = checkedFiles.get(build);
+  if (!checked) checkedFiles.set(build, (checked = new Map()));
+  for (const path of document.paths) {
+    const contents = files.get(path)?.contents;
+    if (contents === undefined) continue;
+    let entry = checked.get(path);
+    if (entry?.contents !== contents) {
+      const revision = build.sourceRevisions[path];
+      entry = {
+        contents,
+        compiled: revision !== undefined && contentRevisions(contents).includes(revision),
+      };
+      checked.set(path, entry);
+    }
+    if (!entry.compiled) return null;
+  }
+  const lineStarts = new Map<string, number[]>();
+  const starts = (contents: string, path: string) => {
+    let result = lineStarts.get(path);
+    if (!result) {
+      result = [0];
+      for (let index = 0; index < contents.length; index++)
+        if (contents.charCodeAt(index) === 10) result.push(index + 1);
+      lineStarts.set(path, result);
+    }
+    return result;
+  };
+  // Pages run forward through the document; several can begin on one long
+  // source line. A file included more than once gives a page several possible
+  // places after the previous page; such a page is left without a marker.
+  const anchors: { page: number; offset: number }[] = [];
+  let floor = 0;
+  for (const anchor of [...build.anchors].toSorted((a, b) => a.page - b.page)) {
+    const contents = files.get(anchor.relativePath)?.contents;
+    if (contents === undefined) continue;
+    const offset = starts(contents, anchor.relativePath)[anchor.line - 1];
+    if (offset === undefined) continue;
+    const candidates: number[] = [];
+    for (const span of document.spans) {
+      if (span.path !== anchor.relativePath) continue;
+      if (offset < span.sourceFrom || offset >= span.sourceFrom + (span.to - span.from)) continue;
+      const candidate = span.from + offset - span.sourceFrom;
+      if (candidate >= floor) candidates.push(candidate);
+    }
+    if (candidates.length !== 1) continue;
+    floor = candidates[0]!;
+    anchors.push({ page: anchor.page, offset: floor });
+  }
+  const result = { key: build.key, source: document.source, pageCount: build.pageCount, anchors };
+  placedAnchors.set(build, result);
+  return result;
 }

@@ -7,7 +7,19 @@ import {
 import { latexLiteralBlock } from "./latexLiteral";
 import type { LatexSourceEdit } from "./latexSourceEditPlan";
 
+let inventoryCache: { source: string; inventory: ReturnType<typeof readLabelInventory> } | null =
+  null;
+
+/** Labels and references in `source`. Every object toolbar asks for the same
+ * source; one scan per source version serves all of them. Treat as read-only.
+ */
 export function latexLabelInventory(source: string) {
+  if (inventoryCache?.source !== source)
+    inventoryCache = { source, inventory: readLabelInventory(source) };
+  return inventoryCache.inventory;
+}
+
+function readLabelInventory(source: string) {
   const targets: { key: string; from: number; to: number; uses: number; duplicate: boolean }[] = [];
   const references: { from: number; to: number; keys: string[] }[] = [];
   let incomplete = false;
@@ -45,17 +57,20 @@ export function latexLabelInventory(source: string) {
         keys: reference.value.split(",").map((key) => key.trim()),
       });
   }
+  const uses = new Map<string, number>();
+  for (const reference of references)
+    for (const key of new Set(reference.keys)) uses.set(key, (uses.get(key) ?? 0) + 1);
+  const definitions = new Map<string, number>();
+  for (const target of targets) definitions.set(target.key, (definitions.get(target.key) ?? 0) + 1);
   for (const target of targets) {
-    target.uses = references.filter((ref) => ref.keys.includes(target.key)).length;
-    target.duplicate = targets.filter((other) => other.key === target.key).length > 1;
+    target.uses = uses.get(target.key) ?? 0;
+    target.duplicate = definitions.get(target.key)! > 1;
   }
   return {
     targets,
     references,
     incomplete,
-    unresolved: [...new Set(references.flatMap((ref) => ref.keys))].filter(
-      (key) => !targets.some((target) => target.key === key),
-    ),
+    unresolved: [...uses.keys()].filter((key) => !definitions.has(key)),
   };
 }
 

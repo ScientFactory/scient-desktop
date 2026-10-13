@@ -31,8 +31,6 @@ it("retains more than 512 small reusable results without a timer expiry", () => 
 it("pauses background admission at capacity and resumes when retained bytes are released", () => {
   const budget = createLatexReadingCacheBudget(900);
   const cache = budget.cache<string>("math");
-  let released = 0;
-  const unsubscribe = budget.subscribeSpace(() => released++);
   expect(cache.put("first", "a", 100, false, "available")).toBe(true);
   expect(cache.put("second", "b", 100, false, "available")).toBe(true);
   for (let attempt = 0; attempt < 1000; attempt++)
@@ -42,12 +40,8 @@ it("pauses background admission at capacity and resumes when retained bytes are 
   expect(budget.statistics().evictions).toBe(0);
   expect(budget.statistics().rejections).toBe(1000);
   cache.delete("first");
-  expect(released).toBe(1);
   expect(cache.put("later", "c", 100, false, "available")).toBe(true);
   expect(budget.statistics().peakBytes).toBeLessThanOrEqual(900);
-  unsubscribe();
-  cache.delete("later");
-  expect(released).toBe(1);
 });
 
 it("keeps background-first LRU ordering without promoting a readiness peek", () => {
