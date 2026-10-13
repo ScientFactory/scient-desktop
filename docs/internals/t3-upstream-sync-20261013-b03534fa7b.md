@@ -5,8 +5,9 @@
 The history-preserving integration and final owned-main composition have passed
 complete local qualification. Yaacov accepted the desktop candidate, authorized
 MERGE delivery and explicitly deferred mobile visual review. The later Stop/queue
-composition also passed a proportional native desktop interaction check at
-`d676e210aa58c33b7d65c32e9855c3078c20bd10`. The integration pointer advances to the
+composition and the later history/native-helper catch-up passed proportional
+native desktop interaction checks, most recently at
+`72b423e95628b27cddab2e00ec15b3bd87bd5943`. The integration pointer identifies the
 qualified frozen target. Exact final pushed-head CI, merge-group checks and actual
 delivery remain separate requirements; release remains separate authorization.
 
@@ -402,14 +403,50 @@ and native-helper staging tests execute only a universal or host-compatible
 binary while still inspecting every slice. The full provider-switch file passed
 65 cases in 78.040 s with both restored assertions.
 
-**Qualification of this newest composition remains pending.** Shared server
-contracts, persistence and desktop/native resources changed, invalidating the
-earlier server reuse audit for this tree. Run the complete applicable local gate
-once the reviewed composition stabilizes, then refresh native/platform evidence
-and the exact-head hosted/merge-group checks. No new official target, release,
-qualification-policy substitution, live-profile access, or OOM incident repair
-is authorized or performed. The earlier cursor metadata remains until this
-composition is qualified. Evidence under `reviews/pr-merge-readiness-20261013`:
-`pr534-f8-owned-main-probe.json`, `pr534-f8-independent-source-reviews.json`,
-`pr534-f8-provider-switch-witness-01.json`, and the `pr534-composed-8301-*` and
-`pr534-native-8301-*` receipts.
+Receiving merge `72b423e95628b27cddab2e00ec15b3bd87bd5943` has exact parents
+`8301dd95794b85ae5d6e08ce7733882acaed643d` and that landed main, and tree
+`5c7b58bea59dd0d12a186557d0549f08c1b082ab`. Shared contracts, persistence and
+desktop resources invalidated the earlier server reuse audit. A complete new
+local `pnpm run test` passed on clean, unchanged inputs in 2,483.902 s: server
+936 files/11,835 cases, web unit 979 files/11,999 cases, desktop 283 files/2,530
+cases and all other applicable workspace suites. Existing skips remain,
+including 40 server files/129 cases and disabled nested suites. This is a
+successful candidate run, not a measured cold-suite or end-to-end speedup.
+
+Formatting, lint, all typechecks, unused-code checks, build, desktop smoke,
+branding, provenance and all five seams passed. The maintained early selector
+ran affected consumers and actual native Pi witnesses in 215.929 s; six added
+history/source API suites passed 85 cases in 7.918 s. All 50 browser files/406
+cases passed locally in 169.213 s with serial files and unchanged assertions
+and timeouts. The credential-free local Git rehearsal passed real push,
+stale-push refusal, rename and fresh-read checks. Its lost acknowledgement is
+explicitly simulated; Cloud review metadata and actual network loss remain
+unverified.
+
+Exact-head hosted CI run `38451391866` passed on its second attempt. The first
+attempt retained one keyboard-popover assertion failure and two macOS ARM
+runner-allocation cancellations before any steps ran. Only failed jobs and
+their dependents were retried. A passing unchanged-head layout retry does not
+prove a permanent repair of that intermittent failure; its independent triage
+and original result remain preserved.
+
+The exact native app used fresh bundled server code and only its own synthetic
+profile and loopback model. Stop closed the physical stream, showed the stopping
+acknowledgement and held the queue. Explicit Resume completed both continuation
+and queued request; the scientific source and two-page PDF remained present,
+and live queue, Stop/Resume and composer settled. The owned ARM helper passed
+the shipped resource-layout validator and physically swapped synthetic files,
+preserving displaced bytes. That resource container is not a signed desktop
+release artifact. The app and fixture server were stopped; all five captured
+PIDs, four listeners and the exact service were verified absent. This review
+does not invent renewed user visual acceptance or real-account/model-quality
+qualification. Mobile visual review remains explicitly deferred.
+
+Evidence under `reviews/pr-merge-readiness-20261013`:
+`pr534-72b-final-qualification-summary.json`, `pr534-f8-independent-source-reviews.json`,
+`pr534-composed-72b-*`, `pr534-native-72b-*`, `pr534-native-resource-72b.json`
+and `pr534-72b-ci-retry-success.json`. Final metadata-only updates reuse this
+runtime evidence after inspecting their exact diff; final pushed-head CI,
+merge-group checks and actual delivery remain separate. No new official target,
+release, qualification-policy substitution, live-profile access or OOM incident
+repair is performed.

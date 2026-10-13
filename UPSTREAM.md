@@ -439,7 +439,8 @@ The current qualified local alignment through
 Literal merge `3846a7fd443e0fc53d8ba520e7a82748cffcc67d` retains the exact
 official target as second parent and all 99 ordinary donor commits. Separate
 owned-main catch-ups retain the preceding alignment, Stop/queue owners and
-landed early-check tooling through `f75556f`; none changes the official merge.
+landed early-check tooling and the history/native-helper owners through
+`f8cda428aca3`; none changes the official merge.
 Narrow Scient owners preserve credential policy, native authority, provider
 instances, scientific readers, immutable migrations and publication holds.
 Complete local qualification passed on the final main composition; the receipt
