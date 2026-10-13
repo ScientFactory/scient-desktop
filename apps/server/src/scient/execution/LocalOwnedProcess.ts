@@ -68,7 +68,7 @@ export const makeLocalOwnedProcessCleanup = Effect.fnUntraced(function* (
  * probed safely here, so Windows remains qualified by that process-layer
  * boundary rather than by the Unix proof below.
  */
-export function ensureLocalOwnedProcessTreeExit(
+function ensureLocalOwnedProcessTreeExit(
   pid: number,
   platform: NodeJS.Platform,
 ): Effect.Effect<void, LocalOwnedProcessTreeExitError> {
