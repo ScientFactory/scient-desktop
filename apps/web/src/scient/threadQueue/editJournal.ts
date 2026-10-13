@@ -56,7 +56,14 @@ function result<T>(request: IDBRequest<T>): Promise<T> {
 }
 // Attachment bytes are written once per object, not cloned on every keystroke.
 // Keys are journal-owned so completion can remove precisely its own blobs.
-const savedFiles = new Map<string, File>();
+// The record belongs to one connection: storage reopened after a close may have
+// been deleted or cleared, so its blobs are written again.
+const savedFilesByConnection = new WeakMap<IDBDatabase, Map<string, File>>();
+function savedFilesFor(transaction: IDBTransaction) {
+  let savedFiles = savedFilesByConnection.get(transaction.db);
+  if (!savedFiles) savedFilesByConnection.set(transaction.db, (savedFiles = new Map()));
+  return savedFiles;
+}
 export async function writeQueueEditJournal(session: QueueEditSession | string) {
   await journal.transaction(["edits", "files"], "readwrite", (transaction) =>
     writeJournal(transaction, session),
@@ -64,6 +71,7 @@ export async function writeQueueEditJournal(session: QueueEditSession | string) 
 }
 function writeJournal(transaction: IDBTransaction, session: QueueEditSession | string) {
   return new Promise<void>((resolve, reject) => {
+    const savedFiles = savedFilesFor(transaction);
     const entries = transaction.objectStore("edits");
     const files = transaction.objectStore("files");
     const written = new Map<string, File>();
@@ -119,6 +127,7 @@ async function decodeDrafts(
   files: IDBObjectStore,
   session: StoredSession,
 ): Promise<QueueEditSession> {
+  const savedFiles = savedFilesFor(files.transaction);
   const draft = async (value: StoredDraft): Promise<ComposerThreadDraftState> => {
     const attachment = async <
       A extends { name: string; mimeType: string; file?: File | null; fileRef?: string },

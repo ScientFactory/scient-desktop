@@ -131,6 +131,17 @@ describe("createIndexedDbConnection", () => {
     expect(storage.open.mock.calls.length).toBe(opensBefore + 2);
   });
 
+  it("opens again after indexedDB.open throws", async () => {
+    const storage = setup();
+    storage.open.mockImplementationOnce(() => {
+      throw new DOMException("Storage is unavailable.", "SecurityError");
+    });
+
+    await expect(storage.get("a")).rejects.toThrow("Storage is unavailable.");
+    await storage.put("a", "1");
+    await expect(storage.get("a")).resolves.toBe("1");
+  });
+
   it("rejects a blocked upgrade and closes the connection that opens later", async () => {
     const storage = setup();
     // An older window that ignores versionchange keeps the upgrade blocked.

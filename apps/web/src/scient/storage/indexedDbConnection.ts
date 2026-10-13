@@ -37,13 +37,11 @@ export function createIndexedDbConnection(options: {
       request.addEventListener("error", () => {
         if (settled) return;
         settled = true;
-        forget(opening);
         reject(request.error);
       });
       request.addEventListener("blocked", () => {
         if (settled) return;
         settled = true;
-        forget(opening);
         reject(new Error(options.blockedMessage));
       });
     });
@@ -66,7 +64,11 @@ export function createIndexedDbConnection(options: {
     ): Promise<T> {
       for (let attempt = 1; ; attempt++) {
         const connection = (current ??= open());
-        const database = await connection;
+        // A failed open is never cached; the next call tries again.
+        const database = await connection.catch((cause: unknown) => {
+          forget(connection);
+          throw cause;
+        });
         let transaction: IDBTransaction;
         try {
           transaction = database.transaction(storeNames, mode);

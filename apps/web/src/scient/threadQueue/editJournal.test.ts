@@ -165,3 +165,49 @@ it("keeps saving queued-message edits after the browser closes their storage", a
   expect(await restored?.edited.images[0]?.file.text()).toBe("png");
   open.mockRestore();
 });
+
+it("writes attachment bytes again when queue storage was deleted while the window was open", async () => {
+  vi.resetModules();
+  const journal = await import("./editJournal");
+  const file = new File(["png"], "plot.png", { type: "image/png" });
+  const draft = {
+    ...createEmptyThreadDraft(),
+    prompt: "Queued question",
+    images: [
+      {
+        type: "image" as const,
+        id: "plot",
+        name: "plot.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        previewUrl: "blob:plot",
+        file,
+      },
+    ],
+  };
+  const session = {
+    key: "deleted-storage",
+    journalKey: "deleted-storage-journal",
+    originalTarget: {
+      environmentId: EnvironmentId.make("environment"),
+      threadId: ThreadId.make("t"),
+    },
+    editTarget: DraftId.make("deleted-storage-edit"),
+    queueItemId: "qitem_deleted",
+    editToken: "edit",
+    ordinary: createEmptyThreadDraft(),
+    edited: draft,
+  };
+  await journal.writeQueueEditJournal(session);
+  await new Promise<void>((resolve, reject) => {
+    const deletion = indexedDB.deleteDatabase("scient-queue-edit-journal");
+    deletion.addEventListener("success", () => resolve());
+    deletion.addEventListener("error", () => reject(deletion.error));
+  });
+
+  // The same File object is saved again, as the composer does on the next edit.
+  await journal.writeQueueEditJournal({ ...session, edited: { ...draft, prompt: "Edited" } });
+  const restored = await journal.readQueueEditJournal(session.journalKey);
+  expect(restored?.edited.prompt).toBe("Edited");
+  expect(await restored?.edited.images[0]?.file.text()).toBe("png");
+});
