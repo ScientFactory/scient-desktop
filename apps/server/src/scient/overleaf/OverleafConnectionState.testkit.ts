@@ -16,6 +16,7 @@ export const overleafConnectionFixture = (
   state: "active",
   base: { commit: null, tree: null, generation: 0 },
   priorBases: [],
+  completedSyncCount: 0,
   localSnapshots: [],
   managedPaths: [],
   localOnlyPaths: [],

@@ -130,6 +130,15 @@ export class OverleafRequestReusedError extends Schema.TaggedError<OverleafReque
   }
 }
 
+export class OverleafRecordInvalidError extends Schema.TaggedError<OverleafRecordInvalidError>()(
+  "OverleafRecordInvalidError",
+  { record: Schema.Literals(["connection", "receipt"]) },
+) {
+  override get message(): string {
+    return `Refused to write an invalid Overleaf ${this.record} record.`;
+  }
+}
+
 export class OverleafRetentionUnavailableError extends Schema.TaggedError<OverleafRetentionUnavailableError>()(
   "OverleafRetentionUnavailableError",
   {
@@ -157,6 +166,7 @@ export type OverleafConnectionRead =
 
 type WriteError = OverleafStateLockedError | OverleafStateIoError;
 
+/** @public Context tag; the coordinator (contract step 2+) consumes it. */
 export class OverleafStateStore extends Context.Service<
   OverleafStateStore,
   {
@@ -166,7 +176,10 @@ export class OverleafStateStore extends Context.Service<
     readonly listConnections: Effect.Effect<ReadonlyArray<string>, OverleafStateIoError>;
     readonly createConnection: (
       document: OverleafConnectionDocument,
-    ) => Effect.Effect<void, WriteError | OverleafConnectionExistsError>;
+    ) => Effect.Effect<
+      void,
+      WriteError | OverleafRecordInvalidError | OverleafConnectionExistsError
+    >;
     /** Compare-and-set on `expectedRevision`; the next document must keep all evidence. */
     readonly replaceConnection: (input: {
       readonly expectedRevision: number;
@@ -177,6 +190,7 @@ export class OverleafStateStore extends Context.Service<
       | OverleafConnectionStaleError
       | OverleafConnectionUnavailableError
       | OverleafTransitionRejectedError
+      | OverleafRecordInvalidError
     >;
     /** Moves an unreadable document aside, bytes intact; returns its quarantine name. */
     readonly quarantineConnection: (
@@ -191,14 +205,14 @@ export class OverleafStateStore extends Context.Service<
     ) => Effect.Effect<
       | { readonly _tag: "created" }
       | { readonly _tag: "existing"; readonly receipt: OverleafOperationReceipt },
-      WriteError | OverleafRequestReusedError
+      WriteError | OverleafRecordInvalidError | OverleafRequestReusedError
     >;
     readonly finishReceipt: (input: {
       readonly connectionId: string;
       readonly requestId: string;
       readonly status: "completed" | "failed" | "unknown";
       readonly resultCategory: string;
-    }) => Effect.Effect<void, WriteError | OverleafRequestReusedError>;
+    }) => Effect.Effect<void, WriteError | OverleafRecordInvalidError | OverleafRequestReusedError>;
     /**
      * Creates or verifies the connection's private application directory for
      * the applier. It must be on the manuscript checkout's volume and outside
@@ -217,7 +231,7 @@ export class OverleafStateStore extends Context.Service<
 /** Fault points for tests; a hook that throws stops the write there, as a crash would. */
 export interface OverleafStateStoreHooks {
   readonly at?: (
-    point: "temporary-written" | "temporary-synced" | "published",
+    point: "temporary-written" | "temporary-synced" | "before-publish" | "published",
     file: string,
   ) => Promise<void>;
 }
@@ -226,6 +240,9 @@ const decodeConnection = Schema.decodeUnknownExit(
   Schema.fromJsonString(OverleafConnectionDocument),
 );
 const decodeReceipt = Schema.decodeUnknownExit(Schema.fromJsonString(OverleafOperationReceipt));
+/** Documents are validated before they are written, not only when read back. */
+const validateConnection = Schema.decodeUnknownExit(OverleafConnectionDocument);
+const validateReceipt = Schema.decodeUnknownExit(OverleafOperationReceipt);
 const encodeConnection = Schema.encodeSync(Schema.fromJsonString(OverleafConnectionDocument));
 const encodeReceipt = Schema.encodeSync(Schema.fromJsonString(OverleafOperationReceipt));
 const isServerId = Schema.is(OverleafServerId);
@@ -263,12 +280,22 @@ export const make = (options: {
       });
 
     // One writer at a time inside this process; the lease excludes other processes.
+    // Every mutation runs uninterruptibly while holding this permit, so an
+    // interrupted caller cannot leave a filesystem write running after another
+    // writer has started, and shutdown cannot release the lease mid-write.
     const writes = yield* Semaphore.make(1);
-    const leaseGate = yield* Semaphore.make(1);
-    let leaseScope: Scope.Closeable | null = null;
-    yield* Effect.addFinalizer(() =>
-      leaseScope === null ? Effect.void : Scope.close(leaseScope, Exit.void),
-    );
+    const leasePath = NodePath.join(root, "lease.sqlite");
+    let lease: {
+      readonly scope: Scope.Closeable;
+      readonly root: { dev: string; ino: string };
+      readonly file: { dev: string; ino: string };
+    } | null = null;
+    const releaseLease = Effect.suspend(() => {
+      const held = lease;
+      lease = null;
+      return held === null ? Effect.void : Scope.close(held.scope, Exit.void);
+    });
+    yield* Effect.addFinalizer(() => writes.withPermits(1)(releaseLease));
 
     const acquireLease = Effect.gen(function* () {
       yield* io("prepare-directory", async () => {
@@ -276,11 +303,10 @@ export const make = (options: {
           if (!(await privateDirectory(directory, userId)))
             throw new Error("Overleaf state directory is not private.");
       });
-      const leasePath = NodePath.join(root, "lease.sqlite");
       const scope = yield* Scope.make();
       yield* Effect.gen(function* () {
         const context = yield* Layer.buildWithScope(
-          makeRuntimeSqliteLayer({ filename: leasePath }),
+          makeRuntimeSqliteLayer({ filename: leasePath, busyTimeout: 0, disableWAL: true }),
           scope,
         );
         const sql = Context.get(context, SqlClient.SqlClient);
@@ -299,8 +325,11 @@ export const make = (options: {
             : new OverleafStateIoError({ operation: "acquire-lease", cause: error }),
         ),
       );
-      leaseScope = scope;
-      yield* io("acquire-lease", () => NodeFSP.chmod(leasePath, 0o600));
+      const identities = yield* io("acquire-lease", async () => {
+        await NodeFSP.chmod(leasePath, 0o600);
+        return { root: await directoryIdentity(root), file: await leaseFileIdentity() };
+      }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
+      lease = { scope, ...identities };
       // Only this process writes here now: temporaries from a dead writer are orphans.
       yield* io("prepare-directory", async () => {
         for (const directory of [connections, receipts]) {
@@ -311,10 +340,42 @@ export const make = (options: {
         }
       });
     });
+    const leaseFileIdentity = async () => {
+      const stat = await NodeFSP.lstat(leasePath, { bigint: true });
+      if (!stat.isFile()) throw new Error("Overleaf lease is not a regular file.");
+      return { dev: String(stat.dev), ino: String(stat.ino) };
+    };
+    /**
+     * The lock protects the file this connection opened. If that file or the
+     * state root was replaced, another process may lock the replacement, so the
+     * old lease is dropped and the lock is taken again on what is there now.
+     * A replacement between this check and the write that follows is not
+     * detected; that window is the boundary of this protection.
+     */
+    const ensureLease = Effect.gen(function* () {
+      const held = lease;
+      if (held !== null) {
+        const current = yield* Effect.promise(async () => {
+          try {
+            return { root: await directoryIdentity(root), file: await leaseFileIdentity() };
+          } catch {
+            return null;
+          }
+        });
+        if (
+          current !== null &&
+          current.root.dev === held.root.dev &&
+          current.root.ino === held.root.ino &&
+          current.file.dev === held.file.dev &&
+          current.file.ino === held.file.ino
+        )
+          return;
+        yield* releaseLease;
+      }
+      yield* acquireLease;
+    });
     const withLease = <A, E>(effect: Effect.Effect<A, E>) =>
-      leaseGate
-        .withPermits(1)(Effect.suspend(() => (leaseScope === null ? acquireLease : Effect.void)))
-        .pipe(Effect.andThen(writes.withPermits(1)(effect)));
+      writes.withPermits(1)(Effect.uninterruptible(ensureLease.pipe(Effect.andThen(effect))));
 
     /** Writes a complete, synced temporary next to `file`. */
     const writeTemporary = async (file: string, contents: string) => {
@@ -336,7 +397,14 @@ export const make = (options: {
     /** Replaces `file` atomically, then makes the rename durable. */
     const replaceDurably = async (file: string, contents: string) => {
       const temporary = await writeTemporary(file, contents);
-      await NodeFSP.rename(temporary, file);
+      try {
+        await hook("before-publish", file);
+        await NodeFSP.rename(temporary, file);
+      } catch (error) {
+        // A temporary left by a crash is removed at the next lease acquisition.
+        await NodeFSP.rm(temporary, { force: true });
+        throw error;
+      }
       await hook("published", file);
       await syncDirectory(NodePath.dirname(file));
     };
@@ -344,6 +412,7 @@ export const make = (options: {
     const createDurably = async (file: string, contents: string): Promise<boolean> => {
       const temporary = await writeTemporary(file, contents);
       try {
+        await hook("before-publish", file);
         await NodeFSP.link(temporary, file);
       } catch (error) {
         if (errorCode(error) === "EEXIST") return false;
@@ -406,9 +475,19 @@ export const make = (options: {
       },
     );
 
+    const requireValid = (record: "connection" | "receipt", value: unknown) =>
+      (
+        record === "connection"
+          ? Exit.isSuccess(validateConnection(value))
+          : Exit.isSuccess(validateReceipt(value))
+      )
+        ? Effect.void
+        : Effect.fail(new OverleafRecordInvalidError({ record }));
+
     const createConnection: OverleafStateStore["Service"]["createConnection"] = (document) =>
       withLease(
         Effect.gen(function* () {
+          yield* requireValid("connection", document);
           const created = yield* io("write", () =>
             createDurably(connectionFile(document.connectionId), encodeConnection(document)),
           );
@@ -423,6 +502,7 @@ export const make = (options: {
       withLease(
         Effect.gen(function* () {
           const connectionId = input.next.connectionId;
+          yield* requireValid("connection", input.next);
           const current = yield* readConnection(connectionId);
           if (current._tag !== "ready")
             return yield* new OverleafConnectionUnavailableError({
@@ -477,6 +557,7 @@ export const make = (options: {
     const beginReceipt: OverleafStateStore["Service"]["beginReceipt"] = (receipt) =>
       withLease(
         Effect.gen(function* () {
+          yield* requireValid("receipt", receipt);
           const file = yield* io("write", async () => {
             const file = receiptFile(receipt.connectionId, receipt.requestId);
             if (!(await privateDirectory(NodePath.dirname(file), userId)))
@@ -514,18 +595,14 @@ export const make = (options: {
               requestId: input.requestId,
             });
           }
-          const now = DateTime.formatIso(yield* DateTime.now);
-          yield* io("write", () =>
-            replaceDurably(
-              file,
-              encodeReceipt({
-                ...existing,
-                status: input.status,
-                resultCategory: input.resultCategory,
-                updatedAt: now,
-              }),
-            ),
-          );
+          const finished: OverleafOperationReceipt = {
+            ...existing,
+            status: input.status,
+            resultCategory: input.resultCategory,
+            updatedAt: DateTime.formatIso(yield* DateTime.now),
+          };
+          yield* requireValid("receipt", finished);
+          yield* io("write", () => replaceDurably(file, encodeReceipt(finished)));
         }),
       );
 
@@ -572,6 +649,7 @@ export const make = (options: {
     });
   });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layer = Layer.effect(
   OverleafStateStore,
   Effect.gen(function* () {

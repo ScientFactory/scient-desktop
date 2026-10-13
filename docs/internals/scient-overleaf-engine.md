@@ -100,16 +100,25 @@ removed when a process takes the lease. An unreadable or newer-schema document
 is reported as such, never treated as missing or reset; it can only be moved
 to `quarantine/` with its bytes intact.
 
-`OverleafConnectionState` defines what a replacement must keep, and the store
-refuses violations: the base never moves backwards or changes without a new
-generation; publication attempts take fresh numbers and are recorded unknown
-before any send; an unknown or superseded attempt is kept unchanged until
-positive evidence resolves it; a resolved attempt is never reopened; a pending
-apply intent cannot be swapped for another; and a retained copy is dropped
-only once it is releasable, seven days old and followed by a completed sync.
-`not-sent` is a definite outcome for a push Scient refused to start;
-`superseded-unresolved` marks an unknown attempt overtaken by a later reviewed
-base, which is not evidence of rejection.
+`OverleafConnectionState` defines what a document and a replacement must
+keep, and the store refuses violations, validating every document before it is
+written. The base never moves backwards or changes without a new generation.
+Each publication attempt records its operation, request, plan digest,
+workspace authority, parent, candidate and base generation; those never
+change, and only its classification may move forward: `unknown` to
+`accepted`, `out-of-date`, `not-sent` or `superseded-unresolved`, and
+`superseded-unresolved` to `accepted`. Each outcome needs its kind of evidence.
+A new attempt takes a fresh number and is recorded `unknown` on the current
+base, before any send. Acceptance adopts exactly the candidate on the base it
+was built for; a rejection or `not-sent` leaves the base alone. A base change
+must supersede every attempt still unknown in the same replacement, and late
+acceptance of a superseded attempt is recorded without moving the later base.
+At most sixteen attempts may be unresolved. A pending apply link is immutable
+until cleared. A retained copy keeps its revision, time and sync count; a
+changed copy never becomes releasable again, and a copy is dropped only after
+seven days and a later completed sync (`completedSyncCount`).
+`overleafRequiredPins` names the private refs (bases, local snapshots, pending
+apply target, unresolved attempts) that cleanup must keep.
 
 Request receipts are created once per request ID. A repeat with the same
 payload returns the original receipt instead of running again; reuse with a

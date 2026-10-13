@@ -18,6 +18,12 @@ import {
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
   readonly spanAttributes?: Record<string, unknown>;
+  /**
+   * Applied while the Bun client opens the file. The Node client sets no busy
+   * timeout and no journal mode on open, so it needs neither.
+   */
+  readonly busyTimeout?: Duration.Input;
+  readonly disableWAL?: boolean;
 };
 
 type Loader = {

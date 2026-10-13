@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real directories, a real second process, real fsync.
 // Coordinator contract step 1: the store-level parts of acceptance cases A04
-// (second process, lease), A17 (corrupt/unsupported state), A19 (disk full at
-// each durable write) and A20 (unsafe or cross-volume retention).
+// (second process, lease), A17 (corrupt/unsupported state), A20 (unsafe or
+// cross-volume retention), and A19 only for failures injected at the store's
+// write boundaries (not partial writes or process death mid-write).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -10,6 +11,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 
 import type {
@@ -27,10 +29,15 @@ const temporaryRoot = () =>
     (directory) => Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
   );
 
-/** A store whose lifetime (and lease) ends when the returned scope closes, like a server exit. */
+/**
+ * A store whose lifetime (and lease) ends when `close` runs, like a server
+ * exit, or at the latest when the test's scope closes.
+ */
 const openStore = (root: string, hooks?: OverleafStateStore.OverleafStateStoreHooks) =>
   Effect.gen(function* () {
-    const scope = yield* Scope.make();
+    const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
     const store = yield* OverleafStateStore.make({
       root,
       ...(hooks === undefined ? {} : { hooks }),
@@ -163,6 +170,7 @@ describe("OverleafStateStore", () => {
               operationId: "operation-1",
               requestId: "request-1",
               planDigest: "a".repeat(64),
+              authority: { bindingId: "binding-1", authorityGeneration: 1, scopeRevision: 1 },
               branch: "main",
               parentCommit: "1".repeat(40),
               candidateCommit: "2".repeat(40),
@@ -193,7 +201,7 @@ describe("OverleafStateStore", () => {
     ),
   );
 
-  it.live.each(["temporary-written", "temporary-synced", "published"] as const)(
+  it.live.each(["temporary-written", "temporary-synced", "before-publish", "published"] as const)(
     "keeps a whole document when a replacement stops at %s",
     (point) =>
       Effect.scoped(
@@ -376,6 +384,163 @@ describe("OverleafStateStore", () => {
         yield* first.close;
         yield* second.store.createConnection(overleafConnectionFixture("connection-2"));
         expect(yield* second.store.listConnections).toEqual(["connection-1", "connection-2"]);
+      }),
+    ),
+  );
+
+  it.live("refuses to write a document that claims an outcome without its evidence", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* temporaryRoot();
+        const { store } = yield* openStore(root);
+        const invalid = {
+          ...overleafConnectionFixture(),
+          lastAttemptNumber: 1,
+          attempts: [
+            {
+              attemptNumber: 1,
+              operationId: "operation-1",
+              requestId: "request-1",
+              planDigest: "a".repeat(64),
+              authority: { bindingId: "binding-1", authorityGeneration: 1, scopeRevision: 1 },
+              branch: "main" as const,
+              parentCommit: "1".repeat(40),
+              candidateCommit: "2".repeat(40),
+              candidateTree: "3".repeat(40),
+              baseGeneration: 0,
+              outcome: "accepted" as const,
+              evidence: null,
+              recordedAt: "2026-10-13T11:00:00.000Z",
+            },
+          ],
+        };
+        const refused = yield* Effect.flip(store.createConnection(invalid));
+        expect(refused).toMatchObject({ _tag: "OverleafRecordInvalidError", record: "connection" });
+        expect(yield* store.readConnection("connection-1")).toEqual({ _tag: "missing" });
+      }),
+    ),
+  );
+
+  it.live("creates nothing, and keeps a running receipt, when publishing the file fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* temporaryRoot();
+        let failing = false;
+        const { store } = yield* openStore(root, {
+          at: async (point) => {
+            if (failing && point === "before-publish")
+              throw Object.assign(new Error("No space left on device"), { code: "ENOSPC" });
+          },
+        });
+        failing = true;
+        const failedCreate = yield* Effect.flip(
+          store.createConnection(overleafConnectionFixture()),
+        );
+        expect(failedCreate._tag).toBe("OverleafStateIoError");
+        expect(yield* store.readConnection("connection-1")).toEqual({ _tag: "missing" });
+        const failedReceipt = yield* Effect.flip(store.beginReceipt(receipt()));
+        expect(failedReceipt._tag).toBe("OverleafStateIoError");
+
+        failing = false;
+        yield* store.beginReceipt(receipt());
+        failing = true;
+        const failedFinish = yield* Effect.flip(
+          store.finishReceipt({
+            connectionId: "connection-1",
+            requestId: "request-1",
+            status: "completed",
+            resultCategory: "accepted",
+          }),
+        );
+        expect(failedFinish._tag).toBe("OverleafStateIoError");
+        failing = false;
+        expect(yield* store.beginReceipt(receipt())).toEqual({
+          _tag: "existing",
+          receipt: receipt(),
+        });
+        expect(
+          yield* Effect.promise(() =>
+            NodeFSP.readdir(NodePath.join(root, "receipts", "connection-1")),
+          ),
+        ).toEqual(["request-1.json"]);
+      }),
+    ),
+  );
+
+  it.live("finishes an interrupted write before another writer can start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* temporaryRoot();
+        let pause: { reached: () => void; release: Promise<void> } | null = null;
+        const { store } = yield* openStore(root, {
+          at: async (point) => {
+            if (point !== "before-publish" || pause === null) return;
+            const current = pause;
+            pause = null;
+            current.reached();
+            await current.release;
+          },
+        });
+        const document = overleafConnectionFixture();
+        yield* store.createConnection(document);
+
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => (release = resolve));
+        const reached = new Promise<void>((resolve) => {
+          pause = { reached: resolve, release: released };
+        });
+        const first = revised(document, { updatedAt: "2026-10-13T11:00:01.000Z" });
+        const writer = yield* Effect.forkChild(
+          store.replaceConnection({ expectedRevision: 1, next: first }),
+        );
+        yield* Effect.promise(() => reached);
+        // The caller gives up while its rename is still pending.
+        const interruption = yield* Effect.forkChild(Fiber.interrupt(writer));
+        const competitor = yield* Effect.forkChild(
+          Effect.flip(
+            store.replaceConnection({
+              expectedRevision: 1,
+              next: revised(document, { updatedAt: "2026-10-13T11:00:02.000Z" }),
+            }),
+          ),
+        );
+        // Give the interruption and the competitor time to act while the write is held.
+        // If the write were abandoned, the competitor would publish within this window.
+        yield* Effect.sleep("100 millis");
+        release();
+        yield* Fiber.join(interruption);
+        // The competitor ran only after the first write landed, so it sees revision 2.
+        expect(yield* Fiber.join(competitor)).toMatchObject({
+          _tag: "OverleafConnectionStaleError",
+          actualRevision: 2,
+        });
+        expect(yield* store.readConnection("connection-1")).toEqual({
+          _tag: "ready",
+          document: first,
+        });
+      }),
+    ),
+  );
+
+  it.live("drops a lease whose file was replaced and defers to whoever holds the new one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* temporaryRoot();
+        const { store } = yield* openStore(root);
+        yield* store.createConnection(overleafConnectionFixture("connection-1"));
+        // Someone removes the lock file this store holds; another server locks a new one.
+        yield* Effect.promise(() => NodeFSP.rm(NodePath.join(root, "lease.sqlite")));
+        const other = leaseHolder(root);
+        yield* Effect.addFinalizer(() => Effect.promise(other.kill));
+        expect(yield* Effect.promise(() => other.status)).toBe("held");
+        const refused = yield* Effect.flip(
+          store.createConnection(overleafConnectionFixture("connection-2")),
+        );
+        expect(refused._tag).toBe("OverleafStateLockedError");
+        expect(yield* store.listConnections).toEqual(["connection-1"]);
+        yield* Effect.promise(other.kill);
+        yield* store.createConnection(overleafConnectionFixture("connection-2"));
+        expect(yield* store.listConnections).toEqual(["connection-1", "connection-2"]);
       }),
     ),
   );
