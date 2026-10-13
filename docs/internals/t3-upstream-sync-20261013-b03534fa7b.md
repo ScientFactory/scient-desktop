@@ -2,13 +2,13 @@
 
 ## Exact boundaries and qualification status
 
-This is an interim review receipt. The history-preserving integration, prior
-complete local aggregate and automated mobile native qualification exist.
-Yaacov accepted the desktop candidate and explicitly deferred mobile visual
-review. The final owned-main catch-up is source-reviewed and committed;
-qualification of that composition remains pending. `upstream-state.json` and the current `UPSTREAM.md` pointer remain at
-the previous qualified official boundary. User-authorized MERGE delivery still
-requires the final gates; release remains separate.
+The history-preserving integration and final owned-main composition have passed
+complete local qualification. Yaacov accepted the desktop candidate, authorized
+MERGE delivery and explicitly deferred mobile visual review. The later Stop/queue
+composition also passed a proportional native desktop interaction check at
+`d676e210aa58c33b7d65c32e9855c3078c20bd10`. The integration pointer advances to the
+qualified frozen target. Exact final pushed-head CI, merge-group checks and actual
+delivery remain separate requirements; release remains separate authorization.
 
 - Original owned base: `43779ee83b358cb929e32cafa1a3e53f7eb147cd`.
 - Previous official integration: `f23d0084b6e023ffb1af9e332d8666affc99d542`.
@@ -37,8 +37,18 @@ requires the final gates; release remains separate.
   preparation before native admission. The owned acknowledgement composes the
   original authorized interrupt command with captured thread/run/attempt
   guards; queue retirement consumes only server user IDs. These source reviews
-  do not substitute for final composed behavioral qualification.
-- Runtime candidate: `e27a7107ca34c6fde564e754a1dd15ff2cc321cc`, tree
+  were followed by the final composed behavioral qualification below.
+- Landed early checks from owned main
+  `f75556fcea6ce591fe526e0d25feb65a42125d2b` are retained by catch-up merge
+  `d676e210aa58c33b7d65c32e9855c3078c20bd10`, with parents
+  `f03b89a35221f857e39850e30a6a5cb8e862ad6c` and that exact main, tree
+  `42e08f8d32f88e1ab89649a457aca3328b81e18d`. Seven of its eight delta paths
+  match reviewed PR #521 and landed-main blobs; the package script alias
+  preserves all incoming fields and `tsc-rs` 0.4.0. Independent review accepted
+  the actual native-input witness, 49-suite mapping, selector and ownership
+  entries. There is no product-runtime, dependency or test-setup body delta
+  from `f03b89a3`. No unlanded sibling ancestry was imported.
+- Earlier desktop acceptance candidate: `e27a7107ca34c6fde564e754a1dd15ff2cc321cc`, tree
   `a01c8016c9e126929f150b0806894a1ff6f38328`. Its change from aggregate-tested
   `3fd6f9b513dab6cec3f1c9378c9f71b59469cd63` affects one browser-only test file;
   production, aggregate-unit, build and desktop-smoke inputs are identical.
@@ -116,16 +126,50 @@ values remain compatibility boundaries.
 ## Qualification and repair evidence
 
 One root owner coordinates heavy checks. Commands use Node 24.19.0, pnpm 11.10.0,
-the committed lockfile, isolated synthetic HOME and a fresh short private TMPDIR
-per command, scrubbed
+the committed lockfile, isolated synthetic HOME and short private TMPDIR, scrubbed
 credentials and client URL overrides. Browser executable caches are shared;
 browser profiles and app data are not. Exact revision/diff hashes, commands,
 timestamps, exits, logs and failed/cancelled attempts are retained outside the
 product repository.
 
+Final qualification at clean `d676e210aa58c33b7d65c32e9855c3078c20bd10`:
+
+| Check                                             | Result and exact scope                                                                                                                                                                                                                              |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Complete `pnpm run test`                          | Exit 0, 3,169.269 s, 47 workspace tasks, zero task cache hits; before/after committed and working inputs identical.                                                                                                                                 |
+| Server aggregate                                  | 932 files / 11,799 cases passed; 40 files / 129 cases skipped, plus three nested not-run cases in the existing disabled live suite. These exclusions do not qualify every real provider.                                                            |
+| Web aggregate unit                                | 972 files / 11,978 cases passed.                                                                                                                                                                                                                    |
+| Stronger native Pi input witness                  | Five actual native/RPC cases passed in 14.711 s, including complete Scient instructions and scoped capability input; authenticated model quality and managed/custom driver resolution remain outside this harness.                                  |
+| Selector                                          | Eleven cases passed in 1.486 s.                                                                                                                                                                                                                     |
+| Formatting / lint / workspace types / unused code | Passed in 1.299 / 6.999 / 20.461 / 45.599 s.                                                                                                                                                                                                        |
+| Build / desktop smoke                             | Passed in 50.207 / 8.599 s.                                                                                                                                                                                                                         |
+| Brand / provenance / all five seams / diff        | Passed in 0.865 / 0.447 / 4.185 / 0.066 s; seam classification is not behavior proof.                                                                                                                                                               |
+| Mapped consumer bundle                            | 49 files / 1,010 cases, zero skips, 297.792 s at `f03b89a3`; the target-owned older native four-case body was then replaced by the stronger five-case witness above.                                                                                |
+| Complete Chromium browser gate                    | 50 files / 401 cases passed in 105.229 s at `f03b89a3`; all browser/product runtime inputs unchanged by the later eight-path test/tool/maintainer-documentation catch-up.                                                                           |
+| Native desktop final composition                  | Actual isolated Electron/backend at `d676e210`: visible Stopping status, physical streaming cancellation, retained queued input, explicit Resume, fresh completed responses and retired live queue controls. Exact ownership and shutdown verified. |
+
+The final aggregate reuses its own synthetic prerequisite cache: the actual
+Tectonic 0.17.0 command fetched public resources and generated a PDF in 105.383 s
+before the run. No live cache or credentials were copied; the existing 25-second
+real-engine test limits remain intact. Explicit offline frozen installation
+reused three packages, downloaded none and left tracked inputs unchanged. Two
+initial dependency preflights failed before tests; the test environment now uses
+the installed public store and refuses automatic installation when verification
+fails. These failed attempts remain recorded.
+
+Browser startup initially encountered an unrelated listener on default port 63315. An external wrapper imports the original configuration and changes only
+root/project API ports; suites, provider, setup, assertions and timeouts remain
+unchanged. A subsequent Playwright route-collection transport failure is retained;
+one unchanged complete retry passed. Neither this retry nor earlier passes prove
+a permanent framework repair. Unrelated listeners were preserved.
+
+The following table records earlier range-specific evidence. It is not a second
+claim of final-candidate qualification; unaffected native/platform inputs remain
+identical after the reviewed main catch-ups.
+
 | Check                                          | Observed result and scope                                                                                                                                                                                    |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| External Phase 1 affected-consumer bundle      | 45 files / 990 cases, 217.083 s; production-composed consumers, not just changed test files. PR #521 tooling remains external; no sibling ancestry import.                                                   |
+| Earlier external Phase 1 consumer bundle       | 45 files / 990 cases, 217.083 s; production-composed consumers, not just changed test files. PR #521 tooling was external at that revision; it subsequently landed through owned main as recorded above.     |
 | Complete `pnpm run test`, aggregate05          | Exit 0, 2,206.897 s at clean `3fd6f9`; 47 workspace tasks, zero task cache hits.                                                                                                                             |
 | Server aggregate                               | 930 files passed / 40 skipped; 11,789 cases passed / 129 skipped. Three further not-run cases are nested under the existing disabled Scient Agent/OMP live suite. This does not qualify every real provider. |
 | Web aggregate unit                             | 970 files / 11,965 cases passed.                                                                                                                                                                             |
@@ -225,14 +269,28 @@ byte-identical to owned main. Completed Linux CI at that exact main qualifies
 those unchanged Linux inputs only; it does not establish candidate CI or macOS
 D-Bus support.
 
-Final qualification must cover the reviewed owned-main composition and record
-final hosted PR-head and merge-group checks. A later landed-main delta must be
-reviewed and its affected evidence refreshed before delivery.
-Desktop acceptance applies to the reviewed runtime; assess later deltas before
-reusing it. Mobile visual review remains explicitly deferred. Queue admission,
-actual MERGE delivery, public-main ancestry and release are separate milestones.
-No cursor advance or alignment merge has occurred; the requested development
-app shutdown is complete. No broader qualification-policy change was adopted.
+The final native check reused only the candidate's synthetic profile and exact
+owned lifecycle. Its native window, distinct bundle identity, bundled backend,
+listener process ancestry and source head were verified. A real Scient Agent
+stream was stopped while a follow-up remained held; explicit Resume produced two
+fresh completed loopback responses and retired the live queue region. A second
+physical Stop captured the visible `Stopping…` status followed by Resume. The
+retry action intentionally remains available. These UI witnesses supplement
+the exact-attempt/replacement/descendant suites; those guarantees are not inferred
+from markup. The observed prior GPT-6-Luna selection was restored without a
+real-provider request. The service, runner, Electron/backend processes and all
+candidate ports were verified absent after shutdown. Profiles and apps remain
+preserved; no installed or unrelated app was targeted.
+
+Local qualification is complete. Final hosted PR-head and merge-group checks
+must still qualify the exact delivered revision. A later landed-main delta must
+be reviewed and its affected evidence refreshed before delivery. Yaacov's earlier
+desktop acceptance is supplemented by this proportional native composition
+review; renewed user visual acceptance is not claimed. Mobile visual review
+remains explicitly deferred. Queue admission, actual MERGE delivery, public-main
+ancestry and release are separate milestones. The integration cursor advances
+to the qualified upstream target; actual alignment delivery remains pending.
+No broader qualification-policy change was adopted.
 
 ## Alignment improvement evidence
 
@@ -240,9 +298,12 @@ Early production-composed checks gave useful feedback in about 3m37s and exposed
 a genuine credential composition defect with a before/after witness. Narrow
 owners reduced overlap without replacing product decisions. Neither result
 establishes a 5× end-to-end improvement or an under-ten-minute cold full suite.
-The successful aggregate still takes 36m47s, and managed Python adds a separately
-measured 12m30s. Server file intervals sum to 1,611.428 s within a 2,098.530-second
-server wall clock; residual time is not attributed by summing file durations.
+The earlier successful aggregate took 36m47s; the final composed run took 52m49s,
+including a 2,999.54-second server step. Managed Python has a separate earlier
+12m30s measurement. Different inputs and conditions prevent a causal slowdown
+claim from those totals. Earlier server file intervals sum to 1,611.428 s within
+a 2,098.530-second server wall clock; residual time is not attributed by summing
+file durations. No full-suite or end-to-end speedup has been demonstrated.
 
 The next improvements should remain small and measured: maintain the existing
 affected-consumer mapping, move faithful native interaction checks to supported
@@ -267,3 +328,11 @@ Mobile completion and current delivery evidence is retained in
 `mobile-android-clipboard-02-xml-summary.json`,
 `mobile-android-app-build-artifact.json` and `alignment-app-stop.json`.
 The existing native settlement review owns the fixture diagnosis and its limits.
+Final composed evidence in the same directory:
+`alignment-phase1-owned-main-commit.json`,
+`pr534-final-qualification-composed-summary.json`,
+`pr534-composed-d676-full-tests-01.json`,
+`pr534-final-browser-05.json`, `pr534-final-tex-prerequisite-01.json`,
+`pr534-native-final-composition-review.json` and
+`pr534-native-final-stop.json`. Per-command receipts retain inputs, times, exits
+and logs without importing transcript or provider history.

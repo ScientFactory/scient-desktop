@@ -342,7 +342,7 @@ from hosted CI, optional platform/account skips and the user's approval.
 The isolated review candidate remains open for user acceptance; the layer
 requires separate merge approval and does not alter its parent PR's policy.
 
-The current local alignment through `f23d0084b6e023ffb1af9e332d8666affc99d542`
+The local alignment through `f23d0084b6e023ffb1af9e332d8666affc99d542`
 is recorded in [the 2026-10-12 receipt](docs/internals/t3-upstream-sync-20261012-f23d0084b6.md)
 ([Scient PR #530](https://github.com/ScientFactory/scient-desktop/pull/530)).
 It retains all 72 ordinary official commits through literal merge
@@ -361,6 +361,23 @@ or ancestry; no alignment-speed gain is asserted. The owner approved the bounded
 visual review and requested the installer-review candidate's shutdown; its owned
 service, processes and ports were confirmed stopped. Merge and auto-merge are
 owner-authorized through the required GitHub queue; release remains separate.
+
+The current qualified local alignment through
+`b03534fa7b847e8403322e416189c6293e6846e0` is recorded in
+[the 2026-10-13 receipt](docs/internals/t3-upstream-sync-20261013-b03534fa7b.md)
+([Scient PR #534](https://github.com/ScientFactory/scient-desktop/pull/534)).
+Literal merge `3846a7fd443e0fc53d8ba520e7a82748cffcc67d` retains the exact
+official target as second parent and all 99 ordinary donor commits. Separate
+owned-main catch-ups retain the preceding alignment, Stop/queue owners and
+landed early-check tooling through `f75556f`; none changes the official merge.
+Narrow Scient owners preserve credential policy, native authority, provider
+instances, scientific readers, immutable migrations and publication holds.
+Complete local qualification passed on the final main composition; the receipt
+separates native desktop interaction, automated mobile checks, the owner's
+desktop acceptance and deferred mobile visual review from exact-head hosted CI,
+merge-group checks and actual delivery. No full-suite or end-to-end speedup is
+asserted. The isolated development candidate was verified stopped; release
+remains separate authorization.
 
 ## Receiving T3 updates
 
