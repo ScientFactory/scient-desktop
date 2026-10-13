@@ -40,7 +40,8 @@ is the reference.
    it by the disk's volume UUID plus the folder's file ID, so a remounted disk
    is still recognized. It refuses, with a specific reason, a disk without a
    readable volume UUID, a disk where the #495 helper cannot exchange files
-   atomically (exFAT and FAT, tested), and a location where no protected
+   atomically (Mac OS Extended, exFAT and FAT32, tested; only APFS is
+   supported), and a location where no protected
    folder can be created. Details: [contract section 8](pr-b-coordinator-contract.md#8-retention-disk-failures-and-inventory-budgets).
 2. **A push Scient refused to start is recorded `not-sent`**, not `unknown`.
 3. **A checkpoint restore finishes an unfinished Overleaf apply itself**
