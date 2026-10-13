@@ -634,7 +634,108 @@ it.live(
     ),
 );
 
-it.live("Git failures reach fork clients without workspace paths or Git output", () =>
+const removeSourceWorktree = Effect.fn("Workspace.removeSourceWorktree")(function* (
+  worktree: string,
+) {
+  const store = yield* ProjectionStoreV2;
+  const source = yield* store.getThread(sourceId);
+  const now = yield* DateTime.now;
+  yield* (yield* EventSinkV2).write({
+    events: [
+      {
+        id: EventId.make(`source-worktree:${worktree}`),
+        type: "thread.metadata-updated",
+        threadId: sourceId,
+        occurredAt: now,
+        payload: { ...source, worktreePath: worktree, updatedAt: now },
+      },
+    ],
+  });
+});
+
+it.live(
+  "a running fork whose worktree was removed forks locally and never snapshots the project",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd } = yield* seed(true);
+        const forks = yield* ConversationForkService;
+        yield* removeSourceWorktree(NodePath.join(cwd, "removed-running-worktree"));
+        const running = { sourceRunningRunId: RunId.make("workspace-run-3") };
+        const options = yield* forks.getOptions({ originThreadId: sourceId, ...running });
+        assert.equal(options.sourceRunningRunId, running.sourceRunningRunId);
+        assert.isFalse(options.newWorktree);
+        assert.include(options.workspaceNotice ?? "", "project folder");
+        const fork = (suffix: string, workspaceMode: "local" | "new-worktree") =>
+          forks.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make(`removed-running-${suffix}`),
+            originThreadId: sourceId,
+            newThreadId: ThreadId.make(`removed-running-${suffix}`),
+            workspaceMode,
+            ...running,
+          });
+        assert.equal((yield* Effect.result(fork("worktree", "new-worktree")))._tag, "Failure");
+        assert.equal(
+          yield* git(cwd, [
+            "for-each-ref",
+            "--format=%(refname)",
+            `${checkpointRefForThreadTurn(ThreadId.make("removed-running-worktree"), 0)}*`,
+          ]),
+          "",
+        );
+        yield* fork("local", "local");
+        const local = yield* (yield* ProjectionStoreV2).getThread(
+          ThreadId.make("removed-running-local"),
+        );
+        assert.equal(local.conversationFork?.status, "ready");
+        assert.equal(local.conversationFork?.cwd, cwd);
+        assert.isNull(local.conversationFork?.checkpointRef);
+        assert.isNull(local.worktreePath);
+      }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+    ),
+);
+
+it.live(
+  "a local fork refuses when the project folder it would use disappears while it is saved",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd } = yield* seed();
+        const fs = yield* FileSystem.FileSystem;
+        yield* removeSourceWorktree(NodePath.join(cwd, "already-removed-worktree"));
+        // Writing the fork's checkpoint ref moves the project folder away and fails, once.
+        const hook = NodePath.join(cwd, ".git", "hooks", "reference-transaction");
+        yield* fs.writeFileString(
+          hook,
+          `#!/bin/sh\nif [ "$1" = prepared ]; then rm -f "$0"; mv '${cwd}' '${cwd}-gone'; exit 1; fi\nexit 0\n`,
+        );
+        yield* fs.chmod(hook, 0o755);
+        const result = yield* Effect.result(
+          (yield* ConversationForkService).dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("vanishing-root"),
+            originThreadId: sourceId,
+            newThreadId: ThreadId.make("vanishing-root"),
+            sourceAssistantMessageId: MessageId.make("workspace-a1"),
+            workspaceMode: "local",
+          }),
+        );
+        yield* fs.rename(`${cwd}-gone`, cwd);
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure")
+          assert.include(result.failure.message, "project folder is unavailable");
+        assert.equal(
+          (yield* (yield* ProjectionStoreV2)
+            .getThread(ThreadId.make("vanishing-root"))
+            .pipe(Effect.exit))._tag,
+          "Failure",
+        );
+      }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+    ),
+);
+
+it.live("a Git failure costs only the restore point, and never reaches clients with paths", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const secret = "/private/fork-diagnostics-path";
@@ -659,22 +760,27 @@ it.live("Git failures reach fork clients without workspace paths or Git output",
           originThreadId: sourceId,
           sourceAssistantMessageId: MessageId.make("workspace-a1"),
         });
-        assert.equal(options.available, false);
-        assert.include(options.reason ?? "", "Git history");
-        assert.notInclude(options.reason ?? "", secret);
-        const result = yield* Effect.result(
+        assert.equal(options.available, true);
+        assert.isFalse(options.newWorktree);
+        assert.notInclude(JSON.stringify(options), secret);
+        const fork = (suffix: string, workspaceMode: "local" | "new-worktree") =>
           forks.dispatch({
             type: "thread.fork",
-            commandId: CommandId.make("git-diagnostics"),
+            commandId: CommandId.make(`git-diagnostics-${suffix}`),
             originThreadId: sourceId,
-            newThreadId: ThreadId.make("git-diagnostics"),
+            newThreadId: ThreadId.make(`git-diagnostics-${suffix}`),
             sourceAssistantMessageId: MessageId.make("workspace-a1"),
-            workspaceMode: "local",
-          }),
+            workspaceMode,
+          });
+        yield* fork("local", "local");
+        const local = yield* (yield* ProjectionStoreV2).getThread(
+          ThreadId.make("git-diagnostics-local"),
         );
+        assert.equal(local.conversationFork?.status, "ready");
+        assert.isNull(local.conversationFork?.checkpointRef);
+        const result = yield* Effect.result(fork("worktree", "new-worktree"));
         assert.equal(result._tag, "Failure");
         if (result._tag === "Failure") {
-          assert.include(result.failure.message, "Git history");
           assert.notInclude(result.failure.message, secret);
           assert.isUndefined(result.failure.cause);
           assert.equal(result.failure.forkDisposition, "rejected");

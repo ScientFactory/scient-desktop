@@ -229,13 +229,21 @@ const make = Effect.gen(function* () {
     const cwd = originAvailable ? originCwd : project.value.workspaceRoot;
     if (!originAvailable && !(yield* baseline.workspaceExists(cwd)))
       return yield* failure("The project folder is unavailable.");
-    const gitRepository = yield* baseline.isGitRepository(cwd);
+    // A Git lookup that fails only costs the restore point: a local fork goes on.
+    const unlessGitFails = (lookup: Effect.Effect<boolean, VcsError>) =>
+      lookup.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Fork checkpoint lookup failed", { cause }).pipe(Effect.as(false)),
+        ),
+      );
+    const gitRepository = yield* unlessGitFails(baseline.isGitRepository(cwd));
     // A running fork snapshots the files it shows, so it needs the original folder.
     const checkpointAvailable =
       gitRepository &&
       (source.kind === "running-turn"
         ? originAvailable
-        : fromCheckpointRef !== null && (yield* baseline.hasCheckpoint(cwd, fromCheckpointRef)));
+        : fromCheckpointRef !== null &&
+          (yield* unlessGitFails(baseline.hasCheckpoint(cwd, fromCheckpointRef))));
     return {
       projection,
       source,
@@ -536,11 +544,13 @@ const make = Effect.gen(function* () {
           );
       // The original worktree can also disappear while the fork is set up: a local
       // fork then works in the project folder too, never in the missing folder.
-      const movedToProjectFolder =
-        command.workspaceMode === "local" &&
-        !inspected.inProjectFolder &&
-        !(yield* baseline.workspaceExists(cwd));
-      if (movedToProjectFolder && !(yield* baseline.workspaceExists(inspected.projectRoot)))
+      const folderGone =
+        command.workspaceMode === "local" && !(yield* baseline.workspaceExists(cwd));
+      const movedToProjectFolder = folderGone && cwd !== inspected.projectRoot;
+      if (
+        folderGone &&
+        (!movedToProjectFolder || !(yield* baseline.workspaceExists(inspected.projectRoot)))
+      )
         return yield* failure("The project folder is unavailable.");
       const inProjectFolder = inspected.inProjectFolder || movedToProjectFolder;
       const forkCwd = movedToProjectFolder ? inspected.projectRoot : cwd;
