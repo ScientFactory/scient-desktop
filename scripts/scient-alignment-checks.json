@@ -112,6 +112,8 @@
         "BackgroundWorkStop preserves superseded attempts, replacement sessions, parent/peer/user/frozen/wrong-workflow projections; released descendants include resumed coordinators and active children behind settled parents. Live/nonretryable owners remain running.",
         "EventSink.pendingStart rejects wrong run/attempt/session/native-thread/root/receipt without events/outbox/projection writes; accepted replay emits no second effect.",
         "NativeStopConjunctions captures exact control request, truthful close-failure owner and real child-process ESRCH after successful shutdown, preserving peer process/queue.",
+        "StopDuringPreparation exercises public Stop through the actual Git checkpoint and EventSink/worker path: the blocked local baseline is interrupted before a native offer, while the workspace lock remains reusable and original untracked bytes remain intact. PendingStartPreparation covers already-declined eligibility and the cursor/subscription gap, exact owner eligibility, listener retirement before native offering, and failed ownership reads.",
+        "useStopGeneration and StopGenerationAcknowledgement cover preparation-time control admission, exact request/attempt identity, late and A-B-A failures, retry and focus; these controlled React hook/transport witnesses do not mount the complete composer or establish native interruption.",
         "ComposerPrimaryActions markup asserts Stop availability and Queue alongside Stop for a running turn with sendable content; it does not invoke Stop/Resume callbacks or qualify native interruption."
       ],
       "checks": {
@@ -121,9 +123,15 @@
           "src/orchestration-v2/RestartContinuation.test.ts",
           "src/orchestration-v2/EventSink.pendingStart.test.ts",
           "src/orchestration-v2/NativeStopConjunctions.integration.test.ts",
+          "src/orchestration-v2/StopDuringPreparation.integration.test.ts",
+          "src/orchestration-v2/scient-fork/PendingStartPreparation.test.ts",
           "src/orchestration-v2/RunExecutionService.test.ts"
         ],
-        "web-unit": ["src/components/chat/ComposerPrimaryActions.test.tsx"]
+        "web-unit": [
+          "src/components/chat/ComposerPrimaryActions.test.tsx",
+          "src/scient/chat/useStopGeneration.test.tsx",
+          "src/scient/chat/StopGenerationAcknowledgement.test.tsx"
+        ]
       },
       "limits": [
         "Synthetic Claude SDK child-process traffic proves physical ownership for those fixtures, not authenticated providers, packaged desktop or mobile shutdown.",
