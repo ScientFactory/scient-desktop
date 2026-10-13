@@ -1,3 +1,4 @@
+// SCIENT-FORK:START — Scient modules this sink composes (fork history, running-fork capture, ...).
 import {
   ProviderTextSnapshotError,
   type ProviderTextSnapshotOwner,
@@ -22,6 +23,7 @@ import {
   runningForkAuthorityChanged,
   makeRunningForkTextCapture,
 } from "./scient-fork/runningForkSource.ts";
+// SCIENT-FORK:END
 import {
   CommandId,
   type OrchestrationV2Run,
