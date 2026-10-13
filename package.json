@@ -68,6 +68,7 @@
     "latex:seams:check": "node scripts/verify-scient-latex-seams.mjs",
     "upstream:provenance:check": "node scripts/verify-upstream-provenance.mjs",
     "alignment:seams:check": "node scripts/scient-seam-check.mjs",
+    "alignment:checks": "node scripts/scient-alignment-checks.mjs",
     "alignment:plan": "node scripts/scient-alignment.mjs plan",
     "alignment:start": "node scripts/scient-alignment.mjs start",
     "build:synctex-runtime": "node scripts/stage-synctex-runtime.ts",
