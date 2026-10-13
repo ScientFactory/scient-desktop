@@ -8,7 +8,11 @@ artifact-backed and interactive renderers.
 A settled Markdown image whose destination resolves to a supported file inside
 the current workspace is presented by a Scient-owned image card. Unsupported
 destinations retain React Markdown's inherited image behavior. The host
-integration is one `img` renderer in `ChatMarkdown.tsx`; resolution,
+integration is a set of marked hooks in `ChatMarkdown.tsx`: inside upstream's
+`img` renderer (`MarkdownImage`: copy Markdown, the remote-image gate, the
+workspace image card, direct images and workspace resources), the `source`
+renderer, `ChatMarkdownAssetImage`'s gated GitHub fallback, and the rehype
+list that keeps safe scientific images without raw HTML. Resolution,
 presentation, actions, and tests live under `apps/web/src/scient/images`.
 
 Remote sources never reach an `<img>`, `<video>`, or `<source>` on render.

@@ -2260,7 +2260,8 @@ describe("MessagesTimeline", () => {
           completedAt: null,
         }}
         anchorMessageId={firstEntry.message.id}
-        liveFollowEnabled={false}
+        // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+        // SCIENT-FORK:END
         timelineEntries={[
           firstEntry,
           {
@@ -2328,7 +2329,8 @@ describe("MessagesTimeline", () => {
         <MessagesTimeline
           {...buildProps()}
           anchorMessageId={null}
-          liveFollowEnabled={false}
+          // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+          // SCIENT-FORK:END
           timelineEntries={timelineEntries}
         />,
       ),
