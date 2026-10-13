@@ -12,7 +12,12 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { showStreamedAnswersNow } from "~/components/chat/useStreamingBlockEntrance";
 import { useStopGeneration } from "./useStopGeneration";
+
+vi.mock("~/components/chat/useStreamingBlockEntrance", () => ({
+  showStreamedAnswersNow: vi.fn(),
+}));
 
 function pendingResponse() {
   let resolve!: (accepted: boolean) => void;
@@ -109,6 +114,12 @@ it("acknowledges immediately, deduplicates in-flight clicks, and waits for serve
   input = { ...input, canInterrupt: true };
   render();
   expect(controller.isStopping).toBe(false);
+});
+
+it("shows what has arrived at once when Stop is pressed", async () => {
+  vi.mocked(showStreamedAnswersNow).mockClear();
+  await act(() => controller.onInterrupt());
+  expect(showStreamedAnswersNow).toHaveBeenCalledTimes(1);
 });
 
 it("clears a rejected command and keeps Stop available for retry", async () => {

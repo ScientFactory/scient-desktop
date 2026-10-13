@@ -8,9 +8,11 @@ seam. Source Markdown remains canonical.
 Scient owns `apps/web/src/scient/presentation` and
 `apps/web/src/scient/visualizations`. The presentation registry recognizes a
 settled rich fence and routes it to a Scient-owned renderer. The inherited T3
-host keeps one narrow branch in `ChatMarkdown.tsx`; streaming and unrecognized
-fences retain the ordinary upstream code-block behavior. A static seam test
-guards this boundary. Markdown file previews already use `ChatMarkdown`, so
+host keeps one branch in `ChatMarkdown.tsx`, inside a marked `SCIENT-FORK`
+region of the `pre` renderer; while the message streams, and for unrecognized
+fences, the code goes through Scient's `MarkdownCodeBlock`
+(`scient/presentation/MarkdownCodeBlock.tsx`, a copy of T3's code block). A
+static seam test guards this boundary. Markdown file previews already use `ChatMarkdown`, so
 they receive the same behavior without a second integration.
 
 This is a representation layer, not an artifact database. The fenced JSON is

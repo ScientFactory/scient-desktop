@@ -3,9 +3,18 @@ import {
   getRowBottom,
   type RememberedTimelinePosition,
   type TimelineListMeasurementState,
-  withRealTimelineEnd,
 } from "./timelineScrollAnchoring";
 import type { RunId } from "@t3tools/contracts";
+
+/** Exclude reserved anchor padding when deciding whether real content is below the reader. */
+function withRealTimelineEnd<T extends TimelineListMeasurementState>(
+  state: T | undefined,
+  composerInset: number,
+): T | undefined {
+  if (!state) return state;
+  const bottom = getRowBottom(state, state.data.length - 1);
+  return bottom === null ? state : { ...state, contentLength: bottom + composerInset };
+}
 
 /** Where a row's readable content ends; trailing file lists and controls come after it. */
 const READING_END_SELECTOR = '[data-reading-end], [data-user-message-body="true"]';
@@ -152,6 +161,18 @@ export function withReadingEnd<
 }
 
 /**
+ * Whether the latest turn is unfinished: it runs, or it ended interrupted or
+ * with an error. Its latest content is then the reading end. A fork, a revert
+ * or a send being set up alone does not make it so.
+ */
+export function latestTurnUnfinished(
+  runningRunId: string | null,
+  latestRunStatus: string | undefined,
+): boolean {
+  return runningRunId !== null || latestRunStatus === "interrupted" || latestRunStatus === "failed";
+}
+
+/**
  * Whether the reader is at the end: the end's text is in view, except at
  * most its last three lines (see readingEndRowIndex: an unfinished turn's
  * latest content, otherwise the latest turn's answer). The one rule for
@@ -251,7 +272,8 @@ export function resolveReadingRow(
   if (index >= 0) return { index, exact: true };
   if (position.turnId) {
     // Prefer the final answer to a disappearing working indicator, then the prompt/fold.
-    index = rows.findIndex(
+    // Earlier answers of the run can stay visible, so take the run's last one.
+    index = rows.findLastIndex(
       (row) =>
         row.kind === "message" &&
         row.message.role === "assistant" &&

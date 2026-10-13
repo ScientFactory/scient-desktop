@@ -1,6 +1,8 @@
 import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { showStreamedAnswersNow } from "~/components/chat/useStreamingBlockEntrance";
+
 interface StopRequest {
   readonly targetKey: string;
 }
@@ -40,6 +42,8 @@ export function useStopGeneration(input: {
 
   const onInterrupt = useCallback(async () => {
     if (targetKey === null || submitting.current?.targetKey === targetKey) return;
+    // What has arrived shows at once; the cut-off answer is not typed out.
+    showStreamedAnswersNow();
     const request = { targetKey };
     submitting.current = request;
     setRequested(request);

@@ -336,3 +336,42 @@ Final composed evidence in the same directory:
 `pr534-native-final-composition-review.json` and
 `pr534-native-final-stop.json`. Per-command receipts retain inputs, times, exits
 and logs without importing transcript or provider history.
+
+## Later owned-main catch-up to `6aeba59ce205`
+
+Owned main subsequently advanced to
+`6aeba59ce205a1fcf1ec560fad07c33d090b7184` (#537, #539 and #551),
+removing #534 from the merge queue because its branch conflicted. This pass
+merges that exact landed commit into the existing alignment; the official
+target remains `b03534fa7b847e8403322e416189c6293e6846e0` and the
+literal official merge `3846a7fd443e0fc53d8ba520e7a82748cffcc67d` is preserved.
+It does not adopt the later upstream tip.
+
+The two textual regions in `MessagesTimeline.tsx` retain the upstream
+prompt-link icon while using Scient's extracted trace-icon owner, and remove
+the redundant raw position writer in favor of `useSaveReadingPosition`.
+That writer retains geometry, disclosures, message/run identity and ongoing
+follow, and guards paint-only views, restoration and pending placement.
+Clean overlaps in chat, markdown, reader restoration and storage require
+semantic review as well. The removed legacy reducer has no live callers; the
+three removed fork checkpoint cases retain their deciding fixtures and
+assertions in the feature-owned replacement suite. The new conversation
+package export adds no dependency version change; the lockfile is unchanged
+from the previously qualified candidate.
+
+**This later composition is not yet qualified.** The completed matrix above
+applies to its recorded earlier inputs. Repository formatting, staged diff
+checks and all five seam checks pass for resolved source tree
+`bf9993d5f1b306fbd78fdb4d92cbe9154630001b`; these are source/locator evidence,
+not runtime proof. Independent source review of that tree completed with no composition regression
+found. It identified inherited source-spelling test guards as separate policy
+debt; they do not establish behavior. Affected local qualification, exact
+pushed-head CI and delivery remain separate. Another candidate owns
+the shared heavy local slot; no parallel heavy suite was started. The prior
+qualified cursor metadata is retained until this catch-up is qualified.
+
+Evidence: `reviews/pr-merge-readiness-20261013/` contains
+`pr534-main-6aeba-source-composition.json`, `pr534-main-6aeba-index-seams.json`
+and the independent receiving-tree review. Failed attempts and actual timing
+receipts remain preserved. Mobile visual review remains explicitly deferred;
+release is not authorized.

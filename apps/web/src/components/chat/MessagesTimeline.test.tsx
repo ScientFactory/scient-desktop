@@ -75,6 +75,33 @@ vi.mock("../DiffWorkerPoolProvider", () => ({
   DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
 }));
 
+// SCIENT-FORK:START — live thread titles for thread-read rows; a titled row links
+// to its thread, so a static render needs a plain link in place of the router's.
+const liveThreadTitles = new Map<string, string>();
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const router = await importOriginal<typeof import("@tanstack/react-router")>();
+  return {
+    ...router,
+    Link: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+      <a className={className}>{children}</a>
+    ),
+  };
+});
+vi.mock("../../state/entities", async (importOriginal) => {
+  const entities = await importOriginal<typeof import("../../state/entities")>();
+  return {
+    ...entities,
+    useThreadShell: (ref: Parameters<typeof entities.useThreadShell>[0]) => {
+      const shell = entities.useThreadShell(ref);
+      const title = ref ? liveThreadTitles.get(ref.threadId) : undefined;
+      return title === undefined
+        ? shell
+        : ({ title, archivedAt: null, deletedAt: null } as unknown as typeof shell);
+    },
+  };
+});
+// SCIENT-FORK:END
+
 vi.mock("./MessagesTimeline.logic", async (importOriginal) => {
   const logic = await importOriginal<typeof import("./MessagesTimeline.logic")>();
   return {
@@ -2234,7 +2261,8 @@ describe("MessagesTimeline", () => {
           completedAt: null,
         }}
         anchorMessageId={firstEntry.message.id}
-        liveFollowEnabled={false}
+        // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+        // SCIENT-FORK:END
         timelineEntries={[
           firstEntry,
           {
@@ -2302,7 +2330,8 @@ describe("MessagesTimeline", () => {
         <MessagesTimeline
           {...buildProps()}
           anchorMessageId={null}
-          liveFollowEnabled={false}
+          // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+          // SCIENT-FORK:END
           timelineEntries={timelineEntries}
         />,
       ),
@@ -2736,6 +2765,38 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("&lt;element_context");
     expect(markup).not.toContain("<element_context");
   });
+
+  // SCIENT-FORK:START — an earlier real answer of a settled turn stays visible.
+  it("gives a kept earlier answer the final answer's copy button and spacing", () => {
+    const assistant = (id: string, text: string, second: number) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt: `2026-01-01T00:00:0${second}Z`,
+      message: {
+        id: MessageId.make(id),
+        role: "assistant" as const,
+        text,
+        runId: RunId.make("run-kept"),
+        createdAt: `2026-01-01T00:00:0${second}Z`,
+        updatedAt: `2026-01-01T00:00:0${second}Z`,
+        streaming: false,
+      },
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          assistant("note", "Let me check the tests…", 1),
+          assistant("answer", "## Diagnosis\nThe cache key ignores the locale.", 2),
+          assistant("final", "Done.", 3),
+        ]}
+      />,
+    );
+    expect(markup.match(/aria-label="Copy message"/g)).toHaveLength(2);
+    expect(markup).toMatch(/class="pb-4[^"]*"[^>]*data-timeline-row-id="answer-entry"/);
+    expect(markup).not.toContain('data-timeline-row-id="note-entry"');
+  });
+  // SCIENT-FORK:END
 
   it("keeps the copy button for collapsed long user messages", () => {
     const markup = renderToStaticMarkup(
@@ -3755,6 +3816,42 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("scient-trace-symbol.svg");
     expect(markup).toContain("Read a Scient thread");
     expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
+
+    // SCIENT-FORK:START — with a live title, screen readers hear it too (#13140).
+    liveThreadTitles.set("thread-child", "Review auth flow");
+    try {
+      const titled = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={
+            [
+              {
+                id: item.id,
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: item.id,
+                  createdAt: MESSAGE_CREATED_AT,
+                  runId: null,
+                  label: item.toolName,
+                  tone: "tool",
+                  itemType: item.type,
+                  toolTitle: item.toolName,
+                  toolLifecycleStatus: "completed",
+                  toolData: { input: item.input, output: item.output },
+                  structuredPayload: item,
+                  projectedItem,
+                },
+              },
+            ] as never
+          }
+        />,
+      );
+      expect(titled).toMatch(/aria-label="[^"]*Review auth flow/);
+    } finally {
+      liveThreadTitles.clear();
+    }
+    // SCIENT-FORK:END
   });
 
   it("formats changed file paths from the workspace root", async () => {
