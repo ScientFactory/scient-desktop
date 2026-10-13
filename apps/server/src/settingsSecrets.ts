@@ -33,8 +33,10 @@ const providerSecretFields = new Map([
       [definition.driverKind, secretSettingsFields(definition.settingsSchema)] as const,
   ),
 ]);
+// SCIENT-FORK:START provider-credential-schema-mount
 export const providerSettingsSecretFields = (driver: string): ReadonlyArray<string> =>
   providerSecretFields.get(driver) ?? [];
+// SCIENT-FORK:END provider-credential-schema-mount
 
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
@@ -95,7 +97,9 @@ export function mapSettingsSecrets(
             ? {
                 config: mapFields(
                   config as Record<string, unknown>,
+                  // SCIENT-FORK:START provider-credential-schema-mount
                   providerSettingsSecretFields(instance.driver),
+                  // SCIENT-FORK:END provider-credential-schema-mount
                   (field, serverHost) =>
                     `provider-config-${encode(instanceId)}-${encode(instance.driver)}-${encode(field)}` +
                     (serverHost === null ? "" : `-${encode(serverHost)}`),
