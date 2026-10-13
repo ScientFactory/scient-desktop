@@ -1154,7 +1154,6 @@ function ChatMarkdownVideo(props: {
   readonly mediaIdentity?: string | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
   readonly onRetry?: (() => Promise<unknown>) | undefined;
-  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   return (
     <MediaVideoPlayer
@@ -1176,27 +1175,6 @@ function ChatMarkdownVideo(props: {
       )}
       onRetry={props.onRetry}
       actionsSource={props.actionsSource}
-      onExpand={
-        props.onImageExpand
-          ? (src) => {
-              props.onImageExpand?.({
-                images: [
-                  {
-                    src,
-                    name: props.alt || "video",
-                    type: "video",
-                    autoPlay: false,
-                    ...(props.originalUrl ? { originalUrl: props.originalUrl } : {}),
-                    ...(props.actionsSource
-                      ? { actionsSource: { ...props.actionsSource, src } }
-                      : {}),
-                  },
-                ],
-                index: 0,
-              });
-            }
-          : undefined
-      }
     />
   );
 }
@@ -1320,7 +1298,6 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
         onRetry={refreshAssetUrl}
-        onImageExpand={props.onImageExpand}
         actionsSource={actionsSource}
       />
     );
@@ -2682,7 +2659,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
             copyMarkdown={markdownSource}
             originalUrl={originalUrl}
             style={style}
-            onImageExpand={imageExpand}
             actionsSource={actionsSource}
           />
         );

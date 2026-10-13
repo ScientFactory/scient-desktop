@@ -35,7 +35,8 @@ clipped to its revealed lines, so the follow scroll simply goes to the real end.
 "Thinking" row fades out (keeping its place) while the answer right above it is appearing
 (`useStreamingTextAppearing`). Revealed height is kept per message (bounded), so remounted
 rows continue rather than replay; a caught-up reveal rests until the answer's content or width
-changes. The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
+changes. Stop shows everything that has arrived at once (`showStreamedAnswersNow`, from
+`scient/chat/useStopGeneration.ts`). The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
 send's prompt is listed (the optimistic row, or a newer server user message than the dispatch
 started from), and stays on while that prompt's own V2 run prepares or starts (the dispatch is
 reset at admission; V2 reports that phase as connecting).

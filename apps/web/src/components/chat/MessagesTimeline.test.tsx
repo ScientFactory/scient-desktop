@@ -75,6 +75,33 @@ vi.mock("../DiffWorkerPoolProvider", () => ({
   DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
 }));
 
+// SCIENT-FORK:START — live thread titles for thread-read rows; a titled row links
+// to its thread, so a static render needs a plain link in place of the router's.
+const liveThreadTitles = new Map<string, string>();
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const router = await importOriginal<typeof import("@tanstack/react-router")>();
+  return {
+    ...router,
+    Link: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+      <a className={className}>{children}</a>
+    ),
+  };
+});
+vi.mock("../../state/entities", async (importOriginal) => {
+  const entities = await importOriginal<typeof import("../../state/entities")>();
+  return {
+    ...entities,
+    useThreadShell: (ref: Parameters<typeof entities.useThreadShell>[0]) => {
+      const shell = entities.useThreadShell(ref);
+      const title = ref ? liveThreadTitles.get(ref.threadId) : undefined;
+      return title === undefined
+        ? shell
+        : ({ title, archivedAt: null, deletedAt: null } as unknown as typeof shell);
+    },
+  };
+});
+// SCIENT-FORK:END
+
 vi.mock("./MessagesTimeline.logic", async (importOriginal) => {
   const logic = await importOriginal<typeof import("./MessagesTimeline.logic")>();
   return {
@@ -3786,6 +3813,42 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("scient-trace-symbol.svg");
     expect(markup).toContain("Read a Scient thread");
     expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
+
+    // SCIENT-FORK:START — with a live title, screen readers hear it too (#13140).
+    liveThreadTitles.set("thread-child", "Review auth flow");
+    try {
+      const titled = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={
+            [
+              {
+                id: item.id,
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: item.id,
+                  createdAt: MESSAGE_CREATED_AT,
+                  runId: null,
+                  label: item.toolName,
+                  tone: "tool",
+                  itemType: item.type,
+                  toolTitle: item.toolName,
+                  toolLifecycleStatus: "completed",
+                  toolData: { input: item.input, output: item.output },
+                  structuredPayload: item,
+                  projectedItem,
+                },
+              },
+            ] as never
+          }
+        />,
+      );
+      expect(titled).toMatch(/aria-label="[^"]*Review auth flow/);
+    } finally {
+      liveThreadTitles.clear();
+    }
+    // SCIENT-FORK:END
   });
 
   it("formats changed file paths from the workspace root", async () => {

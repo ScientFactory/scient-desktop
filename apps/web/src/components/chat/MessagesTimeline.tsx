@@ -6267,11 +6267,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : workLogEntryIsToolLike(workEntry)
         ? "text-trace-label"
         : "text-secondary-label";
-  const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
+  const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
+  const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
+    .filter(Boolean)
+    .join(": ");
   const failureLabel = activityIssuePolicy(workEntry.sourceActivityKind)
     ? "Operation failed"
     : "Tool call failed";
-  const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
   const accessibleDisplayText = showFailedIndicator
     ? `${accessiblePreview}, ${failureLabel.toLowerCase()}`
     : accessiblePreview;

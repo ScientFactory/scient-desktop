@@ -112,6 +112,17 @@ function trackRevealed(messageId: string, height: number) {
 }
 
 /**
+ * Answers to show in full at once: the reader pressed Stop, so what arrived is
+ * shown, not typed out. Kept until the answer's reveal ends, across remounts.
+ */
+const shownNow = new Set<string>();
+const showNowListeners = new Set<() => void>();
+/** Stop: every answer being revealed shows everything it has, at once. */
+export function showStreamedAnswersNow() {
+  for (const listener of showNowListeners) listener();
+}
+
+/**
  * Reveals a streaming message line by line (see above). A message that was
  * never revealed here (finished before it mounted), and reduced motion, are
  * shown as they are. Once the reveal has caught up with a message still
@@ -159,9 +170,11 @@ export function useStreamingBlockEntrance(
       stopResize();
       root.removeEventListener("load", onContentChange, true);
       reducedMotion?.removeEventListener?.("change", onMotionPreference);
+      showNowListeners.delete(onShowNow);
     };
     const finish = () => {
       stop();
+      shownNow.delete(messageId);
       revealedHeights.delete(messageId);
       setAppearing(messageId, false);
       clear();
@@ -171,8 +184,9 @@ export function useStreamingBlockEntrance(
       const now = motionClock.now();
       const elapsed = Math.min(50, Math.max(0, now - last));
       last = now;
+      const showAll = shownNow.has(messageId);
       // The short wait reads no layout; it only counts down.
-      if (now < startsAt) {
+      if (now < startsAt && !showAll) {
         frame = requestAnimationFrame(tick);
         return;
       }
@@ -185,7 +199,7 @@ export function useStreamingBlockEntrance(
           ((REVEAL_LINES_PER_SECOND * lineHeight) / 1000) *
           Math.max(1, waitingLines / REVEAL_MAX_LAG_LINES) *
           (inBlankGap(geometry, front) ? REVEAL_GAP_SPEEDUP : 1);
-        front = Math.min(end, front + speed * elapsed);
+        front = showAll ? end : Math.min(end, front + speed * elapsed);
         apply();
         revealedHeights.set(messageId, front);
         setAppearing(messageId, front > 0);
@@ -207,6 +221,10 @@ export function useStreamingBlockEntrance(
     function onMotionPreference() {
       if (reducedMotion?.matches) finish();
     }
+    const onShowNow = () => {
+      shownNow.add(messageId);
+      wake();
+    };
     const mutations = new MutationObserver(onContentChange);
     mutations.observe(root, { childList: true, subtree: true, characterData: true });
     // The revealed height changes every frame; only a new width reflows the text.
@@ -219,6 +237,7 @@ export function useStreamingBlockEntrance(
     // Images and diagrams inside the answer change its height when they load.
     root.addEventListener("load", onContentChange, true);
     reducedMotion?.addEventListener?.("change", onMotionPreference);
+    showNowListeners.add(onShowNow);
     revealing.add(messageId);
     root.classList.add("streamed-reveal");
     apply();
