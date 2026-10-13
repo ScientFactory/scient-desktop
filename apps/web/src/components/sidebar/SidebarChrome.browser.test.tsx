@@ -1,6 +1,8 @@
 import "../../index.css";
 
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import { EnvironmentId, type DesktopUpdateState } from "@t3tools/contracts";
+import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import * as Option from "effect/Option";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
@@ -15,6 +17,27 @@ const fixture = vi.hoisted(() => ({
   navigate: vi.fn(),
   preload: vi.fn(() => Promise.resolve([])),
   importConversation: vi.fn(),
+  environments: [] as Array<{
+    environmentId: EnvironmentId;
+    label: string;
+    connection: { phase: "connected"; error: null; traceId: null };
+    entry: {
+      target: PrimaryConnectionTarget;
+      enabled: boolean;
+      profile: Option.Option<never>;
+    };
+    serverConfig: {
+      environment: {
+        environmentId: EnvironmentId;
+        label: string;
+        platform: { os: "linux"; arch: "x64" };
+        serverVersion: string;
+        capabilities: { repositoryIdentity: boolean; pullRequests: boolean };
+      };
+      settings: { continueThreadsAfterServerUpdate: boolean };
+      providers: readonly never[];
+    };
+  }>,
 }));
 vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/desktopUpdate", () => ({
@@ -23,7 +46,7 @@ vi.mock("../../state/desktopUpdate", () => ({
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
   useEnvironments: () => ({
-    environments: [{ serverConfig: { environment: { capabilities: { pullRequests: true } } } }],
+    environments: fixture.environments,
   }),
   usePullRequestsSupported: () => true,
 }));
@@ -66,6 +89,35 @@ const updateState: DesktopUpdateState = {
 
 async function mountFooter(width: number, state: DesktopUpdateState) {
   fixture.updateState = state;
+  const environmentId = EnvironmentId.make("sidebar-geometry-primary");
+  fixture.environments = [
+    {
+      environmentId,
+      label: "This app",
+      connection: { phase: "connected", error: null, traceId: null },
+      entry: {
+        target: new PrimaryConnectionTarget({
+          environmentId,
+          label: "This app",
+          httpBaseUrl: "http://localhost:5733",
+          wsBaseUrl: "ws://localhost:5733",
+        }),
+        enabled: true,
+        profile: Option.none(),
+      },
+      serverConfig: {
+        environment: {
+          environmentId,
+          label: "This app",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: state.currentVersion,
+          capabilities: { repositoryIdentity: true, pullRequests: true },
+        },
+        settings: { continueThreadsAfterServerUpdate: false },
+        providers: [],
+      },
+    },
+  ];
   host = document.createElement("div");
   Object.assign(host.style, { width: `${width}px`, margin: "20px", background: "white" });
   document.body.append(host);

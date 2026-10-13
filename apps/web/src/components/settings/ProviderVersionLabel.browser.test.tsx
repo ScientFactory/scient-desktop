@@ -14,6 +14,7 @@ let host: HTMLDivElement | undefined;
 function renderLabel(width: string, version: string, className = "text-xs") {
   host = document.createElement("div");
   host.style.width = width;
+  host.style.margin = "80px";
   host.className = "flex";
   document.body.append(host);
   root = createRoot(host);
@@ -48,6 +49,10 @@ it("fades a clipped version's tail instead of drawing an ellipsis", async () => 
   expect(label.textContent).toBe(LONG_VERSION);
 
   // The full version is one hover away.
+  const rect = label.getBoundingClientRect();
+  expect(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)).toBe(
+    label,
+  );
   await userEvent.hover(label);
   await expect.poll(tooltipText).toBe(LONG_VERSION);
 });
