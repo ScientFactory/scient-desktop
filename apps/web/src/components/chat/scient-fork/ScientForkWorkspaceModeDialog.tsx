@@ -62,7 +62,10 @@ export function scientForkDialogCopy(source: ScientForkSource): {
   }
 }
 
-export type ForkWorktreeUnavailableReason = "no-git-repository" | "no-checkpoint";
+export type ForkWorktreeUnavailableReason =
+  | "no-git-repository"
+  | "no-checkpoint"
+  | "worktree-removed";
 export type ForkWorktreeAvailability =
   | { readonly available: true }
   | { readonly available: false; readonly reason: ForkWorktreeUnavailableReason };
@@ -70,6 +73,7 @@ export type ForkWorktreeAvailability =
 const forkWorktreeUnavailableCopy: Record<ForkWorktreeUnavailableReason, string> = {
   "no-git-repository": "Requires a Git repository",
   "no-checkpoint": "No saved checkpoint for this response",
+  "worktree-removed": "The original worktree was removed",
 };
 
 function unavailableCopy(source: ScientForkSource, reason: ForkWorktreeUnavailableReason): string {
@@ -94,6 +98,8 @@ interface ScientForkDialogProps {
   readonly source: ScientForkSource;
   readonly titleOverrideSupported: boolean;
   readonly worktreeAvailability: ForkWorktreeAvailability;
+  /** Shown for a fork in the current workspace when it works somewhere else. */
+  readonly workspaceNotice?: string | undefined;
   readonly onOpenChange: (open: boolean) => void;
   /** Resolves to "not-accepted" when the fork was not made. */
   readonly onConfirm: (
@@ -188,6 +194,7 @@ export function ScientForkWorkspaceModeDialog({
   proposedTitle,
   titleOverrideSupported,
   worktreeAvailability,
+  workspaceNotice,
   onOpenChange,
   onConfirm,
   open,
@@ -388,6 +395,9 @@ export function ScientForkWorkspaceModeDialog({
                 onCheckedChange={(checked) => setNewWorktree(Boolean(checked))}
               />
             </label>
+            {workspaceNotice && !selectedNewWorktree ? (
+              <p className="text-muted-foreground text-xs">{workspaceNotice}</p>
+            ) : null}
             {skippedImages ? (
               <p role="alert" className="text-xs leading-relaxed">
                 These images could not be read: {skippedImages.join(", ")}. Continue with the

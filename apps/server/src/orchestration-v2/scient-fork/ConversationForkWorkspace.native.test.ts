@@ -464,7 +464,7 @@ it.live("native provisioning abandons a dedicated fork whose frozen checkpoint d
 );
 
 it.live(
-  "a removed source worktree can restore its saved checkpoint only into a dedicated native worktree",
+  "a removed source worktree forks into the project folder, or restores its checkpoint into a worktree",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -494,24 +494,23 @@ it.live(
           sourceAssistantMessageId: MessageId.make("workspace-a1"),
         });
         assert.equal(options.available, true);
-        assert.equal(options.localAvailable, false);
+        assert.equal(options.localAvailable, true);
         assert.equal(options.newWorktree, true);
-        assert.include(options.reason ?? "", "original worktree");
-        const before = yield* sink.latestSequence({});
-        assert.equal(
-          (yield* Effect.result(
-            forks.dispatch({
-              type: "thread.fork",
-              commandId: CommandId.make("removed-local-refusal"),
-              originThreadId: sourceId,
-              newThreadId: ThreadId.make("removed-local-refusal"),
-              sourceAssistantMessageId: MessageId.make("workspace-a1"),
-              workspaceMode: "local",
-            }),
-          ))._tag,
-          "Failure",
-        );
-        assert.equal(yield* sink.latestSequence({}), before);
+        assert.isNull(options.reason);
+        assert.include(options.workspaceNotice ?? "", "project folder");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("removed-local"),
+          originThreadId: sourceId,
+          newThreadId: ThreadId.make("removed-local"),
+          sourceAssistantMessageId: MessageId.make("workspace-a1"),
+          workspaceMode: "local",
+        });
+        const local = yield* store.getThread(ThreadId.make("removed-local"));
+        assert.equal(local.conversationFork?.status, "ready");
+        assert.equal(local.conversationFork?.cwd, cwd);
+        assert.isNull(local.worktreePath);
+        assert.isNull(local.branch);
         const { command, waiting } = yield* pending("removed-source", "new-worktree");
         yield* (yield* OrchestrationEffectWorkerV2).drain();
         assert.equal((yield* Fiber.join(waiting))._tag, "Success");
@@ -523,6 +522,66 @@ it.live(
         assert.equal(yield* fsRead(target.worktreePath, "evidence.txt"), "version 1");
       }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
     ),
+);
+
+it.live("a fork whose own worktree setup is unfinished can still be forked locally", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* seed();
+      const store = yield* ProjectionStoreV2;
+      const { command } = yield* pending("unfinished-parent", "new-worktree");
+      assert.equal(
+        (yield* store.getThread(command.newThreadId)).conversationFork?.status,
+        "pending",
+      );
+      const child = ThreadId.make("unfinished-parent-child");
+      yield* (yield* ConversationForkService).dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("unfinished-parent-child"),
+        originThreadId: command.newThreadId,
+        newThreadId: child,
+        workspaceMode: "local",
+      });
+      const forked = yield* store.getThread(child);
+      assert.equal(forked.conversationFork?.status, "ready");
+      assert.equal(forked.lineage.parentThreadId, command.newThreadId);
+    }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+  ),
+);
+
+it.live("a local fork continues without a restore point when its checkpoint cannot be saved", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* seed();
+      const sql = yield* SqlClient.SqlClient;
+      const forks = yield* ConversationForkService;
+      yield* sql.unsafe(`CREATE TRIGGER reject_snapshot_ownership BEFORE INSERT ON scient_fork_checkpoint_ownership
+        BEGIN SELECT RAISE(ABORT, 'injected ownership failure'); END`);
+      const fork = (suffix: string, workspaceMode: "local" | "new-worktree") =>
+        forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(`no-restore-${suffix}`),
+          originThreadId: sourceId,
+          newThreadId: ThreadId.make(`no-restore-${suffix}`),
+          sourceAssistantMessageId: MessageId.make("workspace-a1"),
+          workspaceMode,
+        });
+      yield* fork("local", "local");
+      const local = yield* (yield* ProjectionStoreV2).getThread(ThreadId.make("no-restore-local"));
+      assert.equal(local.conversationFork?.status, "ready");
+      assert.isNull(local.conversationFork?.checkpointRef);
+      assert.isNull(local.conversationFork?.checkpointOid);
+      // A new worktree is built from the checkpoint, so it still refuses.
+      assert.equal((yield* Effect.result(fork("worktree", "new-worktree")))._tag, "Failure");
+    }).pipe(
+      Effect.provide(
+        makeRuntime(gitLayer, { databaseLayer: SqlitePersistenceMemory }).pipe(
+          Layer.provideMerge(SqlitePersistenceMemory),
+        ),
+      ),
+      Effect.timeout("20 seconds"),
+    ),
+  ),
 );
 
 it.live("Git failures reach fork clients without workspace paths or Git output", () =>

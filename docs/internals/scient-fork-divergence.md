@@ -31,6 +31,12 @@ baseline can be captured safely. Leaving it off
 keeps the conversation branch independent while using the origin project's
 current workspace; it does not rewind local files.
 
+A fork in the current workspace never refuses for a workspace reason it can work around. When the
+original worktree was removed, the fork works in the project folder and the form says so in one
+line. A fork whose own new-worktree setup is still pending or failed can itself be forked in the
+folder it shows. When the fork's checkpoint cannot be saved, it continues without a restore point
+(it cannot rewind files to its start). A new worktree still requires its checkpoint.
+
 The new conversation shows the retained transcript prefix. Its first provider
 turn uses a native fork only when the destination's frozen proof establishes complete
 source ownership and an exact provider boundary. Codex and Claude have qualified

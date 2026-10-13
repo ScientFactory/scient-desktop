@@ -382,14 +382,17 @@ export function ScientChatForkDialog(input: {
             : {
                 available: false,
                 // A running-turn fork snapshots files, so only a missing
-                // Git repository can rule a new worktree out.
+                // Git repository or original folder can rule a new worktree out.
                 reason:
-                  forkCommandTarget?.kind === "running-turn"
-                    ? "no-git-repository"
-                    : "no-checkpoint",
+                  forkCommandTarget?.kind !== "running-turn"
+                    ? "no-checkpoint"
+                    : forkPreview.options.workspaceNotice
+                      ? "worktree-removed"
+                      : "no-git-repository",
               }
           : forkWorktreeAvailability
       }
+      workspaceNotice={forkPreview?.options?.workspaceNotice}
       checking={forkPreview?.checking ?? true}
       locked={forkPreview?.locked ?? false}
       retryTitle={forkPreview?.retryTitle}

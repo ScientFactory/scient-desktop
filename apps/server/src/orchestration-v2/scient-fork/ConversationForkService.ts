@@ -11,6 +11,7 @@ import {
   type ProviderTextSnapshotOwner,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
+  type CheckpointRef,
   EventId,
   ContextTransferId,
   type OrchestrationV2ContextTransfer,
@@ -196,17 +197,14 @@ const make = Effect.gen(function* () {
     yield* legacyImporter.ensureTranscript(input.originThreadId);
     const projection =
       capturedProjection ?? (yield* projections.getThreadProjection(input.originThreadId));
-    if (
-      projection.thread.conversationFork != null &&
-      projection.thread.conversationFork.status !== "ready"
-    )
-      return yield* failure("Finish the original fork's workspace setup first.");
+    // A fork whose own worktree setup is pending or failed already shares its
+    // history, so it forks in the folder it shows now.
     const source = yield* resolveSource(projection, input);
     const plan = yield* planConversationFork({ projection, targetThreadId, source, materialize });
     const project = yield* projects.get(projection.thread.projectId);
     if (Option.isNone(project)) return yield* failure("The conversation's project is unavailable.");
     const originCwd = projection.thread.worktreePath ?? project.value.workspaceRoot;
-    const localAvailable = yield* baseline.workspaceExists(originCwd);
+    const originAvailable = yield* baseline.workspaceExists(originCwd);
     const sourceRun = projection.runs.find((run) => run.id === plan.boundaryRunId);
     let fromCheckpointRef =
       projection.checkpoints.find(
@@ -227,21 +225,17 @@ const make = Effect.gen(function* () {
       )
         fromCheckpointRef = projection.thread.conversationFork.checkpointRef;
     }
-    const cwd = localAvailable ? originCwd : project.value.workspaceRoot;
-    if (
-      !localAvailable &&
-      (source.kind === "running-turn" ||
-        fromCheckpointRef === null ||
-        !(yield* baseline.workspaceExists(cwd)))
-    )
-      return yield* failure("The original workspace is unavailable.");
+    // A removed worktree forks into the project folder rather than refusing.
+    const cwd = originAvailable ? originCwd : project.value.workspaceRoot;
+    if (!originAvailable && !(yield* baseline.workspaceExists(cwd)))
+      return yield* failure("The project folder is unavailable.");
     const gitRepository = yield* baseline.isGitRepository(cwd);
+    // A running fork snapshots the files it shows, so it needs the original folder.
     const checkpointAvailable =
       gitRepository &&
-      (source.kind === "running-turn" ||
-        (fromCheckpointRef !== null && (yield* baseline.hasCheckpoint(cwd, fromCheckpointRef))));
-    if (!localAvailable && !checkpointAvailable)
-      return yield* failure("The original worktree and its saved checkpoint are unavailable.");
+      (source.kind === "running-turn"
+        ? originAvailable
+        : fromCheckpointRef !== null && (yield* baseline.hasCheckpoint(cwd, fromCheckpointRef)));
     return {
       projection,
       source,
@@ -249,7 +243,7 @@ const make = Effect.gen(function* () {
       cwd,
       fromCheckpointRef,
       checkpointAvailable,
-      localAvailable,
+      inProjectFolder: !originAvailable,
     };
   });
 
@@ -384,6 +378,66 @@ const make = Effect.gen(function* () {
           : (snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void),
       { interruptible: true },
     );
+    // Reserves and publishes the fork's own checkpoint ref, copied from the boundary
+    // or, for a running fork, captured from the current files.
+    const freezeCheckpoint = Effect.fnUntraced(function* (input: {
+      readonly command: ThreadForkCommand;
+      readonly cwd: string;
+      readonly source: ConversationForkSource;
+      readonly fromCheckpointRef: CheckpointRef | null;
+      readonly requestedCheckpointRef: CheckpointRef | null;
+    }) {
+      const { command, cwd, source, fromCheckpointRef, requestedCheckpointRef } = input;
+      const owned =
+        requestedCheckpointRef === null
+          ? null
+          : yield* checkpointOwnership
+              .reserve({
+                cwd,
+                commandId: command.commandId,
+                targetThreadId: command.newThreadId,
+                checkpointRef: requestedCheckpointRef,
+              })
+              .pipe(
+                Effect.tapError((cause) =>
+                  Effect.logWarning("Fork snapshot ownership could not be recorded", { cause }),
+                ),
+                Effect.mapError(snapshotFailure),
+              );
+      const checkpointRef = owned?.ref ?? null;
+      if (checkpointRef !== null) {
+        if (source.kind === "running-turn")
+          yield* baseline.capture({ cwd, toCheckpointRef: checkpointRef }).pipe(
+            Effect.provideService(CheckpointPublicationWitness, owned!.beforePublish),
+            Effect.tapError((cause) =>
+              Effect.logWarning("Fork workspace snapshot capture failed", { cause }),
+            ),
+            Effect.mapError(snapshotFailure),
+          );
+        else {
+          const unavailable = failure(
+            command.workspaceMode === "new-worktree"
+              ? "The saved workspace checkpoint is unavailable. Fork without a new worktree instead."
+              : "The saved workspace checkpoint is unavailable. Retry the fork.",
+          );
+          const copied =
+            fromCheckpointRef !== null &&
+            (yield* baseline.copy({ cwd, fromCheckpointRef, toCheckpointRef: checkpointRef }).pipe(
+              Effect.provideService(CheckpointPublicationWitness, owned!.beforePublish),
+              Effect.tapError((cause) =>
+                Effect.logWarning("Fork workspace checkpoint copy failed", { cause }),
+              ),
+              Effect.mapError(() => unavailable),
+            ));
+          if (!copied) return yield* unavailable;
+        }
+      }
+      const checkpointOid =
+        checkpointRef === null ? null : yield* baseline.resolveCheckpoint(cwd, checkpointRef);
+      if (checkpointRef !== null && checkpointOid === null)
+        return yield* failure("The frozen workspace checkpoint is unavailable. Retry the fork.");
+      return { checkpointRef, checkpointOid };
+    });
     const accept = Effect.fnUntraced(function* (capture: CapturedProviderText | null) {
       const receipt = yield* receipts.getByCommandId(command.commandId);
       if (Option.isSome(receipt)) {
@@ -452,10 +506,6 @@ const make = Effect.gen(function* () {
                   position: "after" as const,
                 }
               : yield* failure("The fork's durable conversation boundary is unavailable.");
-      if (command.workspaceMode === "local" && !inspected.localAvailable)
-        return yield* failure(
-          "The original worktree is unavailable. Restore its saved checkpoint into a new worktree instead.",
-        );
       if (command.workspaceMode === "new-worktree" && !checkpointAvailable)
         return yield* failure(
           "This boundary has no saved workspace checkpoint. Fork locally instead.",
@@ -465,50 +515,24 @@ const make = Effect.gen(function* () {
         (source.kind !== "running-turn" || command.workspaceMode === "new-worktree")
           ? checkpointRefForThreadTurn(command.newThreadId, 0)
           : null;
-      const owned =
-        requestedCheckpointRef === null
-          ? null
-          : yield* checkpointOwnership
-              .reserve({
-                cwd,
-                commandId: command.commandId,
-                targetThreadId: command.newThreadId,
-                checkpointRef: requestedCheckpointRef,
-              })
-              .pipe(
-                Effect.tapError((cause) =>
-                  Effect.logWarning("Fork snapshot ownership could not be recorded", { cause }),
-                ),
-                Effect.mapError(snapshotFailure),
-              );
-      const checkpointRef = owned?.ref ?? null;
-      if (checkpointRef !== null) {
-        if (source.kind === "running-turn")
-          yield* baseline.capture({ cwd, toCheckpointRef: checkpointRef }).pipe(
-            Effect.provideService(CheckpointPublicationWitness, owned!.beforePublish),
-            Effect.tapError((cause) =>
-              Effect.logWarning("Fork workspace snapshot capture failed", { cause }),
-            ),
-            Effect.mapError(snapshotFailure),
-          );
-        else {
-          const unavailable = failure(
-            command.workspaceMode === "new-worktree"
-              ? "The saved workspace checkpoint is unavailable. Fork without a new worktree instead."
-              : "The saved workspace checkpoint is unavailable. Retry the fork.",
-          );
-          const copied =
-            fromCheckpointRef !== null &&
-            (yield* baseline.copy({ cwd, fromCheckpointRef, toCheckpointRef: checkpointRef }).pipe(
-              Effect.provideService(CheckpointPublicationWitness, owned!.beforePublish),
-              Effect.tapError((cause) =>
-                Effect.logWarning("Fork workspace checkpoint copy failed", { cause }),
+      // A new worktree is built from the checkpoint. A local fork only loses its
+      // restore point, so it continues without one rather than refusing.
+      const frozen = freezeCheckpoint({
+        command,
+        cwd,
+        source,
+        fromCheckpointRef,
+        requestedCheckpointRef,
+      });
+      const { checkpointRef, checkpointOid } = yield* command.workspaceMode === "new-worktree"
+        ? frozen
+        : frozen.pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Local fork continues without a restore point", { cause }).pipe(
+                Effect.as({ checkpointRef: null, checkpointOid: null }),
               ),
-              Effect.mapError(() => unavailable),
-            ));
-          if (!copied) return yield* unavailable;
-        }
-      }
+            ),
+          );
       const now = yield* DateTime.now;
       const nativeSource = freezeConversationForkNativeSource({
         projection,
@@ -543,10 +567,6 @@ const make = Effect.gen(function* () {
         updatedAt: now,
         consumedAt: null,
       };
-      const checkpointOid =
-        checkpointRef === null ? null : yield* baseline.resolveCheckpoint(cwd, checkpointRef);
-      if (checkpointRef !== null && checkpointOid === null)
-        return yield* failure("The frozen workspace checkpoint is unavailable. Retry the fork.");
       // Source/destination locks are already held. Global title allocation only
       // serializes sibling reads and admission, never workspace capture.
       return yield* titles.withLock(
@@ -565,6 +585,7 @@ const make = Effect.gen(function* () {
               }),
             createdBy: "user",
             creationSource: "web",
+            ...(inspected.inProjectFolder ? { worktreePath: null, branch: null } : {}),
             activeProviderThreadId: null,
             lineage: {
               parentThreadId: projection.thread.id,
@@ -913,12 +934,16 @@ const make = Effect.gen(function* () {
       withoutVcsDiagnostics(
         inspect(input, ThreadId.make(`scient-options:${input.originThreadId}`), undefined, false),
       ).pipe(
-        Effect.map(({ source, checkpointAvailable, localAvailable }): ForkOptions => ({
+        Effect.map(({ source, checkpointAvailable, inProjectFolder }): ForkOptions => ({
           available: true,
-          localAvailable,
-          reason: localAvailable
-            ? null
-            : "The original worktree is unavailable. A saved checkpoint can be restored into a new worktree.",
+          localAvailable: true,
+          reason: null,
+          ...(inProjectFolder
+            ? {
+                workspaceNotice:
+                  "The original worktree was removed, so this fork works in the project folder.",
+              }
+            : {}),
           newWorktree: checkpointAvailable,
           sourceAssistantMessageId: source.kind === "assistant-response" ? source.messageId : null,
           sourceUserMessageId: source.kind === "user-message" ? source.messageId : null,
