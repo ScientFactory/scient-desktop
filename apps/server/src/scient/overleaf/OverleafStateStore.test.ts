@@ -692,7 +692,12 @@ describe("OverleafStateStore", () => {
             expect(prepared.directory).toBe(expectedDirectory);
 
             // A recorded folder that disappeared is reported, and nothing is created in its place.
-            yield* Effect.promise(() => NodeFSP.rm(expectedDirectory, { recursive: true }));
+            // It is moved aside rather than deleted: Linux file systems reuse a freed file ID at
+            // once, so a deleted-and-recreated folder could carry the recorded ID (APFS never
+            // reuses IDs). Keeping the original alive gives the replacement a distinct ID.
+            yield* Effect.promise(() =>
+              NodeFSP.rename(expectedDirectory, `${expectedDirectory}-moved`),
+            );
             expect(yield* refusal(prepare(store, checkout, prepared.identity))).toBe(
               "vault-missing",
             );
