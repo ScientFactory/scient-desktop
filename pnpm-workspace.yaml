@@ -10,7 +10,7 @@ packages:
 # where anything outside onlyBuiltDependencies was silently not built.
 allowBuilds:
   # pnpm file identities include the patch hash; approve only this reviewed source.
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.11.tgz(patch_hash=06b55623909d19ed0b038000202b67603a408c7161be47f976ba15301c16e971)": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.11.tgz(patch_hash=4e2c3a574c2787bb0b058a527ed3f15c9801867fd33c08e0fe50b572d4b21a7c)": true
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
