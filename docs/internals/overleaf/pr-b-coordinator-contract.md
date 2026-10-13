@@ -1,12 +1,12 @@
 # Overleaf manual sync: PR B transition and ownership contract
 
-Written October 11, 2026; owner decisions and step 1 findings added October 13. This refines the [approved revision-5 plan](implementation-plan.md). Step 1 is implemented in draft [#536](https://github.com/ScientFactory/scient-desktop/pull/536) and is being reworked for owner decision 1; the rest of the coordinator does not exist yet. Section 11 holds each step's status. Change a rule here before changing the behavior it governs. The scope is the server coordinator, inventory, connection persistence, authenticated transport, retention actions, and checkout suspension. The client/review interface remains PR C.
+Written October 11, 2026; owner decisions and step 1 findings added October 13. This refines the [approved revision-5 plan](implementation-plan.md). Step 1 is implemented in draft [#536](https://github.com/ScientFactory/scient-desktop/pull/536), including owner decision 1; the rest of the coordinator does not exist yet. Section 11 holds each step's status. Change a rule here before changing the behavior it governs. The scope is the server coordinator, inventory, connection persistence, authenticated transport, retention actions, and checkout suspension. The client/review interface remains PR C.
 
 ## 1. Basis and dependency
 
 Preserve manual, folder-first manuscript synchronization: private bare repository, explicit base, immutable review, local application, verification, then one non-force push. Editor saves, builds, opening a document, and background polling never initiate Cloud sync.
 
-The source inspection is pinned to main `988ceaa4d2cdf3311a77d84d6371c029971b52f9` and helper/probe PR #495 head `45bcd84a741a231734d1d2524921aeb2e56f9e36`. The local applier is merged in #486. #495 is still draft; the October 11 GitHub check reported 33 successful checks, three skipped checks, and conflicts with main. Those are snapshots, not guarantees about a future aligned head.
+The source inspection is pinned to main `988ceaa4d2cdf3311a77d84d6371c029971b52f9` and helper/probe PR #495 head `45bcd84a741a231734d1d2524921aeb2e56f9e36`. The local applier is merged in #486. #495 is still draft; on October 11 it conflicted with main, and on October 13 it was aligned (see below). Check status are snapshots, not guarantees about a future head.
 
 Implement on main containing the reviewed and requalified #495 integration, or deliberately stack on its exact head. Do not silently copy its helper plumbing into PR B. #495 was aligned with main on October 13 (head `4c918b9f3b`, mergeable). Step 1's capability check runs the #495 helper, so step 1 needs #495 merged or the helper available in tests; steps 3 onwards need the integration.
 
