@@ -15,18 +15,22 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TABLE IF NOT EXISTS scient_handoff_projection_sources (
     source_id TEXT PRIMARY KEY NOT NULL
   ) WITHOUT ROWID`;
+  // Body tables keep rowids and store bodies last: a WITHOUT ROWID seek loads an
+  // overflowing record whole, while a rowid lookup reads columns before the body
+  // and body lengths from the record header alone.
   yield* sql`CREATE TABLE IF NOT EXISTS scient_handoff_frozen_items (
     body_id TEXT PRIMARY KEY NOT NULL, item_json TEXT NOT NULL
-  ) WITHOUT ROWID`;
+  )`;
+  // shape_json records the parsed body shape with its byte length (see legacySourceShape).
   yield* sql`CREATE TABLE IF NOT EXISTS scient_handoff_legacy_sources (
-    source_id TEXT PRIMARY KEY NOT NULL, event_id TEXT, payload_json TEXT,
-    messages_indexed INTEGER NOT NULL DEFAULT 0
-  ) WITHOUT ROWID`;
+    source_id TEXT PRIMARY KEY NOT NULL, event_id TEXT,
+    messages_indexed INTEGER NOT NULL DEFAULT 0, shape_json TEXT, payload_json TEXT
+  )`;
   yield* sql`CREATE TABLE IF NOT EXISTS scient_handoff_legacy_messages (
     source_id TEXT NOT NULL, position INTEGER NOT NULL, item_id TEXT NOT NULL,
     role TEXT NOT NULL, text_bytes INTEGER NOT NULL, metadata_json TEXT NOT NULL, payload_json TEXT NOT NULL,
     PRIMARY KEY (source_id, position)
-  ) WITHOUT ROWID`;
+  )`;
   const projection =
     yield* sql`SELECT name FROM sqlite_master WHERE name = 'orchestration_v2_projection_context_handoffs'`;
   if (projection.length > 0)

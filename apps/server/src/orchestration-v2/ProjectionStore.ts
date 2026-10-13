@@ -4128,7 +4128,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT 1 FROM scient_handoff_legacy_sources AS source
                 LEFT JOIN orchestration_events AS event ON event.event_id = source.event_id
                 WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')
-                  AND COALESCE(source.payload_json, event.payload_json) IS NOT NULL))
+                  AND (octet_length(source.payload_json) IS NOT NULL
+                    OR octet_length(event.payload_json) IS NOT NULL)))
             OR (NOT EXISTS (SELECT 1 FROM scient_handoff_legacy_sources AS source
               WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')) AND (
                 json_extract(context.payload_json, '$.historySource.summaryOnly') = 1
@@ -4140,7 +4141,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   LEFT JOIN scient_fork_frozen_items AS frozen ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
                   LEFT JOIN orchestration_v2_projection_turn_items AS item ON item.turn_item_id = history.source_item_id AND item.thread_id = history.source_thread_id
                   WHERE history.source_id = json_extract(context.payload_json, '$.historySource.id')
-                    AND COALESCE(frozen.item_json, body.item_json, item.payload_json) IS NULL
+                    AND octet_length(frozen.item_json) IS NULL AND octet_length(body.item_json) IS NULL
+                    AND octet_length(item.payload_json) IS NULL
                 )
               ))
           )
