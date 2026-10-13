@@ -31,4 +31,13 @@ describe("code block actions", () => {
     expect(on.dataset.variant).toBe("secondary");
     expect(render(false).dataset.variant).toBe("ghost-muted");
   });
+
+  it("draws the copy button as upstream's: muted, with the morphing icon", () => {
+    render(false);
+    const copy = document.querySelector<HTMLElement>('[aria-label="Copy code"]')!;
+    expect(copy.dataset.variant).toBe("ghost-muted");
+    // MorphIcon draws its own svg, not lucide-react's classed icon.
+    expect(copy.querySelector("svg")).not.toBeNull();
+    expect(copy.querySelector("svg.lucide")).toBeNull();
+  });
 });

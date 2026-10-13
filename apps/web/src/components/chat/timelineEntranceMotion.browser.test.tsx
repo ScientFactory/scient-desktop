@@ -229,6 +229,28 @@ it("shows what arrived at once when the reader presses Stop, instead of typing i
   expect(text()?.classList.contains("streamed-reveal")).toBe(false);
 });
 
+it("shows a stopped answer in full when its row comes back, after leaving mid-reveal", async () => {
+  const prompt = entry(1, "Question");
+  const long = Array.from({ length: 12 }, (_, i) => `Paragraph ${i}. ${"Words ".repeat(30)}`);
+  const answer = (streaming: boolean) => reply(45, long.join("\n\n"), streaming);
+  const text = () =>
+    host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
+  const front = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
+  render("motion:stop-away", [prompt, answer(true)], working);
+  await playUntil(() => front() > 10, 2000);
+  // The row unmounts mid-reveal (another thread), then the reader presses Stop.
+  render("motion:stop-away-elsewhere", [entry(72, "Elsewhere")]);
+  await play(32);
+  showStreamedAnswersNow();
+  // Back to the stopped answer: everything shows, nothing left to type out.
+  render("motion:stop-away", [prompt, answer(false)], {
+    isWorking: false,
+    activeTurnInProgress: false,
+  });
+  await play(64);
+  expect(text()?.classList.contains("streamed-reveal")).toBe(false);
+});
+
 it("drops an answer's appearing state when its row unmounts mid-reveal", async () => {
   const prompt = entry(1, "Question");
   const answer = reply(43, "First paragraph.\n\nSecond paragraph.", true);
