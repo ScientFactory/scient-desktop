@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./provider-auth-presentation": {
+      "types": "./src/providerAuthPresentation.ts",
+      "default": "./src/providerAuthPresentation.ts"
+    },
     "./droid-model-presentation": {
       "types": "./src/droidModelPresentation.ts",
       "default": "./src/droidModelPresentation.ts"

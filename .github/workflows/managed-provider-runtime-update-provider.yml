@@ -136,9 +136,9 @@ jobs:
         run: vp install --frozen-lockfile --ignore-scripts --filter=t3...
 
       - name: Install RPC qualification dependencies
-        if: inputs.provider == 'omp' || inputs.provider == 'scient'
-        # The RPC v2 handshake and get_state check is the server's own
-        # managed-activation code, so it needs the server workspace.
+        if: inputs.provider == 'omp' || inputs.provider == 'scient' || inputs.provider == 'muse'
+        # These protocol checks (OMP/Scient RPC, Muse MSP) are the server's own
+        # managed-activation code, so they need the server workspace.
         run: vp install --frozen-lockfile --ignore-scripts --filter=t3...
 
       - name: Install Droid protocol qualification dependencies

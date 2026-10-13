@@ -55,7 +55,7 @@ const StoredGeneratedDocumentRevision = Schema.Struct({
   fileName: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(255),
-    Schema.isPattern(/^[^/\\\0]+\.pdf$/iu),
+    Schema.isPattern(/^[^/\\\x00]+\.pdf$/iu),
   ),
   pageCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 });

@@ -374,6 +374,16 @@ frozen history, managed runtime, privacy and publication boundaries remain.
 The receipt separates complete local qualification with exact affected-scope reuse,
 independent review and bounded stress from hosted CI and the user's visual acceptance.
 
+Since that receipt, Muse lifecycle policy composes through
+`apps/server/src/provider/MuseDriverComposition.ts`. Preserve the optional runtime
+hook in `packages/provider-muse/src/server/driver.ts`, the generic package default
+and the sole upstream MSP implementation. Private runtime, catalog and native
+account policy belong in `scient/providerLifecycle`, not the protocol package.
+The SDK's optional shutdown notification lets native qualification remove its
+private home only after confirmed close, including initialization failure.
+The shared auth completion contract distinguishes unverified native credential
+writes from authentication. Muse stays disabled by default; see [provider lifecycle architecture](docs/internals/provider-lifecycle.md).
+
 The previous locally qualified alignment through `bd2346eda2e2c380d1844869c7fd16c279d2190f`
 is recorded in [the 2026-10-09 receipt](docs/internals/t3-upstream-sync-20261009-ec80933ac8.md)
 ([Scient PR #498](https://github.com/ScientFactory/scient-desktop/pull/498)).

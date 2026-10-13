@@ -17,6 +17,7 @@ import {
 } from "./runtimeFiles.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
 import { parseManagedCursorVersion } from "./managedRuntimeVersion.ts";
+import { parseManagedMuseVersion } from "./museVersion.ts";
 import { runtimeFilesystem } from "./runtimeFilesystem.ts";
 import {
   ManagedRuntimeMutationLockLostError,
@@ -181,6 +182,7 @@ export async function smokeManagedRuntimeExecutable(
     readonly cwd?: string | undefined;
     readonly signal?: AbortSignal | undefined;
     readonly expectedVersion?: string | undefined;
+    readonly versionFormat?: "cursor" | "muse" | undefined;
   } = {},
 ): Promise<void> {
   options.signal?.throwIfAborted();
@@ -244,7 +246,9 @@ export async function smokeManagedRuntimeExecutable(
       else if (code === 0) {
         finish(
           options.expectedVersion !== undefined &&
-            parseManagedCursorVersion(versionOutput) !== options.expectedVersion
+            (options.versionFormat === "muse"
+              ? parseManagedMuseVersion(versionOutput)
+              : parseManagedCursorVersion(versionOutput)) !== options.expectedVersion
             ? new ManagedProviderRuntimeError(
                 `Managed ${displayName} smoke test did not report the expected release version.`,
               )
@@ -280,6 +284,7 @@ export interface ManagedProviderRuntimeDependencies {
       readonly cwd?: string | undefined;
       readonly signal?: AbortSignal | undefined;
       readonly expectedVersion?: string | undefined;
+      readonly versionFormat?: "cursor" | "muse" | undefined;
     },
   ) => Promise<void>;
   readonly commitState: (
@@ -335,6 +340,7 @@ const MANAGED_RUNTIME_PROVIDERS = new Set([
   "pi",
   "omp",
   "scient",
+  "muse",
 ]);
 
 function decodeArtifactReceipt(value: unknown): ManagedRuntimeArtifactReceipt | undefined {
@@ -671,8 +677,8 @@ export class ManagedProviderRuntime {
         {
           ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}),
           signal,
-          ...(artifact.smokeVersionFormat === "cursor"
-            ? { expectedVersion: artifact.version }
+          ...(artifact.smokeVersionFormat
+            ? { expectedVersion: artifact.version, versionFormat: artifact.smokeVersionFormat }
             : {}),
         },
       );

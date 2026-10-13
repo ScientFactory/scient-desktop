@@ -63,6 +63,18 @@ afterEach(() => {
 });
 
 describe("Muse SDK host", () => {
+  it("reports shutdown after failed initialization only once native close is confirmed", async () => {
+    const fixture = mockSpawn();
+    const onClosed = vi.fn();
+    const starting = createMuseSdkHost({ binaryPath: "fixture-muse", onClosed });
+    const failed = expect(starting).rejects.toThrow("Fixture initialization failed.");
+    fixture.startup.reject(new Error("Fixture initialization failed."));
+    await fixture.closing.promise;
+    expect(onClosed).not.toHaveBeenCalled();
+    fixture.shutdown.resolve({ code: 0, signal: null });
+    await failed;
+    expect(onClosed).toHaveBeenCalledOnce();
+  });
   it.each(["META_API_KEY", "meta_api_key", "Meta_Api_Key"])(
     "excludes %s without reading its value or mutating the supplied environment",
     (key) => {
