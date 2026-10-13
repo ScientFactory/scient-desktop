@@ -36,12 +36,16 @@
   );
   animation-name: scient-live-activity-sweep;
   animation-duration: var(--live-activity-duration, 2.2s);
+  /* Deliberately smooth. Upstream T3 #18191 steps this sweep (steps(30)) to draw
+     fewer frames; Scient keeps it linear (owner decision, 2026-10-13). Keep this
+     rule as is when syncing: it overrides upstream's timing without a conflict. */
   animation-timing-function: linear;
 }
 
 .live-activity-focus-counter {
   animation-name: scient-live-activity-sweep-counter;
   animation-duration: var(--live-activity-duration, 2.2s);
+  /* Smooth like the light it carries (see .live-activity-focus above). */
   animation-timing-function: linear;
 }
 
