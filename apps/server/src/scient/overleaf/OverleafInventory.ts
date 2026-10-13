@@ -185,6 +185,8 @@ export interface OverleafInventoryInput {
   /** Tests only: smaller limits, and a pause between reading a file and checking it again. */
   readonly limits?: Partial<OverleafLimits>;
   readonly afterRead?: (path: string) => Promise<void>;
+  /** Tests only: a pause just before a folder is listed. */
+  readonly beforeList?: (folder: string) => Promise<void>;
 }
 
 class Refused extends Error {
@@ -225,8 +227,9 @@ export async function captureOverleafInventory(
     const stat = await NodeFSP.lstat(absolute(path), { bigint: true }).catch(() => null);
     return stat !== null && stat.isDirectory() ? { dev: stat.dev, ino: stat.ino } : null;
   };
+  /** Every walked folder above `path`, and `path` itself when it is a folder, is unchanged. */
   const verifyFolders = async (path: string) => {
-    for (const folder of ancestorsOf(path)) {
+    for (const folder of folders.has(path) ? [...ancestorsOf(path), path] : ancestorsOf(path)) {
       const expected = folders.get(folder);
       const now = await folderIdentity(folder);
       if (
@@ -339,6 +342,10 @@ export async function captureOverleafInventory(
         continue;
       }
       const entries: NodeFS.Dirent[] = [];
+      // A folder swapped for a link would be listed through it, and its managed files
+      // would look deleted; the listing counts only if the folder kept its identity.
+      await input.beforeList?.(next.relative);
+      await verifyFolders(next.relative);
       try {
         // Iterated, not read whole, so a huge folder costs no more than the walk allows.
         for await (const entry of await NodeFSP.opendir(absolute(next.relative))) {
@@ -350,6 +357,7 @@ export async function captureOverleafInventory(
         if (error instanceof Refused) throw error;
         throw new Refused({ reason: "unreadable", path: next.relative || "." });
       }
+      await verifyFolders(next.relative);
       for (const entry of entries.toSorted((left, right) => byPath(left.name, right.name))) {
         const path = next.relative === "" ? entry.name : `${next.relative}/${entry.name}`;
         if (staging.has(path) || isStaging(entry.name)) {
@@ -381,6 +389,9 @@ export async function captureOverleafInventory(
         }
       }
     }
+
+    // Absence is only evidence while every folder walked is still the folder that was listed.
+    for (const folder of folders.keys()) await verifyFolders(folder);
 
     // A managed or selected path that the walk did not find as a file is reported, not guessed.
     const present = new Set(files.map((file) => file.path));

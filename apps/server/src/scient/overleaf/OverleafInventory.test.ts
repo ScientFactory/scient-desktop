@@ -248,4 +248,18 @@ describe("captureOverleafInventory", () => {
       }),
     ).toEqual({ reason: "unstable", path: "sub/secret.txt" });
   });
+  it("fails when a folder is swapped for a link to an empty folder before it is listed", async () => {
+    const root = await folder({ "main.tex": "m", "sub/chapter.tex": "c" });
+    const outside = await folder({});
+    expect(
+      await refusal(root, {
+        managedPaths: ["main.tex", "sub/chapter.tex"],
+        beforeList: async (listed) => {
+          if (listed !== "sub") return;
+          await NodeFSP.rename(NodePath.join(root, "sub"), NodePath.join(root, "sub-moved"));
+          await NodeFSP.symlink(outside, NodePath.join(root, "sub"));
+        },
+      }),
+    ).toEqual({ reason: "unstable", path: "sub" });
+  });
 });
