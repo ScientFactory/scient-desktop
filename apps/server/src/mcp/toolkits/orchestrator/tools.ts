@@ -223,6 +223,8 @@ const ThreadReadTool = Tool.make("scient_thread_inspect", {
   dependencies,
 })
   .annotate(Tool.Title, "Inspect a Scient thread and its runs")
+  // Strict so a misspelled paging param fails instead of silently reading from position 0.
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);

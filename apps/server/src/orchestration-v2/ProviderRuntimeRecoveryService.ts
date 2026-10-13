@@ -566,7 +566,7 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection)
+          ? restartContinuationRun(projection, now)
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -697,7 +697,7 @@ export const make = Effect.gen(function* () {
     for (const threadId of threadIds) {
       yield* Effect.gen(function* () {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-        const run = restartContinuationRun(projection);
+        const run = restartContinuationRun(projection, yield* DateTime.now);
         if (!run) return;
         const updateRequested = updateIntent.get(threadId) === run.id;
         if (
@@ -749,7 +749,7 @@ export const make = Effect.gen(function* () {
     const selected = new Map<ThreadId, RunId>();
     for (const threadId of yield* projections.getRecoveryThreadIds("runtime")) {
       const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-      const run = restartContinuationRun(projection);
+      const run = restartContinuationRun(projection, yield* DateTime.now);
       if (run !== undefined) selected.set(threadId, run.id);
     }
     yield* Ref.set(updateContinuations, selected);

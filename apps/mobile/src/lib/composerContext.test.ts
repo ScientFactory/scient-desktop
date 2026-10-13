@@ -207,6 +207,38 @@ describe("mobile composer context", () => {
 });
 
 describe("native context delivery", () => {
+  it("carries the current PR diff file within the composer wire limits", () => {
+    const metadata = {
+      number: 42,
+      title: "Fix checkout",
+      url: "https://github.com/example/repo/pull/42",
+      headBranch: "fix-checkout",
+      baseBranch: "main",
+      state: "open" as const,
+      isDraft: false,
+    };
+    const record = pullRequestComposerContext(metadata, "pr-42", "src/checkout.ts");
+    expect(record.filePath).toBe("src/checkout.ts");
+    const prompt = projectComposerContextForProvider({
+      text: formatComposerContextReference(record),
+      records: [record],
+    });
+    expect(prompt).toContain(metadata.url);
+    expect(prompt).toContain("src/checkout.ts");
+    expect(composerContextSendBlockReason({ version: 1, records: [record] })).toBeNull();
+    const large = pullRequestComposerContext(
+      {
+        ...metadata,
+        title: "x".repeat(3000),
+        headBranch: "y".repeat(3000),
+        baseBranch: "z".repeat(3000),
+      },
+      "pr-42",
+      `src/${"[long file]".repeat(500)}.ts`,
+    );
+    expect(composerContextSendBlockReason({ version: 1, records: [large] })).toBeNull();
+  });
+
   it.each(["existing-thread", "new-task"])("preserves inline records on %s sends", (path) => {
     const pr = pullRequestComposerContext(
       {
@@ -254,6 +286,14 @@ describe("native context delivery", () => {
           }).message;
     expect(message.context).toEqual(context);
     expect(message.text).toBe(text);
+    const providerInput = projectComposerContextForProvider({
+      text: message.text,
+      records: message.context!.records,
+    });
+    expect(providerInput).toContain("4 | build failed\n5 | retry");
+    expect(providerInput).toContain("Handle the empty cart");
+    expect(providerInput).toContain("- old\n+ new");
+    expect(providerInput).toContain("https://github.com/example/repo/pull/42");
     expect(context.records).toEqual([terminal, review, pr]);
   });
 });

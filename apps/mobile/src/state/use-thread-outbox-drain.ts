@@ -43,6 +43,7 @@ import {
   recordPendingThreadCreationOutcome,
 } from "./pending-thread-creation";
 import { serverEnvironment } from "./server";
+import { gitEnvironment } from "./git";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "./session";
 import {
   confirmThreadOutboxMessageQueued,
@@ -529,6 +530,7 @@ export async function restoreRejectedQueuedMessage(
               mode: queuedMessage.creation.workspaceMode,
               branch: queuedMessage.creation.branch,
               worktreePath: queuedMessage.creation.worktreePath,
+              pullRequestReference: queuedMessage.creation.pullRequestReference,
               ...(queuedMessage.creation.startFromOrigin !== undefined
                 ? { startFromOrigin: queuedMessage.creation.startFromOrigin }
                 : {}),
@@ -662,7 +664,12 @@ async function preserveUploadedAttachmentsForEditor(
 
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  // SCIENT-FORK:START queued-model-selection
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  // SCIENT-FORK:END queued-model-selection
+  const preparePullRequest = useAtomCommand(gitEnvironment.preparePullRequestThread, {
     reportFailure: false,
   });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
@@ -1053,6 +1060,35 @@ export function useThreadOutboxDrain(): void {
         currentConfig.providers,
       );
       if (!hasAccess()) return true;
+      const { reportFailure } = makeDeliveryHelpers(queuedMessage);
+      let workspace = creation;
+      if (creation.pullRequestReference) {
+        // Keep opening the composer and queuing offline immediate. Only Send
+        // resolves the provider's actual PR head, including forks, in a worktree.
+        const checkout = await preparePullRequest({
+          environmentId: queuedMessage.environmentId,
+          input: { cwd: projectCwd, reference: creation.pullRequestReference, mode: "worktree" },
+        });
+        if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision) || !hasAccess())
+          return true;
+        const failure = reportFailure(checkout, "start-turn");
+        if (failure?.action === "retry") return false;
+        if (failure?.action === "restore")
+          return restoreQueuedMessage(persistedMessage, failure.message);
+        if (!AsyncResult.isSuccess(checkout)) return false;
+        if (!checkout.value.worktreePath || !checkout.value.isOnPullRequestHead)
+          return restoreQueuedMessage(
+            persistedMessage,
+            "The PR worktree has local changes and could not update to the PR head. Resolve them before trying again.",
+          );
+        workspace = {
+          ...creation,
+          workspaceMode: "local",
+          branch: checkout.value.branch,
+          worktreePath: checkout.value.worktreePath,
+          startFromOrigin: false,
+        };
+      }
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
         input: buildProjectThreadStartTurnInput({
@@ -1074,14 +1110,13 @@ export function useThreadOutboxDrain(): void {
           modelSelection: sendSettings.modelSelection,
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
-          workspaceMode: creation.workspaceMode,
-          branch: creation.branch,
-          worktreePath: creation.worktreePath,
-          startFromOrigin: creation.startFromOrigin ?? false,
+          workspaceMode: workspace.workspaceMode,
+          branch: workspace.branch,
+          worktreePath: workspace.worktreePath,
+          startFromOrigin: workspace.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });
-      const { reportFailure } = makeDeliveryHelpers(queuedMessage);
       if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
       const failure = reportFailure(deliveryResult, "start-turn");
       if (failure?.action === "retry") {
@@ -1107,7 +1142,7 @@ export function useThreadOutboxDrain(): void {
       }
       return outcome === "removed";
     },
-    [makeDeliveryHelpers, restoreQueuedMessage, startTurn],
+    [makeDeliveryHelpers, preparePullRequest, restoreQueuedMessage, startTurn],
   );
 
   // A creation outcome bridges setup until the server's shell has a turn.

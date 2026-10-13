@@ -200,7 +200,7 @@ import {
   TRACE_ICON_STROKE,
   traceIconOverride,
 } from "../../scient/presentation/traceIcons";
-import { ChevronDown, ChevronRight } from "lucide";
+import { ChevronDown, ChevronRight, Link as LinkIconNode } from "lucide";
 import type {
   ComposerContextId,
   ComposerContextRecord,
@@ -230,6 +230,7 @@ import {
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { promptLinkFor } from "../promptLinks/copyPromptLink";
 // SCIENT-FORK:START
 import { messageCopyHtml } from "~/scient/clipboard/messageCopyHtml";
 // SCIENT-FORK:END
@@ -355,6 +356,7 @@ import {
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import * as DateTime from "effect/DateTime";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { forwardWheelToTimeline } from "./timelineMinimapWheel";
 import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
@@ -540,6 +542,8 @@ interface MessagesTimelineProps {
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
   displayThreadKey?: string;
+  /** The rows are a held snapshot of the previous thread while the next one loads. */
+  paintOnly?: boolean;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   parentThreadLink?: {
@@ -676,6 +680,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   turnDiffSummaries,
   routeThreadKey,
   displayThreadKey,
+  paintOnly = false,
   onOpenTurnDiff,
   onOpenThread,
   parentThreadLink = null,
@@ -1117,7 +1122,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     promptMessageId: readingFollowPromptId,
     responseSettled: responseFollow ? responseFollow.settled : !isWorking,
     suspended:
-      findActive || timelinePositioningPending || restoringThreadPosition || positionHistoryLoading,
+      paintOnly ||
+      findActive ||
+      timelinePositioningPending ||
+      restoringThreadPosition ||
+      positionHistoryLoading,
     composerInset: contentInsetEndAdjustment,
     followResponse: responseFollow?.followsResponse ?? false,
     onFinished: onRevealFinished,
@@ -1515,6 +1524,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START — remember the reading position by row identity.
   const saveReadingPosition = useSaveReadingPosition({
     listRef,
+    paintOnly,
     restoringThreadPosition,
     readingListLoaded,
     positionHistoryLoading,
@@ -1547,7 +1557,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
     const anchorIsAtEnd = resolveTimelineIsAtEnd(state);
     const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
-    if (position && state && anchorIsAtEnd !== undefined) {
+    if (position && state && anchorIsAtEnd !== undefined && !paintOnly) {
       const index = state.indexByKey(position.rowId);
       const row = index === undefined ? undefined : state.elementAtIndex(index);
       const element = listRef.current?.getScrollableNode();
@@ -1683,6 +1693,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     workGroupViewState,
     rows,
     listIdentityKey,
+    anchoredEndSpace,
+    paintOnly,
     restoringThreadPosition,
     listRef,
     positionHistoryLoading,
@@ -1706,6 +1718,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const handleScrollOnNextFrame = useReadingBookkeepingFrame({
     handleScroll,
     listRef,
+    paintOnly,
     contentInsetEndAdjustment,
     restingAtReadingEndRef,
     readerInputRef,
@@ -2043,6 +2056,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     [],
   );
 
+  const forwardMinimapWheel = useCallback(
+    (event: WheelEvent) => {
+      const scrollNode = listRef.current?.getScrollableNode();
+      if (scrollNode) forwardWheelToTimeline(event, scrollNode);
+    },
+    [listRef],
+  );
+
   if (
     rows.length === 0 &&
     !isWorking &&
@@ -2063,7 +2084,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />;
     }
     return (
-      <div className="scient-reading-ui flex h-full items-center justify-center">
+      <div
+        className="scient-reading-ui flex h-full items-center justify-center ps-(--chat-lane-inset-start) pe-(--chat-lane-inset-end)"
+        style={{ paddingBottom: contentInsetEndAdjustment }}
+      >
         <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
       </div>
     );
@@ -2136,6 +2160,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 hitStripWidth={minimapHitStripWidth}
                 currentIndex={minimapCurrentIndex}
                 stripMap={minimapStripMap}
+                onWheel={forwardMinimapWheel}
                 onSelect={(item) => {
                   onManualNavigation();
                   void listRef.current?.scrollToIndex({
@@ -2217,6 +2242,7 @@ function TimelineMinimap({
   currentIndex,
   items,
   stripMap,
+  onWheel,
   onSelect,
 }: {
   hasPersistentGutter: boolean;
@@ -2224,9 +2250,18 @@ function TimelineMinimap({
   currentIndex: number | null;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
+  onWheel: (event: WheelEvent) => void;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const wheelTargetRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      node.addEventListener("wheel", onWheel, { passive: false });
+      return () => node.removeEventListener("wheel", onWheel);
+    },
+    [onWheel],
+  );
 
   const resolvedActiveIndex =
     activeIndex !== null && activeIndex < items.length ? activeIndex : null;
@@ -2301,6 +2336,7 @@ function TimelineMinimap({
       )}
       data-testid="timeline-minimap"
       data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
+      ref={wheelTargetRef}
     >
       <div className="relative h-full w-full select-none">
         <div
@@ -2815,6 +2851,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         .map((record) => record.contextId),
     [resolvedContext.records],
   );
+  // Chips read as their labels outside a draft, so a shared link carries the prose alone.
+  const plainText = useMemo(
+    () => replaceComposerContextReferences(resolvedContext.text, (reference) => reference.label),
+    [resolvedContext.text],
+  );
+  const promptLink = useMemo(() => promptLinkFor(plainText), [plainText]);
   const contextClipboardFragment =
     resolvedContext.records.length === 0
       ? null
@@ -3083,14 +3125,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {resolvedContext.text && (
               <MessageCopyButton
                 // Structured paste needs the canonical links to retain their positions.
-                text={
-                  contextClipboardFragment
-                    ? resolvedContext.text
-                    : replaceComposerContextReferences(
-                        resolvedContext.text,
-                        (reference) => reference.label,
-                      )
-                }
+                text={contextClipboardFragment ? resolvedContext.text : plainText}
                 {...(contextClipboardFragment
                   ? {
                       extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
@@ -3107,6 +3142,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   })
                 }
                 // SCIENT-FORK:END
+                variant="ghost"
+              />
+            )}
+            {promptLink !== null && (
+              <MessageCopyButton
+                text={promptLink}
+                label="Copy prompt link"
+                icon={LinkIconNode}
                 variant="ghost"
               />
             )}

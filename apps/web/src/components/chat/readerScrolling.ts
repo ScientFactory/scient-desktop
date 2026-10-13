@@ -111,6 +111,7 @@ export function useReaderScrollInput({
  */
 export function useSaveReadingPosition({
   listRef,
+  paintOnly = false,
   restoringThreadPosition,
   readingListLoaded,
   positionHistoryLoading,
@@ -129,6 +130,8 @@ export function useSaveReadingPosition({
   workGroupViewState,
 }: {
   listRef: RefObject<LegendListRef | null>;
+  /** A held timeline paints its previous thread without changing its reading receipt. */
+  paintOnly?: boolean;
   restoringThreadPosition: boolean;
   readingListLoaded: boolean;
   positionHistoryLoading: boolean;
@@ -153,6 +156,7 @@ export function useSaveReadingPosition({
   const saveReadingPosition = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (
+      paintOnly ||
       restoringThreadPosition ||
       !readingListLoaded ||
       positionHistoryLoading ||
@@ -192,6 +196,7 @@ export function useSaveReadingPosition({
     });
   }, [
     listRef,
+    paintOnly,
     restoringThreadPosition,
     readingListLoaded,
     positionHistoryLoading,
@@ -249,6 +254,7 @@ export interface RestingAtReadingEnd {
 export function useReadingBookkeepingFrame({
   handleScroll,
   listRef,
+  paintOnly = false,
   contentInsetEndAdjustment,
   restingAtReadingEndRef,
   readerInputRef,
@@ -264,6 +270,8 @@ export function useReadingBookkeepingFrame({
 }: {
   handleScroll: () => void;
   listRef: RefObject<LegendListRef | null>;
+  /** A held timeline has no active reader-position owner. */
+  paintOnly?: boolean;
   contentInsetEndAdjustment: number;
   restingAtReadingEndRef: RefObject<RestingAtReadingEnd | null>;
   readerInputRef: RefObject<boolean>;
@@ -290,6 +298,7 @@ export function useReadingBookkeepingFrame({
   // the last message's text where it was. New rows, streaming, reveals, and
   // content the reader just toggled never move the reader.
   const idleEndKeeping =
+    !paintOnly &&
     !isWorking &&
     !revealActive &&
     !interactionSettling &&

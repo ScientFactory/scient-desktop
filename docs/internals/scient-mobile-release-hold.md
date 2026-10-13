@@ -7,6 +7,9 @@ Scient retains T3-derived mobile source and build foundations so future mobile
 work does not need to start from an empty client. Production CI store builds
 and over-the-air publication are disabled by the
 [mobile production workflow](../../.github/workflows/mobile-eas-production.yml).
+The retained [Android APK mirror](../../.github/workflows/mobile-android-apk.yml)
+also has a disabled job boundary; its schedule and manual trigger do not authorize
+Scient mobile distribution.
 Retained local build scripts and runtime update settings do not establish a
 supported Scient mobile app for users to install.
 

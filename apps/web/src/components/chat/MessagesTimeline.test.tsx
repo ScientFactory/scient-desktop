@@ -143,6 +143,7 @@ vi.mock("@legendapp/list/react", async () => {
         };
     className?: string;
     contentInsetEndAdjustment?: number;
+    onScroll?: () => void;
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
