@@ -163,6 +163,16 @@
       "path": "apps/server/vite.config.ts",
       "anchor": "src/pdf.worker.ts",
       "purpose": "Emit pdfjs' sibling fake-worker module so packaged PDF validation can load it."
+    },
+    {
+      "path": "apps/web/src/components/settings/SettingsGroup.tsx",
+      "anchor": "[&>:not(:first-child)]:border-t",
+      "purpose": "Draw row separators without a universal sibling selector, which restyled every following block on each insertion in long Visual documents."
+    },
+    {
+      "path": "apps/web/src/components/settings/FoldedSettingsSection.tsx",
+      "anchor": "[&>:not(:first-child)]:border-t",
+      "purpose": "Draw row separators without a universal sibling selector, which restyled every following block on each insertion in long Visual documents."
     }
   ]
 }

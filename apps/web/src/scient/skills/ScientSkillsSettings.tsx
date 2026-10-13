@@ -174,7 +174,7 @@ export function ScientSkillsSettings() {
             description="This Scient build does not publish any managed skills."
           />
         ) : (
-          <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50">
+          <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
             {groupSkillsByCategory(
               inventory.data.skills.filter((skill) => skill.scope === "user"),
             ).map((group) => (
