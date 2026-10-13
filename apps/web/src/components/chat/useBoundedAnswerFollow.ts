@@ -364,6 +364,9 @@ export function useBoundedAnswerFollow({
           target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]'))
       )
         return;
+      // A key scrolling a nested region (tool output) leaves the timeline where it is.
+      const direction = ["ArrowUp", "PageUp", "Home"].includes(event.key) ? -1 : 1;
+      if (viewport.contains(target) && !isTimelineScrollTarget(target, viewport, direction)) return;
       if (["ArrowUp", "PageUp", "Home"].includes(event.key)) cancel();
       else if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) yieldToReader();
     };

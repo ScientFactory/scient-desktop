@@ -172,7 +172,7 @@ import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { useTimelineEndControl } from "./chat/useTimelineEndControl";
+import { followModeAfterEndTransition, useTimelineEndControl } from "./chat/useTimelineEndControl";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
@@ -6687,6 +6687,7 @@ function ChatViewContent(props: ChatViewProps) {
       // upstream's handler; the timeline never pins to its end, so a report of
       // leaving it is never swallowed (it would hide Scroll to end while an
       // answer grows below).
+      if (followModeAfterEndTransition(timelineScrollModeRef.current, "reached") === null) return;
       timelineScrollModeRef.current = "following-end";
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       setTimelineLiveFollowEnabled(true);
@@ -6694,6 +6695,7 @@ function ChatViewContent(props: ChatViewProps) {
       setTimelineAnchor(releaseChatTimelineAnchor);
     },
     onLeftEnd: () => {
+      if (followModeAfterEndTransition(timelineScrollModeRef.current, "left") === null) return;
       timelineScrollModeRef.current = "free-scrolling";
       liveFollowUserScrollGenerationRef.current = null;
       // SCIENT-FORK:END

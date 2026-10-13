@@ -1,7 +1,11 @@
 import { act, createRef, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { END_CONTROL_SHOW_DELAY_MS, useTimelineEndControl } from "./useTimelineEndControl";
+import {
+  END_CONTROL_SHOW_DELAY_MS,
+  followModeAfterEndTransition,
+  useTimelineEndControl,
+} from "./useTimelineEndControl";
 
 let control: ReturnType<typeof useTimelineEndControl>;
 let renderer: ReactTestRenderer;
@@ -104,4 +108,12 @@ it("reports each arrival and departure once, however many events repeat it", () 
   }
   expect(onLeftEnd).toHaveBeenCalledTimes(2);
   expect(onReachedEnd).toHaveBeenCalledTimes(1);
+});
+
+it("changes the follow mode on reaching or leaving the end, except while a send is being placed", () => {
+  expect(followModeAfterEndTransition("free-scrolling", "reached")).toBe("following-end");
+  expect(followModeAfterEndTransition("following-end", "left")).toBe("free-scrolling");
+  // The placement owns the mode until it ends or the reader navigates.
+  expect(followModeAfterEndTransition("anchoring-new-turn", "left")).toBeNull();
+  expect(followModeAfterEndTransition("anchoring-new-turn", "reached")).toBeNull();
 });

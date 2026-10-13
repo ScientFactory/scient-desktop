@@ -466,6 +466,15 @@ it("ends only for keys that scroll the timeline, not for a menu's arrow keys or 
     menuItem.dispatchEvent(new KeyboardEvent("keydown", { key: keyName, bubbles: true }));
   }
   menuItem.remove();
+  // Keys scrolling a nested region (tool output) inside the timeline.
+  const nested = document.createElement("div");
+  Object.assign(nested.style, { height: "60px", overflowY: "auto" });
+  nested.tabIndex = 0;
+  nested.append(Object.assign(document.createElement("div"), { style: "height: 400px" }));
+  viewport().append(nested);
+  nested.scrollTop = 100;
+  nested.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+  nested.remove();
   // A shortcut with a modifier, pressed in the timeline.
   viewport().dispatchEvent(
     new KeyboardEvent("keydown", { key: "ArrowUp", metaKey: true, bubbles: true }),
