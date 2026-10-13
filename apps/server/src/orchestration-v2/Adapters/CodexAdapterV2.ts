@@ -1919,7 +1919,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           model: input.modelSelection.model,
           now,
         });
+        // SCIENT-FORK:START — the queue also carries running-fork text snapshot batches.
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2InternalEvent>();
+        // SCIENT-FORK:END
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),

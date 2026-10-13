@@ -325,7 +325,9 @@ interface ReleaseEntryInput {
 }
 
 type ProviderSessionEventSignal =
+  // SCIENT-FORK:START — subscribers also receive running-fork text snapshot batches.
   | { readonly type: "event"; readonly event: ProviderAdapter.ProviderAdapterV2InternalEvent }
+  // SCIENT-FORK:END
   | {
       readonly type: "failure";
       readonly cause: Cause.Cause<ProviderAdapter.ProviderAdapterV2Error>;
