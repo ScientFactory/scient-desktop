@@ -1,7 +1,6 @@
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 // SCIENT-FORK:START — send motion, and the send follow ChatView owns (chat/responseFollow.ts).
-import { returnToLiveFollow } from "./liveFollowOffset";
 import type { TimelineResponseFollow } from "./responseFollow";
 import { ThinkingRowFade } from "./ThinkingRowFade";
 import {
@@ -16,6 +15,8 @@ import {
   type RestingAtReadingEnd,
   useReaderScrollInput,
   useReadingBookkeepingFrame,
+  useReadingPositionRestore,
+  useReadingRestoreTarget,
   useSaveReadingPosition,
 } from "./readerScrolling";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
@@ -24,7 +25,6 @@ import {
   readerAtReadingEnd,
   readingEndAllowance,
   readingEndGapOnScreen,
-  resolveReadingRow,
 } from "./readerScrollPolicy";
 
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
@@ -490,8 +490,6 @@ function TimelineListFooter({
 }
 
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
-/** Older-history pages a missing saved message may load before falling back. */
-const MAX_READING_HISTORY_PAGES = 2;
 
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
@@ -767,8 +765,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     key: listIdentityKey,
     count: 0,
   });
-  const readingHistoryPageCount =
-    readingHistoryPages.key === listIdentityKey ? readingHistoryPages.count : 0;
 
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(() =>
     rememberedPosition?.atEnd === false ? null : listIdentityKey,
@@ -1125,233 +1121,47 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
-  // The last allowed page must arrive before the saved message is given up on.
-  const readingHistoryExhausted =
-    loadEarlier === null ||
-    (readingHistoryPageCount >= MAX_READING_HISTORY_PAGES && !loadEarlier.loading);
-  const restoreTarget = rememberedPosition
-    ? resolveReadingRow(rows, rememberedPosition, readingHistoryExhausted)
-    : null;
-  const restoreRowIndex = restoreTarget?.index ?? -1;
-  const restoreOffset = restoreTarget?.exact ? (rememberedPosition?.offsetWithinRow ?? 0) : 0;
-  const waitingForReadingHistory =
-    restoringThreadPosition &&
-    !!rememberedPosition &&
-    restoreTarget === null &&
-    !readingHistoryExhausted;
-  useEffect(() => {
-    if (
-      !waitingForReadingHistory ||
-      positionHistoryLoading ||
-      !loadEarlier ||
-      loadEarlier.loading ||
-      readingHistoryPageCount >= MAX_READING_HISTORY_PAGES
-    )
-      return;
-    const cursor = loadEarlier.cursor ?? "initial";
-    if (requestedReadingPages.current.cursors.has(cursor)) return;
-    requestedReadingPages.current.cursors.add(cursor);
-    setReadingHistoryPages((current) => ({
-      key: listIdentityKey,
-      count: (current.key === listIdentityKey ? current.count : 0) + 1,
-    }));
-    loadEarlier.onLoadEarlier();
-  }, [
-    waitingForReadingHistory,
+  // SCIENT-FORK:START — restore by message identity, paging in older history (chat/readerScrolling.ts).
+  const { restoreRowIndex, restoreOffset, waitingForReadingHistory } = useReadingRestoreTarget({
+    rows,
+    rememberedPosition,
+    restoringThreadPosition,
     positionHistoryLoading,
     loadEarlier,
     listIdentityKey,
-    readingHistoryPageCount,
-  ]);
+    readingHistoryPages,
+    setReadingHistoryPages,
+    requestedReadingPages,
+  });
+  // SCIENT-FORK:END
   const restoringAlwaysRender = useMemo(
     () =>
       restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
     [restoreRowIndex, restoringThreadPosition],
   );
-  useLayoutEffect(() => {
-    if (!restoringThreadPosition || rows.length === 0 || !readingListLoaded) return;
-    const list = listRef.current;
-    if (!list) return;
-    if (citationRequest !== null || (anchorMessageId !== null && !rememberedPosition)) {
-      setPositionedThreadKey(listIdentityKey);
-      return;
-    }
-    let cancelled = false;
-    let settleFrame: number | null = null;
-    const viewport: HTMLElement | null = list.getScrollableNode();
-    const cancelRestoration = () => {
-      if (cancelled) return;
-      cancelled = true;
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      // Supersede any pending estimated-index scroll before the browser applies the gesture.
-      if (viewport)
-        void list.scrollToOffset({
-          get offset() {
-            return viewport.scrollTop;
-          },
-          animated: false,
-        });
-      setPositionedThreadKey(listIdentityKey);
-    };
-    const cancelForNavigation = () => {
-      cancelRestoration();
-      onManualNavigation();
-    };
-    const onScrollKey = (event: globalThis.KeyboardEvent) => {
-      if (
-        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key) &&
-        !(
-          event.target instanceof Element &&
-          event.target.closest("input, textarea, [contenteditable=true]")
-        )
-      )
-        cancelForNavigation();
-    };
-    viewport?.addEventListener("wheel", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("touchmove", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("pointerdown", cancelForNavigation, { passive: true });
-    viewport?.ownerDocument.addEventListener("keydown", onScrollKey);
-    const position = rememberedPosition;
-    const index = restoreRowIndex;
-    const targetRowId = rows[index]?.id;
-    if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
-    const cleanup = () => {
-      cancelled = true;
-      if (cancelPositionRestoreRef?.current === cancelRestoration) {
-        cancelPositionRestoreRef.current = null;
-      }
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      viewport?.removeEventListener("wheel", cancelForNavigation);
-      viewport?.removeEventListener("touchmove", cancelForNavigation);
-      viewport?.removeEventListener("pointerdown", cancelForNavigation);
-      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
-    };
-    if (positionHistoryLoading || waitingForReadingHistory) return cleanup;
-    // SCIENT-FORK:START — left while following: back to where the follow is now (chat/liveFollowOffset.ts).
-    const followingPromptId = position?.followingPromptId;
-    if (followingPromptId) {
-      returnToLiveFollow({
-        list,
-        rows,
-        composerInset: contentInsetEndAdjustment,
-        promptId: followingPromptId,
-        cancelled: () => cancelled,
-        nextFrame: (step) => {
-          settleFrame = requestAnimationFrame(step);
-        },
-        done: () => {
-          setPositionedThreadKey(listIdentityKey);
-          // The follow carries on from here while the prompt's run still works.
-          onResumeFollow?.(followingPromptId);
-        },
-      });
-      return cleanup;
-    }
-    // SCIENT-FORK:END
-    const scrolling =
-      position && index >= 0
-        ? list.scrollToIndex({
-            index,
-            animated: false,
-            viewPosition: 0,
-            viewOffset: -restoreOffset,
-          })
-        : list.scrollToEnd({ animated: false });
-    void Promise.resolve(scrolling).then(() => {
-      if (cancelled) return;
-      if (!position || index < 0) {
-        // Rows measure after the first jump; keep the end in view until the
-        // list height holds for two frames, so a fresh open lands at the end.
-        let stableEndFrames = 0;
-        let remainingEndFrames = 60;
-        const settleAtEnd = () => {
-          if (cancelled) return;
-          const element = list.getScrollableNode();
-          if (!element || --remainingEndFrames <= 0) {
-            // SCIENT-FORK
-            setAbandonedPositionKey(listIdentityKey);
-            setPositionedThreadKey(listIdentityKey);
-            return;
-          }
-          if (element.scrollHeight - element.clientHeight - element.scrollTop > 1) {
-            stableEndFrames = 0;
-            void Promise.resolve(list.scrollToEnd({ animated: false })).then(() => {
-              if (!cancelled) settleFrame = requestAnimationFrame(settleAtEnd);
-            });
-            return;
-          }
-          if (++stableEndFrames >= 2) setPositionedThreadKey(listIdentityKey);
-          else settleFrame = requestAnimationFrame(settleAtEnd);
-        };
-        settleFrame = requestAnimationFrame(settleAtEnd);
-        return;
-      }
-      // Index scrolling starts from estimates. Keep the saved row mounted
-      // until its measured position and the DOM agree for two layout frames.
-      let stableFrames = 0;
-      let remainingFrames = 60;
-      const reconcile = () => {
-        if (cancelled) return;
-        if (--remainingFrames <= 0) {
-          // SCIENT-FORK
-          setAbandonedPositionKey(listIdentityKey);
-          setPositionedThreadKey(listIdentityKey);
-          return;
-        }
-        const state = list.getState();
-        const rowIndex = targetRowId === undefined ? undefined : state.indexByKey(targetRowId);
-        const row = rowIndex === undefined ? undefined : state.elementAtIndex(rowIndex);
-        const element = list.getScrollableNode();
-        if (!row || !element) {
-          settleFrame = requestAnimationFrame(reconcile);
-          return;
-        }
-        const offset = Math.max(
-          0,
-          Math.min(
-            element.scrollTop +
-              row.getBoundingClientRect().top -
-              element.getBoundingClientRect().top +
-              restoreOffset,
-            element.scrollHeight - element.clientHeight,
-          ),
-        );
-        if (Math.abs(element.scrollTop - offset) > 1) {
-          stableFrames = 0;
-          void list.scrollToOffset({ offset, animated: false }).then(() => {
-            if (!cancelled) settleFrame = requestAnimationFrame(reconcile);
-          });
-          return;
-        }
-        if (++stableFrames >= 2) {
-          setPositionedThreadKey(listIdentityKey);
-        } else {
-          settleFrame = requestAnimationFrame(reconcile);
-        }
-      };
-      settleFrame = requestAnimationFrame(reconcile);
-    });
-    return cleanup;
-  }, [
-    citationRequest,
-    anchorMessageId,
-    cancelPositionRestoreRef,
-    listIdentityKey,
+  // SCIENT-FORK:START — restore by message identity, settle at the end, give up visibly, and
+  // return to a follow the reader left (chat/readerScrolling.ts).
+  useReadingPositionRestore({
     listRef,
-    onManualNavigation,
+    rows,
+    listIdentityKey,
     rememberedPosition,
     restoringThreadPosition,
-    rows,
+    readingListLoaded,
+    citationRequest,
+    anchorMessageId,
     restoreRowIndex,
     restoreOffset,
     waitingForReadingHistory,
     positionHistoryLoading,
-    readingListLoaded,
-    // SCIENT-FORK:START — the return to a follow.
     contentInsetEndAdjustment,
+    cancelPositionRestoreRef,
+    onManualNavigation,
     onResumeFollow,
-    // SCIENT-FORK:END
-  ]);
+    setPositionedThreadKey,
+    setAbandonedPositionKey,
+  });
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — report the positioned thread to a landing fork.
   const positionedListThreadKey = settledListThreadKey({
     listThreadKey: listIdentityKey,
