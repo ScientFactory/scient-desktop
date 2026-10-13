@@ -1,3 +1,4 @@
+// SCIENT-FORK:START — Scient modules this sink composes (fork history, running-fork capture, ...).
 import {
   ProviderTextSnapshotError,
   type ProviderTextSnapshotOwner,
@@ -20,7 +21,9 @@ import { makeSourcePlanConsumer } from "./scient-fork/sourcePlanConsumption.ts";
 import {
   readCurrentRunningForkOwner,
   runningForkAuthorityChanged,
+  makeRunningForkTextCapture,
 } from "./scient-fork/runningForkSource.ts";
+// SCIENT-FORK:END
 import {
   CommandId,
   type OrchestrationV2Run,
@@ -113,10 +116,12 @@ interface EventSinkTransactionHooks {
 }
 
 export interface EventSinkV2Shape {
+  // SCIENT-FORK:START — a running fork's captured text, written and read in one transaction.
   readonly captureRunningForkText?: (input: {
     readonly owner: ProviderTextSnapshotOwner;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ProviderTextSnapshotProjection, EventSinkV2Error | ProviderTextSnapshotError>;
+  // SCIENT-FORK:END
 
   readonly write: (
     input: EventSinkTransactionHooks & {
@@ -186,14 +191,17 @@ export interface EventSinkV2Shape {
     readonly threadId: ThreadId;
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
+    // SCIENT-FORK:START — a running fork's captured source, rechecked at commit.
     readonly runningForkSource?: {
       readonly owner: ProviderTextSnapshotOwner;
       readonly capture: ProviderTextSnapshotProjection;
     };
+    // SCIENT-FORK:END
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
-    /** SCIENT-FORK: a new fork's inherited history, recorded with its creation. */
+    // SCIENT-FORK:START — a new fork's inherited history, recorded with its creation.
     readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
+    // SCIENT-FORK:END
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
@@ -637,49 +645,35 @@ const layerBase: Layer.Layer<
       readCurrentRunningForkOwner({ projectionStore, projectStore }, owner);
     // SCIENT-FORK:END
 
-    const captureRunningForkText = Effect.fn("EventSink.captureRunningForkText")(function* (
-      input: Parameters<NonNullable<EventSinkV2Shape["captureRunningForkText"]>>[0],
-    ) {
-      const result = yield* commitAndPublish(
+    // SCIENT-FORK:START — a running fork's captured text, written with this sink's steps.
+    const writeRunningForkText = makeRunningForkTextCapture({
+      commitAndPublish,
+      readOwner: readRunningForkOwner,
+      appendAndApply: (events) =>
         Effect.gen(function* () {
-          yield* readRunningForkOwner(input.owner);
-          const normalized = yield* normalizeEvents(input.events);
-          const storedEvents = yield* eventStore.append({ events: normalized });
+          const storedEvents = yield* eventStore.append({ events: yield* normalizeEvents(events) });
           yield* applyStoredEvents(storedEvents);
-          yield* readRunningForkOwner(input.owner);
-          // The fork's one full read of its source, at the captured frame.
-          const projection = yield* projectionStore.getThreadProjection(input.owner.threadId);
-          const sourceSequence = yield* eventStore.latestSequence({
-            threadId: input.owner.threadId,
-          });
-          const project = yield* projectStore.get(projection.thread.projectId);
-          if (Option.isNone(project))
-            return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-          return {
-            projection,
-            sourceSequence,
-            storedEvents,
-            workspaceRoot: project.value.workspaceRoot,
-          };
+          return storedEvents;
         }),
-        (committed) =>
-          Effect.gen(function* () {
-            yield* eventStore.publishCommitted(committed.storedEvents);
-            yield* publishLiveEvents(committed.storedEvents);
-          }),
-      ).pipe(
+      publish: (storedEvents) =>
+        eventStore
+          .publishCommitted(storedEvents)
+          .pipe(Effect.andThen(publishLiveEvents(storedEvents))),
+      latestSequence: (threadId) => eventStore.latestSequence({ threadId }),
+      projectionStore,
+      projectStore,
+    });
+    const captureRunningForkText = (
+      input: Parameters<NonNullable<EventSinkV2Shape["captureRunningForkText"]>>[0],
+    ) =>
+      writeRunningForkText(input).pipe(
         Effect.mapError((cause) =>
           Schema.is(ProviderTextSnapshotError)(cause)
             ? cause
             : new EventSinkWriteError({ eventCount: input.events.length, cause }),
         ),
       );
-      return {
-        projection: result.projection,
-        sourceSequence: result.sourceSequence,
-        workspaceRoot: result.workspaceRoot,
-      };
-    });
+    // SCIENT-FORK:END
 
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
@@ -973,7 +967,9 @@ const layerBase: Layer.Layer<
     };
 
     return EventSinkV2.of({
+      // SCIENT-FORK:START — running-fork text capture.
       captureRunningForkText,
+      // SCIENT-FORK:END
       write: (input) =>
         writeEffect({ ...input, effects: [] }).pipe(
           Effect.mapError(

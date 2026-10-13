@@ -464,7 +464,7 @@ it.live("native provisioning abandons a dedicated fork whose frozen checkpoint d
 );
 
 it.live(
-  "a removed source worktree can restore its saved checkpoint only into a dedicated native worktree",
+  "a removed source worktree forks into the project folder, or restores its checkpoint into a worktree",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -494,24 +494,23 @@ it.live(
           sourceAssistantMessageId: MessageId.make("workspace-a1"),
         });
         assert.equal(options.available, true);
-        assert.equal(options.localAvailable, false);
+        assert.equal(options.localAvailable, true);
         assert.equal(options.newWorktree, true);
-        assert.include(options.reason ?? "", "original worktree");
-        const before = yield* sink.latestSequence({});
-        assert.equal(
-          (yield* Effect.result(
-            forks.dispatch({
-              type: "thread.fork",
-              commandId: CommandId.make("removed-local-refusal"),
-              originThreadId: sourceId,
-              newThreadId: ThreadId.make("removed-local-refusal"),
-              sourceAssistantMessageId: MessageId.make("workspace-a1"),
-              workspaceMode: "local",
-            }),
-          ))._tag,
-          "Failure",
-        );
-        assert.equal(yield* sink.latestSequence({}), before);
+        assert.isNull(options.reason);
+        assert.include(options.workspaceNotice ?? "", "project folder");
+        yield* forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("removed-local"),
+          originThreadId: sourceId,
+          newThreadId: ThreadId.make("removed-local"),
+          sourceAssistantMessageId: MessageId.make("workspace-a1"),
+          workspaceMode: "local",
+        });
+        const local = yield* store.getThread(ThreadId.make("removed-local"));
+        assert.equal(local.conversationFork?.status, "ready");
+        assert.equal(local.conversationFork?.cwd, cwd);
+        assert.isNull(local.worktreePath);
+        assert.isNull(local.branch);
         const { command, waiting } = yield* pending("removed-source", "new-worktree");
         yield* (yield* OrchestrationEffectWorkerV2).drain();
         assert.equal((yield* Fiber.join(waiting))._tag, "Success");
@@ -525,7 +524,218 @@ it.live(
     ),
 );
 
-it.live("Git failures reach fork clients without workspace paths or Git output", () =>
+it.live("a fork whose own worktree setup is unfinished can still be forked locally", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* seed();
+      const store = yield* ProjectionStoreV2;
+      const { command } = yield* pending("unfinished-parent", "new-worktree");
+      assert.equal(
+        (yield* store.getThread(command.newThreadId)).conversationFork?.status,
+        "pending",
+      );
+      const child = ThreadId.make("unfinished-parent-child");
+      yield* (yield* ConversationForkService).dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("unfinished-parent-child"),
+        originThreadId: command.newThreadId,
+        newThreadId: child,
+        workspaceMode: "local",
+      });
+      const forked = yield* store.getThread(child);
+      assert.equal(forked.conversationFork?.status, "ready");
+      assert.equal(forked.lineage.parentThreadId, command.newThreadId);
+    }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+  ),
+);
+
+it.live("a local fork continues without a restore point when its checkpoint cannot be saved", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* seed();
+      const sql = yield* SqlClient.SqlClient;
+      const forks = yield* ConversationForkService;
+      yield* sql.unsafe(`CREATE TRIGGER reject_snapshot_ownership BEFORE INSERT ON scient_fork_checkpoint_ownership
+        BEGIN SELECT RAISE(ABORT, 'injected ownership failure'); END`);
+      const fork = (suffix: string, workspaceMode: "local" | "new-worktree") =>
+        forks.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(`no-restore-${suffix}`),
+          originThreadId: sourceId,
+          newThreadId: ThreadId.make(`no-restore-${suffix}`),
+          sourceAssistantMessageId: MessageId.make("workspace-a1"),
+          workspaceMode,
+        });
+      yield* fork("local", "local");
+      const local = yield* (yield* ProjectionStoreV2).getThread(ThreadId.make("no-restore-local"));
+      assert.equal(local.conversationFork?.status, "ready");
+      assert.isNull(local.conversationFork?.checkpointRef);
+      assert.isNull(local.conversationFork?.checkpointOid);
+      // A new worktree is built from the checkpoint, so it still refuses.
+      assert.equal((yield* Effect.result(fork("worktree", "new-worktree")))._tag, "Failure");
+    }).pipe(
+      Effect.provide(
+        makeRuntime(gitLayer, { databaseLayer: SqlitePersistenceMemory }).pipe(
+          Layer.provideMerge(SqlitePersistenceMemory),
+        ),
+      ),
+      Effect.timeout("20 seconds"),
+    ),
+  ),
+);
+
+it.live(
+  "a local fork whose worktree disappears while it is saved works in the project folder",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd } = yield* seed();
+        const fs = yield* FileSystem.FileSystem;
+        const store = yield* ProjectionStoreV2;
+        const sink = yield* EventSinkV2;
+        const worktree = NodePath.join(cwd, "vanishing-worktree");
+        yield* fs.makeDirectory(worktree);
+        const source = yield* store.getThread(sourceId);
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("vanishing-source-worktree"),
+              type: "thread.metadata-updated",
+              threadId: sourceId,
+              occurredAt: now,
+              payload: { ...source, worktreePath: worktree, updatedAt: now },
+            },
+          ],
+        });
+        // Writing the fork's checkpoint ref removes the worktree and fails, once.
+        const hook = NodePath.join(cwd, ".git", "hooks", "reference-transaction");
+        yield* fs.writeFileString(
+          hook,
+          `#!/bin/sh\nif [ "$1" = prepared ]; then rm -rf '${worktree}'; rm -f "$0"; exit 1; fi\nexit 0\n`,
+        );
+        yield* fs.chmod(hook, 0o755);
+        yield* (yield* ConversationForkService).dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("vanishing-local"),
+          originThreadId: sourceId,
+          newThreadId: ThreadId.make("vanishing-local"),
+          sourceAssistantMessageId: MessageId.make("workspace-a1"),
+          workspaceMode: "local",
+        });
+        assert.isFalse(yield* fs.exists(worktree));
+        const target = yield* store.getThread(ThreadId.make("vanishing-local"));
+        assert.equal(target.conversationFork?.status, "ready");
+        assert.equal(target.conversationFork?.cwd, cwd);
+        assert.isNull(target.conversationFork?.checkpointRef);
+        assert.isNull(target.worktreePath);
+        assert.isNull(target.branch);
+      }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+    ),
+);
+
+const removeSourceWorktree = Effect.fn("Workspace.removeSourceWorktree")(function* (
+  worktree: string,
+) {
+  const store = yield* ProjectionStoreV2;
+  const source = yield* store.getThread(sourceId);
+  const now = yield* DateTime.now;
+  yield* (yield* EventSinkV2).write({
+    events: [
+      {
+        id: EventId.make(`source-worktree:${worktree}`),
+        type: "thread.metadata-updated",
+        threadId: sourceId,
+        occurredAt: now,
+        payload: { ...source, worktreePath: worktree, updatedAt: now },
+      },
+    ],
+  });
+});
+
+it.live(
+  "a running fork whose worktree was removed forks locally and never snapshots the project",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd } = yield* seed(true);
+        const forks = yield* ConversationForkService;
+        yield* removeSourceWorktree(NodePath.join(cwd, "removed-running-worktree"));
+        const running = { sourceRunningRunId: RunId.make("workspace-run-3") };
+        const options = yield* forks.getOptions({ originThreadId: sourceId, ...running });
+        assert.equal(options.sourceRunningRunId, running.sourceRunningRunId);
+        assert.isFalse(options.newWorktree);
+        assert.include(options.workspaceNotice ?? "", "project folder");
+        const fork = (suffix: string, workspaceMode: "local" | "new-worktree") =>
+          forks.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make(`removed-running-${suffix}`),
+            originThreadId: sourceId,
+            newThreadId: ThreadId.make(`removed-running-${suffix}`),
+            workspaceMode,
+            ...running,
+          });
+        assert.equal((yield* Effect.result(fork("worktree", "new-worktree")))._tag, "Failure");
+        assert.equal(
+          yield* git(cwd, [
+            "for-each-ref",
+            "--format=%(refname)",
+            `${checkpointRefForThreadTurn(ThreadId.make("removed-running-worktree"), 0)}*`,
+          ]),
+          "",
+        );
+        yield* fork("local", "local");
+        const local = yield* (yield* ProjectionStoreV2).getThread(
+          ThreadId.make("removed-running-local"),
+        );
+        assert.equal(local.conversationFork?.status, "ready");
+        assert.equal(local.conversationFork?.cwd, cwd);
+        assert.isNull(local.conversationFork?.checkpointRef);
+        assert.isNull(local.worktreePath);
+      }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+    ),
+);
+
+it.live(
+  "a local fork refuses when the project folder it would use disappears while it is saved",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd } = yield* seed();
+        const fs = yield* FileSystem.FileSystem;
+        yield* removeSourceWorktree(NodePath.join(cwd, "already-removed-worktree"));
+        // Writing the fork's checkpoint ref moves the project folder away and fails, once.
+        const hook = NodePath.join(cwd, ".git", "hooks", "reference-transaction");
+        yield* fs.writeFileString(
+          hook,
+          `#!/bin/sh\nif [ "$1" = prepared ]; then rm -f "$0"; mv '${cwd}' '${cwd}-gone'; exit 1; fi\nexit 0\n`,
+        );
+        yield* fs.chmod(hook, 0o755);
+        const result = yield* Effect.result(
+          (yield* ConversationForkService).dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("vanishing-root"),
+            originThreadId: sourceId,
+            newThreadId: ThreadId.make("vanishing-root"),
+            sourceAssistantMessageId: MessageId.make("workspace-a1"),
+            workspaceMode: "local",
+          }),
+        );
+        yield* fs.rename(`${cwd}-gone`, cwd);
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure")
+          assert.include(result.failure.message, "project folder is unavailable");
+        assert.equal(
+          (yield* (yield* ProjectionStoreV2)
+            .getThread(ThreadId.make("vanishing-root"))
+            .pipe(Effect.exit))._tag,
+          "Failure",
+        );
+      }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+    ),
+);
+
+it.live("a Git failure costs only the restore point, and never reaches clients with paths", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const secret = "/private/fork-diagnostics-path";
@@ -550,22 +760,27 @@ it.live("Git failures reach fork clients without workspace paths or Git output",
           originThreadId: sourceId,
           sourceAssistantMessageId: MessageId.make("workspace-a1"),
         });
-        assert.equal(options.available, false);
-        assert.include(options.reason ?? "", "Git history");
-        assert.notInclude(options.reason ?? "", secret);
-        const result = yield* Effect.result(
+        assert.equal(options.available, true);
+        assert.isFalse(options.newWorktree);
+        assert.notInclude(JSON.stringify(options), secret);
+        const fork = (suffix: string, workspaceMode: "local" | "new-worktree") =>
           forks.dispatch({
             type: "thread.fork",
-            commandId: CommandId.make("git-diagnostics"),
+            commandId: CommandId.make(`git-diagnostics-${suffix}`),
             originThreadId: sourceId,
-            newThreadId: ThreadId.make("git-diagnostics"),
+            newThreadId: ThreadId.make(`git-diagnostics-${suffix}`),
             sourceAssistantMessageId: MessageId.make("workspace-a1"),
-            workspaceMode: "local",
-          }),
+            workspaceMode,
+          });
+        yield* fork("local", "local");
+        const local = yield* (yield* ProjectionStoreV2).getThread(
+          ThreadId.make("git-diagnostics-local"),
         );
+        assert.equal(local.conversationFork?.status, "ready");
+        assert.isNull(local.conversationFork?.checkpointRef);
+        const result = yield* Effect.result(fork("worktree", "new-worktree"));
         assert.equal(result._tag, "Failure");
         if (result._tag === "Failure") {
-          assert.include(result.failure.message, "Git history");
           assert.notInclude(result.failure.message, secret);
           assert.isUndefined(result.failure.cause);
           assert.equal(result.failure.forkDisposition, "rejected");
