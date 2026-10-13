@@ -5,8 +5,8 @@
 This is an interim review receipt. The history-preserving integration, prior
 complete local aggregate and automated mobile native qualification exist.
 Yaacov accepted the desktop candidate and explicitly deferred mobile visual
-review. Final owned-main catch-up and qualification of that composition remain
-pending. `upstream-state.json` and the current `UPSTREAM.md` pointer remain at
+review. The final owned-main catch-up is source-reviewed and committed;
+qualification of that composition remains pending. `upstream-state.json` and the current `UPSTREAM.md` pointer remain at
 the previous qualified official boundary. User-authorized MERGE delivery still
 requires the final gates; release remains separate.
 
@@ -27,6 +27,17 @@ requires the final gates; release remains separate.
   parent. It preserves the original upstream merge and includes the landed
   project-initialization guide correction. No unlanded implementation lane was
   imported. Public main was reverified at this exact commit during app review.
+- Landed Stop and queue owners from main
+  `fded53330972f86c5f58fab1b1dddb63dae7c6c2` are retained by catch-up merge
+  `1aedc78a13d32e169737d50ca652cc24de5dc24c`, with parents
+  `89d11035e1bc47cfc6d52da9f6b3e8cdac3b4ba1` and that exact main. Independent
+  server and web reviews found no source blockers. Eighteen of the 21 clean
+  delta paths match landed-main blobs; the three composed web/documentation
+  hosts were reviewed against both parents. Stop observes only ordinary local
+  preparation before native admission. The owned acknowledgement composes the
+  original authorized interrupt command with captured thread/run/attempt
+  guards; queue retirement consumes only server user IDs. These source reviews
+  do not substitute for final composed behavioral qualification.
 - Runtime candidate: `e27a7107ca34c6fde564e754a1dd15ff2cc321cc`, tree
   `a01c8016c9e126929f150b0806894a1ff6f38328`. Its change from aggregate-tested
   `3fd6f9b513dab6cec3f1c9378c9f71b59469cd63` affects one browser-only test file;
@@ -214,8 +225,9 @@ byte-identical to owned main. Completed Linux CI at that exact main qualifies
 those unchanged Linux inputs only; it does not establish candidate CI or macOS
 D-Bus support.
 
-Final review must compose actually landed owned main, qualify and review that
-exact composition, and record final hosted PR-head and merge-group checks.
+Final qualification must cover the reviewed owned-main composition and record
+final hosted PR-head and merge-group checks. A later landed-main delta must be
+reviewed and its affected evidence refreshed before delivery.
 Desktop acceptance applies to the reviewed runtime; assess later deltas before
 reusing it. Mobile visual review remains explicitly deferred. Queue admission,
 actual MERGE delivery, public-main ancestry and release are separate milestones.
