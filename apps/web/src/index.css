@@ -1859,6 +1859,8 @@ code {
 
 /* Chat markdown rendering */
 
+/* SCIENT-FORK:START — Markdown reading sizes (scient/typography/profile.css): chat and the rich
+   editor remap Tailwind's sm/xs text tokens and set the body size. */
 .chat-markdown,
 .scient-markdown-document {
   --text-sm: var(--scient-font-size-markdown-body);
@@ -1869,6 +1871,7 @@ code {
   --scient-font-size-code-label: var(--scient-font-size-markdown-marker);
   font-size: var(--scient-font-size-markdown-body);
 }
+/* SCIENT-FORK:END */
 
 .chat-markdown > :first-child {
   margin-top: 0;
@@ -2038,7 +2041,9 @@ code {
   border-top: 1px solid var(--contrast-border);
   padding-top: 0.75rem;
   color: var(--contrast-muted-foreground);
+  /* SCIENT-FORK:START — Markdown reading sizes (upstream: 0.75rem). */
   font-size: var(--scient-font-size-markdown-secondary);
+  /* SCIENT-FORK:END */
 }
 
 .chat-markdown section[data-footnotes] ol {
@@ -2057,7 +2062,9 @@ code {
   justify-content: center;
   border-radius: 0.25rem;
   text-decoration: none;
+  /* SCIENT-FORK:START — Markdown reading sizes (upstream: 0.6875rem). */
   font-size: var(--scient-font-size-markdown-marker);
+  /* SCIENT-FORK:END */
   font-weight: 600;
 }
 
@@ -2069,7 +2076,9 @@ code {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--contrast-foreground);
+  /* SCIENT-FORK:START — Markdown reading sizes (upstream: 0.75rem). */
   font-size: var(--scient-font-size-markdown-secondary);
+  /* SCIENT-FORK:END */
 }
 
 .chat-markdown pre {
@@ -2145,7 +2154,9 @@ code {
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
+  /* SCIENT-FORK:START — Markdown reading sizes (upstream: 0.75rem). */
   font-size: var(--scient-font-size-markdown-secondary);
+  /* SCIENT-FORK:END */
 }
 
 .chat-markdown th,
@@ -2165,12 +2176,16 @@ code {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }
 
-/* Collapsed: single-line cells keep their full text and the table scrolls
-   horizontally. Never truncate here; clipped text would be unreachable. */
+/* SCIENT-FORK:START — collapsed cells never truncate (PR #393). Upstream: "Collapsed (default):
+   single-line cells truncate so arbitrary chat content cannot blow the column out; the footer
+   toggle expands cells to wrap", with overflow: hidden, max-width: 24rem and
+   text-overflow: ellipsis. Here single-line cells keep their full text and the table scrolls
+   horizontally; clipped text would be unreachable. */
 .chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
 .chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
   white-space: nowrap;
 }
+/* SCIENT-FORK:END */
 
 .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
   max-width: 24rem;
@@ -2314,9 +2329,11 @@ code {
   }
 }
 
-/* Scient shared Markdown presentation. Every rule below is additive and sits
-   after the inherited rules it refines, so upstream T3 lines above stay
-   byte-identical through merges. The tokens live beside --code-background. */
+/* Scient shared Markdown presentation. The rules below are additive and sit after the inherited
+   rules they refine. Chat Markdown also changes inherited rules above in place, each inside a
+   SCIENT-FORK region: the reading-size token block, four font-size values (footnotes, footnote
+   reference, inline code, table), the collapsed-table truncation and the heading sizes. The code
+   block tokens live beside --code-background. */
 
 /* SCIENT-FORK:START — chat, composer and previews share the rich editor's quiet card. */
 :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock,
@@ -2330,7 +2347,7 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
 @import "./scient/presentation/scient-markdown-code-header.css";
 /* SCIENT-FORK:END */
 
-/* Interrupted row separators: the line stops short of each cell edge. */
+/* SCIENT-FORK:START — interrupted row separators: the line stops short of each cell edge. */
 .chat-markdown thead th,
 .chat-markdown tbody td {
   border-bottom: 1px solid transparent;
@@ -2343,6 +2360,7 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
   background-repeat: no-repeat;
   background-size: calc(100% - 1rem) 1px;
 }
+/* SCIENT-FORK:END */
 
 /* SCIENT-FORK:START — visual card utility controls */
 @import "./scient/presentation/scient-visual-utility-controls.css";
