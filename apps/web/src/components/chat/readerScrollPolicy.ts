@@ -7,7 +7,7 @@ import {
 import type { RunId } from "@t3tools/contracts";
 
 /** Exclude reserved anchor padding when deciding whether real content is below the reader. */
-export function withRealTimelineEnd<T extends TimelineListMeasurementState>(
+function withRealTimelineEnd<T extends TimelineListMeasurementState>(
   state: T | undefined,
   composerInset: number,
 ): T | undefined {
