@@ -171,7 +171,7 @@ Before writable admission, and again when recovering:
   | exFAT                              | fails (`ENOTSUP`)                                                | fails     | refused                            |
   | FAT32                              | **reports success but only renames**, destroying the second file | fails     | refused (probe detects it)         |
 
-  The FAT32 driver correctly reports no swap support in the volume's capabilities (`VOL_CAP_INT_RENAME_SWAP`). The #495 helper should check that capability before swapping, so no future caller can lose a file this way; this is a #495 follow-up.
+  The FAT32 driver correctly reports no swap support in the volume's capabilities (`VOL_CAP_INT_RENAME_SWAP`). [#555](https://github.com/ScientFactory/scient-desktop/pull/555), stacked on #495, makes the helper check that capability before swapping and verify every swap afterwards, so no caller can lose a file this way.
 
 - **Unplugged disk.** The connection becomes unavailable and pending recovery waits for the same volume and vault. Never create a fresh vault while the connection still references retained copies or an apply intent.
 - **Specific refusals** when no protected location can be created: `read-only-parent`, `shared-parent` (parent not owned by the server user, or writable by others without the sticky bit; ACLs are not inspected), `disk-root-checkout` (the sibling would be on another device), `unsafe-directory` (symlink, wrong owner or permissions), `inside-checkout`.
