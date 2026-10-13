@@ -13,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 
 import { overleafConnectionFixture } from "./OverleafConnectionState.testkit.ts";
 import * as OverleafGitExecutor from "./OverleafGitExecutor.ts";
+import { newOverleafId } from "./OverleafGitExecutor.ts";
 import { captureOverleafInventory } from "./OverleafInventory.ts";
 import * as OverleafRepository from "./OverleafRepository.ts";
 import { buildOverleafReview, overleafConflictKey, type OverleafReview } from "./OverleafReview.ts";
@@ -72,7 +73,7 @@ const review = Effect.fnUntraced(function* (
     readonly choices?: ReadonlyMap<string, ConflictChoice>;
   },
 ) {
-  const repo = NodePath.join(input.root, `connection-${crypto.randomUUID()}.git`);
+  const repo = NodePath.join(input.root, `connection-${newOverleafId()}.git`);
   yield* repos.initialize({ repo, gitUrl: "https://git.overleaf.com/0123456789abcdef01234567" });
   const tree = Effect.fnUntraced(function* (files: Record<string, string>) {
     const entries = [];

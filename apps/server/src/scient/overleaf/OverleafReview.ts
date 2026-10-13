@@ -16,8 +16,14 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 
 import type { OverleafConnectionDocument } from "./OverleafConnectionState.ts";
-import type { OverleafGitError } from "./OverleafGitExecutor.ts";
-import { OVERLEAF_LIMITS, type OverleafInventory } from "./OverleafInventory.ts";
+import { newOverleafId } from "./OverleafGitExecutor.ts";
+import {
+  isOverleafLfsPointer,
+  OVERLEAF_LIMITS,
+  overleafPathExclusion,
+  type OverleafInventory,
+  type OverleafLimits,
+} from "./OverleafInventory.ts";
 import {
   OverleafRepository,
   OverleafRepositoryError,
@@ -34,6 +40,7 @@ import {
   hasConflictMarkers,
   type Rename,
 } from "./syncRules.ts";
+import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
 import type { WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
 
 export type OverleafReviewWarning =
@@ -79,10 +86,16 @@ export interface OverleafReviewBinding {
   readonly remoteTree: string;
   readonly selectedAdditions: ReadonlyArray<string>;
   readonly newLocalOnly: ReadonlyArray<string>;
+  /** Never-synchronized local files captured because Overleaf has content at their place. */
+  readonly collisionPaths: ReadonlyArray<string>;
   readonly choices: ReadonlyArray<readonly [string, ConflictChoice]>;
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
+  /** Conflict material recorded before this review, and which of it is still unresolved. */
+  readonly recordedMarkerPaths: ReadonlyArray<string>;
+  readonly unresolvedMarkers: ReadonlyArray<string>;
   readonly candidateTree: string;
   readonly conflictKeys: ReadonlyArray<string>;
+  /** Files where this review's plan writes new conflict material. */
   readonly markerPaths: ReadonlyArray<string>;
   readonly warnings: ReadonlyArray<OverleafReviewWarning>;
   readonly acknowledgements: ReadonlyArray<OverleafReviewWarning["kind"]>;
@@ -107,6 +120,8 @@ export interface OverleafReview {
   readonly upToDate: boolean;
   /** Local files kept because Overleaf has content at their place (contract A30). */
   readonly collisions: ReadonlyArray<string>;
+  /** Bytes held by `applyPlan.target`, for bounding how many reviews are kept. */
+  readonly targetBytes: number;
   readonly applyPlan: WorkspaceApplyPlan;
 }
 
@@ -114,8 +129,19 @@ export type OverleafReviewRefusal =
   | { readonly reason: "remote-file-limit" }
   | { readonly reason: "remote-too-large" }
   | { readonly reason: "remote-file-too-large"; readonly path: string }
+  /** Overleaf has content the folder could never hold: a dropping, a reserved name, an LFS pointer. */
+  | {
+      readonly reason: "remote-forbidden";
+      readonly path: string;
+      readonly kind: "reserved" | "dropping" | "staging" | "invalid-path" | "lfs-pointer";
+    }
+  /** Two paths differ only by letter case or Unicode form; one would silently replace the other. */
+  | { readonly reason: "path-alias"; readonly first: string; readonly second: string }
   | { readonly reason: "candidate-file-limit" }
   | { readonly reason: "candidate-too-large" }
+  | { readonly reason: "candidate-file-too-large"; readonly path: string }
+  /** More local-only paths than a connection can remember; choose a narrower folder. */
+  | { readonly reason: "local-only-limit" }
   /** Overleaf has content where the folder has something never synchronized (a link, repository, dropping). */
   | { readonly reason: "remote-collides-with-excluded"; readonly path: string };
 
@@ -137,16 +163,21 @@ export interface OverleafReviewInput {
   readonly epochs: { readonly checkout: number; readonly credential: number };
   /** Private folder for staging captured bytes as blobs; cleared afterwards. */
   readonly scratch: string;
-  readonly limits?: Partial<typeof OVERLEAF_LIMITS>;
+  readonly limits?: Partial<OverleafLimits>;
 }
 
 export type OverleafReviewResult =
   | { readonly _tag: "review"; readonly review: OverleafReview }
-  /** Capture these local paths in full and build the review again. */
+  /**
+   * Capture exactly these local paths in full (and no others as collisions)
+   * and build the review again.
+   */
   | { readonly _tag: "needs-capture"; readonly paths: ReadonlyArray<string> }
   | { readonly _tag: "refused"; readonly refusal: OverleafReviewRefusal };
 
+/** Code-unit order: the same on every machine, unlike locale-aware comparison. */
 const byPath = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+const sorted = (paths: Iterable<string>) => [...paths].sort(byPath);
 const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 const ancestors = (path: string) => {
   const out: string[] = [];
@@ -162,47 +193,95 @@ const renamesOf = (changes: ReadonlyArray<TreeChange>): Rename[] =>
   );
 /** A conflict's identity is its set of paths; a choice follows the group, not its position. */
 export const overleafConflictKey = (paths: ReadonlyArray<string>) =>
-  sha256(paths.toSorted(byPath).join("\0"));
+  sha256(sorted(paths).join("\0"));
 /** Editable on Overleaf means text; a NUL byte early on means it is stored as an upload. */
 const looksLikeText = (bytes: Uint8Array) => !bytes.subarray(0, 8_000).includes(0);
+/** LFS pointers are small by specification; larger blobs need no prefix check. */
+const LFS_POINTER_MAX_BYTES = 1024;
 
-/** Canonical JSON: fixed key order from the object literal, arrays as given. */
-const overleafReviewDigest = (binding: OverleafReviewBinding) => sha256(JSON.stringify(binding));
+/** JSON with object keys sorted at every level, so equal bindings always digest equally. */
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object")
+    return `{${Object.keys(value)
+      .sort(byPath)
+      .map(
+        (key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
+      )
+      .join(",")}}`;
+  return JSON.stringify(value);
+};
+export const overleafReviewDigest = (binding: OverleafReviewBinding) =>
+  sha256(canonicalJson(binding));
 
 /**
- * Local files Overleaf has content at, or under, or above, that the inventory
- * did not read. They must be captured and reviewed, never treated as absent.
+ * Never-synchronized local files Overleaf has content at, under or above. They
+ * must be captured and decided in the review, never treated as absent.
  */
-function findCollisions(inventory: OverleafInventory, remote: FileTree) {
-  const uncaptured = [...inventory.localOnly, ...inventory.additions.map((entry) => entry.path)];
+function findCollisions(input: {
+  readonly inventory: OverleafInventory;
+  readonly remote: FileTree;
+  /** Paths captured for an earlier `needs-capture`; still never-synchronized. */
+  readonly collisionPaths: ReadonlySet<string>;
+}) {
+  const { inventory } = input;
+  const unsynced = new Set([
+    ...inventory.localOnly,
+    ...inventory.additions.map((entry) => entry.path),
+    ...input.collisionPaths,
+  ]);
   const beneath = new Map<string, string[]>();
-  for (const path of uncaptured)
+  for (const path of unsynced)
     for (const folder of ancestors(path))
       beneath.set(folder, [...(beneath.get(folder) ?? []), path]);
-  const uncapturedSet = new Set(uncaptured);
   const excluded = new Set(inventory.excluded.map((entry) => entry.path));
   const excludedBeneath = new Set(inventory.excluded.flatMap((entry) => ancestors(entry.path)));
   const capture = new Set<string>();
-  for (const path of remote.keys()) {
-    if (inventory.captured.has(path)) continue;
+  /** For each captured local path, the Overleaf paths it meets. */
+  const meets = new Map<string, Set<string>>();
+  const meet = (local: string, remote: string) => {
+    capture.add(local);
+    meets.set(local, (meets.get(local) ?? new Set()).add(remote));
+  };
+  for (const path of input.remote.keys()) {
+    if (inventory.captured.has(path) && !input.collisionPaths.has(path)) continue;
     if (
       excluded.has(path) ||
       excludedBeneath.has(path) ||
       ancestors(path).some((folder) => excluded.has(folder))
     )
-      return { excluded: path, capture: [] };
-    if (uncapturedSet.has(path)) capture.add(path);
-    for (const below of beneath.get(path) ?? []) capture.add(below);
-    for (const folder of ancestors(path)) if (uncapturedSet.has(folder)) capture.add(folder);
+      return { excluded: path, capture: [], groups: [] };
+    if (unsynced.has(path)) meet(path, path);
+    for (const below of beneath.get(path) ?? []) meet(below, path);
+    for (const folder of ancestors(path)) if (unsynced.has(folder)) meet(folder, path);
   }
-  return { excluded: null, capture: [...capture].sort(byPath) };
+  return {
+    excluded: null,
+    capture: sorted(capture),
+    groups: sorted(capture).map((local) => sorted([local, ...(meets.get(local) ?? [])])),
+  };
+}
+
+/** Two different spellings of one path, by letter case or Unicode form, or null. */
+function findAlias(paths: Iterable<string>) {
+  const seen = new Map<string, string>();
+  for (const path of paths) {
+    for (const name of [...ancestors(path), path]) {
+      const key = manuscriptCollisionKey(name);
+      const earlier = seen.get(key);
+      if (earlier !== undefined && earlier !== name)
+        return earlier < name ? { first: earlier, second: name } : { first: name, second: earlier };
+      seen.set(key, name);
+    }
+  }
+  return null;
 }
 
 export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   input: OverleafReviewInput,
 ) {
   const repos = yield* OverleafRepository;
-  const limits = { ...OVERLEAF_LIMITS, ...input.limits };
+  const limits: OverleafLimits = { ...OVERLEAF_LIMITS, ...input.limits };
   const { repo, connection, inventory } = input;
   const refused = (refusal: OverleafReviewRefusal): OverleafReviewResult => ({
     _tag: "refused",
@@ -219,16 +298,51 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   }
   if (remoteBytes > limits.totalBytes) return refused({ reason: "remote-too-large" });
   const remote = toMap(yield* repos.readTree({ repo, tree: input.remote.tree }));
+  const baseTree = connection.base.tree ?? (yield* repos.writeTree({ repo, entries: [] }));
+  const base = toMap(yield* repos.readTree({ repo, tree: baseTree }));
 
-  const collisions = findCollisions(inventory, remote);
+  // And to the same rules: nothing arrives that the folder's own inventory would refuse.
+  for (const [path, oid] of remote) {
+    const kind = overleafPathExclusion(path);
+    if (kind !== null) return refused({ reason: "remote-forbidden", path, kind });
+    // Content already in the base was checked when it first arrived.
+    if (base.get(path) === oid || (remoteSizes.get(path) ?? 0) > LFS_POINTER_MAX_BYTES) continue;
+    const prefix = yield* repos.readBlob({ repo, oid, maxBytes: LFS_POINTER_MAX_BYTES });
+    if (isOverleafLfsPointer(prefix))
+      return refused({ reason: "remote-forbidden", path, kind: "lfs-pointer" });
+  }
+  const alias = findAlias([
+    ...inventory.captured.keys(),
+    ...inventory.additions.map((entry) => entry.path),
+    ...inventory.localOnly,
+    ...inventory.folders,
+    ...inventory.excluded.map((entry) => entry.path),
+    ...[...remote.keys()].filter((path) => !inventory.captured.has(path)),
+  ]);
+  if (alias !== null) return refused({ reason: "path-alias", ...alias });
+
+  const requested = new Set(input.collisionPaths);
+  const collisions = findCollisions({ inventory, remote, collisionPaths: requested });
   if (collisions.excluded !== null)
     return refused({ reason: "remote-collides-with-excluded", path: collisions.excluded });
-  if (collisions.capture.length > 0)
+  // Exactly the colliding paths are captured as collisions: no fewer, and none that no
+  // longer collide, which would otherwise enter the local tree as if selected.
+  if (
+    collisions.capture.length !== requested.size ||
+    collisions.capture.some((path) => !requested.has(path))
+  )
     return { _tag: "needs-capture", paths: collisions.capture } satisfies OverleafReviewResult;
 
+  const newLocalOnly = inventory.additions
+    .map((addition) => addition.path)
+    .filter((path) => !input.selectedAdditions.includes(path));
+  const keptLocalOnly = connection.localOnlyPaths.filter((path) => !requested.has(path));
+  if (new Set([...keptLocalOnly, ...newLocalOnly]).size > limits.localOnlyPaths)
+    return refused({ reason: "local-only-limit" });
+
   // Stage the captured bytes, so Git stores exactly what was hashed, not a later read.
-  const stage = NodePath.join(input.scratch, `review-${NodeCrypto.randomUUID()}`);
-  const capturedPaths = [...inventory.captured.keys()].sort(byPath);
+  const stage = NodePath.join(input.scratch, `review-${newOverleafId()}`);
+  const capturedPaths = sorted(inventory.captured.keys());
   const oids = yield* Effect.acquireUseRelease(
     Effect.tryPromise({
       try: async () => {
@@ -256,8 +370,6 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     repo,
     entries: capturedPaths.map((path) => ({ path, oid: local.get(path)! })),
   });
-  const baseTree = connection.base.tree ?? (yield* repos.writeTree({ repo, entries: [] }));
-  const base = toMap(yield* repos.readTree({ repo, tree: baseTree }));
 
   const merge = yield* repos.merge({
     repo,
@@ -266,6 +378,13 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     remote: input.remote.tree,
   });
   const merged = toMap(yield* repos.readTree({ repo, tree: merge.tree }));
+  const mergedSizes = yield* repos.treeSizes({ repo, tree: merge.tree });
+  /** Sizes by blob, so candidate limits apply before any blob is read. */
+  const blobSizes = new Map<string, number>();
+  for (const [path, oid] of remote) blobSizes.set(oid, remoteSizes.get(path) ?? 0);
+  for (const [path, oid] of merged) blobSizes.set(oid, mergedSizes.get(path) ?? 0);
+  for (const [path, oid] of local) blobSizes.set(oid, inventory.captured.get(path)!.bytes.length);
+
   const renames = [
     ...renamesOf(yield* repos.diff({ repo, from: baseTree, to: localTree })),
     ...renamesOf(yield* repos.diff({ repo, from: baseTree, to: input.remote.tree })),
@@ -276,27 +395,36 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     merged,
     incoming: yield* repos.diff({ repo, from: localTree, to: merge.tree }),
   });
+  const interrupted = input.interrupted
+    .map((paths) => sorted(paths))
+    .sort((left, right) => byPath(left.join("\0"), right.join("\0")));
   const groups = conflictGroups({
     merge: merge.conflicts,
     guarded,
-    interrupted: input.interrupted,
+    interrupted,
+    collisions: collisions.groups,
     renames,
     trees: { base, local, remote, merged },
-  });
+  }).toSorted((left, right) => byPath(left.paths.join("\0"), right.paths.join("\0")));
 
   const conflicts: OverleafReviewConflict[] = [];
   for (const group of groups) {
     const key = overleafConflictKey(group.paths);
+    const allowed: ConflictChoice[] = ["mine", "theirs"];
+    // Merge-in-editor is judged only for an eligible group, and only within the file limit;
+    // an oversized intermediate result never blocks choosing either side.
     const [only] = group.paths;
     const mergedOid = only === undefined ? undefined : merged.get(only);
-    const mergedText =
-      group.paths.length === 1 && mergedOid !== undefined
-        ? new TextDecoder().decode(
-            yield* repos.readBlob({ repo, oid: mergedOid, maxBytes: limits.fileBytes }),
-          )
-        : "";
-    const allowed: ConflictChoice[] = ["mine", "theirs"];
-    if (canMergeInEditor(group, () => hasConflictMarkers(mergedText))) allowed.push("markers");
+    if (
+      mergedOid !== undefined &&
+      canMergeInEditor(group, () => true) &&
+      (blobSizes.get(mergedOid) ?? Infinity) <= limits.fileBytes
+    ) {
+      const text = new TextDecoder().decode(
+        yield* repos.readBlob({ repo, oid: mergedOid, maxBytes: limits.fileBytes }),
+      );
+      if (canMergeInEditor(group, () => hasConflictMarkers(text))) allowed.push("markers");
+    }
     const wanted = input.choices.get(key);
     conflicts.push({
       ...group,
@@ -305,6 +433,7 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
       chosen: wanted !== undefined && allowed.includes(wanted) ? wanted : null,
     });
   }
+  // Unchosen groups keep the merged state; such a review is not confirmable.
   const candidate = applyChoices({
     merged,
     local,
@@ -313,7 +442,14 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     choices: conflicts.map((conflict) => conflict.chosen ?? "markers"),
   });
   if (candidate.size > limits.managedFiles) return refused({ reason: "candidate-file-limit" });
-  const candidatePaths = [...candidate.keys()].sort(byPath);
+  const candidatePaths = sorted(candidate.keys());
+  let candidateBytes = 0;
+  for (const path of candidatePaths) {
+    const size = blobSizes.get(candidate.get(path)!) ?? Infinity;
+    if (size > limits.fileBytes) return refused({ reason: "candidate-file-too-large", path });
+    candidateBytes += size;
+  }
+  if (candidateBytes > limits.totalBytes) return refused({ reason: "candidate-too-large" });
   const candidateTree = yield* repos.writeTree({
     repo,
     entries: candidatePaths.map((path) => ({ path, oid: candidate.get(path)! })),
@@ -321,16 +457,14 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
 
   // The applier receives every target file's bytes; unchanged files reuse the capture.
   const target = new Map<string, { readonly bytes: Uint8Array }>();
-  let candidateBytes = 0;
   for (const path of candidatePaths) {
     const oid = candidate.get(path)!;
-    const bytes =
-      local.get(path) === oid
-        ? inventory.captured.get(path)!.bytes
-        : yield* repos.readBlob({ repo, oid, maxBytes: limits.fileBytes });
-    candidateBytes += bytes.length;
-    if (candidateBytes > limits.totalBytes) return refused({ reason: "candidate-too-large" });
-    target.set(path, { bytes });
+    target.set(path, {
+      bytes:
+        local.get(path) === oid
+          ? inventory.captured.get(path)!.bytes
+          : yield* repos.readBlob({ repo, oid, maxBytes: limits.fileBytes }),
+    });
   }
 
   const incoming = yield* repos.diff({ repo, from: localTree, to: candidateTree });
@@ -367,17 +501,16 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   if (editableBytes > limits.editableTotalBytes)
     warnings.push({ kind: "editable-total-exceeded", bytes: editableBytes });
 
-  const markerPaths = conflicts
-    .filter((conflict) => conflict.chosen === "markers")
-    .flatMap((conflict) => conflict.paths);
-  const unresolvedMarkers = input.markerPaths
-    .filter((path) => {
-      const file = inventory.captured.get(path);
-      return file !== undefined && hasConflictMarkers(new TextDecoder().decode(file.bytes));
-    })
-    .sort(byPath);
-  const collisionSet = new Set(input.collisionPaths);
-  const selected = new Set(input.selectedAdditions);
+  const markerPaths = sorted(
+    conflicts
+      .filter((conflict) => conflict.chosen === "markers")
+      .flatMap((conflict) => conflict.paths),
+  );
+  const recordedMarkerPaths = sorted(new Set(input.markerPaths));
+  const unresolvedMarkers = recordedMarkerPaths.filter((path) => {
+    const file = inventory.captured.get(path);
+    return file !== undefined && hasConflictMarkers(new TextDecoder().decode(file.bytes));
+  });
 
   const binding: OverleafReviewBinding = {
     connectionId: connection.connectionId,
@@ -391,16 +524,16 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     localTree,
     remoteCommit: input.remote.commit,
     remoteTree: input.remote.tree,
-    selectedAdditions: [...selected].sort(byPath),
+    selectedAdditions: sorted(new Set(input.selectedAdditions)),
     // Unchecked additions are remembered as local-only once the review is applied.
-    newLocalOnly: inventory.additions
-      .map((addition) => addition.path)
-      .filter((path) => !selected.has(path) && !collisionSet.has(path))
-      .sort(byPath),
+    newLocalOnly: sorted(newLocalOnly),
+    collisionPaths: sorted(requested),
     choices: conflicts.flatMap((conflict) =>
       conflict.chosen === null ? [] : [[conflict.key, conflict.chosen] as const],
     ),
-    interrupted: input.interrupted.map((paths) => paths.toSorted(byPath)),
+    interrupted,
+    recordedMarkerPaths,
+    unresolvedMarkers,
     candidateTree,
     conflictKeys: conflicts.map((conflict) => conflict.key),
     markerPaths,
@@ -410,7 +543,7 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     ),
   };
   const review: OverleafReview = {
-    id: NodeCrypto.randomUUID(),
+    id: newOverleafId(),
     digest: overleafReviewDigest(binding),
     binding,
     incoming,
@@ -420,7 +553,8 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     unresolvedMarkers,
     confirmable: conflicts.every((conflict) => conflict.chosen !== null),
     upToDate: incoming.length === 0 && outgoing.length === 0 && conflicts.length === 0,
-    collisions: [...collisionSet].sort(byPath),
+    collisions: sorted(requested),
+    targetBytes: candidateBytes,
     applyPlan: {
       base,
       remote,
@@ -435,5 +569,3 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   };
   return { _tag: "review", review } satisfies OverleafReviewResult;
 });
-
-export type OverleafReviewError = OverleafRepositoryError | OverleafGitError;

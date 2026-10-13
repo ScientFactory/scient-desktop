@@ -211,4 +211,41 @@ describe("captureOverleafInventory", () => {
     const root = await folder({});
     expect(await refusal(NodePath.join(root, "absent"))).toEqual({ reason: "folder-unavailable" });
   });
+  it("refuses a managed file that is on disk only under another spelling", async () => {
+    const nfd = "e\u0301.tex";
+    const root = await folder({ [nfd]: "x" });
+    const names = await NodeFSP.readdir(root);
+    // Some file systems normalize names; the test needs the decomposed spelling kept.
+    if (!names.includes(nfd)) return;
+    expect(await refusal(root, { managedPaths: ["\u00e9.tex"] })).toEqual({
+      reason: "alias",
+      path: "\u00e9.tex",
+      onDisk: nfd,
+    });
+  });
+
+  it("refuses a case-only variant of a managed file instead of deleting it", async () => {
+    const root = await folder({ "Main.tex": "x" });
+    if ((await NodeFSP.readdir(root)).includes("main.tex")) return;
+    expect(await refusal(root, { managedPaths: ["main.tex"] })).toEqual({
+      reason: "alias",
+      path: "main.tex",
+      onDisk: "Main.tex",
+    });
+  });
+
+  it("fails when a folder above a file is swapped for a link while reading", async () => {
+    const root = await folder({ "a.tex": "a", "sub/secret.txt": "inside" });
+    const outside = await folder({ "secret.txt": "outside" });
+    expect(
+      await refusal(root, {
+        managedPaths: ["a.tex", "sub/secret.txt"],
+        afterRead: async (path) => {
+          if (path !== "a.tex") return;
+          await NodeFSP.rename(NodePath.join(root, "sub"), NodePath.join(root, "sub-moved"));
+          await NodeFSP.symlink(outside, NodePath.join(root, "sub"));
+        },
+      }),
+    ).toEqual({ reason: "unstable", path: "sub/secret.txt" });
+  });
 });

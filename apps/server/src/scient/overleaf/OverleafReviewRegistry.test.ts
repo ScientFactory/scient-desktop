@@ -5,7 +5,6 @@ import {
   makeOverleafReviewRegistry,
   OVERLEAF_REVIEW_LIFETIME_MS,
   overleafReviewStaleness,
-  type OverleafReviewCurrent,
 } from "./OverleafReviewRegistry.ts";
 
 const binding: OverleafReviewBinding = {
@@ -22,30 +21,38 @@ const binding: OverleafReviewBinding = {
   remoteTree: "d".repeat(40),
   selectedAdditions: [],
   newLocalOnly: [],
+  collisionPaths: [],
   choices: [],
   interrupted: [],
+  recordedMarkerPaths: [],
+  unresolvedMarkers: [],
   candidateTree: "e".repeat(40),
   conflictKeys: [],
   markerPaths: [],
   warnings: [{ kind: "rename", from: "a.tex", to: "b.tex" }],
   acknowledgements: ["rename"],
 };
-const review = (id: string, change: Partial<OverleafReview> = {}): OverleafReview =>
+const review = (
+  id: string,
+  change: Partial<OverleafReview> = {},
+  connectionId = "connection-1",
+): OverleafReview =>
   ({
     id,
     digest: `digest-${id}`,
-    binding,
+    binding: { ...binding, connectionId },
     confirmable: true,
+    targetBytes: 1,
     ...change,
   }) as OverleafReview;
 const take = (
   registry: ReturnType<typeof makeOverleafReviewRegistry>,
   id: string,
   now = 0,
-  change: { digest?: string; acknowledgements?: ReadonlyArray<string> } = {},
+  change: { digest?: string; acknowledgements?: ReadonlyArray<string>; connectionId?: string } = {},
 ) =>
   registry.take({
-    connectionId: "connection-1",
+    connectionId: change.connectionId ?? "connection-1",
     id,
     digest: change.digest ?? `digest-${id}`,
     acknowledgements: change.acknowledgements ?? ["rename"],
@@ -82,6 +89,30 @@ describe("makeOverleafReviewRegistry", () => {
     expect(registry.current("connection-1", OVERLEAF_REVIEW_LIFETIME_MS)).toBeNull();
   });
 
+  it("drops expired reviews of every connection, not only the one asked about", () => {
+    const registry = makeOverleafReviewRegistry();
+    registry.offer(review("r1", {}, "connection-1"), 0);
+    registry.offer(review("r2", {}, "connection-2"), 0);
+    registry.sweep(OVERLEAF_REVIEW_LIFETIME_MS);
+    expect(take(registry, "r2", 0, { connectionId: "connection-2" })).toEqual({
+      _tag: "refused",
+      reason: "expired",
+    });
+  });
+
+  it("bounds how many reviews and target bytes it holds, evicting the oldest", () => {
+    const registry = makeOverleafReviewRegistry({ reviews: 2, targetBytes: 10 });
+    registry.offer(review("r1", {}, "connection-1"), 0);
+    registry.offer(review("r2", {}, "connection-2"), 1);
+    registry.offer(review("r3", {}, "connection-3"), 2);
+    expect(registry.current("connection-1", 3)).toBeNull();
+    expect(take(registry, "r1", 3)).toEqual({ _tag: "refused", reason: "replaced" });
+    registry.offer(review("r4", { targetBytes: 10 }, "connection-4"), 4);
+    expect(registry.current("connection-2", 5)).toBeNull();
+    expect(registry.current("connection-3", 5)).toBeNull();
+    expect(registry.current("connection-4", 5)?.id).toBe("r4");
+  });
+
   it("refuses a wrong digest, missing acknowledgements or open conflicts without consuming", () => {
     const registry = makeOverleafReviewRegistry();
     registry.offer(review("r1"), 0);
@@ -108,20 +139,8 @@ describe("makeOverleafReviewRegistry", () => {
 });
 
 describe("overleafReviewStaleness", () => {
-  const current: OverleafReviewCurrent = {
-    connectionRevision: binding.connectionRevision,
-    baseGeneration: binding.baseGeneration,
-    baseTree: binding.baseTree,
-    checkoutEpoch: binding.checkoutEpoch,
-    credentialEpoch: binding.credentialEpoch,
-    authority: binding.authority,
-    folderIdentity: binding.folderIdentity,
-    localTree: binding.localTree,
-    remoteCommit: binding.remoteCommit,
-  };
-
-  it("accepts a review that still matches everything it was built from", () => {
-    expect(overleafReviewStaleness(binding, current)).toBeNull();
+  it("accepts a review the fresh rebuild matches exactly", () => {
+    expect(overleafReviewStaleness(binding, { ...binding })).toBeNull();
   });
 
   it.each([
@@ -135,7 +154,12 @@ describe("overleafReviewStaleness", () => {
     ["capture", { localTree: "f".repeat(40) }],
     // A new Overleaf commit with the same tree still changes the parent and the evidence.
     ["remote", { remoteCommit: "f".repeat(40) }],
+    // A new unchecked file leaves the captured tree alone but changes what is remembered.
+    ["inventory", { newLocalOnly: ["new.txt"] }],
+    ["inventory", { collisionPaths: ["notes.txt"] }],
+    ["inventory", { unresolvedMarkers: ["main.tex"] }],
+    ["review", { warnings: [] }],
   ] as const)("reports %s", (reason, change) => {
-    expect(overleafReviewStaleness(binding, { ...current, ...change })).toBe(reason);
+    expect(overleafReviewStaleness(binding, { ...binding, ...change })).toBe(reason);
   });
 });

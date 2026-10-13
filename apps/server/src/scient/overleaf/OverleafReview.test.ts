@@ -20,6 +20,10 @@ import {
 } from "./OverleafReview.ts";
 import type { ConflictChoice } from "./syncRules.ts";
 
+type HarnessError =
+  | OverleafRepository.OverleafRepositoryError
+  | OverleafGitExecutor.OverleafGitError;
+
 const bytes = (value: string) => new TextEncoder().encode(value);
 const text = (value: Uint8Array) => new TextDecoder().decode(value);
 const paragraphs = (...values: ReadonlyArray<string>) =>
@@ -43,8 +47,8 @@ const withScenario = <A, E>(
         readonly request?: ReadonlyArray<string>;
         readonly choices?: ReadonlyMap<string, ConflictChoice>;
       },
-    ) => Effect.Effect<OverleafReviewResult, unknown>;
-    readonly tree: (files: Record<string, string>) => Effect.Effect<string, unknown>;
+    ) => Effect.Effect<OverleafReviewResult, HarnessError>;
+    readonly tree: (files: Record<string, string>) => Effect.Effect<string, HarnessError>;
     readonly folder: string;
     readonly connection: OverleafConnectionDocument;
   }) => Effect.Effect<A, E, FileSystem.FileSystem>,
@@ -113,7 +117,7 @@ const withScenario = <A, E>(
             stagingPaths: [],
           };
           const captured = yield* Effect.promise(() => captureOverleafInventory(inventoryInput));
-          if (captured._tag !== "captured") throw new Error(captured.refusal.reason);
+          if (captured._tag !== "captured") return yield* Effect.die(captured.refusal.reason);
           return yield* buildOverleafReview({
             repo,
             connection,
@@ -272,7 +276,10 @@ describe("buildOverleafReview", () => {
           expect(yield* review()).toEqual({ _tag: "needs-capture", paths: ["notes.txt"] });
           const built = reviewOf(yield* review({ request: ["notes.txt"] }));
           expect(built.collisions).toEqual(["notes.txt"]);
-          expect(built.conflicts.map((conflict) => conflict.paths)).toEqual([["notes.txt"]]);
+          expect(built.conflicts.map((conflict) => [conflict.paths, conflict.origins])).toEqual([
+            [["notes.txt"], ["collision", "merge"]],
+          ]);
+          expect(built.confirmable).toBe(false);
           // Choosing Overleaf's version still captured the local bytes for retention.
           expect(built.applyPlan.captured.has("notes.txt")).toBe(true);
           expect(built.binding.newLocalOnly).toEqual([]);
@@ -397,6 +404,212 @@ describe("buildOverleafReview", () => {
           ]);
           expect(built.unresolvedMarkers).toEqual(["main.tex"]);
           expect(built.upToDate).toBe(false);
+        }),
+    ),
+  );
+  it.live("never publishes or deletes around a never-synchronized folder without a choice", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m", chapter: "c" },
+        local: { "main.tex": "m", "chapter/private.txt": "private" },
+        remote: { "main.tex": "m", chapter: "c" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review()).toEqual({
+            _tag: "needs-capture",
+            paths: ["chapter/private.txt"],
+          });
+          const built = reviewOf(yield* review({ request: ["chapter/private.txt"] }));
+          expect(built.conflicts.map((conflict) => conflict.paths)).toEqual([
+            ["chapter", "chapter/private.txt"],
+          ]);
+          expect(built.confirmable).toBe(false);
+          // Only "mine" would publish the private file, and only once chosen.
+          const key = built.conflicts[0]!.key;
+          const theirs = reviewOf(
+            yield* review({
+              request: ["chapter/private.txt"],
+              choices: new Map([[key, "theirs"]]),
+            }),
+          );
+          expect(theirs.outgoing).toEqual([]);
+          expect(targetText(theirs, "chapter")).toBe("c");
+        }),
+    ),
+  );
+
+  it.live("asks even when a never-synchronized file equals Overleaf's", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m", "notes.txt": "same" },
+        remote: { "main.tex": "m", "notes.txt": "same" },
+        localOnly: ["notes.txt"],
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          const built = reviewOf(yield* review({ request: ["notes.txt"] }));
+          expect(built.upToDate).toBe(false);
+          expect(built.confirmable).toBe(false);
+        }),
+    ),
+  );
+
+  it.live("asks for a new capture when a captured collision no longer collides", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m", "notes.txt": "n" },
+        remote: { "main.tex": "m" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review({ request: ["notes.txt"] })).toEqual({
+            _tag: "needs-capture",
+            paths: [],
+          });
+        }),
+    ),
+  );
+
+  it.live("refuses Overleaf content the folder could never hold", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m" },
+        remote: { "main.tex": "m", ".DS_Store": "x" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review()).toEqual({
+            _tag: "refused",
+            refusal: { reason: "remote-forbidden", path: ".DS_Store", kind: "dropping" },
+          });
+        }),
+    ),
+  );
+
+  it.live("refuses a Git LFS pointer arriving from Overleaf", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m" },
+        remote: {
+          "main.tex": "m",
+          "data.bin": "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 1\n",
+        },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review()).toEqual({
+            _tag: "refused",
+            refusal: { reason: "remote-forbidden", path: "data.bin", kind: "lfs-pointer" },
+          });
+        }),
+    ),
+  );
+
+  it.live("refuses a path Overleaf spells differently from the folder", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m", "Notes.txt": "mine" },
+        remote: { "main.tex": "m", "notes.txt": "theirs" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review()).toEqual({
+            _tag: "refused",
+            refusal: { reason: "path-alias", first: "Notes.txt", second: "notes.txt" },
+          });
+        }),
+    ),
+  );
+
+  it.live("binds recorded markers and collisions into the digest, canonically", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\n" },
+        remote: { "main.tex": "m" },
+      },
+      ({ review, connection }) =>
+        Effect.gen(function* () {
+          const plain = reviewOf(yield* review());
+          const recorded = reviewOf(yield* review({ markerPaths: ["main.tex"] }));
+          expect(recorded.digest).not.toBe(plain.digest);
+          // The same facts with object keys in another order digest the same.
+          const reordered = reviewOf(
+            yield* review({
+              connection: {
+                ...connection,
+                binding: {
+                  scopeRevision: connection.binding.scopeRevision,
+                  authorityGeneration: connection.binding.authorityGeneration,
+                  bindingId: connection.binding.bindingId,
+                },
+              },
+            }),
+          );
+          expect(reordered.digest).toBe(plain.digest);
+        }),
+    ),
+  );
+
+  it.live("lets a side be chosen even when the merged text is over the limit", () =>
+    withScenario(
+      {
+        base: { "main.tex": "base1" },
+        local: { "main.tex": "mine1" },
+        remote: { "main.tex": "their" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          const key = overleafConflictKey(["main.tex"]);
+          const built = reviewOf(
+            yield* review({ limits: { fileBytes: 8 }, choices: new Map([[key, "mine"]]) }),
+          );
+          expect(built.conflicts[0]?.allowed).toEqual(["mine", "theirs"]);
+          expect(built.confirmable).toBe(true);
+          expect(targetText(built, "main.tex")).toBe("mine1");
+        }),
+    ),
+  );
+
+  it.live("refuses an oversized candidate before reading it", () =>
+    withScenario(
+      // Each side fits on its own; only the candidate, with both additions, is too large.
+      {
+        base: { "a.tex": "a" },
+        local: { "a.tex": "a", "c.tex": "cccccc" },
+        remote: { "a.tex": "a", "b.tex": "bbbbbb" },
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review({ select: ["c.tex"], limits: { totalBytes: 12 } })).toEqual({
+            _tag: "refused",
+            refusal: { reason: "candidate-too-large" },
+          });
+        }),
+    ),
+  );
+
+  it.live("refuses more local-only paths than a connection can remember", () =>
+    withScenario(
+      {
+        base: { "main.tex": "m" },
+        local: { "main.tex": "m", "a.aux": "a", "b.aux": "b" },
+        remote: { "main.tex": "m" },
+        localOnly: ["old.log"],
+      },
+      ({ review }) =>
+        Effect.gen(function* () {
+          expect(yield* review({ limits: { localOnlyPaths: 2 } })).toEqual({
+            _tag: "refused",
+            refusal: { reason: "local-only-limit" },
+          });
+          expect((yield* review({ limits: { localOnlyPaths: 3 } }))._tag).toBe("review");
         }),
     ),
   );
