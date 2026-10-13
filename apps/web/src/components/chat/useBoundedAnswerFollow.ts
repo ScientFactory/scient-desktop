@@ -7,8 +7,8 @@ import { isTimelineScrollTarget } from "./timelineScrollTarget";
 import { motionClock } from "./motionClock";
 import { streamingRevealActive, subscribeStreamingReveal } from "./useStreamingBlockEntrance";
 
-/** How much of a newly arrived message the reveal shows: its first lines. */
-const FIRST_LINES_PX = 48;
+/** How much of a message counts as its start being shown: its first lines. */
+export const FIRST_LINES_PX = 48;
 /** The timeline's estimated row height, for a row not yet measured. */
 const ESTIMATED_ROW_SIZE = 90;
 /** How the reveal moves: a top speed and how gently it eases to a stop. */

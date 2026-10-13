@@ -4,6 +4,7 @@ import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import * as DateTime from "effect/DateTime";
 import {
   canApplySendAnchor,
+  latestTurnUnfinished,
   savedPositionIsAtEnd,
   readerAtReadingEnd,
 } from "./chat/readerScrollPolicy";
@@ -2489,15 +2490,15 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }
   const timelineAnchorMessageId = timelineAnchor.messageId;
-  // The end is the running turn's latest content while the thread works,
-  // otherwise the latest answer's text; up to its last three lines may be hidden.
-  const threadWorkingRef = useRef(false);
+  // The end is an unfinished turn's latest content, otherwise the latest
+  // answer's text; up to its last three lines may be hidden.
+  const turnUnfinishedRef = useRef(false);
   const readerAtEndNow = useCallback(
     () =>
       readerAtReadingEnd(
         legendListRef.current?.getState(),
         composerTimelineInset,
-        threadWorkingRef.current,
+        turnUnfinishedRef.current,
       ),
     [composerTimelineInset],
   );
@@ -3963,12 +3964,7 @@ function ChatViewContent(props: ChatViewProps) {
   const isOriginWorking =
     phase === "running" || isSendBusy || isConnecting || isCompacting || awaitingBootstrapTurn;
   const isWorking = isOriginWorking || isForkingThread;
-  // The latest turn is unfinished while it runs, or when it ended interrupted or
-  // with an error; a fork, revert or send setup alone doesn't make it so.
-  threadWorkingRef.current =
-    activeRunningTurnId !== null ||
-    activeLatestRun?.status === "interrupted" ||
-    activeLatestRun?.status === "failed";
+  turnUnfinishedRef.current = latestTurnUnfinished(activeRunningTurnId, activeLatestRun?.status);
   const pendingBackgroundTasks = useMemo(() => {
     if (serverProjection === null || serverProjection === undefined) {
       return [];
@@ -6716,9 +6712,8 @@ function ChatViewContent(props: ChatViewProps) {
   const programmaticScrollPendingRef = useRef(false);
   const anchorUserScrollGenerationRef = useRef(0);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
-  // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
-  // re-pins on its own (independent of the refs), so the timeline needs a
-  // render-visible flag to switch it off once the user scrolls away.
+  // State mirror of the follow mode refs. The timeline never pins to its end;
+  // this flag only lets tool activity release the first message's anchor.
   const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);
   const activeTimelineAnchorIndexRef = useRef<number | null>(null);

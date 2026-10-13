@@ -152,6 +152,18 @@ export function withReadingEnd<
 }
 
 /**
+ * Whether the latest turn is unfinished: it runs, or it ended interrupted or
+ * with an error. Its latest content is then the reading end. A fork, a revert
+ * or a send being set up alone does not make it so.
+ */
+export function latestTurnUnfinished(
+  runningRunId: string | null,
+  latestRunStatus: string | undefined,
+): boolean {
+  return runningRunId !== null || latestRunStatus === "interrupted" || latestRunStatus === "failed";
+}
+
+/**
  * Whether the reader is at the end: the end's text is in view, except at
  * most its last three lines (see readingEndRowIndex: an unfinished turn's
  * latest content, otherwise the latest turn's answer). The one rule for

@@ -20,6 +20,7 @@ import {
 } from "./readerScrolling";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import {
+  latestTurnUnfinished,
   readerAtReadingEnd,
   readingEndAllowance,
   readingEndGapOnScreen,
@@ -592,13 +593,8 @@ interface MessagesTimelineProps {
   onReleaseUnusedAnchor?: () => void;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onUnreadBelowChange?: (count: number) => void;
-  /**
-   * Whether the timeline should keep pinning to the live edge as content
-   * grows. Off while the user is reading history; LegendList's own
-   * maintainScrollAtEnd would otherwise re-pin regardless of ChatView's
-   * scroll-mode refs whenever the user drifts near the bottom.
-   */
-  liveFollowEnabled?: boolean;
+  // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+  // SCIENT-FORK:END
   /**
    * Whether the real rows extend past the viewport above the composer.
    * Reported after scrolls, row size changes, and viewport resizes.
@@ -640,7 +636,8 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
     <ConversationTimeline
       {...props}
       {...find}
-      liveFollowEnabled={!findOpen && (props.liveFollowEnabled ?? true)}
+      // SCIENT-FORK:START — no live-follow flag: the timeline never pins to its end.
+      // SCIENT-FORK:END
     />
   );
 }
@@ -753,10 +750,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     () => new Set(),
   );
   // SCIENT-FORK:END
-  // Whether the latest run is unfinished (running, or it ended interrupted or
-  // with an error): its latest content is then the reading end.
-  const turnUnfinished =
-    runningRunId !== null || latestRun?.status === "interrupted" || latestRun?.status === "failed";
+  // Whether the latest run is unfinished: its latest content is then the reading end.
+  const turnUnfinished = latestTurnUnfinished(runningRunId, latestRun?.status);
   const turnUnfinishedRef = useRef(turnUnfinished);
   useLayoutEffect(() => {
     turnUnfinishedRef.current = turnUnfinished;

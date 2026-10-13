@@ -2233,7 +2233,6 @@ describe("MessagesTimeline", () => {
           completedAt: null,
         }}
         anchorMessageId={firstEntry.message.id}
-        liveFollowEnabled={false}
         timelineEntries={[
           firstEntry,
           {
@@ -2290,18 +2289,6 @@ describe("MessagesTimeline", () => {
         <MessagesTimeline
           {...buildProps()}
           anchorMessageId={null}
-          timelineEntries={timelineEntries}
-        />,
-      ),
-    ).not.toContain('data-maintain-scroll-at-end="enabled"');
-
-    // Reading history still wins over both.
-    expect(
-      renderToStaticMarkup(
-        <MessagesTimeline
-          {...buildProps()}
-          anchorMessageId={null}
-          liveFollowEnabled={false}
           timelineEntries={timelineEntries}
         />,
       ),
