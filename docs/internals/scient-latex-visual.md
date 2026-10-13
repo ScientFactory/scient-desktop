@@ -99,6 +99,13 @@ compiled output.
 The source adapter and its edit mapper share one inline grammar. Supported prose
 includes bold, italic/emphasis, typewriter text, small capitals and underlining;
 roman/sans families and scoped standard size/font declarations are also editable.
+Document copy and cut use that adapter for selections containing supported inline
+commands, math or tables. References, citation options, link text and footnotes
+therefore remain LaTeX rather than disappearing from a plain-text clipboard.
+Plain prose keeps its existing text export. Copy does not publish an edit; cut
+uses the editor's normal source-owned deletion and undo. Pasting a reference
+carries its key, not the referenced source or bibliography entry, and remains
+subject to the target document's existing insertion admission.
 `mathTextFormatting.ts` adapts Text-menu font actions to MathLive's math and text
 slots, retaining the math selection and exporting portable LaTeX font commands.
 `mathColorSyntax.ts` converts MathLive's three/six-digit CSS hex color arguments

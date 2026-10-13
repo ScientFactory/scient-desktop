@@ -523,6 +523,10 @@ const SOURCE_ONLY_INLINE_COMMANDS = new Set([
   "openout",
   "read",
 ]);
+
+export function isSupportedLatexInlineCommand(name: string): boolean {
+  return INLINE_ATOMS.has(name) && !SOURCE_ONLY_INLINE_COMMANDS.has(name);
+}
 const DISPLAY_MATH_ENVIRONMENTS = /^(equation\*?|align\*?|gather\*?)$/u;
 const STRUCTURED_MATH_ENVIRONMENTS = [
   "matrix",
@@ -915,12 +919,7 @@ function inlinePiece(
   const text = inlineTextToken(rest, marks);
   if (text) return { end: at + text.source.length, node: textNode(text.text, marks)! };
   const atomCommand = /^\\([A-Za-z]+)[\t\r\n ]*(\{|\[)/u.exec(rest);
-  if (
-    !atomCommand ||
-    !INLINE_ATOMS.has(atomCommand[1]!) ||
-    SOURCE_ONLY_INLINE_COMMANDS.has(atomCommand[1]!)
-  )
-    return null;
+  if (!atomCommand || !isSupportedLatexInlineCommand(atomCommand[1]!)) return null;
   const name = atomCommand[1]!;
   const citation = latexCitationParts(rest);
   if (citation) {
@@ -4732,7 +4731,7 @@ function serializeInline(nodes: readonly JSONContent[] | undefined): string {
         );
       } else if (node.type === "latexInlineCommand") {
         const name = String(node.attrs?.name ?? "");
-        if (!INLINE_ATOMS.has(name) || SOURCE_ONLY_INLINE_COMMANDS.has(name)) return "";
+        if (!isSupportedLatexInlineCommand(name)) return "";
         value = latexInlineCommandSource(
           name,
           String(node.attrs?.argument ?? ""),
