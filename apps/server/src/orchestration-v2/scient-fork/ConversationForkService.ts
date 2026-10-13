@@ -333,10 +333,16 @@ const make = Effect.gen(function* () {
     // Before the native turn is accepted (Codex can take many seconds to start),
     // nothing native is buffered yet: the fork freezes what is committed.
     if (turns.length === 0) return null;
+    // The capture only adds reply text not yet saved. When it cannot run, the
+    // fork keeps the saved history instead of refusing.
+    const withoutCapture = (reason: string) =>
+      Effect.logWarning("Running fork forks saved history without live text", {
+        reason,
+        threadId: command.originThreadId,
+        runId: source.runId,
+      }).pipe(Effect.as(null));
     if (Option.isNone(snapshots) || snapshots.value.captureRunningForkText === undefined)
-      return yield* failure(
-        "Native running text capture is unavailable. Retry after reconnecting.",
-      );
+      return yield* withoutCapture("unavailable");
     const turn = turns.length === 1 ? turns[0] : undefined;
     if (
       run === undefined ||
@@ -347,7 +353,7 @@ const make = Effect.gen(function* () {
       thread.nativeThreadRef?.nativeId == null ||
       turn.nativeTurnRef?.nativeId == null
     )
-      return yield* failure("The selected native running boundary is not ready. Retry the fork.");
+      return yield* withoutCapture("boundary-not-ready");
     const owner: ProviderTextSnapshotOwner = {
       threadId: projection.thread.id,
       runId: run.id,
@@ -362,23 +368,15 @@ const make = Effect.gen(function* () {
       providerInstanceId: run.providerInstanceId,
       driver: thread.driver,
     };
-    return yield* snapshots.value.captureRunningForkText(owner).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationDispatchCommandError({
-            message:
-              cause.reason === "timed-out"
-                ? "The running response took too long to capture. Retry the fork."
-                : `Native running text capture refused (${cause.reason}). Retry the fork.`,
-            cause,
-            forkDisposition: "rejected",
-          }),
-      ),
-    );
+    return yield* snapshots.value
+      .captureRunningForkText(owner)
+      .pipe(
+        Effect.catchTags({ ProviderTextSnapshotError: (cause) => withoutCapture(cause.reason) }),
+      );
   });
 
   const dispatch = Effect.fn("ConversationFork.dispatch")(function* (command: ThreadForkCommand) {
-    const capture: CapturedProviderText | null = yield* Effect.acquireRelease(
+    const captured: CapturedProviderText | null = yield* Effect.acquireRelease(
       prepareTextCapture(command),
       (captured) =>
         captured === null || Option.isNone(snapshots)
@@ -386,7 +384,8 @@ const make = Effect.gen(function* () {
           : (snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void),
       { interruptible: true },
     );
-    const accept = Effect.gen(function* () {
+    // Resolves null when a captured running source changed before the save.
+    const accept = Effect.fnUntraced(function* (capture: CapturedProviderText | null) {
       const receipt = yield* receipts.getByCommandId(command.commandId);
       if (Option.isSome(receipt)) {
         if (
@@ -707,33 +706,34 @@ const make = Effect.gen(function* () {
                     return yield* failure("The captured workspace is unavailable. Retry the fork.");
                   return yield* commit;
                 }).pipe(attachmentArbitration.withPermit);
-          const committed = yield* (
-            capture === null
-              ? guardedCommit
-              : Option.isSome(snapshots) && snapshots.value.withCapturedForkText !== undefined
-                ? snapshots.value.withCapturedForkText(capture, guardedCommit)
-                : Effect.fail(new ProviderTextSnapshotError({ reason: "owner-lost" }))
+          if (capture === null) return (yield* guardedCommit).receipt.resultSequence;
+          return yield* (
+            Option.isSome(snapshots) && snapshots.value.withCapturedForkText !== undefined
+              ? snapshots.value.withCapturedForkText(capture, guardedCommit)
+              : Effect.fail(new ProviderTextSnapshotError({ reason: "owner-lost" }))
           ).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationDispatchCommandError({
-                  message: "The running source changed before fork acceptance. Retry the fork.",
-                  cause,
-                  forkDisposition: "rejected",
-                }),
+            Effect.map((result) => result.receipt.resultSequence),
+            Effect.catch((cause) =>
+              Effect.logWarning("Running fork source changed after capture", { cause }).pipe(
+                Effect.as(null),
+              ),
             ),
           );
-          return committed.receipt.resultSequence;
         }),
       );
     });
     // Consistent lock order prevents forks in opposite directions deadlocking.
-    const locked = [...new Set([command.originThreadId, command.newThreadId])]
-      .sort()
-      .reduceRight((effect, id) => executor.withLock(id, effect), accept);
-    const sequence = yield* locked;
-    if (capture !== null && Option.isSome(snapshots))
-      yield* snapshots.value.releaseCapturedForkText?.(capture) ?? Effect.void;
+    const locked = (capture: CapturedProviderText | null) =>
+      [...new Set([command.originThreadId, command.newThreadId])]
+        .sort()
+        .reduceRight((effect, id) => executor.withLock(id, effect), accept(capture));
+    // A captured source that moved on (its turn finished, say) forks the saved
+    // history as it is now, rather than refusing. Without a capture there is
+    // nothing to change, so the second attempt always resolves.
+    const sequence = (yield* locked(captured)) ?? (yield* locked(null));
+    if (sequence === null) return yield* failure("The fork could not be saved. Retry the fork.");
+    if (captured !== null && Option.isSome(snapshots))
+      yield* snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void;
     const forkAttachmentIdMap = yield* awaitReady(command.newThreadId).pipe(
       Effect.mapError((cause) =>
         isDispatchError(cause)

@@ -88,18 +88,22 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
           candidate.inheritedFrom?.runId === selected.inheritedFrom.runId;
   let end = -1;
   let boundaryRunId: RunId | null = null;
-  if (source.kind === "settled-run") {
+  if (source.kind === "settled-run" || source.kind === "running-turn") {
     const run = projection.runs.find((run) => run.id === source.runId);
+    if (!run) return yield* reject("The selected run is unavailable.");
+    // A running fork keeps what is saved up to its run, also when that run
+    // settled meanwhile or has saved nothing yet, rather than refusing.
     if (
-      !run ||
+      source.kind === "settled-run" &&
       !["completed", "waiting", "failed", "interrupted", "cancelled"].includes(run.status)
     )
       return yield* reject("The selected run has not settled at a forkable boundary.");
     boundaryRunId = run.id;
     end = rows.findLastIndex(({ item }) => item.runId === run.id);
     if (end < 0) {
-      // A cancelled queued run has no rendered item. Preserve the preceding
-      // history, without admitting a later run or adopting its execution.
+      // A cancelled queued run, or a running one that saved nothing yet, has no
+      // rendered item. Preserve the preceding history, without admitting a later
+      // run or adopting its execution.
       const ordinals = new Map(
         projection.runs.map((candidate) => [candidate.id, candidate.ordinal]),
       );
@@ -108,20 +112,8 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       );
       end = next < 0 ? rows.length - 1 : next - 1;
     }
-  } else if (source.kind === "running-turn") {
-    const run = projection.runs.find((run) => run.id === source.runId);
-    if (!run || !["preparing", "starting", "running", "waiting"].includes(run.status)) {
-      return yield* reject(
-        "The selected run is no longer active. Fork its completed response instead.",
-      );
-    }
-    boundaryRunId = run.id;
-    end = rows.findLastIndex(({ item }) => item.runId === run.id);
-    // A preparing run can have an accepted message without a rendered turn item yet.
-    if (end < 0)
-      return yield* reject(
-        "The running request has not reached a durable conversation boundary yet.",
-      );
+    if (source.kind === "running-turn" && end < 0)
+      return yield* reject("There is nothing to fork yet.");
   } else {
     const expectedType =
       source.kind === "assistant-response" ? "assistant_message" : "user_message";

@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -292,7 +293,7 @@ it.live.each(
         streaming: "turn",
         clean: false,
         control: "sql",
-        title: "rolls back a real raw-item SQL failure and retries the same native prefix",
+        title: "rolls back a real raw-item SQL failure and forks the saved history",
       },
       {
         mode: "cancel-retry",
@@ -308,7 +309,7 @@ it.live.each(
         clean: false,
         control: "timeout",
         title:
-          "expires a stalled real text consumer without stopping the source and retries safely",
+          "expires a stalled real text consumer without stopping the source and forks the saved history",
       },
       {
         mode: "cancel-ordinary",
@@ -338,21 +339,24 @@ it.live.each(
         streaming: "turn",
         clean: false,
         control: "pre-delta",
-        title: "refuses newer received native text before the owning SQL acknowledgement",
+        title:
+          "forks saved history, not newer received native text, before the owning SQL acknowledgement",
       },
       {
         mode: "replaced-generation",
         streaming: "turn",
         clean: false,
         control: "close",
-        title: "refuses a retired generation during planning after reopening the same session ID",
+        title:
+          "forks saved history when a generation retires during planning after reopening the same session ID",
       },
       {
         mode: "eof-after-ack",
         streaming: "turn",
         clean: false,
         control: "eof-final",
-        title: "refuses actual SDK termination during slow planning after raw SQL acknowledgement",
+        title:
+          "forks saved history on actual SDK termination during slow planning after raw SQL acknowledgement",
       },
       {
         mode: "detached-owner",
@@ -367,14 +371,14 @@ it.live.each(
         clean: false,
         control: "eof",
         title:
-          "settles a pending native capture on actual SDK transport failure without publishing a child",
+          "settles a pending native capture on actual SDK transport failure and forks the saved history",
       },
       {
         mode: "stop-before-sql",
         streaming: "turn",
         clean: false,
         control: "stop",
-        title: "refuses a durable Stop admitted before raw SQL capture",
+        title: "forks saved history when a durable Stop is admitted before raw SQL capture",
       },
       {
         mode: "replacement",
@@ -397,7 +401,8 @@ it.live.each(
         streaming: "turn",
         clean: false,
         control: "workspace",
-        title: "refuses a changed captured workspace branch during slow planning",
+        title:
+          "forks saved history when the captured workspace branch changes during slow planning",
       },
       {
         mode: "workspace-resource",
@@ -411,14 +416,14 @@ it.live.each(
         streaming: "turn",
         clean: false,
         control: "complete",
-        title: "refuses native completion during fork planning without publishing a child",
+        title: "forks saved history when the native turn completes during fork planning",
       },
       {
         mode: "sql-cutoff",
         streaming: "turn",
         clean: false,
         control: "metadata",
-        title: "atomically refuses a rollback control change after native capture",
+        title: "forks saved history after a rollback control change follows native capture",
       },
       {
         mode: "foreign-owner",
@@ -471,6 +476,8 @@ it.live.each(
         scenario.control === "healthy" ? "\n```\n\nThen the rest.\n\n" : "Then the rest.";
       const threadId = ThreadId.make(`native-fork-${mode}-source`);
       const forkId = ThreadId.make(`native-fork-${mode}-child`);
+      // The child a failed capture forks from saved history, if any.
+      let savedHistoryChild: unknown = undefined;
       const projectId = ProjectId.make(`native-fork-${mode}-project`);
       const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
       const prompt = "Write a partial answer";
@@ -1095,6 +1102,29 @@ it.live.each(
           } as const;
           const sql = yield* SqlClient.SqlClient;
           const manager = yield* ProviderSessionManagerV2;
+          // A capture that cannot finish forks the saved history instead of
+          // refusing. The child shows the captured text only once SQL saved it.
+          const expectSavedHistoryFork = Effect.fnUntraced(function* (
+            exit: Exit.Exit<unknown, unknown>,
+            prefixSaved: boolean,
+          ) {
+            assert.equal(exit._tag, "Success");
+            const child = yield* orchestrator.getThreadProjection(forkId);
+            assert.equal(child.thread.conversationFork?.status, "ready");
+            assert.equal(child.thread.lineage.parentThreadId, threadId);
+            assert.isEmpty(child.runs);
+            assert.isTrue(
+              Option.isSome(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
+            );
+            assert.equal(
+              child.visibleTurnItems.some(
+                ({ item }) => item.type === "assistant_message" && item.text.startsWith(prefix),
+              ),
+              prefixSaved,
+            );
+            savedHistoryChild = child;
+            return child;
+          });
           if (scenario.control === "foreign") {
             const owner: ProviderTextSnapshotOwner = {
               threadId,
@@ -1132,7 +1162,7 @@ it.live.each(
             currentTimeNanosUnsafe: () => realClock.currentTimeNanosUnsafe(),
             monotonicTimeNanosUnsafe: () => realClock.monotonicTimeNanosUnsafe(),
             sleep: (duration) =>
-              Duration.toMillis(duration) === 90_000
+              Duration.toMillis(duration) === 12_000
                 ? Deferred.await(expireCapture)
                 : realClock.sleep(duration),
           };
@@ -1196,11 +1226,10 @@ it.live.each(
               yield* Deferred.succeed(releaseCarrier, undefined);
             } else {
               yield* Deferred.succeed(releaseCapture, undefined);
-              const rejected = yield* Fiber.join(forking).pipe(
-                Effect.exit,
-                Effect.timeout("15 seconds"),
+              yield* expectSavedHistoryFork(
+                yield* Fiber.join(forking).pipe(Effect.exit, Effect.timeout("15 seconds")),
+                false,
               );
-              assert.equal(rejected._tag, "Failure");
               assert.equal(rawCaptureCount, 1);
               assert.include(rawCaptureFailure, "controlled raw-item SQL failure");
               yield* capture("rawSqlRefused", { rawCaptureFailure });
@@ -1278,12 +1307,14 @@ it.live.each(
             assert.isFalse(
               receipts.some((r) => r.method === "item/completed" || r.method === "turn/completed"),
             );
+            // A cancelled fork leaves nothing; a failed capture forked saved history.
             assert.equal(
               (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
-              "Failure",
+              scenario.control === "cancel-ordinary" ? "Failure" : "Success",
             );
-            assert.isTrue(
+            assert.equal(
               Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
+              scenario.control === "cancel-ordinary",
             );
             assert.isEmpty(yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId));
             yield* capture("ordinaryWithoutRecapture", ordinary);
@@ -1332,22 +1363,14 @@ it.live.each(
             gate.release("after-running-fork");
             yield* Deferred.await(laterReceived).pipe(Effect.timeout("15 seconds"));
             yield* Deferred.succeed(releaseCarrier, undefined);
-            const rejected = yield* Fiber.join(forking).pipe(
-              Effect.exit,
-              Effect.timeout("15 seconds"),
+            yield* expectSavedHistoryFork(
+              yield* Fiber.join(forking).pipe(Effect.exit, Effect.timeout("15 seconds")),
+              false,
             );
-            assert.equal(rejected._tag, "Failure");
             assert.equal(rawCaptureCount, 0);
             assert.deepEqual(
               (yield* orchestrator.getThreadProjection(threadId)).messages,
               source.messages,
-            );
-            assert.equal(
-              (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
-              "Failure",
-            );
-            assert.isTrue(
-              Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
             );
             assert.isEmpty(yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId));
             yield* Deferred.succeed(releaseEmission, undefined);
@@ -1371,11 +1394,10 @@ it.live.each(
                 threadId,
               })
               .pipe(Effect.timeout("15 seconds"));
-            const rejected = yield* Fiber.join(forking).pipe(
-              Effect.exit,
-              Effect.timeout("15 seconds"),
+            yield* expectSavedHistoryFork(
+              yield* Fiber.join(forking).pipe(Effect.exit, Effect.timeout("15 seconds")),
+              false,
             );
-            assert.equal(rejected._tag, "Failure");
             assert.equal(rawCaptureCount, 0);
             assert.equal(clientOpens, 1);
             assert.equal(
@@ -1385,13 +1407,6 @@ it.live.each(
             assert.equal(
               requests.filter((request) => request.method === "thread/unsubscribe").length,
               1,
-            );
-            assert.equal(
-              (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
-              "Failure",
-            );
-            assert.isTrue(
-              Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
             );
             assert.isEmpty(yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId));
             yield* capture("detachedOwner", {
@@ -1410,7 +1425,7 @@ it.live.each(
           }
           if (scenario.control === "eof") {
             gate.releaseAll();
-            const rejected = yield* Fiber.join(forking).pipe(
+            const forked = yield* Fiber.join(forking).pipe(
               Effect.exit,
               Effect.timeout("15 seconds"),
               Effect.onExit((exit) =>
@@ -1432,16 +1447,9 @@ it.live.each(
                 }),
               ),
             );
-            assert.equal(rejected._tag, "Failure");
+            yield* expectSavedHistoryFork(forked, false);
             assert.equal(rawCaptureCount, 0);
             yield* Deferred.succeed(releaseCarrier, undefined);
-            assert.equal(
-              (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
-              "Failure",
-            );
-            assert.isTrue(
-              Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
-            );
             assert.isEmpty(yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId));
             yield* capture("nativeEof", {
               source: yield* orchestrator.getThreadProjection(threadId),
@@ -1471,21 +1479,26 @@ it.live.each(
               yield* Fiber.interrupt(forking).pipe(Effect.timeout("15 seconds"));
             else {
               yield* Deferred.succeed(expireCapture, undefined);
-              const refused = yield* Fiber.join(forking).pipe(
-                Effect.exit,
-                Effect.timeout("15 seconds"),
+              yield* expectSavedHistoryFork(
+                yield* Fiber.join(forking).pipe(Effect.exit, Effect.timeout("15 seconds")),
+                false,
               );
-              assert.equal(refused._tag, "Failure");
-              if (refused._tag === "Failure") {
-                const error = Cause.findErrorOption(refused.cause);
-                assert.isTrue(Option.isSome(error));
-                if (Option.isSome(error))
-                  assert.deepInclude(error.value, { forkDisposition: "rejected" });
-              }
               assert.equal(
                 (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.status,
                 "running",
               );
+              yield* capture("afterTimeout", { rawCaptureCount });
+              yield* Deferred.succeed(releaseCapture, undefined);
+              yield* Deferred.succeed(releaseEmission, undefined);
+              gate.releaseAll();
+              yield* Fiber.join(starting);
+              yield* waitFor(threadId, (p) =>
+                p.providerTurns.some((turn) => turn.status === "completed"),
+              );
+              yield* worker.drain(12);
+              yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
+              yield* manager.closeInstance(modelSelection.instanceId);
+              return { frozen: null, completed: yield* orchestrator.getThreadProjection(threadId) };
             }
             yield* capture("afterCancel", { rawCaptureCount });
             assert.isTrue(
@@ -1494,24 +1507,16 @@ it.live.each(
           }
           yield* Deferred.succeed(releaseCapture, undefined);
           if (scenario.control === "stop") {
-            const rejected = yield* Fiber.join(forking).pipe(
-              Effect.exit,
-              Effect.timeout("15 seconds"),
+            yield* expectSavedHistoryFork(
+              yield* Fiber.join(forking).pipe(Effect.exit, Effect.timeout("15 seconds")),
+              false,
             );
-            assert.equal(rejected._tag, "Failure");
-            const refused = yield* orchestrator.getThreadProjection(threadId);
-            assert.deepEqual(refused.messages, source.messages);
+            const stopped = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(stopped.messages, source.messages);
             assert.isFalse(
-              refused.turnItems.some(
+              stopped.turnItems.some(
                 (item) => item.type === "assistant_message" && item.text === prefix,
               ),
-            );
-            assert.equal(
-              (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
-              "Failure",
-            );
-            assert.isTrue(
-              Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
             );
             assert.isEmpty(yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId));
             yield* Deferred.succeed(releaseEmission, undefined);
@@ -1530,20 +1535,25 @@ it.live.each(
             return { frozen: null, completed: yield* orchestrator.getThreadProjection(threadId) };
           }
           if (scenario.control === "sql") {
-            const rejected = yield* Fiber.join(forking).pipe(Effect.exit);
-            assert.equal(rejected._tag, "Failure");
+            yield* expectSavedHistoryFork(yield* Fiber.join(forking).pipe(Effect.exit), false);
             const rolledBack = yield* orchestrator.getThreadProjection(threadId);
             assert.deepEqual(rolledBack.messages, source.messages);
             assert.deepEqual(rolledBack.turnItems, source.turnItems);
             assert.deepEqual(rolledBack.nodes, source.nodes);
-            assert.isTrue(
-              Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
-            );
             assert.isEmpty(yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId));
             yield* sql.unsafe("DROP TRIGGER reject_buffer_item");
-            forking = yield* forks.dispatch(command).pipe(Effect.forkScoped);
+            yield* Deferred.succeed(releaseEmission, undefined);
+            gate.releaseAll();
+            yield* Fiber.join(starting);
+            yield* waitFor(threadId, (p) =>
+              p.providerTurns.some((turn) => turn.status === "completed"),
+            );
+            yield* worker.drain(12);
+            yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
+            yield* manager.closeInstance(modelSelection.instanceId);
+            return { frozen: null, completed: yield* orchestrator.getThreadProjection(threadId) };
           }
-          if (scenario.control === "cancel" || scenario.control === "timeout") {
+          if (scenario.control === "cancel") {
             yield* Deferred.await(captureCommitted).pipe(Effect.timeout("15 seconds"));
             assert.equal(
               (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
@@ -1659,16 +1669,24 @@ it.live.each(
             }
             yield* Deferred.succeed(releasePlan, undefined);
             if (scenario.control !== "healthy") {
-              const rejected = yield* Fiber.join(forking).pipe(Effect.exit);
-              assert.equal(rejected._tag, "Failure");
-              if (scenario.control === "resource") yield* fs.rename(cwd + "-retired", cwd);
-              assert.equal(
-                (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
-                "Failure",
-              );
-              assert.isTrue(
-                Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
-              );
+              const forked = yield* Fiber.join(forking).pipe(Effect.exit);
+              if (scenario.control === "resource") {
+                // A missing workspace is a real reason: the saved-history retry refuses too.
+                assert.equal(forked._tag, "Failure");
+                yield* fs.rename(cwd + "-retired", cwd);
+                assert.equal(
+                  (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
+                  "Failure",
+                );
+                assert.isTrue(
+                  Option.isNone(
+                    yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId),
+                  ),
+                );
+              }
+              // The source moved on after the capture: the fork keeps the history
+              // saved now, which already holds the captured prefix.
+              else yield* expectSavedHistoryFork(forked, true);
               assert.isEmpty(yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId));
               if (["close", "eof-final"].includes(scenario.control)) {
                 assert.isTrue(
@@ -1716,7 +1734,10 @@ it.live.each(
               const rebuilt = yield* Effect.gen(function* () {
                 const store = yield* ProjectionStoreV2;
                 for (const row of stored) yield* store.apply(row.event);
-                assert.equal((yield* store.getThread(forkId).pipe(Effect.exit))._tag, "Failure");
+                assert.equal(
+                  (yield* store.getThread(forkId).pipe(Effect.exit))._tag,
+                  scenario.control === "resource" ? "Failure" : "Success",
+                );
                 return yield* store.getThreadProjection(threadId);
               }).pipe(Effect.provide(layerMemory));
               assert.deepEqual(rebuilt.messages, completed.messages);
@@ -2038,6 +2059,10 @@ it.live.each(
             if (finished.value.frozen !== null) {
               const child = yield* store.getThreadProjection(forkId);
               assert.deepEqual(child, finished.value.frozen);
+              yield* capture("reopenedSql", { source, child });
+            } else if (savedHistoryChild !== undefined) {
+              const child = yield* store.getThreadProjection(forkId);
+              assert.deepEqual(child, savedHistoryChild);
               yield* capture("reopenedSql", { source, child });
             } else {
               assert.equal((yield* store.getThread(forkId).pipe(Effect.exit))._tag, "Failure");

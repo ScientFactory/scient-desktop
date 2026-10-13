@@ -153,10 +153,10 @@ Source/destination command locks retain their stable order. Global title seriali
 authoritative sibling reads and atomic admission, so another source's local fork can proceed
 during a slow file capture.
 
-Running native-text capture has a 90-second pre-admission deadline, matching the file-capture
-bound. Expiration releases the fork token without retiring the original run. SQL facts already
-committed by its consumer remain valid. Accepted provisioning continues under durable receipts;
-this deadline does not reject or cancel an accepted destination.
+Running native-text capture has a 12-second pre-admission deadline. Expiration releases the fork
+token without retiring the original run. SQL facts already committed by its consumer remain valid.
+Accepted provisioning continues under durable receipts; this deadline does not reject or cancel an
+accepted destination.
 
 Ordinary execution baselines, completed-turn checkpoints, and running-worktree forks share the
 same bounded capture substrate. Changed paths are consumed incrementally with backpressure:
@@ -430,6 +430,13 @@ A new-worktree request captures
 current files into a frozen ref before provisioning; retries use that captured ref. Pending tool,
 approval, or question state is copied only as history. A native clone needs a completed exact root
 boundary, so a running cut takes the portable path. Source execution continues independently.
+
+A running fork never refuses for a reason inside the source run. Live text capture (Codex only)
+adds the reply text not yet saved. When the capture is unavailable, fails, times out, or the run
+moves on before the fork is saved (it finishes, stops, or its session is replaced), the fork keeps
+the history saved at that moment, logged as `Running fork forks saved history without live text`.
+A run that settled before planning forks through its saved end; a run that saved nothing yet forks
+the history before it. Only a fork with nothing to show, or a real workspace loss, still refuses.
 
 ## History by reference and request recovery
 

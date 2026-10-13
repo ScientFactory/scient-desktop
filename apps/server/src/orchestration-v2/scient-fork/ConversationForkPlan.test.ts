@@ -557,21 +557,61 @@ it.effect("rejects missing, streaming, and nested response boundaries", () =>
   }),
 );
 
-it.effect("refuses a running-turn fork after its durable run has settled", () =>
+it.effect("keeps a running-turn fork's saved history when its run settled meanwhile", () =>
   Effect.gen(function* () {
     for (const status of ["completed", "failed", "interrupted", "cancelled"] as const) {
       const projection = makeProjection();
       projection.runs[1] = { ...projection.runs[1]!, status, completedAt: now };
-      const result = yield* Effect.result(
-        planConversationFork({
-          projection,
-          targetThreadId,
-          source: { kind: "running-turn", runId: running },
-        }),
+      const plan = yield* planConversationFork({
+        projection,
+        targetThreadId,
+        source: { kind: "running-turn", runId: running },
+      });
+      assert.equal(plan.boundaryRunId, running, status);
+      assert.include(
+        plan.retained.map((item) => item.id),
+        TurnItemId.make("partial-answer"),
+        status,
       );
-      assert.equal(result._tag, "Failure", status);
-      if (result._tag === "Failure") assert.include(result.failure.message, "no longer active");
     }
+  }),
+);
+
+it.effect("keeps the history before a running-turn fork's run that saved nothing yet", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    projection.runs[1] = { ...projection.runs[1]!, status: "preparing" };
+    projection.turnItems = projection.turnItems.filter((item) => item.runId !== running);
+    projection.visibleTurnItems = projection.visibleTurnItems.filter(
+      ({ item }) => item.runId !== running,
+    );
+    const plan = yield* planConversationFork({
+      projection,
+      targetThreadId,
+      source: { kind: "running-turn", runId: running },
+    });
+    assert.deepEqual(
+      plan.retained.map((item) => item.id),
+      ["question-one", "tool-one", "answer-one"].map((id) => TurnItemId.make(id)),
+    );
+  }),
+);
+
+it.effect("refuses a running-turn fork with nothing saved yet", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    projection.runs[1] = { ...projection.runs[1]!, status: "preparing" };
+    projection.turnItems = [];
+    projection.visibleTurnItems = [];
+    const result = yield* Effect.result(
+      planConversationFork({
+        projection,
+        targetThreadId,
+        source: { kind: "running-turn", runId: running },
+      }),
+    );
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") assert.include(result.failure.message, "nothing to fork yet");
   }),
 );
 
