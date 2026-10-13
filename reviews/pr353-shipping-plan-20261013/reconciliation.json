@@ -1,0 +1,1582 @@
+{
+  "updated": "2026-10-13",
+  "originalHead": "47057d4614cc6890c0393fb4f18c356035094bbb",
+  "hostedHead": "b87625d49d535d9afd3a3319d5e1f1258d7b23db",
+  "reviewedLocalHead": "b87625d49d535d9afd3a3319d5e1f1258d7b23db",
+  "checkout": "local checkout (path omitted from publication)",
+  "originalSha256": "1e9ec3e228376c7c31a4f49cf5cb2937a39aaa350b04d2d99325719e888e5c33",
+  "originalArchive": "reviews/document-start/archive/pr353-first-principles-and-ship-plan-20261011-original.md",
+  "method": "Read-only current source and maintained-test reconciliation; retained evidence separately attributed; no new executable tests or native acceptance",
+  "statusCounts": {
+    "Open": 30,
+    "Implemented": 17,
+    "Partial": 13,
+    "Debt": 17,
+    "Boundary": 4,
+    "Qualification": 3
+  },
+  "findings": [
+    {
+      "id": "R1",
+      "status": "Open",
+      "evidence": "rename",
+      "disposition": "Ordinary existing .tex header rename now takes the shared lease hold, but still bypasses the registered LaTeX view-participant preflight. The in-place route is restricted to Markdown or newly started TeX. Durable rename intent now protects transport identity, but does not settle another view's IME/math/form input. Route every TeX rename through all actual owners; test two views."
+    },
+    {
+      "id": "R2",
+      "status": "Open",
+      "evidence": "references",
+      "disposition": "The bibliography source has a lease, but an unfinished reference form remains in referenceDrafts and does not register pending input/rename readiness on the actual .bib owner. Protect that target, not just the currently displayed .tex; test a dirty form and rename from a second view."
+    },
+    {
+      "id": "R3",
+      "status": "Open",
+      "evidence": "recovery",
+      "disposition": "Parked recovery still reads a JSON array and rewrites it in localStorage. No transaction across windows protects concurrent additions/removals. Move this supported multi-writer operation to atomic storage and retain every foreign entry."
+    },
+    {
+      "id": "R4",
+      "status": "Open",
+      "evidence": "drafts",
+      "disposition": "flushVisualDraft still compares a read slot with an observed value, then performs a separate setLocalStorageItem. Equality detects some conflicts but is not compare-and-swap across windows. Preserve both contenders atomically."
+    },
+    {
+      "id": "R5",
+      "status": "Open",
+      "evidence": "fields",
+      "disposition": "The field journal still performs read/compare/write or read/compare/remove on localStorage. Its ownership check can race. Use an atomic owner-scoped journal, with two-window interleaving tests."
+    },
+    {
+      "id": "R6",
+      "status": "Open",
+      "evidence": "sourceRecovery",
+      "disposition": "The storage warning resets on a matching save with no pending work, but the discard/undo-to-clean branch only discards ownDraft. Clear the warning after verified retirement of that owner's record; retain it if cleanup fails."
+    },
+    {
+      "id": "R7",
+      "status": "Open",
+      "evidence": "project",
+      "disposition": "Included-file ProjectFileSession confirms drafts on saves, while project acceptance still checkpoints them separately. It lacks the selected-file recovery hook's pagehide/cleanup flush. Durable publication intents reduce accepted-save loss but do not cover this separate local checkpoint; consolidate the writer/exit path."
+    },
+    {
+      "id": "B1",
+      "status": "Implemented",
+      "evidence": "build",
+      "disposition": "Every build now gets a fresh private attempt directory. Cancellation/finalizers cannot delete a successor's output; an uncertain cancellation retains only that attempt. Maintained tests cover delayed fetch, precompile hashing, delayed cleanup and restart. Keep this isolation; do not restore the global whole-descendant admission regression."
+    },
+    {
+      "id": "B2",
+      "status": "Implemented",
+      "evidence": "artworkView",
+      "disposition": "Drawing preview starts off and requires explicit source-bound execute-host-tex admission; source changes revoke it. The UI discloses host filesystem authority. This closes automatic-on-mount execution, not sandboxing or hermetic TeX execution."
+    },
+    {
+      "id": "B3",
+      "status": "Implemented",
+      "evidence": "artworkWorkspace",
+      "disposition": "The old whole-workspace/.git walk has been replaced by recorder/tracked-input and candidate-search validation. Dynamic/default/recursive paths conservatively force the driver. The specific workspace-size cache defect is superseded; ordinary preview throughput still needs measurement."
+    },
+    {
+      "id": "B4",
+      "status": "Implemented",
+      "evidence": "buildTests",
+      "disposition": "The obsolete universal XeLaTeX refusal is replaced by positive explicit XeLaTeX/latexmk coverage and correct missing-provider refusal. Optional installed LuaLaTeX preserves default Tectonic. These maintained tests are inspected, not newly run here."
+    },
+    {
+      "id": "D1",
+      "status": "Implemented",
+      "evidence": "surface",
+      "disposition": "Build descriptor binding/freshness now feeds visible Rebuild required/update state. Last-good PDF remains readable during failed or pending rebuilds. Earlier actual desktop evidence is bounded to its tested snapshot; final-head all-mode acceptance remains separate."
+    },
+    {
+      "id": "D2",
+      "status": "Implemented",
+      "evidence": "pdf",
+      "disposition": "Retained-reader failure/status and retry controls exist without discarding the last-good reader. Check both update failure and initial authorization failure at the pinned head; do not call a retained old PDF fresh."
+    },
+    {
+      "id": "D3",
+      "status": "Implemented",
+      "evidence": "synctex",
+      "disposition": "Forward navigation checks compiled source identity, pending edits and a current descriptor; server metadata binds the immutable revision to sourceRevisions and revalidates before/after queries. Changed revisions invalidate pending reveals. Maintain direct-RPC stale/ABA and delayed reveal tests."
+    },
+    {
+      "id": "E1",
+      "status": "Open",
+      "evidence": "editor",
+      "disposition": "latexSelectionClipboard marks math/table content as structured, but a selection containing only ref/cite/href-style inline command atoms takes textBetween. Atom content can still disappear. Add atom-aware serialization and copy/paste consumer tests."
+    },
+    {
+      "id": "E2",
+      "status": "Implemented",
+      "evidence": "model",
+      "disposition": "Lossless list serialization now emits owned item patches; repeated live-item ownership repairs preserve untouched siblings instead of canonicalizing the whole list. Keep byte-exact sibling/CRLF/comment and repeated-item undo fixtures; this is not arbitrary-list round-trip certification."
+    },
+    {
+      "id": "E3",
+      "status": "Open",
+      "evidence": "model",
+      "disposition": "Nested layout/scientific projection callbacks still pass allowRootUpdates:false. A requirement accepted at the root can be refused inside a container. Propagate required setup through an explicit owned plan; preserve two-physical-file refusal until grouped acceptance exists."
+    },
+    {
+      "id": "E4",
+      "status": "Open",
+      "evidence": "editor",
+      "disposition": "External source installation still calls projectLatexVisualDocument synchronously in the mounted editor effect before replacing state. Initial opening/worker improvements do not remove this separate large-source update path. Fence and move projection off the UI thread; measure external updates independently."
+    },
+    {
+      "id": "F1",
+      "status": "Implemented",
+      "evidence": "pagination",
+      "disposition": "The pagination anchor now falls back to captureLatexViewportAnchor when a focused caret lies outside the viewport. The old no-anchor branch is gone. Native momentum/IME acceptance remains a qualification item."
+    },
+    {
+      "id": "F2",
+      "status": "Partial",
+      "evidence": "pagination",
+      "disposition": "Compact paragraph snapshots, changed-block measurement, reusable geometry and coalesced page fences substantially reduce repeated preparation work. Full fallback pagination still exists. Establish production editing/Enter/frame-tail cost before claiming all cohorts are incremental."
+    },
+    {
+      "id": "F3",
+      "status": "Open",
+      "evidence": "editor",
+      "disposition": "onTransaction excludes pagination metadata and ordinary typed documents, but does not exclude viewport-only presentation transactions before refreshToolbar. Add explicit transaction taxonomy and verify scrolling does not trigger semantic toolbar work."
+    },
+    {
+      "id": "F4",
+      "status": "Open",
+      "evidence": "viewport",
+      "disposition": "latexViewportPageNodes now builds a cached page index, but thumbnail admission presentLatexViewportPages still nests every unit over placements and scans members. The reading-page index does not repair that separate quadratic path. Reuse the index and measure thumbnail demand."
+    },
+    {
+      "id": "F5",
+      "status": "Open",
+      "evidence": "viewport",
+      "disposition": "The viewport decorations path still creates a DecorationSet from all document units rather than mapping/reusing only changed decorations. Page readiness coalescing reduces frequency, not per-transaction full-set cost. Fix invalidation ownership before optimizing."
+    },
+    {
+      "id": "F6",
+      "status": "Open",
+      "evidence": "tableGuides",
+      "disposition": "The table editing-guide module is unchanged from the reviewed revision. No current viewport/active-table gate closes the old offscreen measurement mechanism. Limit guide geometry to the active mounted table and qualify navigation/selection."
+    },
+    {
+      "id": "F7",
+      "status": "Implemented",
+      "evidence": "viewport",
+      "disposition": "Viewport admission now retains a source-block anchor through spacer replacement and preparation. Latest repair also prevents retargeting to a newly visible predecessor and cancels same-top navigation settlement. Original 1px stress regression is reported passing; do not generalize it to all native scroll cases."
+    },
+    {
+      "id": "S1",
+      "status": "Open",
+      "evidence": "newDocument",
+      "disposition": "Template choice reads the title textarea globally, or entry.name for titleless templates; it does not read/flush the currently typed Document name input through its owner. Preserve pending name across switches and target the correct pane."
+    },
+    {
+      "id": "S2",
+      "status": "Open",
+      "evidence": "templates",
+      "disposition": "createNewDocumentSource still returns personal template source unchanged when English is selected. A Hebrew saved template is not converted by that branch. Define reversible supported language conversion with exact unrelated-byte preservation."
+    },
+    {
+      "id": "S3",
+      "status": "Open",
+      "evidence": "language",
+      "disposition": "DEFAULT_HEBREW_DOCUMENT_FONT is still Times New Roman. Added font selection/layout repairs do not establish availability on supported Linux hosts. Use a qualified portable default or actionable explicit font admission; test real compilation on the target host."
+    },
+    {
+      "id": "S4",
+      "status": "Open",
+      "evidence": "keyboard",
+      "disposition": "scopesOverlap still treats table as disjoint from its LaTeX host. The catalogue is unchanged. Model actual table/host overlap and verify customization plus runtime dispatch."
+    },
+    {
+      "id": "S5",
+      "status": "Open",
+      "evidence": "readerCss",
+      "disposition": "The reader-control stylesheet is unchanged; the page-number focus selector still shares inappropriate sizing with zoom controls and lacks the requested visible focus treatment. Repair and inspect keyboard focus at normal/large scale."
+    },
+    {
+      "id": "S6",
+      "status": "Open",
+      "evidence": "templatePreview",
+      "disposition": "Personal template preview capture is unchanged and has no canvas pixel materialization. Cloning a canvas node is not durable drawing content. Encode canvas output safely and verify a saved/reloaded preview."
+    },
+    {
+      "id": "S7",
+      "status": "Open",
+      "evidence": "markdownFooter",
+      "disposition": "Every changed Markdown doc still runs textBetween over the whole document and countWords in useMemo. No incremental word-count owner was added. Profile long Markdown typing, then cache/update by changed ranges if material."
+    },
+    {
+      "id": "S8",
+      "status": "Open",
+      "evidence": "newDocument",
+      "disposition": "Relocating away from a folder template still exempts every .bib companion from removal. Preserve shared/changed bibliographies, but clean the exact unchanged dedicated file created by this template under its revision guard."
+    },
+    {
+      "id": "S9",
+      "status": "Open",
+      "evidence": "newFocus",
+      "disposition": "focusNewDocumentWhenOpen still searches only rich Markdown/LaTeX contenteditable surfaces. Source-mode Markdown is absent. Focus the chosen editor through the surface command instead of a global DOM query."
+    },
+    {
+      "id": "N1",
+      "status": "Open",
+      "evidence": "model",
+      "disposition": "The general empty-paragraph serializer emits \\par, but the minimal plain-text patch can return an empty string first. Guidance still requires a paragraph's exact \\par sentinel. Preserve it on clear/reopen/undo; the retained comment and generic fallback do not close guidance loss."
+    },
+    {
+      "id": "PV1",
+      "status": "Implemented",
+      "evidence": "sourcePlan",
+      "disposition": "Owned patches carry physical occurrence/boundary identity; the project planner retains included-file EOF/empty-file ownership and repeated appearances. Tests cover physical destination, multi-block EOF, inverse patches and unchanged root. Keep two-file refusal; this is distinct from grouped editing."
+    },
+    {
+      "id": "PV2",
+      "status": "Implemented",
+      "evidence": "project",
+      "disposition": "The obsolete ignored rootUpdate prop channel is removed. Explicit LatexSourceEdit.root patches are validated and joined in the planner; same-physical-file root/body edits can succeed, two-file plans refuse. Do not restore a silently ignored setup side channel."
+    },
+    {
+      "id": "PV3",
+      "status": "Partial",
+      "evidence": "syntax",
+      "disposition": "More consumers share latexSourceSyntax and bounded macro-definition masking now preserves document boundaries, including starred/trivia/unbraced declarations. Independent regex/raw-includes/comment paths remain. Differential qualification must include comments, verbatim, conditional declarations and macro bodies; consolidation is incomplete."
+    },
+    {
+      "id": "PV4",
+      "status": "Debt",
+      "evidence": "model",
+      "disposition": "The unchanged-inline/nonText-signature fallback can accept a local text patch when general reprojection comparison fails. No new failing input is established here. Differential exact-source/projection tests should constrain it before broader grammar coverage."
+    },
+    {
+      "id": "PV5",
+      "status": "Debt",
+      "evidence": "editor",
+      "disposition": "Source-plan primitives are stronger, but admission, history, pending input and projection lifecycle still live substantially inside LatexVisualEditor. Extract a controller around existing contracts one operation at a time; do not create a second canonical document."
+    },
+    {
+      "id": "PV6",
+      "status": "Partial",
+      "evidence": "sourcePlan",
+      "disposition": "Source plan/outcome contracts and persistence failures now have explicit identities/reasons, but visual insertion/refusal presentation still uses generic string notices/null returns. Typed per-operation capability/refusal remains incomplete."
+    },
+    {
+      "id": "PV7",
+      "status": "Boundary",
+      "evidence": "sourcePlan",
+      "disposition": "Two physical files are intentionally refused before working mutation. One-file root/body patches are now supported. Expand only with staged owner acceptance, per-file acknowledgement, build barriers and safe undo; no atomic disk-save promise."
+    },
+    {
+      "id": "LB-1",
+      "status": "Partial",
+      "evidence": "build",
+      "disposition": "Fresh attempt directories prevent attachment of a prior attempt's stale .bbl. Publication still attaches any bounded .bbl found in the successful attempt without proving that the final run consumed it. Add recorder-consumption proof for same-attempt failure/retry edges or narrow the displayed claim."
+    },
+    {
+      "id": "LB-2",
+      "status": "Implemented",
+      "evidence": "build",
+      "disposition": "Fresh attempt isolation and generation/binding fences cover the earlier precompile hashing/cleanup extension of B1. Maintained delayed-hash/cleanup regressions exist. This is part of B1, not an extra blocker count."
+    },
+    {
+      "id": "LB-3",
+      "status": "Partial",
+      "evidence": "installer",
+      "disposition": "Artwork no longer installs packages as a side effect and Tectonic previews are cache-only. The installer serializes mutation and retains an unknown outcome marker, with timeout/retirement tests. Shared explicit installs still use request-scoped process finalization; whole cross-request reader/install coordination is not established. Preserve the working trusted build lane and qualify cancellation separately."
+    },
+    {
+      "id": "LB-4",
+      "status": "Debt",
+      "evidence": "artwork",
+      "disposition": "A successful artwork response can still carry raster and base64 PDF fallback together. Measure allocation/transport cost before changing the fallback contract; this is not a demonstrated severe leak."
+    },
+    {
+      "id": "LB-5",
+      "status": "Implemented",
+      "evidence": "artwork",
+      "disposition": "Preview algorithm numbering is supplied from the current projection and written into the private generated picture source. The old editable-workspace .aux read is absent. Validate numbering with actual artwork output."
+    },
+    {
+      "id": "LB-6",
+      "status": "Implemented",
+      "evidence": "artworkWorkspace",
+      "disposition": "Startup cleanup now examines bounded service-owned directories and checks marker/host/instance/settled retirement before deleting a proved orphan. Live/uncertain/unmarked directories remain. This is conservative cleanup, not a complete crash/storage-quota guarantee."
+    },
+    {
+      "id": "LB-7",
+      "status": "Debt",
+      "evidence": "artifacts",
+      "disposition": "attachmentByteLength remains optional and no producer writes it; resolveRevisionForAsset still rereads metadata after resolveRevisionUnlocked. Attachment retention accounting and duplicate-read cleanup remain."
+    },
+    {
+      "id": "LB-8",
+      "status": "Debt",
+      "evidence": "build",
+      "disposition": "Build, artwork and installer jobs share more lifetime helpers but still duplicate driver/process/environment/output logic. Extract only a common owned-job substrate; keep publication and explicit artwork authority distinct."
+    },
+    {
+      "id": "LB-9",
+      "status": "Debt",
+      "evidence": "build",
+      "disposition": "Project/root discovery remains spread between build service/index/document-resolution paths. Truthful root error/Retry is improved; one resolver and diagnostic contract are still a follow-up."
+    },
+    {
+      "id": "LB-10",
+      "status": "Qualification",
+      "evidence": "build",
+      "disposition": "Receipt/hash/recorder requalification costs still need matched real-engine measurements. Fresh attempt isolation intentionally changes incremental-build reuse. Measure cold, repeated and recorder-expanded inputs before optimizing away evidence checks."
+    },
+    {
+      "id": "LB-11",
+      "status": "Implemented",
+      "evidence": "synctex",
+      "disposition": "Server SyncTeX metadata and consumers now bind sourceRevisions plus immutable PDF revision/evidence basename and validate around navigation. This is no longer only a UI defense proposal. Retain direct-RPC stale/ABA tests."
+    },
+    {
+      "id": "LB-12",
+      "status": "Boundary",
+      "evidence": "build",
+      "disposition": "Workspace/source evidence is observational and scoped; distribution, fonts, ambient search paths and network are not an immutable hermetic job snapshot. Disclose that boundary. Receipt v2/reproducibility is a separate capability."
+    },
+    {
+      "id": "LB-13",
+      "status": "Implemented",
+      "evidence": "artworkTests",
+      "disposition": "LatexTikzPreview now has maintained unit coverage for authority admission, missing provider/cached resources, private outputs and unretired installation refusal. These inspected tests do not establish an OS sandbox."
+    },
+    {
+      "id": "LB-14",
+      "status": "Debt",
+      "evidence": "build",
+      "disposition": "The comment saying evidence earns exactly one rebuild remains, while status reads do not consume requalification. Align the comment with actual start/status behavior; no behavior rewrite is needed."
+    },
+    {
+      "id": "LB-15",
+      "status": "Debt",
+      "evidence": "build",
+      "disposition": "compiledBibliography remains in build/status snapshots, bounded at roughly 1 MB. Revision attachments/presentation queries could avoid repeated poll payloads. Measure cost before API migration."
+    },
+    {
+      "id": "SP1",
+      "status": "Partial",
+      "evidence": "registry",
+      "disposition": "Open now reads IndexedDB checkpoints for every format, restores held publication/attention and can reconcile old draft bytes even when ordinary TeX draft retention is disabled. The old blanket orphan claim is superseded. Add an exact released .tex checkpoint migration/clean-retirement fixture before declaring upgrade coverage complete."
+    },
+    {
+      "id": "SP2",
+      "status": "Open",
+      "evidence": "recovery",
+      "disposition": "Durable accepted save/rename intents now use the transactional checkpoint lane, but live visual drafts, fields and parked recovery still use independent non-atomic localStorage operations. This overlaps R3/R4/R5; do not count it as a fourth independent loss defect."
+    },
+    {
+      "id": "SP3",
+      "status": "Partial",
+      "evidence": "rename",
+      "disposition": "Durable namespace intents and recovery-attention handling are added; the new-document in-place route checks old/new path leftovers. Ordinary existing TeX rename still bypasses that full recovery namespace preflight. Close source and destination ownership together with R1."
+    },
+    {
+      "id": "SP4",
+      "status": "Open",
+      "evidence": "project",
+      "disposition": "Included-file draft retirement still follows matching save notification rather than all clean transitions; undo/discard-to-disk can leave the separate checkpoint. Consolidate with R7 and test clean return without publication."
+    },
+    {
+      "id": "SP5",
+      "status": "Partial",
+      "evidence": "inputs",
+      "disposition": "Leases now own exact publication intents and attention, but unconverted LaTeX input still uses the separate procedural registry/view refs; reference forms are another store. Unify readiness via owner-scoped holds that permit the owner's own converted publication."
+    },
+    {
+      "id": "SP6",
+      "status": "Boundary",
+      "evidence": "session",
+      "disposition": "Raw session and production coordinator version semantics are distinct. Production clean external adoption advances edit identity. Preserve this intentional distinction; no additional version-counter defect is established."
+    },
+    {
+      "id": "SP7",
+      "status": "Debt",
+      "evidence": "recovery",
+      "disposition": "Persistence outcomes gained typed attention/review identities, but recovery UI notices still mix storage, invalid input and operation strings. Typed presentation should follow actual outcome contracts rather than add another store."
+    },
+    {
+      "id": "SP8",
+      "status": "Open",
+      "evidence": "editor",
+      "disposition": "Editor-side checkpointVisualDraft calls remain alongside the selected-file hook and can use sourceRevision.current from props. Acknowledgement-before-render can produce mismatched retirement identity. Use one lease-snapshot writer per file and retain project-only ownership explicitly."
+    },
+    {
+      "id": "SP9",
+      "status": "Debt",
+      "evidence": "session",
+      "disposition": "The coordinator still has interacting mutable state fields, now including exact intent/review state. A state representation cleanup can follow meaningful transition coverage. Do not replace proven acknowledgement semantics for stylistic reasons."
+    },
+    {
+      "id": "AQ1",
+      "status": "Open",
+      "evidence": "editor",
+      "disposition": "Mounted external-source replacement still creates a fresh EditorState with the existing plugin list to clear history. That resets plugin state/lifetimes beyond undo. Use a history-scoped boundary or verified controlled replacement and test preview/viewport teardown."
+    },
+    {
+      "id": "AQ2",
+      "status": "Open",
+      "evidence": "referencesIndex",
+      "disposition": "Reference state still includes positions, and viewport context serializes that structure. Position-only edits can invalidate otherwise equivalent layout/render context. Separate semantic values from positions and test edits before many references."
+    },
+    {
+      "id": "AQ3",
+      "status": "Debt",
+      "evidence": "worker",
+      "disposition": "Cancelling the active shared visual-processing job still stops the worker and restarts its generation. Generation fences prevent stale publication, but burst cancellation can lose warm work. Measure queue fairness and cold-start cost before changing cancellation policy."
+    },
+    {
+      "id": "AQ4",
+      "status": "Qualification",
+      "evidence": "editor",
+      "disposition": "Typing/source-clock and React presentation state are still coupled. Recent paragraph measurement/cache improvements do not quantify React work per native input. Profile the current production editing path and preserve save-clock/composition semantics."
+    },
+    {
+      "id": "AQ5",
+      "status": "Debt",
+      "evidence": "editor",
+      "disposition": "Render-time writes to operational refs such as editBlocked remain. An extracted controller/committed callback boundary can reduce this coupling. No new concurrent-render failure was reproduced here."
+    },
+    {
+      "id": "AQ6",
+      "status": "Partial",
+      "evidence": "page",
+      "disposition": "Pending fences are now coalesced and targeted to affected source-member pages; compatible warm entry avoids a preparation flash. Other geometry/math/presentation notifications still use separate event/string contracts. Keep this improvement and finish typed common presentation only where it removes actual duplicate work."
+    },
+    {
+      "id": "AQ7",
+      "status": "Open",
+      "evidence": "pagination",
+      "disposition": "setLatexPaginationDimensions still dispatches without an equality guard, and several editor paths write dimensions. Snapshot/local measurement does not make redundant geometry updates impossible. Guard equal inputs and define one committed geometry identity."
+    },
+    {
+      "id": "AQ8",
+      "status": "Debt",
+      "evidence": "editor",
+      "disposition": "A formal semantic/selection/pagination/viewport transaction taxonomy is still missing from the React controller. F3 is the concrete before-ship correction; broad controller extraction follows."
+    },
+    {
+      "id": "AQ9",
+      "status": "Debt",
+      "evidence": "editor",
+      "disposition": "An unhosted reader/footer fallback remains alongside the production reader-host path. Keep it clearly scoped to supported standalone/test use, or give tests a host and remove duplication after checking consumers."
+    },
+    {
+      "id": "AQ10",
+      "status": "Debt",
+      "evidence": "pagination",
+      "disposition": "The footnote widget still reuses measured DOM rows and attaches action listeners inside toDOM. Duplicate-factory effects remain an inference. Make factories own rows/listeners and test repeated construction before asserting a user-visible bug."
+    },
+    {
+      "id": "AQ11",
+      "status": "Qualification",
+      "evidence": "editor",
+      "disposition": "Reference extraction and whole-document counts still run in acknowledgement/presentation-related paths. Measure and attribute them; no current-keypress millisecond claim is justified by old timings."
+    },
+    {
+      "id": "AQ-IB1",
+      "status": "Boundary",
+      "evidence": "math",
+      "disposition": "Passive formula previews and a bounded live-field pool remain intentional. Cache/page/readiness and accessibility work improve that design. Do not replace all passive nodes with interactive readOnly fields without measured consumer benefit."
+    },
+    {
+      "id": "A01",
+      "status": "Partial",
+      "evidence": "publication",
+      "disposition": "Retained native publication binds expected revision/absence before work and retains competing actual entries, with bounded macOS regression evidence. The original overwrite implementation is replaced. Linux/Windows cannot satisfy the activated admission contract; final cross-platform success and durability are not closed (U1)."
+    },
+    {
+      "id": "A02",
+      "status": "Partial",
+      "evidence": "publication",
+      "disposition": "Root/parent/entry bindings and native containment checks replace the earlier path-check-then-stage seam; actual macOS symlink/relocation cases are covered by retained evidence. No universal filesystem/platform containment claim follows. Keep unsupported-host refusal visible while restoring supported-host availability."
+    },
+    {
+      "id": "A03",
+      "status": "Partial",
+      "evidence": "publication",
+      "disposition": "Native retained rename/exchange/compensation replaces the old vulnerable check/unlink sequence and binds exact replay to the original mutation identity. Bounded late-writer/entry tests exist on macOS. Qualify positive rename/recovery on every supported host; do not relabel refusal as successful rename."
+    },
+    {
+      "id": "Q01",
+      "status": "Partial",
+      "evidence": "tests",
+      "disposition": "Meaningful owned-source, replay, cancellation, native and Chromium tests now supplement source-text seam assertions. Some implementation-spelling tests remain. Migrate the remaining contract assertions without deleting useful regression coverage or calling aggregate partial suites a full gate."
+    },
+    {
+      "id": "Q02",
+      "status": "Debt",
+      "evidence": "newDocument",
+      "disposition": "Placement/file commands remain pure seams and durable mutations are stronger; the UI hook still owns global DOM lookup plus relocation/template orchestration. Fix S1/S8/S9 narrowly, then extract one owner-scoped command layer."
+    },
+    {
+      "id": "Q03",
+      "status": "Debt",
+      "evidence": "publication",
+      "disposition": "Canonical per-path lock-table retention/map work still merits bounded resource profiling. Native/journal locks now add cross-process ownership. A local semaphore eviction optimization must not weaken serialization or exact replay."
+    }
+  ],
+  "sourceOwners": {
+    "rename": {
+      "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
+      "line": 1919,
+      "symbol": "const holdPanelFileForRename",
+      "symbolFound": true,
+      "sha256": "80547bcd4aba93aa70b0e44e6fd44ca8569369934dfa0a0c6c2fa37fbe41260f"
+    },
+    "references": {
+      "path": "apps/web/src/scient/latex/LatexReferencesPanel.tsx",
+      "line": 179,
+      "symbol": "const referenceDrafts",
+      "symbolFound": true,
+      "sha256": "8ff9712fc50933c340c4f3ec95afeae6e4dfd2f0cc8744ae033695041b42963c"
+    },
+    "recovery": {
+      "path": "apps/web/src/scient/latex/visualRecovery.ts",
+      "line": 202,
+      "symbol": "function writeParked",
+      "symbolFound": true,
+      "sha256": "026091a9bf78b2a6ccb453dcb9c317ecade202dc6b45ceddfe2aaaf8a09c7ce0"
+    },
+    "drafts": {
+      "path": "apps/web/src/scient/latex/visualDrafts.ts",
+      "line": 40,
+      "symbol": "export function flushVisualDraft",
+      "symbolFound": true,
+      "sha256": "28dea15c8411051a5ddc7be27ebdf3a85a74a9ddeacd6d73c1c4b258ee424a50"
+    },
+    "fields": {
+      "path": "apps/web/src/scient/latex/latexFieldJournal.ts",
+      "line": 2,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "7d6f8975d9e57b09d6474271b9aa144e86dd85b283713318957b6af15549a214"
+    },
+    "sourceRecovery": {
+      "path": "apps/web/src/scient/latex/useLatexSourceRecovery.ts",
+      "line": 46,
+      "symbol": "const stop = lease.subscribe",
+      "symbolFound": true,
+      "sha256": "bb4a590c540a3cb2d50ef90f124019002dbde9ef748903c59a8bfcba0545ad16"
+    },
+    "project": {
+      "path": "apps/web/src/scient/latex/LatexProjectVisualEditor.tsx",
+      "line": 89,
+      "symbol": "function ProjectFileSession",
+      "symbolFound": true,
+      "sha256": "4689766a716806f1b25bdc2de223c237db6af7c4a6832b6ea28a466c59e807db"
+    },
+    "build": {
+      "path": "apps/server/src/scient/latex/LatexBuildService.ts",
+      "line": 1639,
+      "symbol": "const workDirectory =",
+      "symbolFound": true,
+      "sha256": "405e55e88e8aeb85f3c13b06eeb20f5a1cc44ec1e0351477f0df159c44b01d70"
+    },
+    "buildTests": {
+      "path": "apps/server/src/scient/latex/LatexBuildService.test.ts",
+      "line": 1017,
+      "symbol": "keeps successor outputs",
+      "symbolFound": true,
+      "sha256": "b4db038c240e8eea71cefa3041ccddd295fbc865b4dff501ef32164104c78702"
+    },
+    "artworkView": {
+      "path": "apps/web/src/scient/latex/LatexTikzView.tsx",
+      "line": 32,
+      "symbol": "const [admittedSource",
+      "symbolFound": true,
+      "sha256": "dc885fd69bdbfbe8591a8cdfe6be125729fa2a2d8fc9108a55a729f12cc2e781"
+    },
+    "artworkWorkspace": {
+      "path": "apps/server/src/scient/latex/latexArtworkWorkspaces.ts",
+      "line": 135,
+      "symbol": "const fingerprint =",
+      "symbolFound": true,
+      "sha256": "d539db627b866ddd43aca1740db343dedb61e2f6e76f940e18070448e8a06568"
+    },
+    "artwork": {
+      "path": "apps/server/src/scient/latex/LatexTikzPreview.ts",
+      "line": 46,
+      "symbol": "const workspace =",
+      "symbolFound": true,
+      "sha256": "409ebe7ff9c094b56c0537c2a20989f159b2911afcbe7d9bace175f56ba41fa7"
+    },
+    "artworkTests": {
+      "path": "apps/server/src/scient/latex/LatexTikzPreview.test.ts",
+      "line": 2,
+      "symbol": "describe",
+      "symbolFound": true,
+      "sha256": "7584a3d1275749294649e0fecfef385b81ee5a0630634b5e0aad32003effb5ad"
+    },
+    "surface": {
+      "path": "apps/web/src/scient/latex/ScientLatexSurface.tsx",
+      "line": 968,
+      "symbol": "descriptor.bindingStatus",
+      "symbolFound": true,
+      "sha256": "de33a6c87ce0ddab6041ebfdb5a71bf94f0341b146069545a1a9f1cbe927561b"
+    },
+    "pdf": {
+      "path": "apps/web/src/scient/pdf/useRetainedPdfSource.ts",
+      "line": 5,
+      "symbol": "export function",
+      "symbolFound": true,
+      "sha256": "630912bda4a3e5fa91926080750868f85ff428d4c95de49d89dfe1037a1aa3b1"
+    },
+    "synctex": {
+      "path": "apps/server/src/scient/latex/LatexSyncTex.ts",
+      "line": 317,
+      "symbol": "const validateSources",
+      "symbolFound": true,
+      "sha256": "4667a1cf47434c632003e4da0d7874a0524d1f5fb4af7ded3a84bc554f413077"
+    },
+    "editor": {
+      "path": "apps/web/src/scient/latex/LatexVisualEditor.tsx",
+      "line": 537,
+      "symbol": "function latexSelectionClipboard",
+      "symbolFound": true,
+      "sha256": "02dadc08fe98d470e07847e4b58afb37bbbfaae3eaaff2c71b32cf1d029cd266"
+    },
+    "model": {
+      "path": "apps/web/src/scient/latex/latexVisualDocument.ts",
+      "line": 6936,
+      "symbol": "function minimallyPatchedBlock",
+      "symbolFound": true,
+      "sha256": "0ed7adbbbcf4283d32e7f90af16e2aa804c43f0f42a8b5f1b6bd99886fb77e6b"
+    },
+    "pagination": {
+      "path": "apps/web/src/scient/latex/latexVisualPaginationExtension.ts",
+      "line": 190,
+      "symbol": "export function setLatexPaginationDimensions",
+      "symbolFound": true,
+      "sha256": "6ff5e0015ece79f312ffef7949bb46e717b8999eeea39ee17bf5941a549f459f"
+    },
+    "viewport": {
+      "path": "apps/web/src/scient/latex/latexViewport.ts",
+      "line": 599,
+      "symbol": "export function presentLatexViewportPages",
+      "symbolFound": true,
+      "sha256": "d561bf5cee6bdcd8ef8e8b5a5ed891481c6fa5420f2d36fe28a8bc92f49b35f3"
+    },
+    "tableGuides": {
+      "path": "apps/web/src/scient/latex/latexTableEditingGuides.ts",
+      "line": 10,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "50d524cf2481bab009f6cc477910e7fe4516c2259076c4cca002fada763d656e"
+    },
+    "newDocument": {
+      "path": "apps/web/src/scient/documents/useNewDocument.tsx",
+      "line": 551,
+      "symbol": "const choose =",
+      "symbolFound": true,
+      "sha256": "664f8eadd4ccc8f0055dde5c773243ab4ce19007191d0361588996bfc70a7030"
+    },
+    "templates": {
+      "path": "apps/web/src/scient/documents/documentTemplates.ts",
+      "line": 282,
+      "symbol": "export function createNewDocumentSource",
+      "symbolFound": true,
+      "sha256": "bacf6ebeaf60723795b5e67ea2442ec620b402c53adaceefb5cd86c40a98133b"
+    },
+    "language": {
+      "path": "apps/web/src/scient/latex/latexLanguage.ts",
+      "line": 5,
+      "symbol": "DEFAULT_HEBREW_DOCUMENT_FONT",
+      "symbolFound": true,
+      "sha256": "5dcc40a00a8994425802e262ec357c8957bcecef4b0a37983124501a591e2685"
+    },
+    "keyboard": {
+      "path": "apps/web/src/scient/keyboard/catalog.ts",
+      "line": 113,
+      "symbol": "export function scopesOverlap",
+      "symbolFound": true,
+      "sha256": "8f95d0aeabd9aef745a4bce4e8eb01d727d1fccd880841ae20cc6db4b6ad48e0"
+    },
+    "readerCss": {
+      "path": "apps/web/src/scient/writing/documentReaderControls.css",
+      "line": 83,
+      "symbol": "focus",
+      "symbolFound": true,
+      "sha256": "50ebe84a68b629a0e24095cf8cadec56719bbf3ddd33dceb3252f1069bec9c0a"
+    },
+    "templatePreview": {
+      "path": "apps/web/src/scient/documents/templatePreviews.ts",
+      "line": 48,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "d3118012dc58f3e120a06e4d75ce17ba7ce84d9fc19aefd831e02c21457cee09"
+    },
+    "markdownFooter": {
+      "path": "apps/web/src/scient/markdownEditor/ui/ScientMarkdownFooter.tsx",
+      "line": 46,
+      "symbol": "const total =",
+      "symbolFound": true,
+      "sha256": "71a9a121b199a49cdf905b23df69630829472ed3de1bd67b2c60e66fe3faece2"
+    },
+    "newFocus": {
+      "path": "apps/web/src/scient/documents/focusNewDocument.ts",
+      "line": 1,
+      "symbol": "const EDITOR_SELECTOR",
+      "symbolFound": true,
+      "sha256": "6d04dd6bc2b41aa85003d34aaca1df26190f58c350bdc1de2a4fa4343ec7fb4d"
+    },
+    "sourcePlan": {
+      "path": "apps/web/src/scient/latex/latexSourceEditPlan.ts",
+      "line": 7,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "5bf6409e56f34ae8b14eca9fba9261ca435c93bfe10b7a15c8e08d81db7b1552"
+    },
+    "syntax": {
+      "path": "apps/web/src/scient/latex/latexSourceSyntax.ts",
+      "line": 235,
+      "symbol": "export function latexPreambleEnd",
+      "symbolFound": true,
+      "sha256": "704dcd17235c8ccfbd4a322e92e90e176eed61edc50bebf81a47d5debbfa5a93"
+    },
+    "installer": {
+      "path": "apps/server/src/scient/latex/LatexPackageInstaller.ts",
+      "line": 362,
+      "symbol": "const runScript =",
+      "symbolFound": true,
+      "sha256": "3df3e1b6016939c1437677913a06812a57d8f5a2d746a27212c5df89d336b2a0"
+    },
+    "artifacts": {
+      "path": "apps/server/src/scient/documentArtifacts/GeneratedDocumentStore.ts",
+      "line": 1065,
+      "symbol": "const resolveRevisionForAsset",
+      "symbolFound": true,
+      "sha256": "236cb7abdc90cb39db04629caeff6a31c11d45dcddfec3be9d97005590bcf5cc"
+    },
+    "registry": {
+      "path": "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.ts",
+      "line": 411,
+      "symbol": "async open(",
+      "symbolFound": true,
+      "sha256": "96afb1be6f3360398d72fa1818b19061358a4f305060aa5e05a9d07698bff602"
+    },
+    "inputs": {
+      "path": "apps/web/src/scient/latex/latexDocumentInputs.ts",
+      "line": 11,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "40477bc4569d7e5375736cdb20a969e2b9fec9ada130ce2d76cfee4f5b58884d"
+    },
+    "session": {
+      "path": "packages/scient-document/src/persistenceCoordinator.ts",
+      "line": 610,
+      "symbol": "holdForRename",
+      "symbolFound": true,
+      "sha256": "a3f4f9e8fc73a725d7edd84fea5cc9ba56364f171b6d14f62129e6760b070ed4"
+    },
+    "referencesIndex": {
+      "path": "apps/web/src/scient/latex/latexEquationReferences.ts",
+      "line": 90,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "a9d959d51777edb953ec577dd8a66555c93877fcc7e1aca74b037fe4ac45815e"
+    },
+    "worker": {
+      "path": "apps/web/src/scient/latex/visualProcessing.ts",
+      "line": 169,
+      "symbol": "export function processVisualDocument(",
+      "symbolFound": true,
+      "sha256": "e6c4a1cc284fe5bd33a731af0c2835d51fda30330539f18b4e4fff71a827fcf6"
+    },
+    "page": {
+      "path": "apps/web/src/scient/latex/latexPagePresentation.ts",
+      "line": 36,
+      "symbol": "maximumWaitMs",
+      "symbolFound": true,
+      "sha256": "03f8a850f35b29c53581b4a3d33e0ca48bdf82e9081e1cedb9bebecc94ae856d"
+    },
+    "math": {
+      "path": "apps/web/src/scient/latex/mathFieldPool.ts",
+      "line": 31,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "34f866ac4c0164ea35540ef339e0bc38ebd9697950c41d8fd813ddf1150c3553"
+    },
+    "publication": {
+      "path": "apps/server/src/scient/workspace/WorkspaceFileMutations.ts",
+      "line": 755,
+      "symbol": "strictCurrentRoot",
+      "symbolFound": true,
+      "sha256": "5cc52a6962ed61cab464ceb28e75bca6272ed619bbb80bc1dcde3e9450f2df94"
+    },
+    "tests": {
+      "path": "apps/web/src/scient/markdownEditor/scientMarkdownAssetSeam.test.ts",
+      "line": 4,
+      "symbol": "describe",
+      "symbolFound": true,
+      "sha256": "9bef90b05cb695a00b61c559ca1d118a4a34a405a006205528cb3c879d5dc07b"
+    },
+    "opening": {
+      "path": "apps/web/src/scient/latex/latexOpeningPresentation.tsx",
+      "line": 4,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "1cf5699df2c6038c7eb8b9110fe316c75be15ad9948c7d67887044572e156bbe"
+    },
+    "openingCss": {
+      "path": "apps/web/src/scient/latex/latexOpeningPresentation.css",
+      "line": 33,
+      "symbol": "opacity",
+      "symbolFound": true,
+      "sha256": "72e1ef87cdb4b2525a1acebfb484bb366fddf7bdfa70e8102f149afb707b7a8d"
+    },
+    "readingCache": {
+      "path": "apps/web/src/scient/latex/latexReadingCache.ts",
+      "line": 113,
+      "symbol": "24 * 1024",
+      "symbolFound": true,
+      "sha256": "4df8b9eebd418051b8e5321e47e18de07c2278081d951f538f5413d3fc35b1ef"
+    },
+    "mathPreview": {
+      "path": "apps/web/src/scient/latex/mathReadingPreview.ts",
+      "line": 21,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "6b9e8aa9462fda417f2b7a8e9e2f3bd137f24784cba1c18cc328ce2ffdf4f75c"
+    },
+    "readingFonts": {
+      "path": "apps/web/src/scient/latex/latexReadingFonts.ts",
+      "line": 27,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "2e51518d1a12e92cbbb936a97f3082df0d2a2f918e42373f129b32ca3b0c6c76"
+    },
+    "selectionSession": {
+      "path": "apps/web/src/scient/latex/latexSelectionSession.ts",
+      "line": 24,
+      "symbol": "export interface LatexSelectionSnapshot",
+      "symbolFound": true,
+      "sha256": "23c9235d2545e2fcf6880a02eaeda11b2822dd5e6d577c01a033093bd1ad36bf"
+    },
+    "projectionSelection": {
+      "path": "apps/web/src/scient/latex/latexProjectionSelection.ts",
+      "line": 15,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "efb527b8170bc4f07a1847ccba3868235eb01c0ae08f4dbb97f3deb18fd18924"
+    },
+    "sourceNavigation": {
+      "path": "apps/web/src/scient/latex/useLatexSourceNavigation.ts",
+      "line": 8,
+      "symbol": "export function",
+      "symbolFound": true,
+      "sha256": "75dafa329468d737ea6ccf45672fcdeea7e25d1897582f14496060acdf37f275"
+    },
+    "compilationModes": {
+      "path": "apps/web/src/scient/latex/latexCompilation.ts",
+      "line": 7,
+      "symbol": "On save",
+      "symbolFound": true,
+      "sha256": "5730d320554e60270e0843224688dfd2b12b99b8da0daddbf95a2744ce25307f"
+    },
+    "pdfReader": {
+      "path": "apps/web/src/scient/pdf/ScientPdfReader.tsx",
+      "line": 116,
+      "symbol": "const retryLoad",
+      "symbolFound": true,
+      "sha256": "9a2d187c875a19b685ebf8f174d5743705312cc0e92bc525f37529522ae95454"
+    },
+    "mathAccessibility": {
+      "path": "apps/web/src/scient/latex/mathFieldAccessibility.ts",
+      "line": 4,
+      "symbol": "export",
+      "symbolFound": true,
+      "sha256": "75ef257f569645a3ea169f7fb24a30efee70f51b64f3775fca00b1707d4f0d22"
+    },
+    "projectSourceTests": {
+      "path": "apps/web/src/scient/latex/latexProjectVisual.test.ts",
+      "line": 200,
+      "symbol": "allows multiple body and root patches",
+      "symbolFound": true,
+      "sha256": "009f07ff89fb1f1747a1758cc0a1869d4c71320c4d3d1640cd159cca299c1656"
+    }
+  },
+  "newRecords": [
+    "U1 supported-host publication availability",
+    "U2 final integration and hosted gates",
+    "U3 client upgrade and final-head workflow qualification",
+    "U4 page/cache capacity claim limits"
+  ],
+  "initialHostedHead": "1fb52333c0ee31c50001acc5d0b198508bd3d959",
+  "hostedRefreshedAtUtc": "2026-10-12T22:34:56.739867+00:00",
+  "hostedChecksReceipt": "reviews/document-start/pr353-hosted-checks-20261013.json",
+  "developmentComparison": {
+    "checkout": "local checkout (path omitted from publication)",
+    "head": "f70edd24d642e7c9d9bd3ca102b73006fa4f0056",
+    "differentDocumentPaths": [
+      {
+        "path": "apps/server/src/scient/latex/LatexTikzPreview.test.ts",
+        "developmentSha256": "e052e31c65a995269f073679b6e17b8cd0845e616449780fd5e598a6c1be8862",
+        "reviewedSha256": "7584a3d1275749294649e0fecfef385b81ee5a0630634b5e0aad32003effb5ad"
+      },
+      {
+        "path": "apps/server/src/scient/latex/latexProcessRetirement.ts",
+        "developmentSha256": "67388ec6150b061a5a501b12851f5557664366468ea70c6ad4098a6285dd4355",
+        "reviewedSha256": "47e5719293e4d2431d7e6c2600f4c0039a0b2768f34d7c09c4499f9f87adecdc"
+      },
+      {
+        "path": "apps/server/src/scient/workspace/NativeFilePublication.test.ts",
+        "developmentSha256": "80685234635402c18d455baa483c73c34d73adbfb8f6330624b8834d9e9ee88d",
+        "reviewedSha256": "5be0a670d26184bc12d0002dfc091a6519eb78741a62e2e38d719a7dcacbf4b3"
+      },
+      {
+        "path": "apps/server/src/scient/workspace/NativeFilePublication.ts",
+        "developmentSha256": "f5cc54d95e9f18dd08acfd7f3ec37c5ce413d25d4e94e69bc70493258d1533ba",
+        "reviewedSha256": "54535d8a7d5e4d5201b4f478bfd22cf5a8688ba896c894421f9cc3b11fc26be2"
+      },
+      {
+        "path": "apps/web/src/scient/documents/useNewDocument.rename.test.tsx",
+        "developmentSha256": "c770682a6be29903a6afc10ec72a93540958c3ee1a6d6a77526e0d5982320ba0",
+        "reviewedSha256": "abcdb7317b5f557764568b30ff7dee5ed6470ce121d6e5aac066f58b181343c9"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexPagePresentation.ts",
+        "developmentSha256": "f1be90b4c26a575eb56c54557ad0da22e06726f59682b0aa481586aa53e55033",
+        "reviewedSha256": "03f8a850f35b29c53581b4a3d33e0ca48bdf82e9081e1cedb9bebecc94ae856d"
+      },
+      {
+        "path": "native/file-exchange/qualify-publication.mjs",
+        "developmentSha256": "45494f041a620e662b23545a5e2f860ab6daedb574da9d033a2c7525b7139600",
+        "reviewedSha256": "34326c9f33b2ec70321f674da99d7eb140ccb126b4a32d3c1d921167026bbdbf"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexArchiveUnpacker.test.ts",
+        "developmentSha256": "11237a1f5a5d3c51d1a1a5946a3b82e304bb9f7d36925a38eee12ae86edf1e98",
+        "reviewedSha256": "9955aaac06382feae8012ac63e68872cae5c0877a3f3174f408b6f43fd63528b"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexArchiveUnpacker.ts",
+        "developmentSha256": "8507bf1816c272d6b023cf13cf8f81cb674d2f9660a819d6648385083a76e0e1",
+        "reviewedSha256": "579270a2e6041b9a517365033c565f00dd4eb157597949c70b77ba4ea29f6858"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexBuildService.ts",
+        "developmentSha256": "b31444411a11aeb013c22dd5ccd2a74865fe2b2884d0a33a05b1f1309dd32c91",
+        "reviewedSha256": "405e55e88e8aeb85f3c13b06eeb20f5a1cc44ec1e0351477f0df159c44b01d70"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexManagedToolchain.test.ts",
+        "developmentSha256": "2bccd62fe92e3c00317a48ecafab75d8dfd7cb3d11018b574bdbca1ed121c1a8",
+        "reviewedSha256": "154f9f36a525fc9e96a9add92b9fc14d1ad4213089accca4e15a408247737147"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexManagedToolchain.ts",
+        "developmentSha256": "10602e0e2f189a4045e67a04b12450ffd7d6724a943149e2e2fa293c78256416",
+        "reviewedSha256": "5269672f02b29acbaa8526e96018f2de0fc4fbb1c4dc7172e2a9206bbb76060d"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexPackageInstaller.test.ts",
+        "developmentSha256": "d71c6079c83780788da4f7c4410a5ff7050e606530cd9365ae9a721797799dbc",
+        "reviewedSha256": "ff357592475105733f83f5652ff99b11009181e4ffa607f5f610b426100137d4"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexPackageInstaller.ts",
+        "developmentSha256": "7d4780906d702b90d8e812dd88f4a08a24c76bafc70c9efb8c1c0a65c72ca5c9",
+        "reviewedSha256": "3df3e1b6016939c1437677913a06812a57d8f5a2d746a27212c5df89d336b2a0"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexSyncTex.test.ts",
+        "developmentSha256": "574705bfcd67df072e405ee182ed48e0af40492797141ebe387c09bdc8881d21",
+        "reviewedSha256": "3940034cc7062cf53b9b7c8e6f729b7ce899751252fb44a104199af8129a9c9d"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexSyncTex.ts",
+        "developmentSha256": "4e389b88bc31873e96a665d07afb5ecced391f33fcc61527393508d54e4942dc",
+        "reviewedSha256": "4667a1cf47434c632003e4da0d7874a0524d1f5fb4af7ded3a84bc554f413077"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexTikzPreview.ts",
+        "developmentSha256": "6db6f5ff7655fdb3247b3d40a7f3118283e6843a215b0c56a2ab96d2f98057d1",
+        "reviewedSha256": "409ebe7ff9c094b56c0537c2a20989f159b2911afcbe7d9bace175f56ba41fa7"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexToolchain.test.ts",
+        "developmentSha256": "9ad23d7cb72918ad7f0a6fd2a0fc92564ddf9de704a23d99ae03504df9cbb726",
+        "reviewedSha256": "9cc3749cdc5ded465a9e7dcbae2f70e72740f539c128b2de108f2f7115d3e0db"
+      },
+      {
+        "path": "apps/server/src/scient/latex/LatexToolchain.ts",
+        "developmentSha256": "52417dad49e0234e5f91c1400d1a4e69a23b759cdb9d966e7c6923b0ae438a69",
+        "reviewedSha256": "aa4c4d9077be21e04fa31393535cf347af2f0494aa4f04d9412cd105f9beb1da"
+      },
+      {
+        "path": "apps/server/src/scient/latex/SyncTexRuntime.test.ts",
+        "developmentSha256": "df42f013e2ad6bbd2ec1217b660698afb9db83f2c7b347b1d02f61236832ceb9",
+        "reviewedSha256": "c1e7c82745036814702febfaae139b194395019d76def17ca03de9daf1d63d9d"
+      },
+      {
+        "path": "apps/server/src/scient/latex/SyncTexRuntime.ts",
+        "developmentSha256": "bf30695b5a1bc5f9d967c35ca8ba3637283f63a6e3ae7bb8645fa95d143b6daa",
+        "reviewedSha256": "4390c225075de8dd6a47fb44d80b002e564e0188fe3c8eb95ab2f90538d63258"
+      },
+      {
+        "path": "apps/server/src/scient/latex/latexArtworkRaster.ts",
+        "developmentSha256": "2ca2a4e2814d8c3a0a80f3baa5ab78d2d2d22aa8430d0c0c484d8773f99873fb",
+        "reviewedSha256": "c2f8849e222cc576d599fbb7369c68f817361951240ad2c6f89571b8af6148a9"
+      },
+      {
+        "path": "apps/server/src/scient/latex/latexArtworkWorkspaces.test.ts",
+        "developmentSha256": "1cd571af4dfbb289d1a9a67df5343e4af2bc42bd790d82d2bff0c0f3a474858c",
+        "reviewedSha256": "644f42a1d406b6f800bb36757632dd0dd1cb30cdf903e0c5b7eb9715e7cf7105"
+      },
+      {
+        "path": "apps/server/src/scient/latex/latexArtworkWorkspaces.ts",
+        "developmentSha256": "300a6dbf5d390d821aac85f21585978ee482e8709773c6a75618f2b822dca8eb",
+        "reviewedSha256": "d539db627b866ddd43aca1740db343dedb61e2f6e76f940e18070448e8a06568"
+      },
+      {
+        "path": "apps/server/src/scient/latex/latexCommand.test.ts",
+        "developmentSha256": "d49e61baf57e10a934a50d3ac4588319bc28fbb1456196f2f916062d01dae41a",
+        "reviewedSha256": "4d6f5c2dd6edd53ca10b35996543f92d50a47d4e29b9e3dd699073c65709dc6f"
+      },
+      {
+        "path": "apps/server/src/scient/latex/latexCommand.ts",
+        "developmentSha256": "4ab288a8b26997f08131441a4753792ccfb5f9dd175a57d97fd44b2c83aa7e3d",
+        "reviewedSha256": "86fd08342ba6f03112c26278ad92e36849aaeba055dd19fe183ff3a0cd6ee513"
+      },
+      {
+        "path": "apps/server/src/scient/latex/latexLog.test.ts",
+        "developmentSha256": "9498b19107d3594c55a5ebcfecfaa0ff3dd830c598f94a7da168028b2e24dace",
+        "reviewedSha256": "658d47ecb5250de8af90ea631ead96ba9455363efcd101ffd644a2b1b11d081e"
+      },
+      {
+        "path": "apps/server/src/scient/latex/latexLog.ts",
+        "developmentSha256": "8e5946f5d3f8501852e135ddeb3b7a11f5ed87cde7b310a3fea1ac4976bf26cb",
+        "reviewedSha256": "40575e03aa393fda0e739c5f0e3d9b3a246837d812812db8b106b5b79c6fe758"
+      },
+      {
+        "path": "apps/server/src/scient/latex/managedLatexInstall.ts",
+        "developmentSha256": "faffd3a252dfdd6e3aa24cb1332b03226c96b5327d6d6c35fc5f678b95d24085",
+        "reviewedSha256": "4d077c6f61ae0426b77e808456a68cc85ce845fcf0f0ea1c03a7240c6450e577"
+      },
+      {
+        "path": "apps/server/src/scient/workspace/RetainedFileMutation.ts",
+        "developmentSha256": "d161739efbf1f2426e4e79e913b3a3fa06ae70fbefd0d8059d9d8176ccdacfe0",
+        "reviewedSha256": "5c995737bcb98e10d81adde865d109f56b9dfa04ab22cab8f476da33f1ad83df"
+      },
+      {
+        "path": "apps/server/src/scient/workspace/WorkspaceFileErrors.ts",
+        "developmentSha256": "84dfc624316e69c715befcf302b0045b777008ba9dbd31d3073557a5282d5d23",
+        "reviewedSha256": "0a826791532f29c7c67c1341b5ae7735d1e3f10d486f202661b15de34efef583"
+      },
+      {
+        "path": "apps/server/src/scient/workspace/WorkspaceFileWatch.ts",
+        "developmentSha256": "35c96e2c1bc7fccf6cc723587dede8048e2644c310d803fccd4761b87339804e",
+        "reviewedSha256": "f1419ec5eee47f426aa19149d13fb609269f7cc0667da6609fedf330989312c3"
+      },
+      {
+        "path": "apps/server/src/scient/workspace/fileExchange.testkit.ts",
+        "developmentSha256": "f2a7fec8739a7f8eb4e26e56d44d1f3caaa8ab7d052b4a238f56351544ae8f4a",
+        "reviewedSha256": "867a9604bde71f7d9a4bc576cee29d2b41b6a0c2e49839187f8fa714bf3deb37"
+      },
+      {
+        "path": "apps/web/src/components/files/BrowserDocumentFrame.tsx",
+        "developmentSha256": "50cb5b00cd778ee04e3fa64fbabb639d60fda4f7c3be17db4a565089bbb4b2a8",
+        "reviewedSha256": "090cbdd5312645687c9fbd07e95d869246a07dc15444b2968a9e2bc7a522b354"
+      },
+      {
+        "path": "apps/web/src/components/files/FileBreadcrumbNavigator.tsx",
+        "developmentSha256": "ad14972ef8b4427dae930df672aaea8136979a9f8114529767e618d493dc57ab",
+        "reviewedSha256": "f265101489a9871fefa0dd6e1b092774d1042049ae54700629d7dfd6b4fff7a4"
+      },
+      {
+        "path": "apps/web/src/components/files/FileBreadcrumbs.tsx",
+        "developmentSha256": "bc14db3f438e61c8b8fd3e49cf25c2be80bcd5c5fb3f9e767a6e97cc5b568673",
+        "reviewedSha256": "9ab4470c5b83cea8fbb302be05e79e9b6bade96bd8001339b65fbce6bcd6f5d9"
+      },
+      {
+        "path": "apps/web/src/components/files/FileBrowserPanel.tsx",
+        "developmentSha256": "272d05bf594a22c0a39e27d3a513c9facadb68e97c31b99ac72844d4e89f274f",
+        "reviewedSha256": "158fee784fa6a942e3a4bdd97dd2b0525fae66754aae32b51ece6c59e76f4e2b"
+      },
+      {
+        "path": "apps/web/src/components/files/FilePreviewPanel.test.ts",
+        "developmentSha256": "a449ad0a66caac8e18031093f4c99e6ec003fec753f67a3b104f24e89dd7eeb8",
+        "reviewedSha256": "4c622a0676ca684dc0bec23abd361911d4c9a95054c907988f14b40eaeec0112"
+      },
+      {
+        "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
+        "developmentSha256": "b3f77b5facbed2cc6c0e4604ca2614d8d00cb03c191512e2cc37b39fd5c4ff9f",
+        "reviewedSha256": "80547bcd4aba93aa70b0e44e6fd44ca8569369934dfa0a0c6c2fa37fbe41260f"
+      },
+      {
+        "path": "apps/web/src/components/files/FileRenameButton.test.tsx",
+        "developmentSha256": "68c79721f6c8be780b4e9a4c0aa3311cdaed869f17bf297ee3b030d78be43bad",
+        "reviewedSha256": "7dca8db5e7802696c27f4dcb813a27723db869522b0e3bcf3c61a18a7b666a69"
+      },
+      {
+        "path": "apps/web/src/components/files/FileRenameButton.tsx",
+        "developmentSha256": "d876e6f770c18ca7438901d79004f1d80bbcd79adc06ada9b5ad5d698889e7e5",
+        "reviewedSha256": "c455e9e0bd69d9f1955096caf0a442d1b213391779f1cc65569e9394389e490b"
+      },
+      {
+        "path": "apps/web/src/components/files/fileEditorDismissal.test.ts",
+        "developmentSha256": "13eff9fc5511c74c57656650812dbead0c819edc1eea70b8a40d57ab6535a6f3",
+        "reviewedSha256": "df16ab28d5301aa118f24fa93d9dcfa5d7909656c25470d628e6ba7a58d25894"
+      },
+      {
+        "path": "apps/web/src/components/files/fileEditorDismissal.ts",
+        "developmentSha256": "2c3f524c5e2fcafa101a44e5950021ae7cc1ef808534274a2804d62ee036cc4a",
+        "reviewedSha256": "3e962bc462c04af3450bbf1fe3fa824601130b95c299996c6db55d371ae7d527"
+      },
+      {
+        "path": "apps/web/src/components/files/fileLineReveal.test.ts",
+        "developmentSha256": "d4d00f9610ef56b857e8f442bb943b062bc7f739cca01c71881b757b9f8ddb2d",
+        "reviewedSha256": "756196681b1ef30a0f578e0abdb6e5cf61ee9924dbafedc1c4d68f92834d8bf0"
+      },
+      {
+        "path": "apps/web/src/components/files/fileLineReveal.ts",
+        "developmentSha256": "b19f7b406b3a2cfc220a35727cf070d3b7b7003fff36f07726bc4591713af753",
+        "reviewedSha256": "cf8c25b5ff0d28c4d32a55d3cc5eba8be61525a5aba0a0314f427f35733eb56f"
+      },
+      {
+        "path": "apps/web/src/components/files/filePreviewMode.ts",
+        "developmentSha256": "edb9054e16feb2f591da0758fb1aac00f383bf337cf95bcc8885dd1d603b1c0c",
+        "reviewedSha256": "cf991f556165b5a6130eebb70464d2e735b56a525a11ce7fef010818baae3589"
+      },
+      {
+        "path": "apps/web/src/components/files/fileSaveCoordinator.test.ts",
+        "developmentSha256": "dabe59458b78124edec0fd5fe625a76d0e68b55038a2e696399f8fb10810ae41",
+        "reviewedSha256": "460b97d42094f7619067cd59928f8a65fe09652859e776c1ee33269b1d2046b8"
+      },
+      {
+        "path": "apps/web/src/components/files/fileSaveCoordinator.ts",
+        "developmentSha256": "7a30e5a32811e03adbc65197ede4aa537f1f3a71c5bfd714fb489f34a1c3829a",
+        "reviewedSha256": "c8e603cd0f3073df269b6e2ede2e9ae46fe2d0999fad5073b5b21b2b6aaaf03f"
+      },
+      {
+        "path": "apps/web/src/components/files/fileSurfaceChrome.tsx",
+        "developmentSha256": "ed0372696edbe3b6e8aef684177f1d2f5f5138abcd3f041a5a62ac43c5e78ffd",
+        "reviewedSha256": "0d3f1d7dc822e6bdf10f58b46641fff96ff74d5b9aeb0732bdb30a240dc459c2"
+      },
+      {
+        "path": "apps/web/src/components/files/projectFilesQueryState.test.ts",
+        "developmentSha256": "b4eface6604f51e7da95d5dff1d1f317bf679cb37b0d9332645e453dfb8887e6",
+        "reviewedSha256": "432585b461903cf564df28da6d401acb72ce5aeb93da0cc68a4c299fddc94ce4"
+      },
+      {
+        "path": "apps/web/src/components/files/useFileSaveCoordinator.test.tsx",
+        "developmentSha256": "694e499657d772f1505850e3e2a8b6d7585845750e9ba44783497fbed40c3fcb",
+        "reviewedSha256": "2567f7788aac0584373f4f079365ba2acffbaf47925468f763efc2ee1f944b0e"
+      },
+      {
+        "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
+        "developmentSha256": "aa19cd6d66d6aacea5e8e3efae199761a9b108ed232736aa08c00466394c87a5",
+        "reviewedSha256": "f97d4df55b4f0006dc8b9e98452888865a487bd3585db1e9ac09e0ec73d3fa3e"
+      },
+      {
+        "path": "apps/web/src/components/files/workspaceFileSessionRegistry.test.ts",
+        "developmentSha256": "9d44f3ef09221d401978482065a7156c09b563eebaa650dde0bf7d60d046e8cc",
+        "reviewedSha256": "96aeaed7fb30eda9f476f1e5a10348574f91b209db7c210f627e91b02d8ddf2d"
+      },
+      {
+        "path": "apps/web/src/components/files/workspaceFileSessionRegistry.ts",
+        "developmentSha256": "4f2414c9d1c0230b09d3bf43353a6b63b32ca5d51b3f527b5b91f41876f76288",
+        "reviewedSha256": "b5df051a9ffaa508a2103c23b41ebca936b564469aee036199035082e609be75"
+      },
+      {
+        "path": "apps/web/src/scient/documents/DocumentsSettings.interaction.test.tsx",
+        "developmentSha256": "a4a088497855e86748887d044fad909eecdf401656398bb19ad3a1adbaf18373",
+        "reviewedSha256": "466ceb38602d56910922bed2bbc3d15ef6aa31761fd90e98638c499274cf3e8d"
+      },
+      {
+        "path": "apps/web/src/scient/documents/documentTemplates.ts",
+        "developmentSha256": "48bfd04bea571da48a1c4ef2d236344ecb5ea71fa055fa144aa38e49eabca7e6",
+        "reviewedSha256": "bacf6ebeaf60723795b5e67ea2442ec620b402c53adaceefb5cd86c40a98133b"
+      },
+      {
+        "path": "apps/web/src/scient/documents/useNewDocument.tsx",
+        "developmentSha256": "e3ccb884fed4e3530eb1dc8acd54f1691b9c31350c5babcf41161bbe63020427",
+        "reviewedSha256": "664f8eadd4ccc8f0055dde5c773243ab4ce19007191d0361588996bfc70a7030"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexDocumentSettings.tsx",
+        "developmentSha256": "6036491ee654885d30996d72638172ceed5c560af4e2d3f1b15e2fe9b5454e57",
+        "reviewedSha256": "ac33eb66330bad3f029276d1c0db0e896d9dec5cf562e3aa6cd8c7219cef7114"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexLiteralCodeView.tsx",
+        "developmentSha256": "da6f58917afa540508599fa90ff827afed1eda7012d7d6ba899d2587f63b3149",
+        "reviewedSha256": "4abe507e9f22c00bddc8c422a6a2102913ae01818f1a33341131e9f1e07d8f45"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexLongTableBand.tsx",
+        "developmentSha256": "3efa21bb8953b5048213b758b6c418cd168bb342942d402c49fb03bdc0d9888e",
+        "reviewedSha256": "3992dc76e02032cead979aac79326a8f8a414b15212c18ba45e4ddd261e20916"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexMathField.tsx",
+        "developmentSha256": "a612e43dedcd5f75acc296b4872f429286295fffe64bc10db2fd8bd4c0067610",
+        "reviewedSha256": "826c77eb96a0db4d0bb3f4b4f9977c43c315b6feec09c51e6fbee3da2157a94f"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexProjectVisualEditor.tsx",
+        "developmentSha256": "f395962638fb15eca14f876cbc5cc9cea38b964521a717e78e9f2a0db6e0fa35",
+        "reviewedSha256": "4689766a716806f1b25bdc2de223c237db6af7c4a6832b6ea28a466c59e807db"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexProsePreview.tsx",
+        "developmentSha256": "6eb712ac0b90f0271c6c98471a91d834d3845ba18370971924883459b615addc",
+        "reviewedSha256": "fbd24e5dd139349b9f547c1c44be3a868c1b458ee96e7b3acbd1a1b9a7316d3b"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexSelect.tsx",
+        "developmentSha256": "2489e2c4b93456a87dc85fad0ad826a4986d941ea744d12d1d098c8449ac516c",
+        "reviewedSha256": "52cbddfc19444db3436bd447ef5337b473aafd6d8d46ea6c7b679c97c7f1b1ea"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexTextField.tsx",
+        "developmentSha256": "8ae6b1cfd0242e972ccf1dacde3f2366ac255c3eaefd840dc19379c10d2fa3b8",
+        "reviewedSha256": "0c5160b750c27fa6a287fb953ac8ee5e199153b86ffb786ab2101c212cea74a8"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexTikzView.browser.test.tsx",
+        "developmentSha256": "1eeef87a1ef7208485e66983d896d2296a479fc078b9e4deb7c0662228cd5fe9",
+        "reviewedSha256": "9176b11c7bab826e4a7d2be4f2228ba6468cdeeef107b82340e92b2b6a66e87f"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexTitleView.tsx",
+        "developmentSha256": "9aeb3c04c2833b1f03bd637b0ba83fcf86e65abbe902059696d519f998c81029",
+        "reviewedSha256": "9d0e4bbf242df0e3efd433555739664e58e84e727315bf397d68df10c33df343"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexVisualEditor.browser.test.tsx",
+        "developmentSha256": "0fb41d6d1032b198efa8686132af573deb0cbc9fc190e0f1443b0475cb922722",
+        "reviewedSha256": "930a89a74511b27756877fe6a1053e5abfc225392f6b22e9d1b64e4252d52a88"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexVisualEditor.test.tsx",
+        "developmentSha256": "baaa6d2dfa65fa7cc116906e02e3e13e9309412cb849dea6bd6be9f73a451177",
+        "reviewedSha256": "460b27344a47c2a087c9a39c504d4ab53fe9518eecc64fdb2b6c47c5628a8be8"
+      },
+      {
+        "path": "apps/web/src/scient/latex/LatexVisualEditor.tsx",
+        "developmentSha256": "ba61d6dc04b00d565068be1a7a698e2ca8c8e1620d22908264519b60fbe997de",
+        "reviewedSha256": "02dadc08fe98d470e07847e4b58afb37bbbfaae3eaaff2c71b32cf1d029cd266"
+      },
+      {
+        "path": "apps/web/src/scient/latex/ScientLatexSurface.session.test.tsx",
+        "developmentSha256": "98e903fe92b2224cd26ae6e4e3a1ce62266f4d713954346c842cbbea41f38eca",
+        "reviewedSha256": "77f6624cd4bcfb79bb8e57e785025f9ea75bc037cb49a82ba0f7b1d3952ec1b0"
+      },
+      {
+        "path": "apps/web/src/scient/latex/ScientLatexSurface.tsx",
+        "developmentSha256": "518471fd37a1122ff4dceb19a1b43dfaa3ee8b5882aa68196e8f3a84aea89263",
+        "reviewedSha256": "de33a6c87ce0ddab6041ebfdb5a71bf94f0341b146069545a1a9f1cbe927561b"
+      },
+      {
+        "path": "apps/web/src/scient/latex/changeLatexDocumentCompiler.test.ts",
+        "developmentSha256": "3a9ffcd541677d779ec4149125aa2f461a161e31f62a562a220cf290281d8421",
+        "reviewedSha256": "cc97b97b3cbe5aec10f191ea3a0d15e8d41300edb852e27c1066e4666c9ef02b"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexBasicBoxes.ts",
+        "developmentSha256": "2182e96c82d5ff70c770c753d58069e2cad82450f26ebb98902255d8decb24eb",
+        "reviewedSha256": "fdb590c932609b1888f270f6a0b339c9ce2a3ff1263b2b7b32a929cb5888107d"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexContextEvents.ts",
+        "developmentSha256": "f83d97ef900e4988b2d05c94d7de635f34acd3235e426c5cdf84165e9a4b21a8",
+        "reviewedSha256": "e38aba2a39ff2cf817894eccd4eedc0fd99415e33f3f889506c2573e53d0c355"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexDirection.css",
+        "developmentSha256": "e20373eb5a5a17b17ada6a278baf9bc0c1e4953d803b13cf4ec8456a58687b63",
+        "reviewedSha256": "d77a9549d570e8a321b71af77c7a815a6dd0089c7c0e4160ed0d23c026d80212"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexEquationReferences.ts",
+        "developmentSha256": "6a30a9a141a0bdb65ebf1d44dce9b4d44c3b3e06a5ba3c825db999c4c63a83f6",
+        "reviewedSha256": "a9d959d51777edb953ec577dd8a66555c93877fcc7e1aca74b037fe4ac45815e"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexLanguage.ts",
+        "developmentSha256": "0cbcb473c1f83c61a9f2473cf8ae049c442728c005045b5d9a59869a77070c8a",
+        "reviewedSha256": "5dcc40a00a8994425802e262ec357c8957bcecef4b0a37983124501a591e2685"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexListOptions.ts",
+        "developmentSha256": "aa09b0398ade68966c242c3981146b0582773eccbda50986ec1801668f4ffed6",
+        "reviewedSha256": "39d5b31e457791e3af6879bbd4546a3dd7163f2cc9b08e480ac778d50f11ddbb"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexMathNumbering.ts",
+        "developmentSha256": "4e9a92c4796ee6970f1a035ed07b6d1bd02cbea30cc36a20ac787729d5dd1db5",
+        "reviewedSha256": "0251db31ae97ae984fd9fdfe6249929d5ac943f1afd60f4b8d366a8eb8cb9d14"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexNestedSelection.browser.test.tsx",
+        "developmentSha256": "0db61a9950256c18fa95bdd50cf1d83af7c34f24efb7291a7a8f2fce387a5775",
+        "reviewedSha256": "37316163edfe5f387960618305400c538ab4f5411b7c10d471002f8e6a4054ae"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexNestedSelection.integration.browser.test.tsx",
+        "developmentSha256": "35c35fd8b75d2442e5164fa324791b12659c7fa52af2037859cd2a864cc8832f",
+        "reviewedSha256": "5c535210ce79e09c4ea5a8361a0a1ee43e44498bf4d2eff05282fd750b13bb98"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexPackages.ts",
+        "developmentSha256": "16f23fc216d00fb7b8a47e825c7fad1654df870b75941c863790a71f5cb67fb0",
+        "reviewedSha256": "456b737626b76e3c8c5a6e2d7ae19e58fd3840dc99ac28b22b7ca560db582f3a"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexPageLayouts.ts",
+        "developmentSha256": "05be23975e85888d6eb5fb3ae87276475a2b01c42915c2e68445324227028093",
+        "reviewedSha256": "5be3fd1d82fd12abbb926ced3ae3b58666fd292c349c53bbd76cc6e2f279629e"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexSelectionSession.browser.test.ts",
+        "developmentSha256": "1992302ead05b4f5003b0bfb2135e79cd0b3db2340d80e6fab4dfbe05bb2260c",
+        "reviewedSha256": "c250f4e3917dc216b275f9137800f7eabde0302654e81a67358ba9603e60c09f"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexSelectionSession.ts",
+        "developmentSha256": "3d170d08eb135980462b130f203976a49cea4e95ede284b01eae0c856f5d548d",
+        "reviewedSha256": "23c9235d2545e2fcf6880a02eaeda11b2822dd5e6d577c01a033093bd1ad36bf"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexStructuredSelection.ts",
+        "developmentSha256": "e220ded389365b8a88c4d3bfbcb21ba53ac14a7afb608d1a9c74f6264446910f",
+        "reviewedSha256": "8ae18b9d4e0715ec88745ec14685c405aaec45e711c414ae00276d6bc07e6460"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexTableAuthoring.ts",
+        "developmentSha256": "602ebc779087ff3c9ecf80b4899bddc47b87fa9c80bb9e531c6a33bd5806932a",
+        "reviewedSha256": "a283de99101c501af30c0568f93a82849c12703021b49b6bc54aa9bf342f18ab"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexTextSelectionRects.ts",
+        "developmentSha256": "8803e506988b14b916d34f449720fd4b5c6c3f44169158675d980c1d85be1901",
+        "reviewedSha256": "9ea4e7523094f8290696821b6119de9c000f2fa2582ad947802eff2591131b51"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexTextSelectionSession.ts",
+        "developmentSha256": "b25d3404cea4d5ce4ed53e19d0401a06ee603550eda6bfbdf4c8e71097ae2577",
+        "reviewedSha256": "adfa604e34d91677cc6e82f2e15f34a8616d19fed24f1e230e3c9bc1a5aa46a9"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexVisualDocument.test.ts",
+        "developmentSha256": "1c471ebb93e8f641223fcf1a2a035fd9cdaa6bb43035117454f6ef3aa48c1bec",
+        "reviewedSha256": "4c5cb72b29d8e96f166894bf311c3b72079412dc029a3ed68a4440356130b61d"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexVisualDocument.ts",
+        "developmentSha256": "0fc0b7cb5d69459b206830c74622b9f60919c4498e28164c9560b4e5295030eb",
+        "reviewedSha256": "0ed7adbbbcf4283d32e7f90af16e2aa804c43f0f42a8b5f1b6bd99886fb77e6b"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexVisualPagination.test.ts",
+        "developmentSha256": "93f10f61cafa8ff972af1b4a14783a0dd3f61f670e37911f76a6d966cdfd1763",
+        "reviewedSha256": "3413abe325acbda4f9b35272f0dbe1544b07fcdb8fcbc460090f09cba1f157ea"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexVisualPagination.ts",
+        "developmentSha256": "582a70e8e78f09a829fbf55d5d2a43d150f0fae69adb683e6b82d50108e2ba94",
+        "reviewedSha256": "d958e31dd06d6cba99541256d4e8ed28528dc8e7357a0c47871066ffeb464d6f"
+      },
+      {
+        "path": "apps/web/src/scient/latex/latexVisualPaginationExtension.ts",
+        "developmentSha256": "9f4dcf4865fa5359b825d431a9a3eb02fc79b85743495ae6c92abd30126a4e9c",
+        "reviewedSha256": "6ff5e0015ece79f312ffef7949bb46e717b8999eeea39ee17bf5941a549f459f"
+      },
+      {
+        "path": "apps/web/src/scient/latex/mathEditingGuides.ts",
+        "developmentSha256": "31152c6927553c275809da95b862dc50bf933707593807cb0e74e298d6e63d93",
+        "reviewedSha256": "9318a0f4a7d5f8221b37beceb4ce95d3e80fc0cb003a52df8a7af8bf7edfec76"
+      },
+      {
+        "path": "apps/web/src/scient/latex/mathLiveCommandCompletion.ts",
+        "developmentSha256": "ef7ccaf98b83263d1dc130c0593dcd45a2fbaeda1dd170fb6fed0afaa884f693",
+        "reviewedSha256": "1e37cdbc2359c53b072ad77ed2070e702b825835934263095f42664daca16823"
+      },
+      {
+        "path": "apps/web/src/scient/latex/mathLiveSelection.ts",
+        "developmentSha256": "05435e51184134a319a6ab9e9b7133f60348dd733cb874259bbaae081f65172d",
+        "reviewedSha256": "bbb7f8190ffce563ef57e554ad06c1e5202ed43ca1f820f1b139702b656e9d76"
+      },
+      {
+        "path": "apps/web/src/scient/latex/mathReadingPreview.ts",
+        "developmentSha256": "0bfe4023ff56c761820f48aaa56ea217e21d762f05a5f221d8e583b6fd8518b6",
+        "reviewedSha256": "6b9e8aa9462fda417f2b7a8e9e2f3bd137f24784cba1c18cc328ce2ffdf4f75c"
+      },
+      {
+        "path": "apps/web/src/scient/latex/mathSelectionSession.ts",
+        "developmentSha256": "da39b74317abcea8baa99143df2b6939e3241a5681869580ff4c9dcb10d68951",
+        "reviewedSha256": "a866654d87073bf2308436d79d22c057bbbe7dcfd35717edeae71267389cf581"
+      },
+      {
+        "path": "apps/web/src/scient/latex/mathTextFormatting.ts",
+        "developmentSha256": "ace234fd891424a9743c6b51ff073463b16b0eb637bd249f83dfb23de478e61c",
+        "reviewedSha256": "bf9152ecdb846f38395f66ea4a05f21aebda6e552d8afca3d40f682778b1c715"
+      },
+      {
+        "path": "apps/web/src/scient/latex/scient-latex.css",
+        "developmentSha256": "db9db578324b7af7232325394c3ef01c3d2aa8ace0ea1c8b72a8d1596f8408f0",
+        "reviewedSha256": "aa8041190aa2fb0ac4846e8bc551176c09ec883cc71c805a22a44200df264fc7"
+      },
+      {
+        "path": "apps/web/src/scient/latex/scientLatexSurfaceModel.ts",
+        "developmentSha256": "000ba9d48963feb3d0f413391638052855e9109121d1cbd02bd7f8f81588b81a",
+        "reviewedSha256": "d4c27127ead32cd1d21ee97b05115d81f3d2d1a0ce6972222e5aa59e22e84d32"
+      },
+      {
+        "path": "apps/web/src/scient/latex/scientLatexSurfaceSeam.test.ts",
+        "developmentSha256": "e7c273470f0e11ee0b7650c927889bb62efe964714085111f531340a943779e6",
+        "reviewedSha256": "5603f9bec628a106ae188f4bdf44d8ba5a253345a4c2df2283926e498a5fd680"
+      },
+      {
+        "path": "apps/web/src/scient/latex/useLatexTableSelection.ts",
+        "developmentSha256": "1b662704929e60d4ef9d9c6f1700bf5a80e25f3bd71b209f47c079ea36db37fb",
+        "reviewedSha256": "74b0cdafa808586a61c18f14a6cf49c1bb2089e8c9f051da4dcf986c1a4fe3e2"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/ScientMarkdownWorkspaceSurface.test.tsx",
+        "developmentSha256": "acbb903f1597dc47d2c5586d1599b62ab112169eaec36a61b6ad9d1d307d26eb",
+        "reviewedSha256": "24927b2f963ae10df92680cceb5a6789cb81eac011c1f693ed5ec63eefb192b7"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/fileCitationNavigation.ts",
+        "developmentSha256": "2daca4dc2d1ad52920e8e882de4a4c0c29774b308bd50e601de7890cbebff60f",
+        "reviewedSha256": "00472e3df457401576b4535462429a0ebef3102ab1ed3a7357fe504f9e46595b"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/nodes/ScientImageDetails.tsx",
+        "developmentSha256": "ab9a6b54d4096ad8b07edc30ab9ac35f1c386f58252710e382acf4c11b23bf95",
+        "reviewedSha256": "7dd45af1b063f4a91ca7e7cf2f8b38ce3b9ac26bb9e1b343aae6715acafb6472"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/nodes/imageNodeView.ts",
+        "developmentSha256": "a8ff76a8301aac0691e386745113c037cd466dd9ba867ecc6fbcc076ac94a157",
+        "reviewedSha256": "ff7e23a3374ed43817e38426b5ec32a8372b3bd980077540e76d50de88e42771"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/documentFailureReason.test.ts",
+        "developmentSha256": "2179f8c7bbd7588070c4b853a77f585f9c6929af4615f830a934088f1d2495b2",
+        "reviewedSha256": "b7d738ee2c33ef6fdc9ce9883ce9d2af3077944eba0880ec6e862b92599a0608"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/documentFailureReason.ts",
+        "developmentSha256": "cdaa426f5324aee7c4bceaf6953769bb55e60716c93678f15fe35327154a38ce",
+        "reviewedSha256": "b07d9ea7404f5b746c7e136a736d0d668ad8ec16793b727cbce4c9934928fb09"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/documentPublication.test.ts",
+        "developmentSha256": "b9246fefe336204924ae008522a8b2f5a4af5b59d64d04d1f68887421675e47a",
+        "reviewedSha256": "6811a849be12944f347880ecf5bcbde02930aff1e773f3a1ad3bc389f3fae857"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/documentPublication.ts",
+        "developmentSha256": "c98c56fee726a4150d56fdb31ddded2a325cf57c6a067f7805e206cc940ff1da",
+        "reviewedSha256": "0ce03e8be465b8ff76f79e446796fb619d83b499d4af125c5a683ba18821098d"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/markdownDraftCheckpoint.test.ts",
+        "developmentSha256": "dcf37f39bc0bea63fbbfd0d990f85dd0f74f0739b5a55723d6fd0638418f9671",
+        "reviewedSha256": "0788cfe6167109b50b7a6eb55eb53abf0a5d0f4e538627bf27b3e8021869a699"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.test.ts",
+        "developmentSha256": "c78cb418bb99478b3b865dc4501d94f53f8aeba3a6330354f8d3d55c35f1aa3a",
+        "reviewedSha256": "70f876b228480c5947288540bac72227110a817190240cfa0de5fada54ee9229"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.ts",
+        "developmentSha256": "c65b2725cb32acc924bc27ff291b2731d12d4ba49b63550ea11754562ac906f7",
+        "reviewedSha256": "96afb1be6f3360398d72fa1818b19061358a4f305060aa5e05a9d07698bff602"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceTransport.test.ts",
+        "developmentSha256": "d51db6259c0821a93aee90d6b645f7049aa9053747eb0ae05e6baff855716eb1",
+        "reviewedSha256": "b7294ade27af6635e3ddc382c7556d20ff89a0eb981da357187c5db384fadaf5"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceTransport.ts",
+        "developmentSha256": "d8ad6f9782f64010c5b4e6a0195ab030024661c2ba77e9db85ba5a8efcc6fa1b",
+        "reviewedSha256": "16d205a4af0d3dce19031e8541325079be8cbc87ab39b7b8d98d242e78e6df14"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/renameOpenDocument.test.ts",
+        "developmentSha256": "29b91fc1fdd4299dc5e9c0c96b53fa702c2491aaeb2f01b22e5834f655d88cc7",
+        "reviewedSha256": "6e4d652a494def8c3a3f9238849ff1fe942668164a2c98ba060d964e95c347d9"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/renameOpenDocument.ts",
+        "developmentSha256": "16c130eb1ab159283b99bde37a321f0b712fee264089db03d07b5900b0a21f70",
+        "reviewedSha256": "fbdae8ed32a12c04bc6e956bf7dd35a585d73db79daeb3eb57fe185b431bcbf6"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/useMarkdownPersistenceLease.test.tsx",
+        "developmentSha256": "102e1752f4745e55ea0c375aebd7bbb7fb1a1b3c05167f233b463a05dc87f410",
+        "reviewedSha256": "db15601502e8c233ca9be374539fc827483a50d41580440e59b6a022c700496f"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/persistence/useMarkdownPersistenceLease.ts",
+        "developmentSha256": "f709ed9f64cf0d899f91aae23104c62c0ba2ea5b38282035e71a8462e4a06470",
+        "reviewedSha256": "727c2d4a439a86e69b87a9258492785f60be856e8d34518965200bb1c6d2ecb9"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/prosemirror/session.test.ts",
+        "developmentSha256": "d9569d06f0ea752fb0a57b158cfdaf0cabad24f7ba85fd91bdde130b8723e99d",
+        "reviewedSha256": "615905d3ef8caab03a67b82a0dc23700fd44d5069d19a7850ac60c20f44c6e2c"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/scient-markdown-editor.css",
+        "developmentSha256": "6c2cf70efb5c7c1262ed567e30091f6c3a07933c2e891663dae38da4096c5f51",
+        "reviewedSha256": "b07164fd073ca9e3066afa8c2085f5554595eff300cdb978514ac3075f06bc06"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/scientMarkdownEditorStyles.test.ts",
+        "developmentSha256": "9490edee2a1de0f6573b0ec94081567d11c0179956b4f263a237595a52bdbe21",
+        "reviewedSha256": "3d36aeea0876c289974e438d6830eaaa1d2000239ac322a07cfd917cf36ec337"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/ui/ScientMarkdownPersistenceNotice.test.tsx",
+        "developmentSha256": "7e5bf51840c3b13949ae5006a73be0637b25dbe42e22f56cf98a00b1ae017a47",
+        "reviewedSha256": "79b8f62b5ba2e109d364d0bd4486e0735db5d9b63776dd200d11bc43c7bd4da7"
+      },
+      {
+        "path": "apps/web/src/scient/markdownEditor/ui/ScientMarkdownPersistenceNotice.tsx",
+        "developmentSha256": "125c6bf8bb7a0cbcf1be6df58d28db078748afa509c6f7528fe61f2e70726093",
+        "reviewedSha256": "8e0fb9acb3a9d63859cbbeb565e22aaae4e463af6c766e255e550b3e65051328"
+      },
+      {
+        "path": "packages/scient-document/src/persistenceCoordinator.test.ts",
+        "developmentSha256": "3b364098e84291d693a21f4ee3a716e068b82f27c1b27afbfa6915cb192aa29f",
+        "reviewedSha256": "7c389fcf151d6d0c8217b8fdbe7effce421baf86a26e191b0c05ede7531bc8f4"
+      },
+      {
+        "path": "packages/scient-document/src/persistenceCoordinator.ts",
+        "developmentSha256": "27115b85df0a92ee6f13784089ff78f478f0815337d170653717c933ec0b88b4",
+        "reviewedSha256": "a3f4f9e8fc73a725d7edd84fea5cc9ba56364f171b6d14f62129e6760b070ed4"
+      },
+      {
+        "path": "packages/scient-document/src/session.test.ts",
+        "developmentSha256": "969788fc2636b8f8a5aa48b67569cd7756517e32f6d2ecedfdcc04d5b0a5195c",
+        "reviewedSha256": "b8edb6559364d236d2be457f1dcd66469db093053d64b491f2a7457bef29763e"
+      },
+      {
+        "path": "packages/scient-document/src/session.ts",
+        "developmentSha256": "e8269369aef4b7688da21002d28e2dbe022f06af396bd62fb068813fee9fcb06",
+        "reviewedSha256": "a86f705c58866e7af0a9565e0156442f9175e9c0dbf00ce273221eb7f8efae39"
+      },
+      {
+        "path": "packages/scient-document/src/testing/stressHarness.ts",
+        "developmentSha256": "d12d8aebc3f06da6b3d3a8bf8bd645ae36456b594d7a63d89dc2519825d4c2da",
+        "reviewedSha256": "01ebad7a44e573528c84d7821e17d11afedbf1f6772467cc0597b3e5a7ff7622"
+      }
+    ],
+    "interpretation": "Byte differences include formatting, main API integration and collaborator changes already newer in delivery. Spot comparisons cover editor/model/surface/page/persistence/build; no blanket assertion that development dirty files are unpublished or equivalent."
+  },
+  "reportSha256": "b200b7076844af334c8f5d018e9580db20837654a51cc3ee56265c8947e6a2fc",
+  "publicationNote": "Shareable copy; machine-local paths omitted. Original hashes describe retained local artifacts, not this link-normalized publication."
+}

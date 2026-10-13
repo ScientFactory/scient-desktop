@@ -1,0 +1,77 @@
+{
+  "checkedAt": "2026-10-13T00:16:12.612874+00:00",
+  "canonicalReview": "ARCHITECTURE_REVIEW.md",
+  "catalogueHead": "b87625d49d535d9afd3a3319d5e1f1258d7b23db",
+  "planHead": "5f6342e4688f16553caaaeddeeae85081336a3bc",
+  "main": "887e363db1eae11ca7d1566a48bd5c6c71d17f8f",
+  "method": "read-only Git source comparison; no tests or builds rerun",
+  "keySourceChecks": [
+    {
+      "path": "apps/server/src/scient/workspace/WorkspaceFileMutations.ts",
+      "unchanged": true,
+      "currentSha256": "5cc52a6962ed61cab464ceb28e75bca6272ed619bbb80bc1dcde3e9450f2df94"
+    },
+    {
+      "path": "native/file-exchange/publication-posix.c",
+      "unchanged": true,
+      "currentSha256": "df3759f85a4540d34aeb3515c8e556fd1367f62fd2934c18c3639ed247312f22"
+    },
+    {
+      "path": "native/file-exchange/publication-windows.c",
+      "unchanged": true,
+      "currentSha256": "bae514470f7608704ba4757265a64035a6040c6aa6ff6cd501f3f55afff366f0"
+    },
+    {
+      "path": "apps/web/src/scient/latex/visualRecovery.ts",
+      "unchanged": true,
+      "currentSha256": "026091a9bf78b2a6ccb453dcb9c317ecade202dc6b45ceddfe2aaaf8a09c7ce0"
+    },
+    {
+      "path": "apps/web/src/scient/latex/visualDrafts.ts",
+      "unchanged": true,
+      "currentSha256": "28dea15c8411051a5ddc7be27ebdf3a85a74a9ddeacd6d73c1c4b258ee424a50"
+    },
+    {
+      "path": "apps/web/src/scient/latex/latexFieldJournal.ts",
+      "unchanged": true,
+      "currentSha256": "7d6f8975d9e57b09d6474271b9aa144e86dd85b283713318957b6af15549a214"
+    },
+    {
+      "path": "apps/web/src/scient/latex/useLatexSourceRecovery.ts",
+      "unchanged": true,
+      "currentSha256": "bb4a590c540a3cb2d50ef90f124019002dbde9ef748903c59a8bfcba0545ad16"
+    },
+    {
+      "path": "apps/web/src/scient/latex/LatexProjectVisualEditor.tsx",
+      "unchanged": true,
+      "currentSha256": "4689766a716806f1b25bdc2de223c237db6af7c4a6832b6ea28a466c59e807db"
+    },
+    {
+      "path": "apps/web/src/scient/latex/LatexReferencesPanel.tsx",
+      "unchanged": true,
+      "currentSha256": "8ff9712fc50933c340c4f3ec95afeae6e4dfd2f0cc8744ae033695041b42963c"
+    },
+    {
+      "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
+      "unchanged": true,
+      "currentSha256": "80547bcd4aba93aa70b0e44e6fd44ca8569369934dfa0a0c6c2fa37fbe41260f"
+    },
+    {
+      "path": "apps/server/src/scient/latex/LatexBuildService.ts",
+      "unchanged": true,
+      "currentSha256": "405e55e88e8aeb85f3c13b06eeb20f5a1cc44ec1e0351477f0df159c44b01d70"
+    },
+    {
+      "path": "apps/server/src/scient/latex/LatexSyncTex.ts",
+      "unchanged": true,
+      "currentSha256": "4667a1cf47434c632003e4da0d7874a0524d1f5fb4af7ded3a84bc554f413077"
+    },
+    {
+      "path": "apps/web/src/scient/latex/latexLanguage.ts",
+      "unchanged": true,
+      "currentSha256": "5dcc40a00a8994425802e262ec357c8957bcecef4b0a37983124501a591e2685"
+    }
+  ],
+  "incomingDiff": " apps/web/src/scient/latex/LatexMathField.tsx       |  16 +-\n .../latex/latexPagePresentation.browser.test.tsx   |   6 +-\n .../latex/latexReadingViewWeight.browser.test.ts   |  57 +++++\n .../web/src/scient/latex/latexReadingViewWeight.ts |  17 ++\n .../src/scient/latex/latexScroll.browser.test.tsx  |  14 +-\n .../scient/latex/latexViewport.browser.test.tsx    |  58 +++--\n apps/web/src/scient/latex/latexViewport.ts         |  99 +++++++--\n .../scient/latex/latexViewportRetention.test.ts    |  19 ++\n .../web/src/scient/latex/latexViewportRetention.ts |  51 ++++-\n .../src/scient/latex/mathFieldAdmissionFocus.ts    |  47 ++++\n apps/web/src/scient/latex/mathFieldReadiness.ts    |  38 ++++\n apps/web/src/scient/latex/mathReadingAdmission.css |  27 +++\n .../latex/mathReadingNodeView.browser.test.tsx     | 243 +++++++++++++++++++++\n apps/web/src/scient/latex/mathReadingNodeView.ts   | 211 +++++++++++++++---\n apps/web/src/scient/latex/mathReadingPreview.ts    |   3 +\n docs/internals/scient-latex-visual.md              |  29 ++-\n docs/reports/latex-reading-retention-20261013.md   |  60 +++++\n docs/user/latex.md                                 |   6 +\n 18 files changed, 913 insertions(+), 88 deletions(-)\n",
+  "publicationNote": "Shareable copy; machine-local paths omitted. Original hashes describe retained local artifacts, not this link-normalized publication."
+}
