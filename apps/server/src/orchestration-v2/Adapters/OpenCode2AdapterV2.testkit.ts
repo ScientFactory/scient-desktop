@@ -365,6 +365,7 @@ export const openCode2ReplayRuntime = (
     readonly external?: boolean;
     readonly borrowers?: { current: number };
     readonly beforeResponse?: (operation: string) => Promise<void>;
+    readonly replayGate?: ProviderReplayGate;
   },
 ) =>
   Effect.gen(function* () {

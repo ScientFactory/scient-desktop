@@ -641,6 +641,88 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const provider = ProviderInstanceId.make("codex_work");
+      yield* Effect.all(
+        [
+          service.updateSettings({
+            setModelFavorites: [{ provider, model: "sol", favorite: true }],
+          }),
+          service.updateSettings({
+            setModelFavorites: [{ provider, model: "sol", favorite: true }],
+          }),
+          service.updateSettings({
+            setModelFavorites: [{ provider, model: "luna", favorite: true }],
+          }),
+          service.updateSettings({ setModelsHidden: [{ provider, model: "astra", hidden: true }] }),
+          service.updateSettings({ setModelsHidden: [{ provider, model: "luna", hidden: true }] }),
+          service.updateSettings({
+            setProviderModelOrder: { provider, modelOrder: ["luna", "sol"] },
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const settings = yield* service.getSettings;
+      assert.deepEqual(settings.favorites?.map((entry) => entry.model).sort(), ["luna", "sol"]);
+      assert.deepEqual(settings.providerModelPreferences?.[provider]?.hiddenModels.toSorted(), [
+        "astra",
+        "luna",
+      ]);
+      assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["luna", "sol"]);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+  it.effect("persists and broadcasts model preferences to other connected clients", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const provider = ProviderInstanceId.make("codex_work");
+        const patch = {
+          favorites: [{ provider, model: "sol" }],
+          providerModelPreferences: {
+            [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] },
+          },
+        };
+        const changes = yield* service.subscribeChanges;
+        yield* service.updateSettings(patch);
+        const received = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.deepEqual(received.favorites, patch.favorites);
+        assert.deepEqual(received.providerModelPreferences, patch.providerModelPreferences);
+        const saved = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(saved.favorites, patch.favorites);
+        assert.deepEqual(saved.providerModelPreferences, patch.providerModelPreferences);
+        const hidden = yield* service.updateSettings({
+          setModelsHidden: [{ provider, model: "sol", hidden: true }],
+        });
+        assert.deepEqual(hidden.providerModelPreferences?.[provider], {
+          hiddenModels: ["astra", "sol"],
+          modelOrder: ["sol"],
+        });
+        const shown = yield* service.updateSettings({
+          setModelsHidden: [{ provider, model: "astra", hidden: false }],
+        });
+        assert.deepEqual(shown.providerModelPreferences?.[provider], {
+          hiddenModels: ["sol"],
+          modelOrder: ["sol"],
+        });
+        assert.deepEqual(
+          (yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath)))
+            .providerModelPreferences,
+          shown.providerModelPreferences,
+        );
+        yield* service.updateSettings({ favorites: [], providerModelPreferences: {} });
+        // An older device's delayed seed cannot undo a clear, even after persistence.
+        const migrated = yield* service.updateSettings({ migrateModelPreferences: patch });
+        assert.deepEqual(migrated.favorites, []);
+        assert.deepEqual(migrated.providerModelPreferences, {});
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -2293,7 +2375,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
         assert.deepEqual(next.sourceControlWriterModelSelection, sourceControlWriterModelSelection);
         assert.deepEqual(
-          ServerSettingsModule.resolveSourceControlWriterModelSelection(next),
+          ServerSettingsModule.resolveSourceControlWriterModelSelection(next, undefined, null),
           next.textGenerationModelSelection,
         );
         assert.deepEqual(
@@ -2317,7 +2399,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         });
         assert.deepEqual(
-          ServerSettingsModule.resolveSourceControlWriterModelSelection(restored),
+          ServerSettingsModule.resolveSourceControlWriterModelSelection(restored, undefined, null),
           sourceControlWriterModelSelection,
         );
       }).pipe(Effect.provide(makeServerSettingsLayer())),
@@ -3970,3 +4052,56 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });
+
+it.effect(
+  "serializes concurrent first visibility and order edits without dropping curated defaults",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const provider = ProviderInstanceId.make("scient-personal");
+      const initialPreferences = {
+        hiddenModels: ["curated-hidden"],
+        modelOrder: ["default-first"],
+      };
+      yield* Effect.all(
+        [
+          service.updateSettings({
+            setModelsHidden: [{ provider, model: "first-added", hidden: true, initialPreferences }],
+          }),
+          service.updateSettings({
+            setModelsHidden: [
+              { provider, model: "second-added", hidden: true, initialPreferences },
+            ],
+          }),
+          service.updateSettings({
+            setProviderModelOrder: { provider, modelOrder: ["user-first"], initialPreferences },
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const settings = yield* service.getSettings;
+      assert.deepEqual(settings.providerModelPreferences?.[provider]?.hiddenModels.toSorted(), [
+        "curated-hidden",
+        "first-added",
+        "second-added",
+      ]);
+      assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["user-first"]);
+      const persisted = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(
+        persisted.providerModelPreferences[provider],
+        settings.providerModelPreferences?.[provider],
+      );
+      yield* service.updateSettings({
+        providerModelPreferences: { [provider]: { hiddenModels: [], modelOrder: [] } },
+      });
+      const stale = yield* service.updateSettings({
+        setProviderModelOrder: { provider, modelOrder: [], initialPreferences },
+      });
+      assert.deepEqual(stale.providerModelPreferences?.[provider], {
+        hiddenModels: [],
+        modelOrder: [],
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer().pipe(Layer.provideMerge(NodeServices.layer)))),
+);

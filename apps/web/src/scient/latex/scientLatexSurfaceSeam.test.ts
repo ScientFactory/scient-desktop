@@ -31,7 +31,7 @@ function mountedPropNames(): ReadonlyArray<string> {
 function declaredPropNames(): ReadonlyArray<string> {
   const declaration = surfaceSource.match(/interface ScientLatexSurfaceProps \{([\s\S]*?)\n\}/u);
   if (!declaration?.[1]) throw new Error("ScientLatexSurface no longer declares its props.");
-  return [...declaration[1].matchAll(/readonly (\w+):/gu)].map((match) => match[1] ?? "");
+  return [...declaration[1].matchAll(/readonly (\w+)\??:/gu)].map((match) => match[1] ?? "");
 }
 
 describe("Scient LaTeX file-preview seam", () => {

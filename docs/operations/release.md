@@ -43,6 +43,31 @@ the stable scheduler and production gate.
   from the checksum-pinned 0.6.21 installer without signing
   secrets or publication authority. Release Smoke uses synthetic artifacts and
   remains a separate workflow/manifest check.
+- Linux Packaging builds an unsigned x64 AppImage on Ubuntu for desktop,
+  native, assembly, or dependency changes. Ordinary renderer/server source
+  edits alone do not select it. Unknown diffs run qualification; failure,
+  cancellation, or an unexplained skip blocks the existing required `Test`
+  check on PRs and merge groups. It has no signing secrets or publication step.
+  The job extracts the real AppImage, checks archived branding and external
+  runtimes, verifies x64 executable ELF metadata and dynamic-library resolution
+  (static helpers require no interpreter or needed libraries), executes
+  SyncTeX/Whisper and the resource-monitor protocol, and
+  verifies desktop survival/shutdown and archived-icon registration under
+  isolated XDG state, Xvfb, and a private D-Bus session. Capture helper execution
+  is checked without claiming live KDE/Hyprland compositor acceptance.
+  A second AppImage from the same retained stage restores only the five
+  duplicate ASAR trees for a controlled compressed-size comparison; retained
+  archive bytes and external resource bytes/modes must match. This measures
+  the cleanup on identical inputs, not a download comparison between releases.
+- The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
+  packages; their Linux variants remain, and the Windows sidecar is separate.
+  WSL installation restores execute permissions for Cursor's Linux `rg` and
+  `cursorsandbox` helpers in the verified cache because Windows-created archives
+  lose those permissions. Windows Packaging runs the same install script and
+  executes that exact packaged archive on Linux without installing replacement
+  dependencies, checking native loads, terminals, CLI,
+  HTTP startup, and shutdown. This qualifies the Linux payload; WSL distro and
+  Windows/Linux interoperability acceptance remain separate platform checks.
 - Windows loose-file validation retains an 80-file core budget. Pinned voice
   and Windows/WSL Cursor inventories are admitted separately only after their
   exact file sets pass validation; missing or extra component files fail even
@@ -53,6 +78,41 @@ the stable scheduler and production gate.
 Release versions follow the current stable line. A version does not imply
 proximity to `v1.0.0`; semantic versions permit any number of patch and minor
 releases before the product earns the `1.0.0` contract.
+
+## Runtime payload checks
+
+The WSL tarball omits `*.map` at every depth, matching the existing desktop
+ASAR and Windows server-sidecar source-map policy. Build output retains its
+maps for debugging; archive filtering does not delete them or change map
+generation. Packaged launchers do not enable source-map loading. Preserve the
+corresponding source revision and build output when diagnosing bundled stacks.
+
+Whisper, resource monitor, and SyncTeX run from external Electron resources.
+Their `apps/desktop/prod-resources` staging trees are excluded from `app.asar`
+on every platform; Linux also excludes the KDE and Hyprland capture staging
+trees. Keep individual exclusions: Linux registration reads
+`apps/desktop/prod-resources/icon.png` from the archive, and other branding
+files must remain available.
+
+The artifact builder inspects emitted ASAR contents and checks every staged
+runtime file exists and is nonempty in external resources, including libraries,
+provenance, and licenses. On POSIX targets it also checks that executable files
+retain executable permission and requires the named runtime binaries to be
+executable even if staging already lost their mode. Linux's archived
+registration icon is required.
+SyncTeX staging restores `0755` on the macOS/Linux executable after verifying
+its target receipt, size, and checksum. This handles loose CI artifacts arriving
+with mode `0644` without changing the downloaded source, licenses, receipt, or
+Windows executable.
+Windows validation separately inspects the actual WSL tar members and rejects
+maps even when the archive digest is valid.
+
+These are structural checks, not native acceptance. Payload changes still need
+macOS voice/resource-monitor/SyncTeX acceptance, Windows/WSL startup, terminal,
+provider, search and install/update checks, and Linux capture/runtime/registration
+acceptance. Record compressed artifact sizes separately from raw file sizes;
+repacking or compression models cannot establish installer download savings.
+Keep differential updates enabled and qualify the normal update path.
 
 ## Production identity and data safety
 

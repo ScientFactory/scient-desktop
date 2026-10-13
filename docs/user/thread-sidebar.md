@@ -177,8 +177,10 @@ that conversation's folder. Scratch conversations do not have Git branches, chec
 or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
 conversation and its files into another project is not yet supported.
 
-The option is available only on a connected machine whose data directory is outside a
-Git checkout. Dev candidates keep their profile inside the worktree but use a
+The option is available on a connected machine whose configured scratch location is outside
+Git. Git does not need to be installed: the server verifies its own scratch folders through
+canonical filesystem paths and repository markers. Other detection or permission failures
+leave the option unavailable. Dev candidates keep their profile inside the worktree but use a
 separate persistent scratch location outside Git.
 
 ## Group threads into sections

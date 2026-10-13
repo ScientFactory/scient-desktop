@@ -767,3 +767,16 @@ describe("model selection patches at project scope", () => {
     });
   });
 });
+
+it("routes legacy model preference keys exclusively to the selected environment", () => {
+  const patch = {
+    favorites: [{ provider: ProviderInstanceId.make("codex"), model: "sol" }],
+    providerModelPreferences: {},
+  };
+  const plan = planScopedSettingsPatch(named, environments, patch);
+  expect(plan.clientPatch).toEqual({});
+  expect(plan.hasClientWrite).toBe(false);
+  expect(plan.serverWrites).toEqual([
+    { environmentId: server.environmentId, label: server.label, patch },
+  ]);
+});

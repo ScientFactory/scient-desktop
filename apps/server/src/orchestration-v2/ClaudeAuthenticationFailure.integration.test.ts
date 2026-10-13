@@ -106,6 +106,7 @@ it.effect.each(
               Effect.gen(function* () {
                 const messages = yield* Queue.unbounded<SDKMessage>();
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(messages),

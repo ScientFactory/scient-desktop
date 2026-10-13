@@ -1,3 +1,4 @@
+import { investigationUnsupported } from "@t3tools/provider-core/server/textGenerationOperations";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -485,5 +486,7 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateReviewGuide: () =>
+      Effect.fail(investigationUnsupported("generateReviewGuide", "Droid")),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

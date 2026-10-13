@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — capability and command share the outbound hold.
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -231,10 +234,14 @@ export const make = Effect.gen(function* () {
       threadAutoSettlement: true,
       storageCleanup: true,
       storageCleanupRun: true,
+      // SCIENT-FORK:START
+      otlpEndpointCheck: !SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled,
+      // SCIENT-FORK:END
       projectWorktreeCleanup: true,
       worktreesDirectory: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
+      projectProviderInstanceOverrides: true,
       threadSnooze: true,
       environmentThemes: true,
       usageLimitSources: true,

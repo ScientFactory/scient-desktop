@@ -24,6 +24,7 @@ export const makeNativeTextGeneration = (
     generatePrContent: () => Effect.die("Unexpected pull-request generation"),
     generateBranchName: () => Effect.die("Unexpected branch generation"),
     generateThreadTitle: () => Effect.die("Unexpected title generation"),
+    generateReviewGuide: () => Effect.die("Unexpected review guide generation"),
     ...overrides,
   });
   const instance: ProviderInstance = {

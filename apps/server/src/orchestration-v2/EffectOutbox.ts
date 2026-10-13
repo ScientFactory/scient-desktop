@@ -34,6 +34,9 @@ import { forkParked } from "../serverActivation.ts";
 // SCIENT-FORK:START checkpoint-capture-lane
 import { checkpointCaptureLaneBarrier } from "./scient-fork/CheckpointCaptureLane.ts";
 // SCIENT-FORK:END checkpoint-capture-lane
+// SCIENT-FORK:START — receipt-aware Stop uses a private run interrupt request.
+import { PendingStartInterruptRequest } from "./scient-fork/PendingStartInterrupt.ts";
+// SCIENT-FORK:END
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("scient-fork.provision") }),
@@ -58,13 +61,9 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     /** Newly queued starts cannot execute a later retry's active attempt. */
     expectedAttemptId: Schema.optional(RunAttemptId),
   }),
-  Schema.Struct({
-    type: Schema.Literal("provider-run.interrupt"),
-    runId: RunId,
-    expectedAttemptId: RunAttemptId,
-    providerSessionId: ProviderSessionId,
-    providerThreadId: ProviderThreadId,
-  }),
+  // SCIENT-FORK:START — an accepted start may not have published its native receipt yet.
+  PendingStartInterruptRequest,
+  // SCIENT-FORK:END
   Schema.Struct({
     type: Schema.Literal("provider-turn.interrupt"),
     providerSessionId: ProviderSessionId,

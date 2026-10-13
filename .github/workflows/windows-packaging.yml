@@ -134,3 +134,31 @@ jobs:
             release/latest*.yml
           if-no-files-found: warn
           retention-days: 7
+      - name: Collect the packaged WSL runtime
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path wsl-qualification | Out-Null
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'scient-install-upgrade/resources/wsl-runtime.tar.gz') wsl-qualification/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-packaging-wsl-runtime
+          path: wsl-qualification/wsl-runtime.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  qualify_wsl_runtime:
+    name: Windows packaging / Packaged WSL Linux runtime
+    needs: package_windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-packaging-wsl-runtime
+          path: wsl-qualification
+      - name: Exercise the exact Linux payload from the Windows package
+        run: node scripts/qualify-wsl-runtime.mjs wsl-qualification/wsl-runtime.tar.gz

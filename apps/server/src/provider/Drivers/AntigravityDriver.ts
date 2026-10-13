@@ -17,10 +17,10 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
 import type { AcpError } from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import {
   isAntigravityTextGenerationAvailable,
@@ -57,6 +57,7 @@ import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/Antigr
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
+import { makeAntigravityUsageProbe } from "../antigravityUsageLimits.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
@@ -79,9 +80,11 @@ import {
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
+// SCIENT-FORK:START — native effort variants share manifest family metadata.
 export const antigravityCatalogMatching: ModelCatalog.CatalogMatching = {
   family: (slug) => slug.replace(/-(low|medium|high)$/, ""),
 };
+// SCIENT-FORK:END
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
@@ -89,12 +92,12 @@ export type AntigravityDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | HttpClient.HttpClient
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | ModelCatalog.ModelCatalog
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
-  | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
   | LegacyAntigravityDriverEnv;
 
@@ -127,6 +130,7 @@ export const AntigravityDriver: ScientProviderDriver<
 
       const crypto = yield* Crypto.Crypto;
       const fileSystem = yield* FileSystem.FileSystem;
+      const httpClient = yield* HttpClient.HttpClient;
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const host = yield* ProviderHost.ProviderHost;
@@ -216,13 +220,12 @@ export const AntigravityDriver: ScientProviderDriver<
 
       const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
         input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
-        options?: { readonly initializeOnly: true },
       ): Effect.fn.Return<
         AcpSessionRuntime.AcpSessionRuntime["Service"],
         AcpError | ProviderSetupError,
         Scope.Scope
       > {
-        if (authConfigIssue !== null && !options?.initializeOnly) {
+        if (authConfigIssue !== null) {
           return yield* new ProviderSetupError({
             instanceId,
             operation: "configure",
@@ -436,9 +439,20 @@ export const AntigravityDriver: ScientProviderDriver<
         };
       });
 
+      const usage = yield* makeAntigravityUsageProbe({
+        profileDirectory,
+        authMethod: auth.authMethod,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
       const provider = yield* makeAntigravityProvider(settings, {
         stampIdentity: classifyModels,
         probe,
+        probeUsage: usage.probe,
+        clearUsage: usage.clear,
         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
         discoverGlobalSkills: discoverAntigravitySkills({ userHome }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -497,9 +511,11 @@ export const AntigravityDriver: ScientProviderDriver<
             mcpServers: [],
           }),
       });
+      // SCIENT-FORK:START — voice correction reuses the existing guarded generator.
       const voiceTranscriptCorrection = makeAntigravityAcpVoiceTranscriptCorrection(
         generation.generateStructured,
       );
+      // SCIENT-FORK:END
       // SCIENT-FORK:START — assisted account actions over the official auth controller.
       const connectionActions = makeAntigravityInstanceConnectionActions({
         instanceId,

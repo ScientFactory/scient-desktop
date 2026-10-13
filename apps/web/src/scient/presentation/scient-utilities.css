@@ -1,3 +1,5 @@
+@import "./scient-form-focus.css";
+
 /* The stage background remains a component-layer class; register its name
    for the upstream unknown-class check without moving its theme rules. */
 @utility scient-stage-art {

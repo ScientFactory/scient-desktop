@@ -31,6 +31,7 @@ export function observeAssistantCitationCommentSource({
   onUnavailable: () => void;
 }): () => void {
   const { source, range, viewport } = anchor;
+  const releaseSelection = anchor.retainSelection?.();
   const registry = typeof CSS !== "undefined" ? CSS.highlights : undefined;
   let highlight: Highlight | null = null;
   let stopped = false;
@@ -42,6 +43,7 @@ export function observeAssistantCitationCommentSource({
   const dispose = () => {
     if (stopped) return;
     stopped = true;
+    releaseSelection?.();
     observer.disconnect();
     if (!highlight) return;
     highlight.delete(range);
@@ -58,6 +60,13 @@ export function observeAssistantCitationCommentSource({
     if (!source.isConnected || !viewport.contains(source)) {
       unavailable();
       return false;
+    }
+    if (anchor.resolveRects) {
+      if (!anchor.resolveRects().length) {
+        unavailable();
+        return false;
+      }
+      return true;
     }
     if (
       sourceChanged ||
@@ -81,7 +90,7 @@ export function observeAssistantCitationCommentSource({
   };
 
   if (!validate(false)) return dispose;
-  if (typeof Highlight !== "undefined" && registry) {
+  if (!anchor.resolveRects && typeof Highlight !== "undefined" && registry) {
     const existing = registry.get(COMMENT_HIGHLIGHT_NAME);
     highlight = existing ?? new Highlight();
     highlight.add(range);

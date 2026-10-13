@@ -15,7 +15,17 @@ export type AssistantCitationSourceAnchor = {
   viewport: HTMLElement;
   /** A file reader owns re-resolving its live range; this is never serialized. */
   resolveRange?: () => Range | null;
+  /** Model selections (math/cells) supply their ink bounds instead of a DOM text range. */
+  resolveRects?: () => readonly DOMRect[];
+  selectionOwnerId?: string;
+  retainSelection?: () => (() => void) | null;
 };
+
+export function assistantCitationSourceRects(
+  anchor: AssistantCitationSourceAnchor,
+): readonly DOMRect[] {
+  return anchor.resolveRects?.() ?? [...anchor.range.getClientRects()];
+}
 
 export function findAssistantCitationSourceAnchor(
   document: Document,

@@ -50,6 +50,7 @@ import { isProviderInstanceDisabledOpen } from "./scient-provider/ProviderInstan
 // SCIENT-FORK:END provider-enabled-at-open
 // SCIENT-FORK:START — a Stop before native acceptance declines and captures the start.
 import {
+  pendingStartPreparation,
   pendingStartCancellation,
   startUnlessStopRequested,
 } from "./scient-fork/PendingStartOwner.ts";
@@ -1585,6 +1586,19 @@ export const layer: Layer.Layer<
             sameNativeThread &&
             !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+        // SCIENT-FORK:START — ordinary prompts prepare locally; adopted native work has already begun.
+        ...(providerWork === undefined
+          ? {
+              prepareBeforeProviderTurn: pendingStartPreparation({
+                eventSink,
+                threadId: input.threadId,
+                runId: run.id,
+                rootNodeId: rootNode.id,
+                shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+              }),
+            }
+          : {}),
+        // SCIENT-FORK:END
         cancelBeforeProviderTurn: makePendingStartCancellation({
           threadId: input.threadId,
           runId: run.id,

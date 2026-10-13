@@ -64,9 +64,12 @@ import {
   withIssuedCodexMcpReplayExpectations,
 } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -82,6 +85,7 @@ import {
   materializeReplayTranscriptWorkspace,
 } from "@t3tools/provider-testing/replayTranscript";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { layer as makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -701,6 +705,10 @@ describe("orchestrator MCP toolkit", () => {
           const credentialRegistryLayer = makeCredentialRegistryLayer(
             EnvironmentId.make("environment:mcp-orchestrator"),
           );
+          // The toolkit, manager and worker must observe the same current settings.
+          const layerSettings = ServerSettings.layerTest({ responseStreamingMode: "turn" }).pipe(
+            Layer.orDie,
+          );
           const layerOrchestrator = makeOrchestratorV2ReplayLayerWithRegistry(
             {
               name: "orchestrator-mcp-toolkit",
@@ -715,13 +723,23 @@ describe("orchestrator MCP toolkit", () => {
               },
             },
             layerRegistry,
-            { configureMcp: true, mcpSessionRegistryLayer: credentialRegistryLayer },
+            {
+              configureMcp: true,
+              mcpSessionRegistryLayer: credentialRegistryLayer,
+              layerServerSettings: layerSettings,
+            },
           ).pipe(Layer.provide(layerContinuationProbe));
           const layerOrchestration = Layer.merge(
             layerOrchestrator,
-            ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
+            ThreadManagementService.layer.pipe(
+              Layer.provide(layerOrchestrator),
+              Layer.provide(layerSettings),
+              Layer.provide(
+                CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+              ),
+            ),
           );
-          const layerProviderRegistry = ProviderRegistryMock.layer([
+          const providerCatalog = yield* Ref.make<ReadonlyArray<ServerProvider>>([
             makeProviderSnapshot({
               instanceId: codexInstanceId,
               driver: ProviderDriverKind.make("codex"),
@@ -750,6 +768,11 @@ describe("orchestrator MCP toolkit", () => {
               model: "opencode/test",
             }),
           ]);
+          const originalCatalog = yield* Ref.get(providerCatalog);
+          const layerProviderRegistry = Layer.succeed(ProviderRegistry.ProviderRegistry, {
+            ...ProviderRegistryMock.makeProviderRegistryMock(originalCatalog),
+            getProviders: Ref.get(providerCatalog),
+          });
           // In-memory ScheduledTaskService stub so the schedule/list/update/
           // delete tools can be exercised without SQL/launch wiring.
           const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
@@ -823,6 +846,7 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provideMerge(credentialRegistryLayer),
             Layer.provide(layerRegistry),
             Layer.provide(layerProviderRegistry),
+            Layer.provideMerge(layerSettings),
             Layer.provide(layerScheduledTaskStub),
             Layer.provide(layerGit),
             Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
@@ -2986,6 +3010,185 @@ describe("orchestrator MCP toolkit", () => {
               ),
             ).toHaveLength(2);
 
+            // A committed creation or prompt keeps its receipt after the catalog changes.
+            // Observe the actual persisted command IDs rather than reproducing MCP ID logic.
+            const settings = yield* ServerSettings.ServerSettingsService;
+            const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+            const receiptFor = (
+              threadId: ThreadId,
+              eventType: "thread.created" | "run.created",
+              commandType: "thread.create" | "message.dispatch",
+            ) =>
+              Effect.gen(function* () {
+                const stored = Option.getOrThrow(
+                  yield* orchestrator
+                    .streamStoredEventsFrom({ threadId, afterSequence: 0, eventType })
+                    .pipe(Stream.runHead, Effect.timeout("10 seconds")),
+                );
+                if (stored.commandId === null) {
+                  return yield* Effect.die(new Error("Expected a persisted command identity."));
+                }
+                const receipt = Option.getOrThrow(yield* receipts.getByCommandId(stored.commandId));
+                expect(receipt).toMatchObject({ threadId, commandType, status: "accepted" });
+                return receipt;
+              });
+            const emptyCreationReceipt = yield* receiptFor(
+              emptyThread.threadId,
+              "thread.created",
+              "thread.create",
+            );
+            const promptedCreationReceipt = yield* receiptFor(
+              promptedThread.threadId,
+              "thread.created",
+              "thread.create",
+            );
+            const promptedDispatchReceipt = yield* receiptFor(
+              promptedThread.threadId,
+              "run.created",
+              "message.dispatch",
+            );
+            const beforeDisabledEmpty = yield* orchestrator.getThreadProjection(
+              emptyThread.threadId,
+            );
+            const beforeDisabledPrompted = yield* waitForDurableProjection(
+              orchestrator,
+              promptedThread.threadId,
+              (projection) =>
+                projection.runs.some(
+                  (run) => run.id === promptedThread.runId && run.status === "completed",
+                ),
+            );
+            const emptySequence = yield* orchestrator.getThreadEventSequence(emptyThread.threadId);
+            const promptedSequence = yield* orchestrator.getThreadEventSequence(
+              promptedThread.threadId,
+            );
+            const turnsBeforeReplay = (yield* Ref.get(capturedTurns)).filter(
+              (turn) =>
+                turn.threadId === emptyThread.threadId || turn.threadId === promptedThread.threadId,
+            );
+            const beforeDisabledSettings = yield* settings.getSettings;
+            yield* Effect.gen(function* () {
+              yield* settings.updateSettings({
+                projectSettingsOverrides: {
+                  [projectId]: {
+                    ...beforeDisabledSettings.projectSettingsOverrides[projectId],
+                    providerInstances: {
+                      ...beforeDisabledSettings.projectSettingsOverrides[projectId]
+                        ?.providerInstances,
+                      [codexInstanceId]: { enabled: false },
+                      [claudeInstanceId]: { enabled: false },
+                    },
+                  },
+                },
+              });
+              yield* Ref.set(
+                providerCatalog,
+                originalCatalog.map((provider) =>
+                  provider.instanceId === codexInstanceId ||
+                  provider.instanceId === claudeInstanceId
+                    ? { ...provider, enabled: false }
+                    : provider,
+                ),
+              );
+              const management = yield* ThreadManagementService.ThreadManagementService;
+              expect(
+                yield* management.isProviderInstanceEnabledForProject({
+                  projectId,
+                  instanceId: codexInstanceId,
+                }),
+              ).toBe(false);
+              expect(
+                yield* management.isProviderInstanceEnabledForProject({
+                  projectId,
+                  instanceId: claudeInstanceId,
+                }),
+              ).toBe(false);
+
+              const disabledReplay = yield* invoke("create_threads", createInput);
+              expect(disabledReplay.isError).toBe(false);
+              const replayed = yield* decodeCreateThreadsResult(disabledReplay.structuredContent);
+              expect(replayed.threads.map((thread) => thread.threadId)).toEqual(
+                created.threads.map((thread) => thread.threadId),
+              );
+              expect(replayed.threads[1]?.runId).toBe(promptedThread.runId);
+
+              // The first entry has an accepted creation but no prompt receipt.
+              // Adding its first prompt cannot borrow the creation's admission.
+              const partialReplay = yield* invoke("create_threads", {
+                ...createInput,
+                threads: [
+                  { ...createInput.threads[0]!, prompt: "Fresh prompt after provider disable." },
+                  createInput.threads[1]!,
+                ],
+              });
+              expect(declaredFailure(partialReplay)).toMatchObject({
+                code: "orchestration_error",
+                message: expect.stringContaining("disabled"),
+              });
+              const freshCreation = yield* invoke("create_threads", {
+                clientRequestId: "create-after-catalog-disable",
+                threads: [{ target: { driverKind: "claudeAgent" } }],
+              });
+              expect(freshCreation.isError).toBe(true);
+
+              for (const accepted of [
+                emptyCreationReceipt,
+                promptedCreationReceipt,
+                promptedDispatchReceipt,
+              ]) {
+                expect(
+                  Option.getOrThrow(yield* receipts.getByCommandId(accepted.commandId)),
+                ).toEqual(accepted);
+              }
+              const afterDisabledEmpty = yield* orchestrator.getThreadProjection(
+                emptyThread.threadId,
+              );
+              const afterDisabledPrompted = yield* orchestrator.getThreadProjection(
+                promptedThread.threadId,
+              );
+              expect(afterDisabledEmpty.messages).toEqual(beforeDisabledEmpty.messages);
+              expect(afterDisabledEmpty.runs).toEqual(beforeDisabledEmpty.runs);
+              expect(afterDisabledPrompted.messages).toEqual(beforeDisabledPrompted.messages);
+              expect(afterDisabledPrompted.runs).toEqual(beforeDisabledPrompted.runs);
+              expect(yield* orchestrator.getThreadEventSequence(emptyThread.threadId)).toBe(
+                emptySequence,
+              );
+              expect(yield* orchestrator.getThreadEventSequence(promptedThread.threadId)).toBe(
+                promptedSequence,
+              );
+              expect(
+                (yield* Ref.get(capturedTurns)).filter(
+                  (turn) =>
+                    turn.threadId === emptyThread.threadId ||
+                    turn.threadId === promptedThread.threadId,
+                ),
+              ).toEqual(turnsBeforeReplay);
+              expect(
+                (yield* orchestrator.getThreadProjection(parentThreadId)).visibleTurnItems.filter(
+                  (row) => {
+                    if (row.item.type !== "thread_created") return false;
+                    const targetThreadId = row.item.targetThreadId;
+                    return created.threads.some((thread) => thread.threadId === targetThreadId);
+                  },
+                ),
+              ).toHaveLength(2);
+            }).pipe(
+              Effect.ensuring(
+                Ref.set(providerCatalog, originalCatalog).pipe(
+                  Effect.andThen(
+                    settings.updateSettings({
+                      projectSettingsOverrides: {
+                        [projectId]:
+                          beforeDisabledSettings.projectSettingsOverrides[projectId] ?? null,
+                      },
+                    }),
+                  ),
+                  Effect.asVoid,
+                  Effect.orDie,
+                ),
+              ),
+            );
+
             const promptedReadCall = yield* invoke("scient_thread_inspect", {
               threadId: promptedThread.threadId,
               limit: 1,
@@ -4488,7 +4691,13 @@ describe("orchestrator MCP toolkit", () => {
         );
         const layerOrchestration = Layer.merge(
           layerOrchestrator,
-          ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
+          ThreadManagementService.layer.pipe(
+            Layer.provide(layerOrchestrator),
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
+          ),
         );
         const layerProviderRegistry = ProviderRegistryMock.layer([
           makeProviderSnapshot({
@@ -4513,6 +4722,7 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provideMerge(credentialRegistryLayer),
           Layer.provide(replayHarness.makeProviderAdapterRegistryLayer(transcript)),
           Layer.provide(layerProviderRegistry),
+          Layer.provide(ServerSettings.layerTest()),
           Layer.provide(layerUnusedScheduledTaskStub),
           Layer.provide(NodeServices.layer),
           Layer.provideMerge(McpProviderSessions.layer),

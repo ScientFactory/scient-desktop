@@ -53,6 +53,7 @@ function renderPicker(input: {
   root = createRoot(host);
   root.render(
     <ModelPickerContent
+      environmentId={null}
       activeInstanceId={instanceId}
       model={input.model}
       lockedProvider={null}

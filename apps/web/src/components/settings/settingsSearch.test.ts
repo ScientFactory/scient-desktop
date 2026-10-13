@@ -218,6 +218,8 @@ describe("searchSettings", () => {
       "provider-health-check-interval",
       "cursor-keychain-usage",
       "source-control-writer-model",
+      "review-guide-model",
+      "review-guide-instructions",
       "source-control-writing-style",
       "t3-connect",
       "hold-webhooks-while-offline",
@@ -456,6 +458,10 @@ describe("searchSettings", () => {
 });
 
 describe("settings search targets", () => {
+  it("keeps the safety-held telemetry export action out of settings search", () => {
+    expect(searchSettings("OpenTelemetry export")).toEqual([]);
+    expect(SETTINGS_SEARCH_ITEMS.map((item) => item.id)).not.toContain("telemetry-export");
+  });
   it.each([
     "auto-settle-inactive-threads",
     "auto-settle-merged-threads",

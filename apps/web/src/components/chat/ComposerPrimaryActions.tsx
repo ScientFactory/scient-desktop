@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Stop status presentation has its own feature owner.
+import { StopGenerationAcknowledgement } from "../../scient/chat/StopGenerationAcknowledgement";
+// SCIENT-FORK:END
 import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, Minimize2Icon, PlayIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
@@ -31,6 +34,9 @@ interface ComposerPrimaryActionsProps {
   isRunning: boolean;
   /** Stop can reach a run, including one still preparing or starting. */
   canInterrupt: boolean;
+  // SCIENT-FORK:START — acknowledges the click without declaring cancellation complete.
+  isStopping?: boolean;
+  // SCIENT-FORK:END
   followUpBehavior?: "queue" | "steer";
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
@@ -95,6 +101,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   pendingAction,
   isRunning,
   canInterrupt,
+  // SCIENT-FORK:START — acknowledges the click without declaring cancellation complete.
+  isStopping = false,
+  // SCIENT-FORK:END
   followUpBehavior = "steer",
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
@@ -135,7 +144,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     environmentIdentificationMode === "artwork",
   );
 
-  const renderStopGenerationButton = () => (
+  // SCIENT-FORK:START — compose the acknowledgement around the original Stop action.
+  const renderStopAction = () => (
+    // SCIENT-FORK:END
     <Tooltip key="interrupt">
       <TooltipTrigger
         render={
@@ -163,6 +174,14 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       <TooltipPopup>Interrupt</TooltipPopup>
     </Tooltip>
   );
+
+  // SCIENT-FORK:START — keep pending status and the retry button in one layout group.
+  const renderStopGenerationButton = () => (
+    <StopGenerationAcknowledgement isStopping={isStopping}>
+      {renderStopAction()}
+    </StopGenerationAcknowledgement>
+  );
+  // SCIENT-FORK:END
 
   if (pendingAction) {
     return (

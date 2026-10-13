@@ -81,6 +81,7 @@ it.live(
                 const frames = child ? childFrames : sourceFrames;
                 if (!child) options = input.options;
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(frames),

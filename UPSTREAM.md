@@ -35,7 +35,8 @@ clipped to its revealed lines, so the follow scroll simply goes to the real end.
 "Thinking" row fades out (keeping its place) while the answer right above it is appearing
 (`useStreamingTextAppearing`). Revealed height is kept per message (bounded), so remounted
 rows continue rather than replay; a caught-up reveal rests until the answer's content or width
-changes. The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
+changes. Stop shows everything that has arrived at once (`showStreamedAnswersNow`, from
+`scient/chat/useStopGeneration.ts`). The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
 send's prompt is listed (the optimistic row, or a newer server user message than the dispatch
 started from), and stays on while that prompt's own V2 run prepares or starts (the dispatch is
 reset at admission; V2 reports that phase as connecting).
@@ -70,6 +71,19 @@ A remounted list must finish restoration before saving again. Reserved anchor pa
 is excluded from both end-control visibility and send eligibility.
 Nested tool-output scrolling and the shared mobile scroll policy are unchanged.
 
+Kept answers (Scient): once a turn settles, upstream folds everything but the turn's last
+assistant message behind "Worked for…". Scient keeps an earlier message visible in place when
+it reads as a real answer: structure (a heading, a list of two or more items, a table, fenced
+code, display math, an image) or at least 400 characters
+(`@scientfactory/conversation/answer-visibility`). Short progress notes still fold with the work.
+A kept answer gets the copy button, time and spacing of the final answer, but not its other
+roles: forking, the trailing tool footer, created-thread summaries, the unread count, fork
+baselines and export still use the last message. The one marked mount is in `deriveTurnFolds`
+(`MessagesTimeline.logic.ts`), so rows, find in thread and citations agree; the row flag
+`keptAnswer` is set beside `showAssistantMeta` and rendered by the marked checks in
+`MessagesTimeline.tsx`. Owner: `apps/web/src/scient/threadTimeline/keptAnswers.ts`. Keep the
+rule out of `deriveTerminalAssistantMessageIds`.
+
 Scient's local Preview discovery requires an explicit web URL before sending
 HTTP(S) traffic. Preserve this deliberate boundary in `PortScanner.ts`: passive
 listener enumeration enriches ownership metadata but never authorizes a probe,
@@ -103,6 +117,14 @@ The Scient-owned `useScientDownloadProgress` hook smooths only the displayed
 percentage and ring, bounded by confirmed progress. It must not drive updater
 actions, completion, or shared state; reduced motion uses direct readings.
 
+Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
+and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
+`SCIENT-FORK` mounts in upstream hosts. Local checkpoint preparation observes the
+committed Stop directly and releases its scope before declined-start finalization;
+native offering and adopted provider work retain their receipt-aware control.
+Preserve upstream's effect ordering and transaction/cancellation machinery.
+The maintained boundaries are in [the separation map](docs/internals/scient-fork-divergence.md#extracted-owners-and-host-mounts).
+
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
 policy, identity, scientific behavior, release decisions, and every deliberate
@@ -119,12 +141,12 @@ divergence.
 - Authoritative migration policy: `Scient/docs/planning/t3-foundation-migration-plan.md`
 
 Scient's public desktop CLI command is `scient`: Settings, the PATH installer,
-root CLI help/version output, and public parser recovery instructions use this
-name. `SCIENT_DESKTOP_IDENTITY.cliCommandName` owns the executable name.
-Operational recovery commands instead bind to this installation's absolute
-launcher or running executable and entry script, with its resolved profile;
-they never guess an npm package or dispatch an unrelated PATH command. Linux
-elevation preserves the profile through `--base-dir`, and direct Electron
+and root CLI help/version output use this name.
+`SCIENT_DESKTOP_IDENTITY.cliCommandName` owns the executable name.
+Recovery commands, including parser advice, bind to this installation's absolute
+launcher or running executable and entry script; they never guess an npm
+package or dispatch an unrelated PATH command. Operational recovery retains
+the resolved profile. Linux elevation preserves it through `--base-dir`, and direct Electron
 invocations explicitly preserve Node mode. Windows snippets use PowerShell.
 
 Scient-written `t3` launchers and existing owned PATH shortcuts are refreshed
@@ -318,7 +340,7 @@ application seams. No publication authority or general extraction-line waiver
 is added. The development candidate is held stopped until requested for app
 acceptance; hosted CI qualifies the pushed revision separately.
 
-The current locally qualified alignment through `74dfbb697235b0db87355d3f8575dc2ba45dddf7`
+The prior locally qualified alignment through `74dfbb697235b0db87355d3f8575dc2ba45dddf7`
 is recorded in [the 2026-10-11 receipt](docs/internals/t3-upstream-sync-20261011-74dfbb6972.md)
 ([Scient PR #513](https://github.com/ScientFactory/scient-desktop/pull/513)).
 It receives all 54 official first-parent commits after the previous boundary.
@@ -333,6 +355,26 @@ independent source review and final isolated desktop visual/interaction checks
 from hosted CI, optional platform/account skips and the user's approval.
 The isolated review candidate remains open for user acceptance; the layer
 requires separate merge approval and does not alter its parent PR's policy.
+
+The current local alignment through `f23d0084b6e023ffb1af9e332d8666affc99d542`
+is recorded in [the 2026-10-12 receipt](docs/internals/t3-upstream-sync-20261012-f23d0084b6.md)
+([Scient PR #530](https://github.com/ScientFactory/scient-desktop/pull/530)).
+It retains all 72 ordinary official commits through literal merge
+`de8482724fa062fbea7daa4549cd70dc9e665b85`, whose exact second parent is the
+frozen official target. The initial owned-main catch-up retains `f8babe1313`;
+the later separate catch-up `43779ee83b358cb929e32cafa1a3e53f7eb147cd` retains
+landed owned main `887e363db1eae11ca7d1566a48bd5c6c71d17f8f`, including the
+reviewed model-account overlay repair. Neither catch-up changes the official boundary.
+Scient provider instances/defaults, scoped guidance, native ownership and queue
+holds, immutable migration identities, scientific surfaces and publication
+controls compose with the incoming host behavior. The receipt distinguishes the
+passing canonical local gate and physical native/platform checks from blocked
+mobile UI, account/platform exclusions, hosted CI and the user's acceptance.
+External PR #521 checks supplement qualification without importing its source
+or ancestry; no alignment-speed gain is asserted. The owner approved the bounded
+visual review and requested the installer-review candidate's shutdown; its owned
+service, processes and ports were confirmed stopped. Merge and auto-merge are
+owner-authorized through the required GitHub queue; release remains separate.
 
 ## Receiving T3 updates
 
@@ -857,6 +899,18 @@ grouping or collapsible shelves, reconcile against these seams instead of layeri
 second grouping. Decisions, invariants and the full seam list are in
 [sidebar sections](docs/internals/scient-sidebar-sections.md).
 
+Antigravity's native runtime, profiles, callback handling, and auth controller remain
+upstream-owned. Scient composes its qualified release source through
+`scient/providerLifecycle/ScientAntigravityInstallation.ts` and its compact setup
+through `AntigravityAcpLifecycleActions.ts`, retaining T3's installation service
+identity and controller. Keep the bounded authorization-link handoff, safe failure
+presentation/diagnostics, process teardown and publication guards. Scient plugin
+projection lives under `scient/skills`; voice correction shares the existing guarded
+generation runner. Retain these narrow mounts without forking the native engine.
+Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
+and targets outside the qualified native set; removing a fallback requires native
+replacement qualification, not merely an available Google archive.
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.
@@ -910,10 +964,12 @@ server's scratch project, with verified non-Git evidence. It rejects the shared
 parent, nested descendants, and symlink escapes, while retaining ordinary Git
 worktree lineage and existing authority-generation/publication checks.
 
-The server still withholds `ServerConfig.scratchWorkspaceRoot` and
-`projects.ensureScratch` when the selected scratch root's parent is inside a Git
-checkout or VCS detection fails. Clients gate on the advertised root, including remote/mobile
-entry points. The dev runner selects persistent scratch storage outside the
+The upstream managed-folder service owns scratch advertisement, project creation and thread
+allocation for RPC, MCP and launch. It withholds the capability when the configured root has
+Git ancestry or inspection fails. Missing Git alone does not disable scratch: both unavailable-
+executable and spawn-NotFound errors use canonical filesystem evidence limited to host-owned
+scratch folders. Other Git failures remain closed, and failed admission is retried on the next
+request. Clients gate on the advertised root, including remote/mobile entry points. The dev runner selects persistent scratch storage outside the
 checkout without moving its existing profile; that selected parent must also be
 outside Git.
 Thread deletion retains scratch files. Moving a started scratch conversation and
@@ -959,6 +1015,15 @@ application pipeline. Shared reading sizes and fixed-pixel/shadow-root exception
 are routed through `apps/web/src/scient/typography/profile.css`; do not spread those
 overrides across inherited components during upstream conflict resolution. See
 [Scient typography profile](docs/internals/scient-typography.md).
+
+Scient's bordered form controls indicate focus with a single border, retaining
+upstream focus and validation colors. The owned override lives in
+`apps/web/src/scient/presentation/scient-form-focus.css`, imported by
+`scient-utilities.css` through its existing `SCIENT-FORK` mount in `index.css`.
+Comboboxes reuse the input override; ghost selects and unrelated controls retain
+their focus rings. Preserve this mount during alignment rather than deleting
+ring classes from inherited components. The production-CSS regression in
+`scient-form-focus.browser.test.tsx` runs in the existing web layout CI job.
 
 Composer collapse is opt-in in Scient: `composerCollapseOnScroll` defaults to
 `false`. Upstream removed blur-triggered collapse; do not restore that obsolete

@@ -266,9 +266,8 @@ function applyScriptPlaceholders(
 ): string {
   let result = template;
   for (const [token, value] of Object.entries(replacements)) {
-    // SCIENT-FORK:START — Preserve shell dollars until upstream #14598 lands.
+    // A replacer function keeps `$$` and other `$` patterns in the value literal.
     result = result.replaceAll(`@@${token}@@`, () => value);
-    // SCIENT-FORK:END
   }
   return result;
 }

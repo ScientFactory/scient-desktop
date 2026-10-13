@@ -251,7 +251,8 @@ export function resolveReadingRow(
   if (index >= 0) return { index, exact: true };
   if (position.turnId) {
     // Prefer the final answer to a disappearing working indicator, then the prompt/fold.
-    index = rows.findIndex(
+    // Earlier answers of the run can stay visible, so take the run's last one.
+    index = rows.findLastIndex(
       (row) =>
         row.kind === "message" &&
         row.message.role === "assistant" &&

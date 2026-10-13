@@ -12,8 +12,10 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
   formatComposerContextReference,
+  isImageReferencesOnly,
   replaceComposerContextReferences,
   sanitizeComposerContextLabel,
 } from "@t3tools/shared/composerContextReferences";
@@ -228,10 +230,17 @@ export function reidentifyComposerContext(
   };
 }
 
-/** Keep inline references and their records together when dispatching queued messages. */
+/**
+ * Keep queued records canonical; choose the wire format against the host at dispatch time.
+ * An image-only prompt goes out as the attachment-only prompt web sends, so the agent is still
+ * asked to respond. The images stay in the message's attachments and context records.
+ */
 export function serializeComposerMessageForServer(
-  text: string,
+  composerText: string,
   context: OrchestrationMessageContext | undefined,
 ): { text: string; context?: OrchestrationMessageContext } {
+  const text = isImageReferencesOnly(composerText)
+    ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
+    : composerText;
   return { text, ...(context ? { context } : {}) };
 }

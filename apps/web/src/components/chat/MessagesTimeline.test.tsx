@@ -75,6 +75,33 @@ vi.mock("../DiffWorkerPoolProvider", () => ({
   DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
 }));
 
+// SCIENT-FORK:START — live thread titles for thread-read rows; a titled row links
+// to its thread, so a static render needs a plain link in place of the router's.
+const liveThreadTitles = new Map<string, string>();
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const router = await importOriginal<typeof import("@tanstack/react-router")>();
+  return {
+    ...router,
+    Link: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
+      <a className={className}>{children}</a>
+    ),
+  };
+});
+vi.mock("../../state/entities", async (importOriginal) => {
+  const entities = await importOriginal<typeof import("../../state/entities")>();
+  return {
+    ...entities,
+    useThreadShell: (ref: Parameters<typeof entities.useThreadShell>[0]) => {
+      const shell = entities.useThreadShell(ref);
+      const title = ref ? liveThreadTitles.get(ref.threadId) : undefined;
+      return title === undefined
+        ? shell
+        : ({ title, archivedAt: null, deletedAt: null } as unknown as typeof shell);
+    },
+  };
+});
+// SCIENT-FORK:END
+
 vi.mock("./MessagesTimeline.logic", async (importOriginal) => {
   const logic = await importOriginal<typeof import("./MessagesTimeline.logic")>();
   return {
@@ -1581,6 +1608,77 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
+  it.each([true, false])(
+    "keeps the reading row in place when tool output toggles at the end: %s",
+    async (isAtEnd) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let nextFrame = 0;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const flushFrame = () =>
+        act(() => {
+          const callbacks = [...frames.values()];
+          frames.clear();
+          callbacks.forEach((callback) => callback(0));
+        });
+      const viewport = { scrollTop: 400, scrollHeight: 1000 };
+      const props = buildProps();
+      props.listRef.current = {
+        getState: () => ({ isAtEnd }),
+        getScrollableNode: () => viewport,
+      } as unknown as LegendListRef;
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...props}
+              timelineEntries={[
+                {
+                  id: "tool",
+                  kind: "work",
+                  createdAt: MESSAGE_CREATED_AT,
+                  entry: {
+                    id: "tool",
+                    createdAt: MESSAGE_CREATED_AT,
+                    label: "Run command",
+                    tone: "tool",
+                    toolLifecycleStatus: "completed",
+                    detail: "Command output",
+                  },
+                },
+              ]}
+            />,
+          );
+        });
+        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
+        const list = renderer!.root.find(
+          (node) => node.props.ListFooterComponent !== undefined && node.props.onItemSizeChanged,
+        );
+        for (const scrollHeight of [1300, 900]) {
+          await act(() => toggle.props.onClick());
+          // The rows grow or shrink once the list measures them.
+          viewport.scrollHeight = scrollHeight;
+          await flushFrame();
+          expect(viewport.scrollTop).toBe(400);
+          // Late tool output must not move the reading row either.
+          viewport.scrollHeight = scrollHeight + 200;
+          await act(() => list.props.onItemSizeChanged());
+          expect(viewport.scrollTop).toBe(400);
+          await flushFrame();
+          await flushFrame();
+          viewport.scrollTop = 400;
+        }
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    },
+  );
+
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -2665,6 +2763,38 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("<element_context");
   });
 
+  // SCIENT-FORK:START — an earlier real answer of a settled turn stays visible.
+  it("gives a kept earlier answer the final answer's copy button and spacing", () => {
+    const assistant = (id: string, text: string, second: number) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt: `2026-01-01T00:00:0${second}Z`,
+      message: {
+        id: MessageId.make(id),
+        role: "assistant" as const,
+        text,
+        runId: RunId.make("run-kept"),
+        createdAt: `2026-01-01T00:00:0${second}Z`,
+        updatedAt: `2026-01-01T00:00:0${second}Z`,
+        streaming: false,
+      },
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          assistant("note", "Let me check the tests…", 1),
+          assistant("answer", "## Diagnosis\nThe cache key ignores the locale.", 2),
+          assistant("final", "Done.", 3),
+        ]}
+      />,
+    );
+    expect(markup.match(/aria-label="Copy message"/g)).toHaveLength(2);
+    expect(markup).toMatch(/class="pb-4[^"]*"[^>]*data-timeline-row-id="answer-entry"/);
+    expect(markup).not.toContain('data-timeline-row-id="note-entry"');
+  });
+  // SCIENT-FORK:END
+
   it("keeps the copy button for collapsed long user messages", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -3683,6 +3813,42 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("scient-trace-symbol.svg");
     expect(markup).toContain("Read a Scient thread");
     expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
+
+    // SCIENT-FORK:START — with a live title, screen readers hear it too (#13140).
+    liveThreadTitles.set("thread-child", "Review auth flow");
+    try {
+      const titled = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={
+            [
+              {
+                id: item.id,
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: item.id,
+                  createdAt: MESSAGE_CREATED_AT,
+                  runId: null,
+                  label: item.toolName,
+                  tone: "tool",
+                  itemType: item.type,
+                  toolTitle: item.toolName,
+                  toolLifecycleStatus: "completed",
+                  toolData: { input: item.input, output: item.output },
+                  structuredPayload: item,
+                  projectedItem,
+                },
+              },
+            ] as never
+          }
+        />,
+      );
+      expect(titled).toMatch(/aria-label="[^"]*Review auth flow/);
+    } finally {
+      liveThreadTitles.clear();
+    }
+    // SCIENT-FORK:END
   });
 
   it("formats changed file paths from the workspace root", async () => {

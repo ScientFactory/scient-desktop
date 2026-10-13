@@ -1,5 +1,4 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -10,6 +9,7 @@ import * as CliError from "effect/cli/CliError";
 import * as ServerConfig from "../config.ts";
 import { runServer } from "../server.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
+import { resolveCliCommand } from "./invocation.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
@@ -44,9 +44,11 @@ export const runDefaultServerCommand = (flags: CliServerFlags) =>
         !explicitPath &&
         (!(yield* fs.exists(cwd)) || (yield* fs.stat(cwd)).type !== "Directory")
       ) {
+        const helpCommand = yield* resolveCliCommand(["--help"]);
+        const exampleCommand = yield* resolveCliCommand(["./my-project"]);
         return yield* new CliError.UserError({
           cause: cwd,
-          userMessage: `Unknown command ${yield* encodeCommand(cwd)}. Use "${SCIENT_DESKTOP_IDENTITY.cliCommandName} --help" for commands or an explicit path such as "${SCIENT_DESKTOP_IDENTITY.cliCommandName} ./my-project" for a new directory.`,
+          userMessage: `Unknown command ${yield* encodeCommand(cwd)}. Use "${helpCommand}" for commands or an explicit path such as "${exampleCommand}" for a new directory.`,
         });
       }
     }

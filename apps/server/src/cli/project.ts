@@ -235,6 +235,7 @@ const layerProjectCliRuntime = RuntimeLayer.layerProjectService.pipe(
     ),
   ),
   Layer.provideMerge(WorkspacePaths.layer),
+  Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(SqlitePersistence.layerConfig),
 );
 
