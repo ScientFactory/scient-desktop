@@ -34,6 +34,9 @@ describe("isSubstantiveAnswer", () => {
     expect(isSubstantiveAnswer("Found two issues:\n- the cache\n- the retry")).toBe(true);
     expect(isSubstantiveAnswer("Steps:\n1. Build\n2. Test")).toBe(true);
     expect(isSubstantiveAnswer("Checklist\n1. Confirm the deploy.")).toBe(false);
+    // Items or a heading made of inline code still count.
+    expect(isSubstantiveAnswer("- `foo`\n- `bar`")).toBe(true);
+    expect(isSubstantiveAnswer("## `parse()`")).toBe(true);
   });
 
   it("keeps tables, fenced code, display math and images", () => {
@@ -43,10 +46,17 @@ describe("isSubstantiveAnswer", () => {
     expect(isSubstantiveAnswer("The energy is\n$$E = mc^2$$")).toBe(true);
     expect(isSubstantiveAnswer("\\[\nx^2\n\\]")).toBe(true);
     expect(isSubstantiveAnswer("Consider \\[E = mc^2\\] within a sentence.")).toBe(true);
+    // A standalone block may hold blank lines.
+    expect(isSubstantiveAnswer("$$\nx + y\n\n$$")).toBe(true);
+    expect(isSubstantiveAnswer("\\[\nx + y\n\n\\]")).toBe(true);
     expect(isSubstantiveAnswer("\\begin{align*}\nx &= 1\n\\end{align*}")).toBe(true);
     expect(isSubstantiveAnswer("Here: ![plot](plot.png)")).toBe(true);
     expect(isSubstantiveAnswer("![plot][chart]\n\n[chart]: ./plot.png")).toBe(true);
     expect(isSubstantiveAnswer("![chart]\n\n[chart]: ./plot.png")).toBe(true);
+    // Labels match as CommonMark normalises them; a destination may sit on the next line.
+    expect(isSubstantiveAnswer("![build  chart]\n\n[Build chart]: ./plot.png")).toBe(true);
+    expect(isSubstantiveAnswer("![chart]\n\n[chart]:\n  ./plot.png")).toBe(true);
+    expect(isSubstantiveAnswer("![chart][]\n\n[chart]: ./plot.png")).toBe(true);
     expect(isSubstantiveAnswer("Done.", { hasImages: true })).toBe(true);
   });
 
@@ -62,6 +72,14 @@ describe("isSubstantiveAnswer", () => {
     // An unclosed opener is not display math; a bare shortcut reference is not an image.
     expect(isSubstantiveAnswer("The $$ sign and \\[ bracket.")).toBe(false);
     expect(isSubstantiveAnswer("See ![note] later.")).toBe(false);
+    // A reference image needs its definition; math stays within a paragraph.
+    expect(isSubstantiveAnswer("Checking ![plot][chart] resolution next.")).toBe(false);
+    expect(isSubstantiveAnswer("Checking $$ handling.\n\nThe $$ parser is next.")).toBe(false);
+    // A quote's underline is a rule, not a heading.
+    expect(isSubstantiveAnswer("> Still checking the tests.\n---")).toBe(false);
+    // Inline code may cross a line break, and use longer backtick runs.
+    expect(isSubstantiveAnswer("Checking `![a](b)\nparser` next.")).toBe(false);
+    expect(isSubstantiveAnswer("Checking ``a ` $$x$$`` next.")).toBe(false);
     expect(isSubstantiveAnswer("See [the docs](https://example.com).")).toBe(false);
   });
 });
