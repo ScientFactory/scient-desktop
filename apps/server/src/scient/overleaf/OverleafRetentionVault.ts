@@ -208,8 +208,17 @@ async function verifiedFolder(
   volume: string,
   create: boolean,
 ) {
-  for (const level of levels) await ensurePrivate(level, userId, create);
-  const directory = await NodeFSP.realpath(levels.at(-1)!);
+  let directory: string;
+  try {
+    for (const level of levels) await ensurePrivate(level, userId, create);
+    directory = await NodeFSP.realpath(levels.at(-1)!);
+  } catch (error) {
+    // Denial or disappearance of one candidate must not stop the search for another.
+    const code = errorCode(error) ?? "";
+    if (["ENOENT", "ENOTDIR"].includes(code)) throw new Refused("vault-missing");
+    if (["EACCES", "EPERM"].includes(code)) throw new Refused("unsafe-directory");
+    throw error;
+  }
   const stat = await statOrRefuse(directory, "vault-missing");
   if (stat.dev !== checkoutStat.dev || (await physicallyInside(directory, checkoutStat)))
     throw new Refused("unsafe-directory");
