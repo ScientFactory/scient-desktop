@@ -240,6 +240,7 @@ describe("native context delivery", () => {
   });
 
   it.each(["existing-thread", "new-task"])("preserves inline records on %s sends", (path) => {
+    const rawDiff = "- old\n+ new";
     const pr = pullRequestComposerContext(
       {
         number: 42,
@@ -258,7 +259,7 @@ describe("native context delivery", () => {
       sectionId: "review",
       filePath: "checkout.ts",
       text: "Handle the empty cart",
-      diff: "- old\n+ new",
+      diff: rawDiff,
     };
     const context: OrchestrationMessageContext = { version: 1, records: [terminal, review, pr] };
     const text = context.records.map(formatComposerContextReference).join(" ");
@@ -285,6 +286,9 @@ describe("native context delivery", () => {
             worktreeBranchName: "unused",
           }).message;
     expect(message.context).toEqual(context);
+    expect(
+      message.context?.records.find((record) => record.contextId === review.contextId),
+    ).toMatchObject({ diff: rawDiff });
     expect(message.text).toBe(text);
     const providerInput = projectComposerContextForProvider({
       text: message.text,
@@ -292,9 +296,10 @@ describe("native context delivery", () => {
     });
     expect(providerInput).toContain("4 | build failed\n5 | retry");
     expect(providerInput).toContain("Handle the empty cart");
-    expect(providerInput).toContain("- old\n+ new");
+    expect(providerInput).toContain("diff:\n  - old\n  + new");
     expect(providerInput).toContain("https://github.com/example/repo/pull/42");
     expect(context.records).toEqual([terminal, review, pr]);
+    expect(review.diff).toBe(rawDiff);
   });
 });
 
