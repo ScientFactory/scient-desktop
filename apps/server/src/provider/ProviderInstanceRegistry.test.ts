@@ -84,6 +84,7 @@ import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import { SECRET_REDACTED } from "../settingsSecrets.ts";
 
 const decodeAntigravitySettingsForTest = Schema.decodeSync(AntigravitySettings);
 
@@ -100,6 +101,9 @@ const TestPtyAdapterLive = Layer.succeed(
     spawn: () => Effect.die("PTY must not start in provider instance registry tests"),
   }),
 );
+
+// The mock CLIs from makeTildeProviderFixtures are scripts Windows cannot execute.
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
@@ -549,7 +553,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       Effect.provide(testLayer),
     );
 
-  it.live("refreshes Claude usage after redeeming a reset", () =>
+  it.live.skipIf(windowsHost)("refreshes Claude usage after redeeming a reset", () =>
     Effect.gen(function* () {
       const { outcome, after } = yield* redeemClaudeReset({
         result: "reset",
@@ -560,14 +564,16 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }),
   );
 
-  it.live("reports Claude's answer when a claim changed nothing and the re-probe fails", () =>
-    Effect.gen(function* () {
-      const { outcome } = yield* redeemClaudeReset({
-        result: "already_used",
-        usageFailsAfterClaim: true,
-      });
-      expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
-    }),
+  it.live.skipIf(windowsHost)(
+    "reports Claude's answer when a claim changed nothing and the re-probe fails",
+    () =>
+      Effect.gen(function* () {
+        const { outcome } = yield* redeemClaudeReset({
+          result: "already_used",
+          usageFailsAfterClaim: true,
+        });
+        expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
+      }),
   );
 
   it.live(
@@ -939,6 +945,67 @@ describe("ProviderInstanceRegistryLive — enabled resolution", () => {
         } satisfies ProviderInstance;
       }),
   });
+
+  it.effect("withholds unresolved credentials before creation and preserves config errors", () =>
+    Effect.gen(function* () {
+      const created: Array<{ readonly instanceId: string; readonly enabled: boolean }> = [];
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [makeRecordingDriver(created)],
+        configMap: {
+          [ProviderInstanceId.make("config_marker")]: {
+            driver: antigravityDriverKind,
+            config: { apiKey: SECRET_REDACTED },
+          },
+          [ProviderInstanceId.make("invalid_config")]: {
+            driver: antigravityDriverKind,
+            config: { apiKey: SECRET_REDACTED, binaryPath: false },
+          },
+          [ProviderInstanceId.make("env_marker")]: {
+            driver: antigravityDriverKind,
+            environment: [{ name: "TOKEN", value: "", sensitive: true, valueRedacted: true }],
+          },
+          [ProviderInstanceId.make("materialized_env")]: {
+            driver: antigravityDriverKind,
+            environment: [
+              { name: "TOKEN", value: "materialized-token", sensitive: true, valueRedacted: true },
+            ],
+          },
+          [ProviderInstanceId.make("ordinary_empty_env")]: {
+            driver: antigravityDriverKind,
+            environment: [{ name: "OPTION", value: "", sensitive: false }],
+          },
+          [ProviderInstanceId.make("explicit_empty_secret")]: {
+            driver: antigravityDriverKind,
+            config: { apiKey: "" },
+          },
+          [ProviderInstanceId.make("nonsecret_marker")]: {
+            driver: antigravityDriverKind,
+            config: { binaryPath: SECRET_REDACTED, apiKey: "actual-key" },
+          },
+        },
+      });
+      expect(created.map((entry) => entry.instanceId).toSorted()).toEqual(
+        [
+          "materialized_env",
+          "ordinary_empty_env",
+          "explicit_empty_secret",
+          "nonsecret_marker",
+        ].toSorted(),
+      );
+      const unavailable = yield* registry.listUnavailable;
+      expect(unavailable).toHaveLength(3);
+      expect(
+        unavailable.find((entry) => entry.instanceId === "invalid_config")?.unavailableReason,
+      ).toContain("Invalid config");
+      for (const id of ["config_marker", "env_marker"]) {
+        const snapshot = unavailable.find((entry) => entry.instanceId === id);
+        expect(snapshot?.availability).toBe("unavailable");
+        expect(snapshot?.enabled).toBe(false);
+        expect(snapshot?.unavailableReason).toContain("credentials could not be read");
+        expect(snapshot?.unavailableReason).not.toContain(SECRET_REDACTED);
+      }
+    }),
+  );
 
   it.effect("resolves every envelope/config flag combination per most-restrictive-wins", () =>
     Effect.gen(function* () {

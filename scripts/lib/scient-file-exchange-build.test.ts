@@ -30,7 +30,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("file exchange
       expect(actual).toEqual(
         (arch === "universal" ? ["arm64", "x86_64"] : [arch === "x64" ? "x86_64" : "arm64"]).sort(),
       );
-      if (arch === "arm64" || arch === "universal")
+      if (arch === "universal" || arch === HostProcess.Architecture.defaultValue())
         expect(
           NodeChildProcess.execFileSync(helper, ["--version"], { encoding: "utf8" }).trim(),
         ).toBe("scient-file-exchange/1");

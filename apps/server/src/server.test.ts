@@ -5797,8 +5797,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("proxies browser OTLP trace exports through the server", () =>
+  it.effect.each([
+    {
+      caseTitle: "rejects browser OTLP exports from an undeclared origin by default",
+      trustedDevOrigin: false,
+    },
+    {
+      caseTitle: "proxies browser OTLP trace exports through the server",
+      trustedDevOrigin: true,
+    },
+  ])("$caseTitle", ({ trustedDevOrigin }) =>
     Effect.gen(function* () {
+      const clientOrigin = "http://localhost:5733";
       const upstreamRequests: Array<{
         readonly body: string;
         readonly contentType: string | null;
@@ -5914,6 +5924,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         config: {
           otlpTracesUrl: collector.url,
+          ...(trustedDevOrigin ? { devUrl: new URL(clientOrigin) } : {}),
         },
         layers: {
           browserTraceCollector: {
@@ -5925,17 +5936,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      const rejected = yield* HttpClient.post("/api/observability/v1/traces", {
+        headers: {
+          cookie,
+          "content-type": "application/json",
+          origin: trustedDevOrigin ? "http://localhost:5734" : clientOrigin,
+        },
+        body: HttpBody.text(JSON.stringify(payload), "application/json"),
+      });
+      assert.equal(rejected.status, 401);
+      assert.propertyVal(yield* rejected.json, "reason", "invalid_credential");
+      assert.deepEqual(localTraceRecords, []);
+      assert.deepEqual(upstreamRequests, []);
+      if (!trustedDevOrigin) return;
+
       const response = yield* HttpClient.post("/api/observability/v1/traces", {
         headers: {
-          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          cookie,
           "content-type": "application/json",
-          origin: "http://localhost:5733",
+          origin: clientOrigin,
         },
         body: HttpBody.text(JSON.stringify(payload), "application/json"),
       });
 
-      assert.equal(response.status, 204);
-      assert.equal(response.headers["access-control-allow-origin"], "*");
+      assert.equal(response.status, 204, yield* response.text);
+      assert.equal(response.headers["access-control-allow-origin"], clientOrigin);
+      assert.equal(response.headers["access-control-allow-credentials"], "true");
       assert.deepEqual(localTraceRecords, [
         {
           type: "otlp-span",

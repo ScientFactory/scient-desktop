@@ -188,6 +188,30 @@ it("flushes the latest captured position on pagehide before the storage debounce
   expect(saved.offsetWithinRow).toBe(receipt.offsetWithinRow);
 });
 
+it("keeps a held thread's exact reading and follow receipt through scroll, pagehide and unmount", async () => {
+  const key = "geometry:held-follow-receipt";
+  const entries = Array.from({ length: 20 }, (_, i) => entry(i));
+  render(key, entries);
+  await expect.poll(() => readTimelinePosition(key)).toBeDefined();
+  await listRef.current!.scrollToOffset({ offset: 300, animated: false });
+  await frames();
+  const captured = readTimelinePosition(key)!;
+  const saved = { ...captured, atEnd: false, followingPromptId: "message-19" };
+  rememberTimelinePosition(key, saved);
+
+  render(key, entries, { paintOnly: true });
+  const node = listRef.current!.getScrollableNode()!;
+  node.scrollTop += 35;
+  node.dispatchEvent(new Event("scroll"));
+  await frames();
+  expect(readTimelinePosition(key)).toEqual(saved);
+  window.dispatchEvent(new Event("pagehide"));
+  expect(readTimelinePosition(key)).toEqual(saved);
+  root?.unmount();
+  root = undefined;
+  expect(readTimelinePosition(key)).toEqual(saved);
+});
+
 it("does not offer a jump into reserved blank space but reports a hidden answer", async () => {
   const prompt = entry(0, "Short prompt");
   const onIsAtEndChange = vi.fn();

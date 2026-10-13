@@ -241,6 +241,41 @@ describe("Pi status copy", () => {
 });
 
 describe("deriveProviderModelsForDisplay", () => {
+  it("shows a renamed built-in once while retaining a custom model's availability detail", () => {
+    const builtIn: ServerProviderModel = {
+      slug: "built-in",
+      name: "Renamed built-in",
+      isCustom: false,
+      capabilities: null,
+    };
+    const display = deriveProviderModelsForDisplay({
+      liveModels: [
+        builtIn,
+        {
+          slug: "custom",
+          name: "custom",
+          isCustom: true,
+          capabilities: null,
+          unavailableReason: "Synthetic model unavailable",
+        },
+      ],
+      customModels: [
+        { slug: "built-in", name: "Renamed built-in", capabilities: null },
+        { slug: "custom", name: "My custom model", capabilities: null },
+      ],
+    });
+    expect(display).toEqual([
+      builtIn,
+      {
+        slug: "custom",
+        name: "My custom model",
+        isCustom: true,
+        capabilities: null,
+        unavailableReason: "Synthetic model unavailable",
+      },
+    ]);
+  });
+
   it.each(["custom:scient-fixture", "scient_fixture/model"])(
     "retains discovered connection %s independently of the legacy list",
     (slug) => {

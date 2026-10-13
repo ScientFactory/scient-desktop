@@ -73,13 +73,22 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
         clear();
         return;
       }
+      const pointerOnText =
+        pointer !== null &&
+        rects.some(
+          (line) =>
+            pointer.x >= line.left - 8 &&
+            pointer.x <= line.right + 8 &&
+            pointer.y >= line.top - 8 &&
+            pointer.y <= line.bottom + 8,
+        );
       setSelection({
         sourceAnchor: captured.sourceAnchor,
         citation: captured.citation,
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
           selectionRect: rects.at(-1) ?? rect,
-          pointer,
+          pointer: pointerOnText ? pointer : null,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),
       });

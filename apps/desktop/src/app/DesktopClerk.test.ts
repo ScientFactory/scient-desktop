@@ -412,3 +412,58 @@ it.effect.each(["startup", "open-url"] as const)(
       );
     }).pipe(Effect.scoped),
 );
+
+it.effect("hands Scient app links to the renderer while browser activation stays held", () =>
+  Effect.gen(function* () {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const electronApp = {
+      whenReady: Effect.void,
+      on: (name: string, listener: (...args: unknown[]) => void) =>
+        Effect.sync(() => {
+          listeners.set(name, listener);
+        }),
+    } as unknown as ElectronApp.ElectronApp["Service"];
+    const received: Array<string> = [];
+    yield* Effect.gen(function* () {
+      const clerk = yield* DesktopClerk.DesktopClerk;
+      yield* clerk.configure;
+      const open = (url: string) => {
+        const event = { preventDefault: vi.fn() };
+        listeners.get("open-url")!(event, url);
+        return event.preventDefault.mock.calls.length;
+      };
+      // Scient's default-browser activation is held.
+      assert.strictEqual(open("https://example.com/page"), 0);
+      assert.strictEqual(open("http://localhost:3000/"), 0);
+      // Prompt and thread links ride the same queue; the renderer routes them in the app.
+      assert.strictEqual(open("scient://new?prompt=hi"), 1);
+      assert.strictEqual(open("scient-next-dev://threads/env-1/thread-1"), 1);
+      assert.strictEqual(open("t3code://new?prompt=hi"), 0);
+      // Unregistered app identities and other protocols retain their handling.
+      assert.strictEqual(open("mailto:hello@example.com"), 0);
+      assert.strictEqual(open("t3code://somewhere-else"), 0);
+      yield* Effect.yieldNow;
+      assert.deepStrictEqual(received, [
+        "scient://new?prompt=hi",
+        "scient-next-dev://threads/env-1/thread-1",
+      ]);
+    }).pipe(
+      Effect.provide(layerDesktopClerk(true, [], "darwin")),
+      Effect.provideService(HostProcess.Arguments, ["t3"]),
+      Effect.provideService(ElectronApp.ElectronApp, electronApp),
+      Effect.provideService(
+        ElectronWindow.ElectronWindow,
+        {} as ElectronWindow.ElectronWindow["Service"],
+      ),
+      Effect.provideService(
+        DesktopWebLinks.DesktopWebLinks,
+        DesktopWebLinks.DesktopWebLinks.of({
+          receive: (url) => Effect.sync(() => void received.push(url)),
+          setRendererReady: () => Effect.void,
+        }),
+      ),
+    );
+  }).pipe(Effect.scoped),
+);

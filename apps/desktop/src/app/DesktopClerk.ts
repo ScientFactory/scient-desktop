@@ -13,6 +13,9 @@ import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@t3tools/shared/code
 import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCallback.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
+// SCIENT-FORK:START — registered app identity and local draft-link policy.
+import { scientPromptLinkAppPath as promptLinkAppPath } from "@t3tools/shared/scientPromptLinks";
+// SCIENT-FORK:END
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -198,8 +201,15 @@ export const make = Effect.gen(function* () {
         );
         return true;
       };
+      // Prompt links and thread links (`scient://new?…`, `scient://threads/…`) reach the
+      // renderer through the same queue as web links; it routes them in the app.
+      const openAppLink = (value: string | undefined) => {
+        if (!value || promptLinkAppPath(value) === null) return false;
+        void runPromise(webLinks.receive(value));
+        return true;
+      };
       const args = yield* HostProcess.Arguments;
-      args.some((value) => startProviderAuthHandoff(value));
+      args.some((value) => startProviderAuthHandoff(value) || openAppLink(value));
       // Compatible default-browser routing remains subject to Scient's activation hold.
       const openWebLink = (url: string) => {
         if (!DesktopWebLinks.desktopWebLinksEnabled || !DesktopWebLinks.isWebLink(url))
@@ -208,7 +218,12 @@ export const make = Effect.gen(function* () {
         return true;
       };
       yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
-        if (startProviderAuthHandoff(url) || resumeProviderAuth(url) || openWebLink(url))
+        if (
+          startProviderAuthHandoff(url) ||
+          resumeProviderAuth(url) ||
+          openWebLink(url) ||
+          openAppLink(url)
+        )
           event.preventDefault();
       });
       // A browser opens HTML files too, which macOS hands over by path.
@@ -218,7 +233,12 @@ export const make = Effect.gen(function* () {
         void runPromise(webLinks.receive(NodeURL.pathToFileURL(path).href));
       });
       yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
-        if (argv?.some((value) => startProviderAuthHandoff(value) || resumeProviderAuth(value)))
+        if (
+          argv?.some(
+            (value) =>
+              startProviderAuthHandoff(value) || resumeProviderAuth(value) || openAppLink(value),
+          )
+        )
           return;
         void runPromise(
           Effect.gen(function* () {

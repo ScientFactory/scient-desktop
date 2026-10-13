@@ -364,6 +364,13 @@ formatting to the shared provider package. Native shutdown and OMP remain the ph
 owners described in [provider lifecycle](./provider-lifecycle.md) and [providers](./providers.md);
 relocating a helper does not certify cleanup.
 
+Accounting credentials compose through `usage/usageAccountingSettingsSecrets.ts` in the shared
+`settingsSecrets.ts` visitor. Preserve the shipped `usage-accounting-source-<base64url-id>` key,
+redaction, and atomic settings/secret rollback. `ScientProviderCredentialAvailability.ts` checks
+only schema-declared secrets after config decoding and before provider factory scope creation;
+failed materialization still reconciles the authoritative stored snapshot and removes revoked
+instances. These owners do not replace native session lifetime or caller authority checks.
+
 #### Contracts, transport and composition
 
 | Host mount                                                           | Current Scient-owned modules                                                                                                                                                                                                       |
@@ -394,6 +401,23 @@ not a requirement to relocate the whole host.
 | Command palette/sidebar mounts                                  | `commandPalette/scientCommandPalette.tsx`, `sidebar/` and `sections/`; retain the complete await → currentness check → side-effect continuation in the owning callback                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Settings mounts                                                 | `settings/` navigation/visibility and feature-owned settings rows under `skills/`, `providerConnection/`, `analytics/`, `bidi/`, `keyboard/`, `typography/`, `wordExport/` and `onboarding/`                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Desktop settings/backend/window mounts                          | [`settings/scientDesktopSettings.ts`](../../apps/desktop/src/settings/scientDesktopSettings.ts), `backend/scientAnalyticsMetadata.ts`, `backend/scientBackendLaunch.ts`, `window/scientMainWindowSizing.ts`; native launch and window lifecycle stay in their desktop hosts                                                                                                                                                                                                                                                                                                                                                         |
+
+Prompt-link identity and copy policy live in `packages/shared/src/scientPromptLinks.ts`; the
+upstream parser retains generic mechanics. Desktop/web producers use registered Scient links
+without a hosted prompt authority. Mobile producers retain the actual binary's Expo scheme.
+Default-browser, cloud, and mobile publication holds remain independent. Sidebar bulk updates
+compose through the existing `scient/desktopUpdate/updateReadyNotice.tsx` singleton; exact service
+versions require current owned GitHub artifact availability from `serverReleaseAvailability.ts`,
+while the backend retains update permission, preflight, and installation authority.
+
+Mobile's generic `lib/markdownDocument.ts` retains its parser, HTML transform and
+entity decoder. A paired, module-level mount binds those existing tools to
+[`ScientMarkdownProjection.ts`](../../apps/mobile/src/native/ScientMarkdownProjection.ts),
+which owns canonical file/mention sources, native link occurrence mapping and
+entity projection. The existing `nativeMarkdownProjection` import remains the
+consumer surface. `native/EnrichedMarkdownText.tsx` supplies that projection to
+the native renderer; the reviewed Enriched dependency patch owns platform
+selection and clipboard handling. Stored message text remains authoritative.
 
 The map is source ownership evidence only. It does not replace public-codec, SQL/rollback, provider
 lifetime, packaging or manual UI acceptance evidence, and it does not turn source-text seam guards

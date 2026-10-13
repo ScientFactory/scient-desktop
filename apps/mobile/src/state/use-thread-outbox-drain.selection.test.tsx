@@ -29,6 +29,9 @@ const calls = vi.hoisted(() => ({
   updateMetadata: vi.fn(),
   setRuntimeMode: vi.fn(),
   setInteractionMode: vi.fn(),
+  preparePullRequestThread: vi.fn(() => {
+    throw new Error("Existing-thread selection must not prepare a pull-request worktree");
+  }),
   threads: [] as EnvironmentThreadShell[],
   configs: new Map<EnvironmentId, ServerConfig>(),
   writeConfig: vi.fn<(value: ServerConfig) => void>(),
@@ -99,6 +102,11 @@ vi.mock("./threads", async () => {
     },
   };
 });
+// Match the other command leaves without starting the native connection runtime.
+// The real drain stays mounted; any unexpected PR preparation fails this fixture.
+vi.mock("./git", () => ({
+  gitEnvironment: { preparePullRequestThread: "prepare-pr" },
+}));
 vi.mock("./use-atom-command", () => ({
   useAtomCommand: (command: string) => {
     switch (command) {
@@ -110,6 +118,8 @@ vi.mock("./use-atom-command", () => ({
         return calls.setRuntimeMode;
       case "interaction":
         return calls.setInteractionMode;
+      case "prepare-pr":
+        return calls.preparePullRequestThread;
       default:
         throw new Error(`Unexpected command ${command}`);
     }
@@ -257,6 +267,7 @@ beforeEach(async () => {
   ]) {
     command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   }
+  calls.preparePullRequestThread.mockClear();
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
   appAtomRegistry.set(acknowledgedThreadMessagesAtom, []);
   calls.writeConfig(config);
@@ -301,6 +312,7 @@ async function deliver(current: ModelSelection, captured: ModelSelection, permit
     expect(calls.updateMetadata).not.toHaveBeenCalled();
     expect(calls.setRuntimeMode).not.toHaveBeenCalled();
     expect(calls.setInteractionMode).not.toHaveBeenCalled();
+    expect(calls.preparePullRequestThread).not.toHaveBeenCalled();
     expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([]);
     return;
   }
@@ -321,6 +333,7 @@ async function deliver(current: ModelSelection, captured: ModelSelection, permit
   expect(appAtomRegistry.get(acknowledgedThreadMessagesAtom)).toEqual([message]);
   expect(calls.setRuntimeMode).not.toHaveBeenCalled();
   expect(calls.setInteractionMode).not.toHaveBeenCalled();
+  expect(calls.preparePullRequestThread).not.toHaveBeenCalled();
 }
 it("keeps a connected target's captured selection queued when its exact operation grant is absent", async () => {
   calls.sessions.set(environmentId, {

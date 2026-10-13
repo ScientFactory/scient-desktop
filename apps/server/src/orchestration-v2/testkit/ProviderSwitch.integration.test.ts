@@ -2168,6 +2168,8 @@ describe("orchestration v2 provider switching", () => {
         );
         assert.isBelow(handoffItem?.ordinal ?? Infinity, queuedUserItem?.ordinal ?? -Infinity);
         assert.ok(handoffItem?.type === "handoff");
+        assert.include(turns.at(-1)!.text, "Codex current turn complete");
+        assert.include(turns.at(-1)!.text, "Codex first queued turn complete");
         assert.include(turns.at(-1)!.text, "Codex second queued turn complete");
       }),
     ),

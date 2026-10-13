@@ -61,6 +61,9 @@ Changes apply to connected environments that support the setting. After an offli
 reconnects, use **Apply to all** to reconcile a different value; older servers need updating first.
 If you previously enabled continuation only for updates, enable this setting once to allow recovery
 without a connected client.
+A thread is not resumed while it waits for your approval, answer, or secret, or
+while it is archived, snoozed, or settled. After three automatic resumes in a row,
+the thread waits for your next message.
 
 The action depends on how that environment started:
 
@@ -113,6 +116,17 @@ in [Run Scient in the background](./background-service.md).
    newer official release manually; do not remove the existing data directory.
 
 ## Update providers
+
+The sidebar's **Update everything** action shows the eligible updates for each
+connected environment before you confirm. It updates providers first, then
+supported remote servers, and installs this desktop app last. Servers requiring
+an exact Scient release artifact are included only when that artifact is
+available from Scient's release repository. Disconnected environments, missing
+maintenance permissions, and incompatible release channels are excluded.
+
+The confirmation identifies the servers that will restart and whether they can
+resume interrupted threads. Continuation still requires that server's supported
+capability and enabled setting; it does not revive stopped or settled work.
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment

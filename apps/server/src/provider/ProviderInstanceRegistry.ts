@@ -75,6 +75,7 @@ import type { ScientProviderInstance } from "./ScientProviderInstance.ts";
 
 // SCIENT-FORK:START — native sessions are owned by both instance and caller scopes.
 import { ownNativeSessionLifetimes } from "./ScientNativeSessionLifetimes.ts";
+import { hasUnresolvedProviderCredentials } from "./ScientProviderCredentialAvailability.ts";
 // SCIENT-FORK:END
 
 export interface ProviderInstanceRegistryShape {
@@ -251,6 +252,21 @@ const buildEntry = <R>(input: {
     }
 
     const typedConfig = decodeResult.success;
+    // SCIENT-FORK:START — stored credential markers cannot reach a native provider factory.
+    if (hasUnresolvedProviderCredentials(entry.driver, typedConfig, entry.environment ?? [])) {
+      return {
+        kind: "unavailable" as const,
+        snapshot: yield* buildUnavailableProviderSnapshot({
+          driverKind: entry.driver,
+          instanceId,
+          displayName: entry.displayName,
+          accentColor: entry.accentColor,
+          reason:
+            "Provider credentials could not be read. Reload settings after restoring the secret store.",
+        }),
+      };
+    }
+    // SCIENT-FORK:END
     const childScope = yield* Scope.make();
     // Attach the child scope to the registry's parent scope: if the
     // registry scope closes, each surviving instance's child scope is

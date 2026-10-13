@@ -26,6 +26,7 @@ import {
   DesktopDmgBackgroundSourceMissingError,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
+  readWorkspaceConfig,
   createBuildConfig,
   DesktopBuildPackageVersionMismatchError,
   DESKTOP_ELECTRON_LANGUAGES,
@@ -121,6 +122,23 @@ const stagePackageExtensions = {
   "electron-webauthn": { peerDependenciesMeta: { typescript: { optional: true } } },
   "@electron-webauthn/macos": { peerDependenciesMeta: { typescript: { optional: true } } },
 };
+
+/** The patch suffix belongs to pnpm's approval identity, not the tarball filename. */
+function workspaceAllowBuildTarballPath(key: string): string | undefined {
+  const identity = /(?:^|@)file:(.*)$/u.exec(key)?.[1];
+  if (identity === undefined) return undefined;
+  const patchStart = identity.indexOf("(patch_hash");
+  const tarball = patchStart < 0 ? identity : identity.slice(0, patchStart);
+  if (patchStart >= 0) {
+    assert.match(
+      identity.slice(patchStart),
+      /^\(patch_hash=[a-f0-9]{64}\)$/u,
+      `allowBuilds names a malformed patch identity: ${key}`,
+    );
+  }
+  assert.isNotEmpty(tarball, `allowBuilds names an empty tarball: ${key}`);
+  return tarball;
+}
 
 // A minimal stand-in for the staged sidecar roots packed into the WSL archive.
 const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(function* (
@@ -669,6 +687,54 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       packageExtensions: stagePackageExtensions,
     });
   });
+
+  // pnpm writes "set this to true or false" placeholders into allowBuilds when a
+  // tarball changes. pnpm ignores them, but the release build decode rejects them.
+  it("distinguishes file tarballs from exact pnpm patch approval suffixes", () => {
+    const hash = "a".repeat(64);
+    for (const key of [
+      "file:deps/native.tgz",
+      "native@file:deps/native.tgz",
+      "@scope/native@file:deps/native.tgz",
+      `native@file:deps/native.tgz(patch_hash=${hash})`,
+      `@scope/native@file:deps/native.tgz(patch_hash=${hash})`,
+    ]) {
+      assert.equal(workspaceAllowBuildTarballPath(key), "deps/native.tgz");
+    }
+    assert.equal(workspaceAllowBuildTarballPath("native@1.2.3"), undefined);
+    assert.equal(workspaceAllowBuildTarballPath("native"), undefined);
+    assert.equal(
+      workspaceAllowBuildTarballPath("file:deps/native(stable).tgz"),
+      "deps/native(stable).tgz",
+    );
+    for (const key of [
+      "native@file:",
+      "native@file:deps/native.tgz(patch_hash=)",
+      "native@file:deps/native.tgz(patch_hash=invalid)",
+      "native@file:deps/native.tgz(patch_hash",
+      `native@file:deps/native.tgz(patch_hash=${hash}`,
+      `native@file:deps/native.tgz(patch_hash=${hash})(peer@1.2.3)`,
+    ]) {
+      assert.throws(() => workspaceAllowBuildTarballPath(key));
+    }
+  });
+
+  it.effect("decodes the repo allowBuilds and every file: tarball it names exists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { allowBuilds = {} } = yield* readWorkspaceConfig();
+      const repoRoot = path.join(import.meta.dirname, "..");
+      for (const key of Object.keys(allowBuilds)) {
+        const tarball = workspaceAllowBuildTarballPath(key);
+        if (tarball === undefined) continue;
+        assert.isTrue(
+          yield* fs.exists(path.join(repoRoot, tarball)),
+          `allowBuilds names a missing tarball: ${key}`,
+        );
+      }
+    }),
+  );
 
   it("stages pnpm 11 allowBuilds and patchedDependencies in the workspace yaml", () => {
     assert.deepStrictEqual(

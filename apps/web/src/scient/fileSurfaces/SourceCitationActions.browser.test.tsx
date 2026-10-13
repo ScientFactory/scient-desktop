@@ -1,5 +1,6 @@
 import "../../index.css";
 
+import type { DocumentSaveIntent } from "@scientfactory/scient-document";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -100,11 +101,22 @@ it("quotes the editable model's exact draft and CRLF range through the real tool
     relativePath: "editable.ts",
   };
   const source = "const alpha = 1;\r\nconst beta = 2;\r\n";
+  let disk = { source, revision: "initial" };
+  const writes: DocumentSaveIntent[] = [];
+  let acknowledgeWrite!: (receipt: { revision: string }) => void;
+  const acknowledgement = new Promise<{ revision: string }>((resolve) => {
+    acknowledgeWrite = resolve;
+  });
   const registry = new MarkdownPersistenceRegistry({
     debounceMs: 60_000,
     createTransport: () => ({
-      write: async () => ({ revision: "saved" }),
-      read: async () => ({ source, revision: "initial" }),
+      write: async (intent) => {
+        writes.push(intent);
+        const receipt = await acknowledgement;
+        disk = { source: intent.source, revision: receipt.revision };
+        return receipt;
+      },
+      read: async () => disk,
       classifyFailure: () => "terminal",
       subscribe: () => () => {},
       project: () => {},
@@ -119,8 +131,18 @@ it("quotes the editable model's exact draft and CRLF range through the real tool
   })!;
   const draft = "// unsaved\r\n" + source;
   expect(lease.change(draft, lease.getSnapshot().editVersion)).toBe(true);
+  // Autosave's maximum wait also applies with a long debounce. Keep the real
+  // owned write unacknowledged while exercising the draft citation contract.
+  const pendingSave = lease.flushNow();
   const onCite = vi.fn<MarkdownCiteHandler>(() => true);
   try {
+    expect(writes).toEqual([{ source: draft, expectedRevision: "initial", editVersion: 1 }]);
+    expect(lease.getSnapshot()).toMatchObject({
+      baselineSource: source,
+      draftSource: draft,
+      pending: true,
+      inFlight: true,
+    });
     root.render(
       <MarkdownSourceSurface
         {...target}
@@ -134,7 +156,9 @@ it("quotes the editable model's exact draft and CRLF range through the real tool
         onPostRender={() => {}}
       />,
     );
-    await userEvent.click(page.getByRole("textbox"));
+    const textbox = page.getByRole("textbox");
+    await userEvent.click(textbox);
+    const nativeEditor = textbox.element();
     await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
     await userEvent.click(page.getByRole("button", { name: "Ask in chat", exact: true }));
     expect(onCite).toHaveBeenCalledOnce();
@@ -148,7 +172,35 @@ it("quotes the editable model's exact draft and CRLF range through the real tool
       origin: "draft",
     });
     expect(lease.getSnapshot().draftSource).toBe(draft);
+    expect(lease.getSnapshot().baselineSource).toBe(source);
+
+    acknowledgeWrite({ revision: "saved" });
+    expect(await pendingSave).toBe(true);
+    expect(disk).toEqual({ source: draft, revision: "saved" });
+    expect(lease.getSnapshot()).toMatchObject({
+      baselineSource: draft,
+      baselineRevision: "saved",
+      draftSource: draft,
+      pending: false,
+      inFlight: false,
+    });
+    await userEvent.click(textbox);
+    expect(textbox.element()).toBe(nativeEditor);
+    await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+    await userEvent.click(page.getByRole("button", { name: "Ask in chat", exact: true }));
+    expect(onCite).toHaveBeenCalledTimes(2);
+    expect(onCite.mock.calls[1]![0]).toMatchObject({
+      text: draft,
+      sourceStart: 0,
+      sourceEnd: draft.length,
+      startLine: 1,
+      endLine: 3,
+      sourceSelection: true,
+      origin: "saved",
+    });
   } finally {
+    acknowledgeWrite({ revision: "saved" });
+    await pendingSave;
     root.unmount();
     document.getSelection()?.removeAllRanges();
     host.remove();

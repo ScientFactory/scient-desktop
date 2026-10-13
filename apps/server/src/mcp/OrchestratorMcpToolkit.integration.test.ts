@@ -1599,6 +1599,12 @@ describe("orchestrator MCP toolkit", () => {
               _tag: "OrchestratorMcpFailure",
               code: "capability_denied",
             });
+            expect(threadReadTool?.tool.inputSchema).toMatchObject({ additionalProperties: false });
+            const unknownPagingParamError = yield* invoke("scient_thread_inspect", {
+              threadId: parentThreadId,
+              cursor: 90,
+            }).pipe(Effect.flip);
+            expect(unknownPagingParamError.message).toContain("Expected no excess property");
             const threadUpdateTool = server.tools.find(
               ({ tool }) => tool.name === "scient_thread_update",
             );
