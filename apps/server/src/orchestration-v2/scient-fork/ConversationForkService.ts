@@ -505,7 +505,8 @@ const make = Effect.gen(function* () {
               messageId: source.messageId,
               position: "before" as const,
             }
-          : plan.boundaryRunId !== null
+          : plan.boundaryRunId !== null &&
+              !(source.kind === "assistant-response" && plan.cutsOpenRun)
             ? { type: "run" as const, threadId: projection.thread.id, runId: plan.boundaryRunId }
             : source.kind === "assistant-response"
               ? {

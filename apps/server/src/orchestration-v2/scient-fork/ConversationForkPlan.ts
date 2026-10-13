@@ -88,6 +88,8 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
           candidate.inheritedFrom?.runId === selected.inheritedFrom.runId;
   let end = -1;
   let boundaryRunId: RunId | null = null;
+  // The fork stops inside a run that is still working.
+  let cutsOpenRun = false;
   if (source.kind === "settled-run" || source.kind === "running-turn") {
     const run = projection.runs.find((run) => run.id === source.runId);
     if (!run) return yield* reject("The selected run is unavailable.");
@@ -155,15 +157,14 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       ) {
         return yield* reject("Choose a response from the conversation, not a nested task.");
       }
-      if (
-        run &&
-        !["completed", "failed", "interrupted", "cancelled", "waiting"].includes(run.status)
-      ) {
-        return yield* reject("This response's run has not settled yet.");
-      }
-      const lastInBoundary = rows.findLastIndex(({ item: candidate }) =>
-        belongsToBoundary(candidate, item),
-      );
+      // A finished reply inside a run that is still working (a message queued
+      // after it, say) forks through that reply; the run's later work stays out.
+      cutsOpenRun =
+        run !== undefined &&
+        !["completed", "failed", "interrupted", "cancelled", "waiting"].includes(run.status);
+      const lastInBoundary = cutsOpenRun
+        ? clicked
+        : rows.findLastIndex(({ item: candidate }) => belongsToBoundary(candidate, item));
       end = lastInBoundary < 0 ? clicked : lastInBoundary;
     }
   }
@@ -418,6 +419,7 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
     plans: [...plans.values()],
     nodes: [...nodes.values()],
     boundaryRunId,
+    cutsOpenRun,
   };
 });
 

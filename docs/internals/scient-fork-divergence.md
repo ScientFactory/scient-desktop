@@ -12,7 +12,10 @@ conversation continues independently. `/fork` captures the running turn when
 one is active, otherwise it selects the latest completed assistant response.
 
 - Forking an assistant response retains the transcript through that response.
-  The destination waits for the user's next message.
+  The destination waits for the user's next message. A finished response inside a
+  run that is still working (for example with a message queued after it) forks
+  through that response; the run's later work stays out, its in-progress state is
+  copied as history, and the fork marker sits after that message.
 - Forking a user message retains only the completed transcript before that
   message. The selected text and images are restored as an unsent, persisted
   destination composer draft so the user can edit or send it deliberately.
