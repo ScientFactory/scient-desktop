@@ -20,6 +20,9 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+// SCIENT-FORK:START — bounded native failure metadata, without provider payloads.
+import { recordAntigravityAuthFailure } from "../scient/providerLifecycle/antigravityAuthDiagnostics.ts";
+// SCIENT-FORK:END
 import {
   antigravityAuthStageFailure,
   parseAntigravityAuthorizationUrl,
@@ -106,6 +109,7 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
   };
 }
 
+// SCIENT-FORK:START — safe failure presentation; native OAuth and account checks stay upstream.
 function safeAuthFailure(
   cause: Cause.Cause<unknown>,
   usesBrowser: boolean,
@@ -135,6 +139,7 @@ function safeAuthFailure(
     : "Antigravity could not authenticate with the configured credentials.";
 }
 
+// SCIENT-FORK:END
 /** Owns one instance's explicit sign-in and all process admission around sign-out. */
 export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   Runtime extends AntigravityAuthRuntime,
@@ -228,6 +233,11 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     lock.withPermits(1)(
       Effect.gen(function* () {
         if (activeFlow !== flow) return;
+        // SCIENT-FORK:START — only the current failed attempt emits diagnostics.
+        if (Exit.isFailure(result)) {
+          yield* recordAntigravityAuthFailure(result.cause, !flow.authorizationUrlReceived);
+        }
+        // SCIENT-FORK:END
         activeFlow = undefined;
         operation = "idle";
         flow.pending = undefined;

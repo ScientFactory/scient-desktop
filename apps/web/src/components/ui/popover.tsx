@@ -2,6 +2,8 @@
 
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
+import { useContext } from "react";
+import { OverlayScrollScope } from "./overlay-scroll-scope";
 import { cn } from "~/lib/utils";
 
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
@@ -50,11 +52,14 @@ function PopoverPopup({
   collisionAvoidance,
   tooltipStyle = false,
   keepMounted = false,
+  suspended = false,
   viewportClassName,
   anchor,
   collisionBoundary,
   ...props
 }: PopoverPrimitive.Popup.Props & {
+  /** Keep the owner mounted while a nested portal owns interaction and focus. */
+  suspended?: boolean;
   padding?: keyof typeof popoverViewportPaddingClassName;
   surface?: "default" | "bare";
   variant?: "default" | "panel";
@@ -73,6 +78,7 @@ function PopoverPopup({
 }) {
   // Viewport rekeys its children when the active trigger clears on close. Persistent
   // single-trigger forms need a stable container to retain drafts and submit guards.
+  const scrollScope = useContext(OverlayScrollScope);
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
   return (
     <PopoverPrimitive.Portal keepMounted={keepMounted}>
@@ -93,6 +99,8 @@ function PopoverPopup({
               "z-(--z-sheet) w-[min(calc(var(--thread-details-panel-width)+--spacing(4)),calc(var(--anchor-width)---spacing(2)))] transition-[top] duration-150 ease-out data-instant:transition-[top] motion-reduce:transition-none motion-reduce:data-instant:transition-none"
             : "z-[130]",
         )}
+        style={suspended ? { visibility: "hidden" } : undefined}
+        inert={suspended || undefined}
         data-slot="popover-positioner"
         side={side}
         sideOffset={sideOffset}
@@ -113,6 +121,8 @@ function PopoverPopup({
               "w-full overflow-visible rounded-none border-0 bg-transparent shadow-none before:hidden [backdrop-filter:none] [-webkit-backdrop-filter:none]",
             className,
           )}
+          {...scrollScope?.portalProps}
+          data-overlay-scroll-scope={scrollScope?.id}
           data-slot="popover-popup"
           {...props}
         >

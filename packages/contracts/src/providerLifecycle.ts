@@ -81,7 +81,8 @@ export const ProviderConnectionOperation = Schema.Struct({
   startedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
   message: TrimmedNonEmptyString,
-  authorizationUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
+  // Match the native provider-auth handoff; OAuth URLs must never be truncated.
+  authorizationUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(16_384))),
   authorizationUrlKind: Schema.optionalKey(ProviderAuthorizationUrlKind),
   /** True only while the live provider process can accept a pasted one-time code. */
   acceptsAuthorizationCode: Schema.optionalKey(Schema.Boolean),

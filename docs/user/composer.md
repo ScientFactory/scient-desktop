@@ -176,8 +176,7 @@ comment bubble used for assistant quotes. Text in paragraphs, lists, tables,
 and ordinary code blocks is supported; selecting an entire image, formula, or
 interactive chart is not part of this action. When an editable diagram's source
 is visible, selecting that source is supported like any other code block; selecting
-the rendered diagram is not. Source view and read-only host-file previews keep
-their existing controls.
+the rendered diagram is not.
 
 The chip retains the exact selected text, the original environment and workspace,
 file path, and the containing Markdown source lines. The line range describes
@@ -194,6 +193,20 @@ the captured quote and its source information, not an automatic read of a newer
 file version. If the conversation has moved to another worktree, the original
 file opens in the existing read-only host-file preview instead of resolving the
 same filename against the new workspace.
+
+## Quote code or source
+
+Select code in a workspace file's source editor and choose **Ask in chat**.
+This also works in Markdown and LaTeX Source/Split, compute source editors,
+and read-only code previews. The quote keeps the exact selected code, its
+file and UTF-16 offsets, and the captured saved or draft revision. Citing does
+not save or change the file.
+
+Click the quote chip to reopen Source. Scient selects the original range when
+the revision still matches, or a uniquely verified match after the source moves.
+If it cannot verify a location, the quote remains intact and the recorded line
+opens with a notice. Existing rendered Markdown quotes keep their rendered-view
+reopening behavior.
 
 ## Quote an assistant response
 

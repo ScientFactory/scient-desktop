@@ -166,6 +166,11 @@
       "purpose": "Mount additive analysis and compute actions, generic freshness controls, and plain-language file failure copy in the file viewer."
     },
     {
+      "path": "apps/web/src/components/files/fileLineReveal.ts",
+      "anchor": "resolveFileRevealLine",
+      "purpose": "Resolve source citation reveals to their verified current line while preserving recorded-line fallback and ordinary file links in the inherited scroll guard."
+    },
+    {
       "path": "apps/web/src/components/files/AttachmentFilePreview.tsx",
       "anchor": "MEDIA_FAILURE_COPY",
       "purpose": "Use Scient's shared plain-language copy for attachment preview failures."

@@ -3,8 +3,10 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import type * as React from "react";
+import { useContext } from "react";
 
 import { cn } from "~/lib/utils";
+import { OverlayScrollScope } from "./overlay-scroll-scope";
 import { buttonVariants } from "./button";
 
 const Menu = MenuPrimitive.Root;
@@ -39,6 +41,7 @@ function MenuPopup({
   keepMounted?: boolean;
   padding?: "default" | "compact";
 }) {
+  const scrollScope = useContext(OverlayScrollScope);
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
       <MenuPrimitive.Positioner
@@ -63,6 +66,8 @@ function MenuPopup({
             className,
           )}
           data-slot="menu-popup"
+          {...scrollScope?.portalProps}
+          data-overlay-scroll-scope={scrollScope?.id}
           {...props}
         >
           <div

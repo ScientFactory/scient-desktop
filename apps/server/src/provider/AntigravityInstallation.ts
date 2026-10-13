@@ -1,3 +1,9 @@
+/**
+ * SCIENT-FORK: retain T3's native paired installer and service identity.
+ * Scient adds qualified release receipts/selection, Windows filesystem handling,
+ * and verified process teardown before publication or deletion. Catalog service
+ * composition lives in scient/providerLifecycle/ScientAntigravityInstallation.ts.
+ */
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest or free-space query.
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
 import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
@@ -29,11 +35,6 @@ import { ServerConfig } from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
 import { makeInstallerFilesystem } from "./runtimeFilesystem.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import { ManagedRuntimeCatalog } from "../scient/providerLifecycle/ManagedRuntimeCatalog.ts";
-import {
-  bundledAntigravityAcpAsset,
-  resolveAntigravityAcpCatalogAsset,
-} from "../scient/providerLifecycle/antigravityAcpCatalog.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
 import {
   buildAntigravityAcpSpawnInput,
@@ -124,26 +125,7 @@ export class AntigravityInstallation extends Context.Service<
     AntigravityInstallation,
     Effect.gen(function* () {
       const config = yield* ServerConfig;
-      const catalog = yield* ManagedRuntimeCatalog;
-      const platform = yield* HostProcess.Platform;
-      const arch = yield* HostProcess.Architecture;
-      return yield* makeAntigravityInstallation({
-        baseDir: config.baseDir,
-        refreshLatestRelease: catalog.refresh.pipe(
-          Effect.map(
-            (current) =>
-              resolveAntigravityAcpCatalogAsset(current, platform, arch) ??
-              bundledAntigravityAcpAsset(platform, arch),
-          ),
-        ),
-        latestRelease: catalog.current.pipe(
-          Effect.map(
-            (current) =>
-              resolveAntigravityAcpCatalogAsset(current, platform, arch) ??
-              bundledAntigravityAcpAsset(platform, arch),
-          ),
-        ),
-      });
+      return yield* makeAntigravityInstallation({ baseDir: config.baseDir });
     }),
   );
 }

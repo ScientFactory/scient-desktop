@@ -17,6 +17,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { Command } from "effect/cli";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -188,13 +190,71 @@ describe("t3 server command safety", () => {
             Effect.flip,
           );
           expect(String(error)).toContain(`Unknown command "${word}"`);
-          expect(String(error)).toContain('"scient --help"');
-          expect(String(error)).toContain('"scient ./my-project"');
           expect(yield* pathExists(word)).toBe(word === "package.json");
           expect(yield* pathExists(baseDir)).toBe(false);
         }
       }),
     ),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "prints runnable recovery commands for script, packaged, and standalone installations",
+    () =>
+      withTempDirectory("Scient CLI's recovery-", (root) =>
+        Effect.gen(function* () {
+          const runtime = NodePath.join(root, "private Node's location", "node");
+          const entry = NodePath.join(root, "entry's cache", "bin.mjs");
+          const launcher = NodePath.join(root, "Scient's launcher");
+          const baseDir = NodePath.join(root, "profile");
+          yield* Effect.promise(async () => {
+            await NodeFSP.mkdir(NodePath.dirname(runtime), { recursive: true });
+            await NodeFSP.mkdir(NodePath.dirname(entry), { recursive: true });
+            await NodeFSP.symlink(process.execPath, runtime);
+            await NodeFSP.writeFile(entry, "console.log(JSON.stringify(process.argv.slice(2)));\n");
+            await NodeFSP.writeFile(launcher, '#!/bin/sh\nprintf \'["%s"]\\n\' "$1"\n', {
+              mode: 0o755,
+            });
+          });
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          for (const installation of ["script", "packaged", "standalone"] as const) {
+            const error = yield* runCli(["conenct", "--base-dir", baseDir]).pipe(
+              Effect.provideService(HostProcess.WorkingDirectory, root),
+              Effect.provideService(HostProcess.Platform, "linux"),
+              Effect.provideService(
+                HostProcess.ExecutablePath,
+                installation === "standalone" ? launcher : runtime,
+              ),
+              Effect.provideService(HostProcess.Arguments, [runtime, entry]),
+              Effect.provideService(HostProcess.IsExecutable, installation === "standalone"),
+              Effect.provideService(
+                HostProcess.Environment,
+                installation === "packaged" ? { T3CODE_CLI_PATH: launcher } : {},
+              ),
+              Effect.flip,
+            );
+            const advice =
+              /Use "(.*)" for commands or an explicit path such as "(.*)" for a new directory\./.exec(
+                String(error),
+              );
+            expect(advice).not.toBeNull();
+            for (const [command, args] of [
+              [advice![1]!, ["--help"]],
+              [advice![2]!, ["./my-project"]],
+            ] as const) {
+              const output = yield* spawner.string(
+                ChildProcess.make("/bin/sh", ["-c", command], {
+                  cwd: root,
+                  env: { PATH: "", HOME: root },
+                  extendEnv: false,
+                  stdin: "ignore",
+                }),
+              );
+              expect(JSON.parse(output)).toEqual(args);
+            }
+            expect(yield* pathExists(baseDir)).toBe(false);
+          }
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      ),
   );
 
   it.effect("shows help without creating state", () =>

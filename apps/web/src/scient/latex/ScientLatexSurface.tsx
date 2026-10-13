@@ -1,3 +1,5 @@
+import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
+import type { MarkdownCiteHandler } from "~/scient/markdownEditor/markdownCitation";
 import type { FilePostRender } from "~/scient/fileSurfaces/StaticTextFileSurface";
 import { File, Virtualizer } from "@pierre/diffs/react";
 import { useAtomValue } from "@effect/atom-react";
@@ -13,6 +15,7 @@ import {
   type ScientLatexManagedInstallState,
   type ScientLatexSyncUnavailableReason,
   type ScopedThreadRef,
+  type FileCitation,
 } from "@t3tools/contracts";
 import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
 import * as Schema from "effect/Schema";
@@ -97,6 +100,9 @@ interface ScientLatexSurfaceProps {
   /** Root carried by navigation from an already established LaTeX document. */
   readonly latexRootRelativePath: string | null;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
+  readonly threadRef?: ScopedThreadRef | undefined;
+  readonly onCite?: MarkdownCiteHandler | undefined;
+  readonly citationReveal?: FileCitation | undefined;
   /** The working source: the session's draft when there is one. */
   readonly contents: string;
   /** The revision last confirmed on disk. The draft may be ahead of it. */
@@ -307,6 +313,8 @@ function LatexDiagnosticsRow(props: {
 
 /** A file too large to edit reads the same way it does in the file panel. */
 function LatexReadOnlyHalf(props: {
+  readonly threadRef?: ScopedThreadRef | undefined;
+  readonly onCite?: MarkdownCiteHandler | undefined;
   readonly cwd: string;
   readonly relativePath: string;
   readonly contents: string;
@@ -314,29 +322,46 @@ function LatexReadOnlyHalf(props: {
   readonly wordWrap: boolean;
   readonly onPostRender: FilePostRender;
 }) {
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
+  const baseline = useCallback(() => props.contents, [props.contents]);
+  const ready = useCallback(() => true, []);
   return (
-    <Virtualizer
-      className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-      config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
-    >
-      <File
-        file={{
-          name: props.relativePath,
-          contents: props.contents,
-          ...scientificSourceLanguageOverride(props.relativePath),
-          cacheKey: projectFileCacheKey(props.cwd, props.relativePath, props.contents),
-        }}
-        options={{
-          disableFileHeader: true,
-          overflow: props.wordWrap ? "wrap" : "scroll",
-          theme: resolveDiffThemeName(props.resolvedTheme),
-          themeType: props.resolvedTheme,
-          unsafeCSS: LATEX_EDITOR_UNSAFE_CSS,
-          onPostRender: props.onPostRender,
-        }}
-        className="min-h-full"
-      />
-    </Virtualizer>
+    <div ref={setViewport} className="flex min-h-0 flex-1">
+      {props.threadRef ? (
+        <SourceCitationActions
+          editor={null}
+          viewport={viewport}
+          target={{ ...props.threadRef, cwd: props.cwd, path: props.relativePath }}
+          baseline={baseline}
+          ready={ready}
+          staticSource={props.contents}
+          onCite={props.onCite}
+          revealId={0}
+        />
+      ) : null}
+      <Virtualizer
+        className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+        config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
+      >
+        <File
+          file={{
+            name: props.relativePath,
+            contents: props.contents,
+            ...scientificSourceLanguageOverride(props.relativePath),
+            cacheKey: projectFileCacheKey(props.cwd, props.relativePath, props.contents),
+          }}
+          options={{
+            disableFileHeader: true,
+            overflow: props.wordWrap ? "wrap" : "scroll",
+            theme: resolveDiffThemeName(props.resolvedTheme),
+            themeType: props.resolvedTheme,
+            unsafeCSS: LATEX_EDITOR_UNSAFE_CSS,
+            onPostRender: props.onPostRender,
+          }}
+          className="min-h-full"
+        />
+      </Virtualizer>
+    </div>
   );
 }
 
@@ -948,6 +973,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             >
               {persistence === null ? (
                 <LatexReadOnlyHalf
+                  threadRef={props.threadRef}
+                  onCite={props.onCite}
                   cwd={props.cwd}
                   relativePath={props.relativePath}
                   contents={props.contents}
@@ -957,6 +984,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 />
               ) : (
                 <MarkdownSourceSurface
+                  threadRef={props.threadRef}
+                  onCite={props.onCite}
+                  citationReveal={props.citationReveal}
+                  citationRootRelativePath={resolvedRootRelativePath ?? undefined}
                   persistence={persistence}
                   environmentId={props.environmentId}
                   cwd={props.cwd}

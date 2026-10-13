@@ -13,6 +13,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   memo,
+  useContext,
   useMemo,
   useState,
   useCallback,
@@ -22,6 +23,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { ModelPickerOverlayContext } from "../../scient/providerConnection/ModelPickerOverlayContext";
 import { ModelPickerNewChatFooter } from "./ModelPickerNewChatFooter";
 import { ModelListDisclosureContent } from "./ModelListDisclosureContent";
 import { ModelListRow } from "./ModelListRow";
@@ -522,8 +524,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     props.renderProviderSetup,
     sidebarInstanceEntries,
   ]);
+  const overlay = useContext(ModelPickerOverlayContext);
   const selectedSetupEntry =
-    selectedInstanceId !== "favorites" && setupAvailableInstanceIds?.has(selectedInstanceId)
+    selectedInstanceId !== "favorites" &&
+    (setupAvailableInstanceIds?.has(selectedInstanceId) ||
+      overlay?.instanceId === selectedInstanceId)
       ? entryByInstanceId.get(selectedInstanceId)
       : undefined;
   const isShowingSetup = selectedSetupEntry !== undefined;
@@ -913,7 +918,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen()) {
+      if (overlay?.instanceId || event.defaultPrevented || event.repeat || isCommandPaletteOpen()) {
         return;
       }
 
@@ -961,6 +966,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       window.removeEventListener("keydown", onWindowKeyDown, true);
     };
   }, [
+    overlay?.instanceId,
     handleModelSelect,
     handleSelectInstance,
     keybindings,
