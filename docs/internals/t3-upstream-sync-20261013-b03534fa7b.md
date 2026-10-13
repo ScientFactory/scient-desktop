@@ -469,3 +469,28 @@ receipt/cursor can identify this main as qualified. The early full typecheck
 passed in 19.744 s. Evidence: `reviews/pr-merge-readiness-20261013/pr534-ff9-*`.
 No unrelated feature fix, test weakening, publication or profile access is
 part of this catch-up. The isolated app remains verified stopped.
+
+## Later owned-main catch-up to `ad35cc25320e`
+
+Main then landed its fork reliability/separation batch at
+`ad35cc25320e9e326a63fbf781c9ec9af23aef6e`. This ordinary owned-main merge
+preserves the original official merge and frozen target. At receiving tree
+`861119ba9c65e0b15000f9346e87396014cec1b6`, all 26 changed code/test blobs
+match landed main; only the divergence document combines both parents.
+Independent server and web reviews found no composition-caused regression.
+Snapshot contracts, capture transactions, outbox effects and retirement helpers
+retain narrow Scient owners; the host keeps the execution and transaction
+boundaries. Main's saved-history fallback never adopts the source run.
+Replaced refusal assertions now check acknowledged text, saved prompts, frozen
+SQL reopen results, source continuation, and receipt/outbox ownership.
+
+The full shared/app typecheck passed on unchanged staged inputs in 24.635 s.
+Further affected qualification is pending, including native fork/lifecycle
+witnesses, execution/session/event consumers, packages, clients and browser
+coverage. The cancelled prior-head browser run has no success receipt; its
+partial log and cancellation remain preserved. Earlier completed checks are
+evidence only for inputs they actually qualify. The notice is an options
+snapshot retained on retry, without a claim that every later workspace-loss UI
+race has a deciding fixture. No cursor advance, new official target, independent
+feature fix, gate waiver, live-profile use or publication is performed here.
+Evidence: `reviews/pr-merge-readiness-20261013/pr534-ad35-*`.
