@@ -145,7 +145,16 @@ async function probeCapability(directory: string, exchangeHelper: string | null)
     } catch {
       throw new Refused("unsupported-filesystem");
     }
-    if ((await NodeFSP.readFile(left, "utf8")) !== "b") throw new Refused("unsupported-filesystem");
+    // Some drivers accept the swap and do a plain rename instead (FAT32 on macOS 26
+    // destroys the second file and reports success), so check both sides.
+    const swapped = await Promise.all([
+      NodeFSP.readFile(left, "utf8"),
+      NodeFSP.readFile(right, "utf8"),
+    ]).then(
+      ([l, r]) => l === "b" && r === "a",
+      () => false,
+    );
+    if (!swapped) throw new Refused("unsupported-filesystem");
   } finally {
     await Promise.all([left, right, link].map((file) => NodeFSP.rm(file, { force: true })));
   }

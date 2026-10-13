@@ -35,7 +35,7 @@ const diskImagesAvailable =
   NodeChildProcess.spawnSync("/usr/bin/hdiutil", ["help"]).status !== null;
 
 /** A disposable disk image; attach mounts it at a chosen path, as a reconnected disk would be. */
-const diskImage = (root: string, format: "APFS" | "ExFAT" | "JHFS+") =>
+const diskImage = (root: string, format: "APFS" | "ExFAT" | "JHFS+" | "MS-DOS FAT32") =>
   Effect.gen(function* () {
     const file = NodePath.join(root, `${format}.dmg`);
     yield* Effect.promise(async () => {
@@ -43,11 +43,14 @@ const diskImage = (root: string, format: "APFS" | "ExFAT" | "JHFS+") =>
         "create",
         "-quiet",
         "-size",
-        "20m",
+        "40m",
         "-fs",
         format,
         "-volname",
-        `SCT${format.toUpperCase().replace("+", "")}`,
+        `SCT${format
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "")
+          .slice(-6)}`,
         file,
       ]);
     });
@@ -984,6 +987,20 @@ describe("OverleafStateStore", () => {
             expect(fallback.directory).toBe(
               NodePath.join(mounted, ".scient-overleaf", "environment-1", "connection-1"),
             );
+          }),
+        ),
+      );
+
+      it.live("refuses FAT32, whose driver reports a swap it did not perform", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* temporaryRoot();
+            const image = yield* diskImage(root, "MS-DOS FAT32");
+            const mounted = yield* image.attach("fat");
+            const checkout = NodePath.join(mounted, "paper");
+            yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+            const { store } = yield* openStore(NodePath.join(root, "state"));
+            expect(yield* refusal(prepare(store, checkout))).toBe("unsupported-filesystem");
           }),
         ),
       );
