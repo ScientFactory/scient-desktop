@@ -65,6 +65,15 @@ describe("reader-owned scrolling", () => {
     expect(saved?.turnId).toBe("run-b");
   });
 
+  it("restores a run to its final answer when earlier answers stay visible", () => {
+    const rows: MessagesTimelineRow[] = [
+      message("prompt-a", "run-a", "user"),
+      message("earlier-answer-a", "run-a"),
+      message("final-answer-a", "run-a"),
+    ];
+    expect(resolveReadingRow(rows, position, true)).toEqual({ index: 2, exact: false });
+  });
+
   it("waits for paged-out content instead of using a stale absolute offset", () => {
     const rows = [message("recent", "run-z")];
     expect(resolveReadingRow(rows, position, false)).toBeNull();

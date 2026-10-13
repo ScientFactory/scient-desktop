@@ -70,6 +70,19 @@ A remounted list must finish restoration before saving again. Reserved anchor pa
 is excluded from both end-control visibility and send eligibility.
 Nested tool-output scrolling and the shared mobile scroll policy are unchanged.
 
+Kept answers (Scient): once a turn settles, upstream folds everything but the turn's last
+assistant message behind "Worked for…". Scient keeps an earlier message visible in place when
+it reads as a real answer: structure (a heading, a list of two or more items, a table, fenced
+code, display math, an image) or at least 400 characters
+(`@scientfactory/conversation/answer-visibility`). Short progress notes still fold with the work.
+A kept answer gets the copy button, time and spacing of the final answer, but not its other
+roles: forking, the trailing tool footer, created-thread summaries, the unread count, fork
+baselines and export still use the last message. The one marked mount is in `deriveTurnFolds`
+(`MessagesTimeline.logic.ts`), so rows, find in thread and citations agree; the row flag
+`keptAnswer` is set beside `showAssistantMeta` and rendered by the marked checks in
+`MessagesTimeline.tsx`. Owner: `apps/web/src/scient/threadTimeline/keptAnswers.ts`. Keep the
+rule out of `deriveTerminalAssistantMessageIds`.
+
 Scient's local Preview discovery requires an explicit web URL before sending
 HTTP(S) traffic. Preserve this deliberate boundary in `PortScanner.ts`: passive
 listener enumeration enriches ownership metadata but never authorizes a probe,
