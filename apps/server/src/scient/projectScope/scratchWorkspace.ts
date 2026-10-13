@@ -29,7 +29,7 @@ export function isGitMissing(error: unknown): boolean {
 }
 
 /** Checks canonical ancestry, including dangling or unreadable .git entries. */
-export const isOutsideGitAncestry = Effect.fn("ScratchWorkspace.isOutsideGitAncestry")(function* (
+const isOutsideGitAncestry = Effect.fn("ScratchWorkspace.isOutsideGitAncestry")(function* (
   directory: string,
 ) {
   const fs = yield* FileSystem.FileSystem;

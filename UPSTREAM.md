@@ -339,15 +339,20 @@ is recorded in [the 2026-10-12 receipt](docs/internals/t3-upstream-sync-20261012
 ([Scient PR #530](https://github.com/ScientFactory/scient-desktop/pull/530)).
 It retains all 72 ordinary official commits through literal merge
 `de8482724fa062fbea7daa4549cd70dc9e665b85`, whose exact second parent is the
-frozen official target. Separate owned-main catch-up retains `f8babe1313`.
+frozen official target. The initial owned-main catch-up retains `f8babe1313`;
+the later separate catch-up `43779ee83b358cb929e32cafa1a3e53f7eb147cd` retains
+landed owned main `887e363db1eae11ca7d1566a48bd5c6c71d17f8f`, including the
+reviewed model-account overlay repair. Neither catch-up changes the official boundary.
 Scient provider instances/defaults, scoped guidance, native ownership and queue
 holds, immutable migration identities, scientific surfaces and publication
 controls compose with the incoming host behavior. The receipt distinguishes the
 passing canonical local gate and physical native/platform checks from blocked
 mobile UI, account/platform exclusions, hosted CI and the user's acceptance.
 External PR #521 checks supplement qualification without importing its source
-or ancestry; no alignment-speed gain is asserted. The isolated review candidate
-remains available; merge and release require separate user decisions.
+or ancestry; no alignment-speed gain is asserted. The owner approved the bounded
+visual review and requested the installer-review candidate's shutdown; its owned
+service, processes and ports were confirmed stopped. Merge and auto-merge are
+owner-authorized through the required GitHub queue; release remains separate.
 
 ## Receiving T3 updates
 
