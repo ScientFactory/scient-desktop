@@ -32,8 +32,7 @@ import {
   allEnvironmentShellsBootstrappedAtom,
 } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
-// SCIENT-FORK:START — upstream's "Fork from this response" (its only caller) is replaced by Scient fork V2.
-// SCIENT-FORK:END
+import { waitForAtomValue } from "./waitForAtomValue";
 
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 const EMPTY_THREAD_SHELLS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
@@ -251,8 +250,14 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
-// SCIENT-FORK:START — upstream's "Fork from this response" (its only caller) is replaced by Scient fork V2.
-// SCIENT-FORK:END
+export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Promise<boolean> {
+  return waitForAtomValue({
+    registry: appAtomRegistry,
+    atom: environmentThreadShells.threadShellAtom(ref),
+    predicate: (thread) => thread !== null,
+    timeoutMs,
+  });
+}
 
 /** Whether the environment hosts preview tabs in its own browser (`runtime: "server"`),
     so clients without Electron can still use the Browser panel. */

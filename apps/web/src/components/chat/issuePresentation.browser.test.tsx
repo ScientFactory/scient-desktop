@@ -40,6 +40,7 @@ const base = {
   turnDiffSummaries: [],
   onOpenTurnDiff: () => {},
   onOpenThread: () => {},
+  onForkFromRun: () => Promise.resolve(),
   onRollbackCheckpoint: () => {},
   supportsConversationRollback: false,
   onRevertToTurnCount: () => {},

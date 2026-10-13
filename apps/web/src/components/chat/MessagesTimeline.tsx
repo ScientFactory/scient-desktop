@@ -414,8 +414,10 @@ interface TimelineRowSharedState {
   displayThreadKey?: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
-  // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
-  // SCIENT-FORK:END
+  onForkFromRun: (input: {
+    readonly sourceThreadId: ThreadId;
+    readonly runId: RunId;
+  }) => Promise<void>;
   onRollbackCheckpoint: (input: {
     readonly checkpointId: string;
     readonly scopeId: string;
@@ -557,8 +559,10 @@ interface MessagesTimelineProps {
     readonly threadId: ThreadId;
     readonly title: string;
   } | null;
-  // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
-  // SCIENT-FORK:END
+  onForkFromRun: (input: {
+    readonly sourceThreadId: ThreadId;
+    readonly runId: RunId;
+  }) => Promise<void>;
   onRollbackCheckpoint: (input: {
     readonly checkpointId: string;
     readonly scopeId: string;
@@ -692,8 +696,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onOpenTurnDiff,
   onOpenThread,
   parentThreadLink = null,
-  // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
-  // SCIENT-FORK:END
+  onForkFromRun,
   onRollbackCheckpoint,
   supportsConversationRollback,
   onRevertToTurnCount,
@@ -1816,8 +1819,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       openPullRequest,
       onOpenTurnDiff,
       onOpenThread,
-      // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
-      // SCIENT-FORK:END
+      onForkFromRun,
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,
@@ -1866,8 +1868,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       openPullRequest,
       onOpenTurnDiff,
       onOpenThread,
-      // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
-      // SCIENT-FORK:END
+      onForkFromRun,
       onRollbackCheckpoint,
       onToggleTurnFold,
       onToggleAttemptFold,

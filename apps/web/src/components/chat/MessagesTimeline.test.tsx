@@ -427,8 +427,7 @@ function buildProps() {
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
-    // SCIENT-FORK:START — upstream's "Fork from this response" is replaced by Scient fork V2.
-    // SCIENT-FORK:END
+    onForkFromRun: async () => {},
     onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},

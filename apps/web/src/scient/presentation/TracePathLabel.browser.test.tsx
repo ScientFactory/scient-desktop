@@ -156,6 +156,7 @@ it.each([false, true])(
         turnDiffSummaries={[]}
         onOpenTurnDiff={() => {}}
         onOpenThread={() => {}}
+        onForkFromRun={() => Promise.resolve()}
         onRollbackCheckpoint={() => {}}
         supportsConversationRollback={false}
         onRevertToTurnCount={() => {}}
