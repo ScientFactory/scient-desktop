@@ -14,8 +14,10 @@ file browser, and other technical surfaces remain unchanged.
 
 ## Markdown boundary
 
-`ChatMarkdown` keeps T3's existing remark/rehype pipeline, sanitizes raw HTML,
-and then applies the small `rehypeScientBidi` transform. The message base uses
+`ChatMarkdown` uses `scientMarkdownPipeline` (`scient/markdown/`: T3's
+remark/rehype pipeline plus math, the image-card mark and a sanitizer schema
+widened for it), sanitizes raw HTML, and then applies the small
+`rehypeScientBidi` transform. The message base uses
 the same prose thresholds as local blocks; when aggregate prose is in the
 mixed band, top-level Markdown blocks provide one vote each. Code, links, and
 equations are excluded before that evidence is counted. The transform adds
@@ -108,11 +110,13 @@ carries.
 
 The Copy message button adds the same HTML only for messages with RTL text.
 It renders the message's Markdown (the plain flavour's own text) into an inert
-document with chat's own pipeline, exported from `ChatMarkdown` behind a seam:
+document with chat's own pipeline, in `scient/clipboard/chatMarkdownPipeline.ts`:
 `chatMarkdownPipeline` (math delimiter normalization, the chat remark plugins
 for the message profile, and the raw-HTML and sanitize steps),
-`chatMarkdownCodeBoxDirection` (fence `dir` and title metadata), and
-`chatMarkdownAlertLabel`, followed by `rehypeScientBidi`. Math carries chat's
+`chatMarkdownCodeBoxDirection` (fence `dir` and title metadata, from the
+`chatCodeBoxDirection` the code block also uses), and
+`chatMarkdownAlertLabel`, followed by `rehypeScientBidi`. It reads Markdown
+nodes with `ChatMarkdown`'s own readers, imported from one marked export list. Math carries chat's
 `$$` copy source and display math becomes its own LTR paragraph, as in a
 selection copy. The result does not depend on whether the virtualized row is
 mounted or a details block is collapsed; a mounted row only supplies the
@@ -139,8 +143,8 @@ The setting contract and Scient bidi modules are Scient-owned. The only
 inherited host edits are the ChatMarkdown renderer, ChatView scope, composer
 plugin mount, settings panel entry, and the clipboard seams in
 `markdown-clipboard.ts`, `useCopyToClipboard.ts`, `MessageCopyButton.tsx`, and
-the two Copy message call sites in `MessagesTimeline.tsx`, and the clipboard
-pipeline exports and shared code-box direction in `ChatMarkdown.tsx`. Do not fork T3's renderer or add
+the two Copy message call sites in `MessagesTimeline.tsx`, and the marked export
+list of node readers in `ChatMarkdown.tsx`. Do not add
 direction logic to provider, server, persistence, or shell code. When T3's
 Markdown or composer seams change, reapply this narrow adapter and rerun the
 focused bidi tests before accepting the upstream update.

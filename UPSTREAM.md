@@ -1,10 +1,19 @@
 # Upstream maintenance
 
-Scient owns desktop/web reader-position policy in `ChatView.tsx`,
-`MessagesTimeline.tsx`, and `chat/readerScrollPolicy.ts`. The outer timeline never
-maintains the live end during streaming, tool activity, completion, or queued
+Scient owns desktop/web reader-position policy. The owners are Scient-only files in
+`apps/web/src/components/chat/`: `readerScrollPolicy.ts` (the reading end),
+`readerScrolling.ts` (reader input, the one position writer, per-frame bookkeeping and
+idle end keeping, restore), `readingPositionStore.ts` (session storage),
+`responseFollow.ts` and `useBoundedAnswerFollow.ts` (the send follow), `liveFollowOffset.ts`
+(return to a follow), `useTimelineEndControl.ts` and `unreadTimelineMessages.ts` (Scroll to
+end and its count). They are mounted in marked regions of `ChatView.tsx`,
+`MessagesTimeline.tsx` and `timelineScrollAnchoring.ts`; ChatView's reader navigation
+(placement cancel, one-shot Scroll to end, gesture listeners, thread-switch reset) stays in
+marked regions there because it shares refs with upstream's anchor callbacks. The outer
+timeline never maintains the live end during streaming, tool activity, completion, or queued
 sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at the reading
-end, `MessagesTimeline` itself keeps that end in place through size changes of existing
+end, `useReadingBookkeepingFrame` (`chat/readerScrolling.ts`, mounted in MessagesTimeline)
+keeps that end in place through size changes of existing
 rows and viewport resizes (measured on screen, reacting only when content moves the
 text end), never for new rows or while the reader's own scrolling input is in motion,
 paused during disclosure toggles and briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the latest answer's text
@@ -21,14 +30,16 @@ Send motion (Scient): the draft hero composer's move to the thread always animat
 (260ms, decelerating curve; `useDraftHeroMotion` in `chat/timelineEntranceMotion.ts`), not only
 with the opt-in panel animation setting; reduced motion skips it. A first prompt being placed is revealed top-down
 and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
-measurements hold), and the "Working for" header carries a small breathing dot (`chat/liveActivity.tsx`); its line just
+measurements hold; `chat/timelineEntranceMotion.ts`, and a played entrance never replays on
+row remount), and the "Working for" header carries a small breathing dot (`chat/liveActivity.tsx`); its line just
 appears. Live activity (Scient): only the current activity row sweeps (`currentLiveActivityRowId`:
 Thinking, the running-tool bar, an active compaction, a running setup stage), with a wider light looping continuously
 at one pace per label (`--live-activity-duration`) over text resting at 55%
 (`scient/presentation/scient-live-activity.css` refines the upstream live-activity utilities; the
 sweep stays smooth (linear) over upstream #18191's `steps(30)`, an owner decision of 2026-10-13); the
 upstream stepped `live-tool-shine` is no longer applied, and other live rows stay still
-(`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
+(`chat/liveActivity.tsx`). A step still running after 10s shows its elapsed time
+(`LiveStepElapsed`, same file). While an
 answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal` in
 `scient/presentation/scient-streamed-reveal.css`):
 after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with
@@ -38,7 +49,8 @@ clipped to its revealed lines, so the follow scroll simply goes to the real end.
 (`useStreamingTextAppearing`). Revealed height is kept per message (bounded), so remounted
 rows continue rather than replay; a caught-up reveal rests until the answer's content or width
 changes. Stop shows everything that has arrived at once (`showStreamedAnswersNow`, from
-`scient/chat/useStopGeneration.ts`). The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
+`scient/chat/useStopGeneration.ts`). Upstream's 600ms per-block streaming fade in `index.css`
+stays on underneath the reveal. The timeline's working state (`chat/timelineWorkingState.ts`) is held back until a
 send's prompt is listed (the optimistic row, or a newer server user message than the dispatch
 started from), and stays on while that prompt's own V2 run prepares or starts (the dispatch is
 reset at admission; V2 reports that phase as connecting).
@@ -74,7 +86,12 @@ history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
 The reading position has one writer, `useSaveReadingPosition` (`chat/readerScrolling.ts`);
 upstream's raw write in `handleScroll` is removed, so a placement in flight never replaces a
-record that names its message. Capture native scroll positions synchronously before Legend's deferred callbacks;
+record that names its message. When syncing T3 #17348 (a `liveFollowEnabled` parameter on
+`rememberTimelinePosition` storing `atEnd: liveFollowEnabled || position.atEnd`, a `paintOnly`
+prop, a save on follow opt-out): keep the one writer, and do not adopt
+`liveFollowEnabled || position.atEnd`; Scient has no live follow, so pass `false` or drop the
+parameter in a marked hunk. `paintOnly` duplicates Scient's `positionHistoryLoading` gate.
+Capture native scroll positions synchronously before Legend's deferred callbacks;
 debounce only session storage and flush captured positions on navigation/page exit.
 A remounted list must finish restoration before saving again. Reserved anchor padding
 is excluded from both end-control visibility and send eligibility.
@@ -92,6 +109,36 @@ baselines and export still use the last message. The one marked mount is in `der
 `keptAnswer` is set beside `showAssistantMeta` and rendered by the marked checks in
 `MessagesTimeline.tsx`. Owner: `apps/web/src/scient/threadTimeline/keptAnswers.ts`. Keep the
 rule out of `deriveTerminalAssistantMessageIds`.
+
+Timeline rows (Scient): Scient bodies live outside `MessagesTimeline.logic.ts` and are called
+from marked regions: fork separators (`scient/fork/forkTimelineMarkers.ts`, row
+`ForkMarkerSeparator.tsx`), imported-turn folds (`scient/fork/historicalTimelineTurns.ts`),
+compact trace paths (`scient/presentation/compactPathLabel.ts`, `TracePathLabel.tsx`), the
+setup card kept after handoff (`scient/threadTimeline/postHandoffSetup.ts`) and subagent
+workflow grouping (`scient/presentation/subagentRowGroups.ts`). Scient's trace icons
+(`scient/presentation/traceIconSet.tsx`, overrides in `traceIcons.ts`) are consulted at one
+marked mount before upstream's `WorkEntryIcon` switch, which stays upstream's text. A new
+upstream icon name (T3 #18865 adds `"code"`) falls through to that switch and needs no Scient
+change unless Scient wants its own drawing.
+
+Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
+(`scient/presentation/MarkdownCodeBlock.tsx`, with `CodeBlockActions.tsx` and
+`CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
+`ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
+hand. T3's invisible placeholder while a language loads (#11062), the MorphIcon copy button
+(#14924) and the pressed wrap toggle (#13208) are ported. Returning the generic code block to
+`ChatMarkdown.tsx`, so such fixes merge in, is an open follow-up. Settled Mermaid, Vega-Lite and Plotly
+fences render through `scient/presentation/ScientRichFence.tsx` in place of T3's
+`chat/MermaidDiagram.tsx`. `ChatMarkdown.tsx` otherwise keeps upstream's layout and renderer
+names; every Scient edit there sits in a `SCIENT-FORK` region that names its owner. The Copy
+message rich flavour reads chat's Markdown through `scient/clipboard/chatMarkdownPipeline.ts`,
+which imports one marked export list from `ChatMarkdown.tsx`; math copy lives in
+`scient/clipboard/mathClipboard.ts`, called from marked hunks in `markdown-clipboard.ts`.
+`FileCitationHoverCard` lives in `scient/markdownEditor/`; `AssistantCitationChip.tsx` carries
+only marked mounts for file quotes. Chat tables open wrapped, ignore the word-wrap setting,
+never pin column widths and never truncate cells; the table scrolls instead (#393). Inline code
+that is an exact CSS colour shows a swatch (`scient/markdown/inlineCssColor.ts`). Chat videos
+have no Expand button, as upstream (#9253).
 
 Scient's local Preview discovery requires an explicit web URL before sending
 HTTP(S) traffic. Preserve this deliberate boundary in `PortScanner.ts`: passive
@@ -1133,14 +1180,18 @@ outside those roots. The inherited-host seams are limited to one lazy editor
 mount and eye switch in `FilePreviewPanel.tsx`, one create button in
 `FileBrowserPanel.tsx`, a generic current-file control slot in
 `FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
-typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts, the
-shared `MarkdownCodeBlock` (including its title, actions, and highlighter)
-imported by `ChatMarkdown.tsx` and read-only Mermaid error fallbacks, optional
+typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts,
+Scient's `MarkdownCodeBlock` (a copy of T3's code block, owned in
+`scient/presentation`; upstream fixes must be ported by hand) mounted in
+`ChatMarkdown.tsx` and read-only Mermaid error fallbacks, optional
 positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
-`MediaActions.tsx`, and an additive trailing block plus two tokens in
-`index.css`. Source projection, the save queue, command policy, nested-node
-behavior, and Markdown transport must remain outside inherited T3 components;
-`index.css` inherited rule bodies stay byte-identical. See
+`MediaActions.tsx`, and in `index.css` an additive trailing block and two Markdown
+code-block tokens beside `--code-background`, plus marked
+in-place changes to inherited chat-Markdown rules: the reading-size token block,
+four `font-size` values (footnotes, footnote reference, inline code, table), the
+heading sizes and the collapsed-table truncation (#393). Each is inside a
+`SCIENT-FORK` region. Source projection, the save queue, command policy, nested-node
+behavior, and Markdown transport must remain outside inherited T3 components. See
 [Scient rich Markdown editor](docs/internals/scient-rich-markdown-editor.md).
 
 LaTeX Source saving shares the Scient-owned document session and
