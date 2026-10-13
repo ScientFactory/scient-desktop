@@ -75,6 +75,7 @@ import { makeRunningForkTextSnapshots } from "./scient-fork/runningForkSource.ts
 import {
   cancelDeclinedPendingStart,
   settleCancelledStart,
+  type PendingStartPreparation,
 } from "./scient-fork/PendingStartOwner.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — native workflow coordinators own their runless members.
@@ -592,6 +593,9 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  // SCIENT-FORK:START — the local checkpoint stage can observe Stop before native admission.
+  readonly prepareBeforeProviderTurn?: PendingStartPreparation;
+  // SCIENT-FORK:END
   readonly cancelBeforeProviderTurn?: () => Effect.Effect<
     EventSink.PendingStartOwner | undefined,
     unknown
@@ -997,15 +1001,18 @@ export const layer: Layer.Layer<
                         { runId: input.run.id },
                       ),
                 ),
+                // SCIENT-FORK:START — cancel only local preparation; retain native receipt safety.
+                (capture) => input.prepareBeforeProviderTurn?.(capture) ?? capture,
+                // SCIENT-FORK:END
               );
             if (
               input.shouldStartProviderTurn !== undefined &&
               !(yield* input.shouldStartProviderTurn()) &&
+              // SCIENT-FORK:START — owned pre-receipt Stop settles after subscription binding.
               input.cancelBeforeProviderTurn === undefined
+              // SCIENT-FORK:END
             )
               return null;
-            // Owned pre-receipt Stop needs its subscription before interrupting
-            // retained work. The second gate still refuses every native offer.
             return responseStreamingMode;
           }).pipe(
             Effect.catchCause((cause) =>

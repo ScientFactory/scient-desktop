@@ -693,6 +693,9 @@ import { assetEnvironment } from "../state/assets";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
+// SCIENT-FORK:START — Stop acknowledgement belongs to the captured thread/attempt.
+import { useStopGeneration } from "../scient/chat/useStopGeneration";
+// SCIENT-FORK:END
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button, InlineButton } from "./ui/button";
 import {
@@ -4971,7 +4974,9 @@ function ChatViewContent(props: ChatViewProps) {
   }, [composerRef]);
   const canInterruptRunningThread =
     canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
-  const onInterrupt = useCallback(async () => {
+  // SCIENT-FORK:START — the owned acknowledgement composes the original interrupt command.
+  const performInterrupt = useCallback(async () => {
+    // SCIENT-FORK:END
     if (
       !activeThread ||
       !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
@@ -4988,7 +4993,19 @@ function ChatViewContent(props: ChatViewProps) {
         error instanceof Error ? error.message : "Failed to interrupt the current turn.",
       );
     }
+    // SCIENT-FORK:START — only an accepted command keeps the acknowledgement.
+    return result._tag !== "Failure";
+    // SCIENT-FORK:END
   }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+  // SCIENT-FORK:START — acknowledge Stop while durable cancellation finishes.
+  const { isStopping, onInterrupt } = useStopGeneration({
+    threadKey: activeThreadKey,
+    runId: activeRunningTurnId ?? activeLatestRun?.runId ?? null,
+    canInterrupt: canInterruptRunningThread,
+    projection: serverProjection,
+    operation: performInterrupt,
+  });
+  // SCIENT-FORK:END
   useEffect(() => subscribeSnapShotComposerFocus(focusComposer), [focusComposer]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -12616,6 +12633,9 @@ function ChatViewContent(props: ChatViewProps) {
                               }
                               phase={phase}
                               canInterrupt={canInterruptRunningThread}
+                              // SCIENT-FORK:START — explicit Stop acknowledgement.
+                              isStopping={isStopping}
+                              // SCIENT-FORK:END
                               isConnecting={isConnecting || !queueEditsReady}
                               isSendBusy={
                                 (isSendBusy && !sendQueuesBehindSetup) ||
