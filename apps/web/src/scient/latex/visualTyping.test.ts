@@ -1,4 +1,6 @@
-import { Schema } from "@tiptap/pm/model";
+import { Schema, Slice } from "@tiptap/pm/model";
+import { EditorState } from "@tiptap/pm/state";
+import { ReplaceStep } from "@tiptap/pm/transform";
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyLatexVisualDocumentChange,
@@ -9,8 +11,11 @@ import {
   parseTypingDraft,
   rebindVisualTypingContent,
   reconcileVisualPendingContent,
+  isOrdinaryTyping,
+  isSourceOwnedTyping,
 } from "./visualTyping";
 import { serializedVisualDocument } from "./visualDocumentJson";
+import { LatexSourceStep } from "./LatexSourceStep";
 
 const syntaxAttrs = { sourceId: { default: null }, sourceMeta: { default: null } };
 const schema = new Schema({
@@ -23,6 +28,59 @@ const schema = new Schema({
     text: {},
   },
   marks: { bold: {} },
+});
+
+describe("source-tracked typing classification", () => {
+  const state = () =>
+    EditorState.create({
+      schema,
+      doc: schema.nodes.doc!.create(null, [
+        schema.nodes.paragraph!.create(null, schema.text("First")),
+        schema.nodes.paragraph!.create(null, schema.text("Second")),
+      ]),
+    });
+  const annotation = () => new LatexSourceStep(0, 0, Slice.empty, { edit: null, inverse: null });
+
+  it.each(["insert", "delete"] as const)(
+    "classifies a tracked text %s and its undo without checking ownership at the history marker",
+    (operation) => {
+      const original = state();
+      const position = original.doc.firstChild!.nodeSize + 2;
+      const transaction =
+        operation === "insert"
+          ? original.tr.insertText("added", position)
+          : original.tr.delete(position, position + 1);
+      transaction.step(annotation());
+      expect(isOrdinaryTyping(transaction)).toBe(true);
+      expect(isSourceOwnedTyping(transaction, (index) => index === 1)).toBe(true);
+      expect(isSourceOwnedTyping(transaction, () => false)).toBe(false);
+      const undo = EditorState.create({ schema, doc: transaction.doc }).tr;
+      for (let index = transaction.steps.length - 1; index >= 0; index--)
+        undo.step(transaction.steps[index]!.invert(transaction.docs[index]!));
+      expect(isOrdinaryTyping(undo)).toBe(true);
+      expect(isSourceOwnedTyping(undo, (index) => index === 1)).toBe(true);
+      expect(undo.doc.eq(original.doc)).toBe(true);
+    },
+  );
+
+  it("does not classify history-only, arbitrary empty replacements or structural edits as typing", () => {
+    const original = state();
+    expect(isOrdinaryTyping(original.tr)).toBe(false);
+    expect(isOrdinaryTyping(original.tr.step(annotation()))).toBe(false);
+    expect(
+      isOrdinaryTyping(original.tr.insertText("added", 2).step(new ReplaceStep(0, 0, Slice.empty))),
+    ).toBe(false);
+    expect(
+      isOrdinaryTyping(
+        original.tr.step(
+          new LatexSourceStep(0, original.doc.firstChild!.nodeSize, Slice.empty, {
+            edit: null,
+            inverse: null,
+          }),
+        ),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("reopened typing ownership", () => {

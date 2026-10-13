@@ -23,6 +23,7 @@ vi.mock("./mathFieldReadiness", async (importOriginal) => {
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
+import { isMacKeyboard } from "../keyboard/keys";
 import { clearVisualDraft } from "./visualDrafts";
 import { mathReadingPreviewReady } from "./mathReadingPreview";
 import { refreshMathReadingContext, type MathReadingNodeOptions } from "./mathReadingNodeView";
@@ -445,7 +446,7 @@ it("clicking beside a display returns to prose without initializing math", async
   expect(host.querySelectorAll("math-field")).toHaveLength(0);
   await userEvent.keyboard("q");
   await expect.poll(() => source).toContain("qAfter.");
-  await userEvent.keyboard("{Control>}z{/Control}");
+  await userEvent.keyboard(isMacKeyboard() ? "{Meta>}z{/Meta}" : "{Control>}z{/Control}");
   await expect.poll(() => source).toBe(original);
 });
 
