@@ -42,7 +42,7 @@ export function tracePathPresentation(path: string, workspaceRoot: string | unde
 }
 
 /** Only literal path details are eligible; diagnostics and file bodies keep their text. */
-export function compactPathPresentation(text: string, workspaceRoot: string | undefined) {
+function compactPathPresentation(text: string, workspaceRoot: string | undefined) {
   const trimmed = text.trim();
   return PATH_START.test(trimmed) && !/[\r\n]/u.test(trimmed)
     ? tracePathPresentation(trimmed, workspaceRoot)
