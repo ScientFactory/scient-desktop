@@ -172,7 +172,7 @@ async function statOrRefuse(path: string, missing: OverleafRetentionRefusal) {
  */
 async function physicallyInside(path: string, checkout: Stat): Promise<boolean> {
   for (let current = path; ; current = NodePath.dirname(current)) {
-    const stat = await NodeFSP.stat(current, { bigint: true });
+    const stat = await statOrRefuse(current, "vault-missing");
     if (stat.dev === checkout.dev && stat.ino === checkout.ino) return true;
     if (NodePath.dirname(current) === current) return false;
   }
@@ -192,6 +192,10 @@ async function siblingLevels(
   if (parentStat.dev !== checkoutStat.dev) throw new Refused("disk-root-checkout");
   // Checked on every use, not only the first: whoever owns the parent can replace its entries.
   if (userId !== undefined && Number(parentStat.uid) !== userId) throw new Refused("shared-parent");
+  // A parent others can write to, without the sticky bit, lets them rename our folder away.
+  // ACLs are not inspected; that remains a documented limit.
+  if ((parentStat.mode & 0o022n) !== 0n && (parentStat.mode & 0o1000n) === 0n)
+    throw new Refused("shared-parent");
   const base = NodePath.join(parent, OVERLEAF_VAULT_DIRECTORY);
   return [
     base,
@@ -266,7 +270,14 @@ export async function locateOverleafRetention(input: {
       input.stateRetained,
       NodePath.join(input.stateRetained, input.connectionId),
     ];
-    const stateRoot = await NodeFSP.realpath(NodePath.dirname(input.stateRetained));
+    let stateRoot: string;
+    try {
+      stateRoot = await NodeFSP.realpath(NodePath.dirname(input.stateRetained));
+    } catch (error) {
+      if (["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(errorCode(error) ?? ""))
+        throw new Refused("unsafe-directory");
+      throw error;
+    }
     const stateUsable =
       (await statOrRefuse(stateRoot, "unsafe-directory")).dev === checkoutStat.dev &&
       !(await physicallyInside(stateRoot, checkoutStat));

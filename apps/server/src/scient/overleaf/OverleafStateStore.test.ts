@@ -766,6 +766,62 @@ describe("OverleafStateStore", () => {
         ),
     );
 
+    it.live("keeps searching when the other possible location cannot be read", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* temporaryRoot();
+          const checkout = NodePath.join(root, "paper");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+          const first = yield* openStore(
+            NodePath.join(checkout, ".state", "overleaf"),
+            undefined,
+            fakeVolume,
+          );
+          const prepared = yield* prepare(first.store, checkout);
+          yield* first.close;
+          const moved = yield* openStore(NodePath.join(root, "state"), undefined, fakeVolume);
+          const denied = NodePath.join(root, "state", "retained");
+          yield* Effect.acquireRelease(
+            Effect.promise(async () => {
+              await NodeFSP.mkdir(denied, { recursive: true });
+              await NodeFSP.chmod(denied, 0o000);
+            }),
+            () => Effect.promise(() => NodeFSP.chmod(denied, 0o700)),
+          );
+          expect(yield* prepare(moved.store, checkout, prepared.identity)).toEqual(prepared);
+        }),
+      ),
+    );
+
+    it.live("refuses a parent folder others can write to, on first use and on recovery", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* temporaryRoot();
+          const parent = NodePath.join(root, "parent");
+          const checkout = NodePath.join(parent, "paper");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout, { recursive: true }));
+          const { store } = yield* openStore(
+            NodePath.join(checkout, ".state", "overleaf"),
+            undefined,
+            fakeVolume,
+          );
+          const prepared = yield* prepare(store, checkout);
+          yield* Effect.acquireRelease(
+            Effect.promise(() => NodeFSP.chmod(parent, 0o777)),
+            () => Effect.promise(() => NodeFSP.chmod(parent, 0o700)),
+          );
+          expect(yield* refusal(prepare(store, checkout, prepared.identity))).toBe("shared-parent");
+          yield* Effect.promise(() =>
+            NodeFSP.rm(NodePath.join(parent, ".scient-overleaf"), { recursive: true }),
+          );
+          expect(yield* refusal(prepare(store, checkout))).toBe("shared-parent");
+          // The sticky bit stops others renaming entries they do not own.
+          yield* Effect.promise(() => NodeFSP.chmod(parent, 0o1777));
+          expect((yield* prepare(store, checkout)).directory).toContain(".scient-overleaf");
+        }),
+      ),
+    );
+
     it.live("refuses a disk without a volume identity, never using the device number", () =>
       Effect.scoped(
         Effect.gen(function* () {
