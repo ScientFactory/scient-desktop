@@ -6683,6 +6683,20 @@ function ChatViewContent(props: ChatViewProps) {
       if (timelineScrollIntentRef.current === "toward-end") {
         composerRef.current?.restoreAfterTimelineReachedEnd();
       }
+      // SCIENT-FORK:START — the follow modes change once per transition, as in
+      // upstream's handler; the timeline never pins to its end, so a report of
+      // leaving it is never swallowed (it would hide Scroll to end while an
+      // answer grows below).
+      timelineScrollModeRef.current = "following-end";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      setTimelineLiveFollowEnabled(true);
+      // The reader came back to the end on their own: the anchored run framing is over.
+      setTimelineAnchor(releaseChatTimelineAnchor);
+    },
+    onLeftEnd: () => {
+      timelineScrollModeRef.current = "free-scrolling";
+      liveFollowUserScrollGenerationRef.current = null;
+      // SCIENT-FORK:END
     },
   });
   const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
@@ -7170,38 +7184,10 @@ function ChatViewContent(props: ChatViewProps) {
     composerRef.current?.restoreAfterTimelineReachedEnd();
   }, [composerRef]);
 
-  // Manual navigation and streaming growth both leave the timeline's own
-  // follow bookkeeping here; the end-control hook owns the pill and the
-  // unread count.
-  const onIsAtEndChange = useCallback(
-    (isAtEnd: boolean) => {
-      if (
-        !isAtEnd &&
-        liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
-      ) {
-        // Streaming growth flickers isAtEnd while the timeline is still pinned
-        // to the live edge. Re-pin the reader and keep the pill hidden; leaving
-        // the end here would break follow with no scroll event to re-arm it.
-        resetEndControlForThread(true);
-        return;
-      }
-      onEndControlIsAtEndChange(isAtEnd);
-      if (isAtEnd) {
-        timelineScrollModeRef.current = "following-end";
-        liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-        setTimelineLiveFollowEnabled(true);
-        // Reachable only once manual navigation has already broken follow, so
-        // the anchored run framing is over: the user scrolled back to the live
-        // edge and expects the stream to stick to it again, exactly like the
-        // scroll-to-bottom pill (#6519).
-        setTimelineAnchor(releaseChatTimelineAnchor);
-      } else {
-        timelineScrollModeRef.current = "free-scrolling";
-        liveFollowUserScrollGenerationRef.current = null;
-      }
-    },
-    [onEndControlIsAtEndChange, resetEndControlForThread],
-  );
+  // SCIENT-FORK:START — the end-control hook owns the pill, the unread count
+  // and the follow modes (its onReachedEnd/onLeftEnd above).
+  const onIsAtEndChange = onEndControlIsAtEndChange;
+  // SCIENT-FORK:END
 
   useLayoutEffect(() => {
     if (timelineScrollModeRef.current !== "anchoring-new-turn") return;

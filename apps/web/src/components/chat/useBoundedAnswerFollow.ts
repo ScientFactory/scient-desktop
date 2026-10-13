@@ -344,9 +344,24 @@ export function useBoundedAnswerFollow({
       else revealTop = Math.max(revealTop, viewport.scrollTop);
     };
     const onKey = (event: KeyboardEvent) => {
+      // Only a key that scrolls the timeline counts (as in ChatView's own key
+      // handling): focus in the timeline or nowhere, unmodified, not typing. A
+      // key moving through a menu, a dialog or the composer leaves the follow be.
+      const target = event.target;
+      const document = viewport.ownerDocument;
       if (
-        event.target instanceof Element &&
-        event.target.closest("input, textarea, [contenteditable=true]")
+        !(target instanceof Node) ||
+        (!viewport.contains(target) &&
+          target !== document.body &&
+          target !== document.documentElement) ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        (target instanceof Element &&
+          target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]'))
       )
         return;
       if (["ArrowUp", "PageUp", "Home"].includes(event.key)) cancel();
