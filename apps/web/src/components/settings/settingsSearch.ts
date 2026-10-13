@@ -1,8 +1,10 @@
+import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import {
@@ -14,6 +16,7 @@ import {
 export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
+  | "/settings/diagnostics"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/snap-shot"
@@ -57,6 +60,9 @@ export interface SettingsSearchItem {
   // Its row only renders on Windows desktop, so other desktop platforms must
   // not expose a result that points to a missing anchor.
   readonly windowsOnly?: boolean;
+  // Its row renders only where the release channel can change: the desktop
+  // app, or a hosted web build deployed with a channel.
+  readonly releaseChannelOnly?: boolean;
   readonly cloudOnly?: boolean;
   readonly environmentOnly?: boolean;
   readonly providerSettingsOnly?: boolean;
@@ -91,6 +97,7 @@ export interface SettingsSearchAvailability {
  * subtitles both render from this record, so each label exists once.
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
+  "/settings/diagnostics": "Diagnostics",
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
   "/settings/projects": "Projects",
@@ -136,12 +143,42 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
   };
 });
 
+/** Anchor id of a source control host's settings form on the Source Control page. */
+export function sourceControlHostSettingsSearchId(kind: string) {
+  return `source-control-host-${kind}` as const;
+}
+
+/** One result per host whose definition declares settings, searchable by its field titles. */
+const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMap((definition) =>
+  definition.settings && definition.kind !== "github"
+    ? [
+        {
+          id: sourceControlHostSettingsSearchId(definition.kind),
+          title: `${definition.label} credentials`,
+          to: "/settings/source-control" as const,
+          searchTerms: [
+            `${definition.label} ${Object.keys(definition.settings.fields).join(" ")} token credentials sign in`,
+          ],
+          environmentOnly: true,
+          scope: "environment-defaults" as const,
+        },
+      ]
+    : [],
+);
+
 /**
  * Searchable settings and stable destinations, in result order. Rows with a
  * dedicated anchor render their id and title via `searchableSetting`; items
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "desktop-update-track",
+    title: "Update track",
+    to: "/settings/general",
+    searchTerms: ["stable beta release channel updates prerelease"],
+    desktopOnly: true,
+  },
   {
     id: "custom-models",
     title: "Custom models",
@@ -167,6 +204,23 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Word export (Pandoc)",
     to: "/settings/scientific-computing",
     searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "latex", "reinstall"],
+  },
+  {
+    id: "storage-worktree-keep-when",
+    targetId: "storage-worktrees",
+    title: "Keep worktrees with local changes",
+    to: "/settings/storage",
+    scope: "project-defaults",
+    searchTerms: [
+      "local work safety tracked changes untracked files ignored env build output cleanup",
+    ],
+  },
+  {
+    id: "storage-delete-now",
+    title: "Delete now",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: ["storage cleanup run now results report removed kept failed"],
   },
   {
     id: "storage-worktrees",
@@ -272,7 +326,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
-    searchTerms: ["dev nightly artwork pill label hide none"],
+    searchTerms: ["dev beta nightly artwork pill label hide none"],
     // The setting is stage-dependent, so its parent section is the stable destination.
     targetId: "appearance-interface",
   },
@@ -567,10 +621,23 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
-    id: "cli-command",
-    title: "t3 command",
+    id: "app-version",
+    title: "Version",
     to: "/settings/general",
-    searchTerms: ["cli terminal shell path install command line"],
+    searchTerms: ["about check for updates download install upgrade release"],
+  },
+  {
+    id: "update-track",
+    title: "Update track",
+    to: "/settings/general",
+    searchTerms: ["release channel stable latest nightly prerelease"],
+    releaseChannelOnly: true,
+  },
+  {
+    id: "cli-command",
+    title: "scient command",
+    to: "/settings/general",
+    searchTerms: ["cli terminal shell path install command line t3"],
     desktopOnly: true,
   },
   {
@@ -852,14 +919,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
     scope: "environment-defaults",
   },
-  {
-    id: "bitbucket-credentials",
-    title: "Bitbucket credentials",
-    to: "/settings/source-control",
-    searchTerms: ["bitbucket atlassian access token api token email credentials sign in"],
-    environmentOnly: true,
-    scope: "environment-defaults",
-  },
+  ...SOURCE_CONTROL_HOST_SEARCH_ITEMS,
   {
     id: "source-control-writing-style",
     title: "Source control writing style",
@@ -883,6 +943,32 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "override generated commit change request pr titles descriptions branch bookmark",
     ],
+    environmentOnly: true,
+    scope: "project-defaults",
+  },
+  {
+    id: "review-guides",
+    title: "Review guides (beta)",
+    to: "/settings/source-control",
+    searchTerms: ["pull request pr guided review guide tour beta experimental"],
+    environmentOnly: true,
+  },
+  {
+    id: "review-guide-model",
+    title: "Review guide model",
+    to: "/settings/source-control",
+    // Hidden until review guides are on, so a search lands on the switch that shows it.
+    targetId: "review-guides",
+    searchTerms: ["pull request pr guided review guide brief maintainer"],
+    environmentOnly: true,
+    scope: "project-defaults",
+  },
+  {
+    id: "review-guide-instructions",
+    title: "Review guide instructions",
+    to: "/settings/source-control",
+    targetId: "review-guides",
+    searchTerms: ["pull request pr guided review guide preferences taste prompt custom"],
     environmentOnly: true,
     scope: "project-defaults",
   },
@@ -1006,6 +1092,7 @@ export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
 const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const));
 
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
+  "/settings/diagnostics": "environment",
   "/settings/projects": "project",
   "/settings/general": null,
   "/settings/appearance": null,
@@ -1159,6 +1246,7 @@ export function searchSettings(
   return items
     .flatMap((item, index) => {
       if (!isElectron && item.desktopOnly === true) return [];
+      if (item.releaseChannelOnly && !isElectron && HOSTED_APP_CHANNEL === null) return [];
       if (item.macOnly && !isMacPlatform(platform)) return [];
       if (item.windowsOnly && !isWindowsPlatform(platform)) return [];
 

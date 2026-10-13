@@ -9,6 +9,7 @@ import settingsRouteSource from "../../routes/settings.tsx?raw";
 const mocks = vi.hoisted(() => ({
   resolvedPath: "/settings/general",
   navigate: vi.fn(),
+  preload: vi.fn(() => Promise.resolve([])),
   closeMobile: vi.fn(),
   mobile: false,
   scroll: vi.fn(() => true),
@@ -21,6 +22,7 @@ vi.mock("./settingsSectionVisibility", async (importOriginal) => ({
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mocks.navigate,
+  useRouter: () => ({ preloadRoute: mocks.preload }),
   useRouterState: () => mocks.resolvedPath,
 }));
 vi.mock("../../components/settings/settingsLayout", () => ({

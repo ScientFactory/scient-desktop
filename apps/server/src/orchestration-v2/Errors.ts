@@ -20,10 +20,14 @@ export class OrchestrationThreadSettleBlockedError extends Schema.TaggedError<Or
   "OrchestrationThreadSettleBlockedError",
   {
     threadId: ThreadId,
+    detail: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return "This thread still needs attention. Resolve or interrupt it first, then try again.";
+    return (
+      this.detail ??
+      "This thread still needs attention. Resolve or interrupt it first, then try again."
+    );
   }
 }
 

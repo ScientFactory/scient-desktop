@@ -14,13 +14,13 @@ import * as Effect from "effect/Effect";
 
 import type { ContextHandoffServiceV2Shape } from "../ContextHandoffService.ts";
 import type { EventSinkV2Shape } from "../EventSink.ts";
-import type { IdAllocatorV2Shape } from "../IdAllocator.ts";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type { ProjectionStoreV2Shape } from "../ProjectionStore.ts";
 import type {
   ProviderAdapterV2Error,
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterV2SessionRuntime,
-} from "../ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTurnStartError } from "../ProviderTurnStartService.ts";
 import { frozenForkPortableReason } from "./ConversationForkNativeSource.ts";
 
@@ -82,7 +82,7 @@ export const startFrozenConversationFork = <ELoad, RLoad, EHistory, RHistory>(in
   readonly startError: (cause: string) => ProviderTurnStartError;
   readonly contextHandoffService: ContextHandoffServiceV2Shape;
   readonly eventSink: EventSinkV2Shape;
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
 }) =>
   Effect.gen(function* () {
     const {

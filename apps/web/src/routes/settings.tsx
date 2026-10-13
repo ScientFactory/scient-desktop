@@ -1,8 +1,12 @@
+import {
+  SettingsRoutePending,
+  SettingsRouteError,
+} from "../components/settings/SettingsRouteLoading";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { useSettingsRestore } from "../components/settings/useSettingsRestore";
 
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -20,6 +24,7 @@ import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScope
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
+  settingsContentResetKey,
   validateSettingsRouteSearch,
 } from "../components/settings/settingsScopeNavigation";
 import {
@@ -114,8 +119,12 @@ function SettingsContentLayout() {
   const location = useLocation();
   const navigateToMainApp = useNavigateToMainApp();
   useEscapeToGoBack(navigateToMainApp);
-  const { search } = useSettingsScope();
+  const { search, environment } = useSettingsScope();
   const [restoreSignal, setRestoreSignal] = useState(0);
+  const contentResetKey =
+    location.pathname === "/settings/diagnostics" || location.pathname === "/settings/providers"
+      ? `${environment?.environmentId}:${restoreSignal}`
+      : settingsContentResetKey(search, restoreSignal);
 
   return (
     <SidebarInset
@@ -136,10 +145,7 @@ function SettingsContentLayout() {
           </div>
         </WorkspacePageHeader>
 
-        <div
-          key={`${JSON.stringify(search)}:${restoreSignal}`}
-          className="min-h-0 flex flex-1 flex-col"
-        >
+        <div key={contentResetKey} className="min-h-0 flex flex-1 flex-col">
           <SettingsScopeBoundary pathname={location.pathname}>
             <Outlet />
           </SettingsScopeBoundary>
@@ -178,6 +184,10 @@ function SettingsRouteLayout() {
 }
 
 export const Route = createFileRoute("/settings")({
+  pendingComponent: SettingsRoutePending,
+  pendingMs: 80,
+  pendingMinMs: 0,
+  errorComponent: SettingsRouteError,
   validateSearch: validateSettingsRouteSearch,
   search: { middlewares: [retainSettingsScope] },
   beforeLoad: async ({ context, location }) => {

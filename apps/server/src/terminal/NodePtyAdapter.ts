@@ -1,14 +1,16 @@
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
+import type * as NodePty from "node-pty";
 
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import * as PtyAdapter from "./PtyAdapter.ts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoadError>()(
   "NodePtyModuleLoadError",
@@ -23,16 +25,30 @@ export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoad
   }
 }
 
-type NodePtyModuleLoader = () => Promise<typeof import("node-pty")>;
+type NodePtyModuleLoader = () => Promise<typeof NodePty>;
+
+// node-pty stays external to the CLI bundle because it dlopens a native
+// addon. Inside a Node single-executable, `import()` cannot load files from
+// disk (only built-ins resolve), while `require` always reads the real
+// filesystem, so both the module and its spawn-helper resolve through it.
+const requireForNodePty = NodeModule.createRequire(import.meta.url);
+
+const loadNodePty: NodePtyModuleLoader = () =>
+  Promise.resolve().then(() => requireForNodePty("node-pty") as typeof NodePty);
+
+/** Injectable so tests can substitute a fake module; `require` bypasses module mocks. */
+export const NodePtyModuleLoaderRef = Context.Reference<NodePtyModuleLoader>(
+  "server/terminal/NodePtyModuleLoader",
+  { defaultValue: () => loadNodePty },
+);
 
 let didEnsureSpawnHelperExecutable = false;
 
 const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
-  const requireForNodePty = NodeModule.createRequire(import.meta.url);
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
 
   const packageJsonPath = requireForNodePty.resolve("node-pty/package.json");
   const packageDir = path.dirname(packageJsonPath);
@@ -52,7 +68,7 @@ const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
 
 const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (platform === "win32") return;
   if (didEnsureSpawnHelperExecutable) return;
 
@@ -77,11 +93,7 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
  * Its public API has no readiness event. The private ready_datapipe handler sets
  * pid before our listener runs.
  */
-const waitForWindowsPid = (
-  process: import("node-pty").IPty,
-  trackedProcess: NodePtyProcess,
-  shell: string,
-) =>
+const waitForWindowsPid = (process: NodePty.IPty, trackedProcess: NodePtyProcess, shell: string) =>
   Effect.callback<void, PtyAdapter.PtySpawnError>((resume) => {
     const hasPid = () => Number.isInteger(process.pid) && process.pid > 0;
     const failure = (cause: unknown) =>
@@ -134,7 +146,7 @@ const waitForWindowsPid = (
  * The private agent can cancel the pending connection before a child exists.
  * Cleanup failures are logged without replacing the startup failure.
  */
-const killStartingWindowsPty = (process: import("node-pty").IPty) =>
+const killStartingWindowsPty = (process: NodePty.IPty) =>
   Effect.try(() => {
     if (
       "_agent" in process &&
@@ -157,13 +169,13 @@ const killStartingWindowsPty = (process: import("node-pty").IPty) =>
   );
 
 class NodePtyProcess implements PtyAdapter.PtyProcess {
-  private readonly process: import("node-pty").IPty;
+  private readonly process: NodePty.IPty;
   private readonly platform: NodeJS.Platform;
   private exitEvent: PtyAdapter.PtyExitEvent | undefined;
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
-  private readonly exitSubscription: import("node-pty").IDisposable;
+  private readonly exitSubscription: NodePty.IDisposable;
 
-  constructor(process: import("node-pty").IPty, platform: NodeJS.Platform) {
+  constructor(process: NodePty.IPty, platform: NodeJS.Platform) {
     this.process = process;
     this.platform = platform;
     // Retain exits while Windows readiness and the manager hand off the process.
@@ -217,13 +229,12 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 }
 
-export const make = Effect.fn("NodePtyAdapter.make")(function* (
-  loadNodePtyModule: NodePtyModuleLoader = () => import("node-pty"),
-) {
+export const make = Effect.fn("NodePtyAdapter.make")(function* () {
+  const loadNodePtyModule = yield* NodePtyModuleLoaderRef;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
 
   const nodePty = yield* Effect.tryPromise({
     try: loadNodePtyModule,
@@ -239,8 +250,8 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
     ensureNodePtySpawnHelperExecutable().pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(HostProcessPlatform, platform),
-      Effect.provideService(HostProcessArchitecture, architecture),
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.provideService(HostProcess.Architecture, architecture),
       Effect.orElseSucceed(() => undefined),
     ),
   );

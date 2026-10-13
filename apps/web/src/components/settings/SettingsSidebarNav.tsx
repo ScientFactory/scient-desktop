@@ -1,3 +1,4 @@
+import { useSettingsIntentPreload } from "./useSettingsIntentPreload";
 import {
   lazy,
   Suspense,
@@ -97,6 +98,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
+  "/settings/diagnostics": Settings2Icon,
   "/settings/appearance": PaletteIcon,
   "/settings/projects": PanelsTopLeftIcon,
   "/settings/keybindings": KeyboardIcon,
@@ -118,11 +120,13 @@ const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
   to: SettingsPath;
   icon: ComponentType<{ className?: string }>;
-}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[]).map((to) => ({
-  to,
-  label: SETTINGS_SECTION_LABELS[to],
-  icon: SETTINGS_SECTION_ICONS[to],
-}));
+}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[])
+  .filter((to) => to !== "/settings/diagnostics")
+  .map((to) => ({
+    to,
+    label: SETTINGS_SECTION_LABELS[to],
+    icon: SETTINGS_SECTION_ICONS[to],
+  }));
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
@@ -131,6 +135,7 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
+  const preloadSettings = useSettingsIntentPreload();
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
@@ -154,24 +159,38 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   useEffect(() => {
     const result = results[activeResultIndex];
     if (!result) return;
+    if (isSearching && document.activeElement === searchInputRef.current) {
+      preloadSettings(result.to, result.targetId ?? result.id);
+    }
     document
       .getElementById(`settings-search-result-${result.id}`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [activeResultIndex, results]);
+  }, [activeResultIndex, isSearching, preloadSettings, results]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.defaultPrevented || event.isComposing) return;
+      const isFindShortcut =
+        event.key.toLowerCase() === "f" &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey;
+      const isSlashShortcut =
+        event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey;
+      if (!isFindShortcut && !isSlashShortcut) return;
 
       const target = event.target;
       if (
         target instanceof HTMLElement &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable ||
-          // Keep focus inside open dialogs and popups instead of escaping
-          // their focus trap into the sidebar search.
-          target.closest('[role="dialog"], [aria-modal="true"], [data-slot$="popup"]') !== null)
+        ((isSlashShortcut &&
+          (target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.isContentEditable)) ||
+          // Preserve dialog and popup focus traps, and let shortcut recorders
+          // capture the keypress without moving focus into the sidebar search.
+          target.closest(
+            '[role="dialog"], [aria-modal="true"], [data-slot$="popup"], [data-keybinding-capture]',
+          ) !== null)
       ) {
         return;
       }
@@ -330,6 +349,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       isActive={index === activeResultIndex}
                       className="h-auto min-h-10 items-start"
                       onMouseMove={() => setActiveResultIndex(index)}
+                      onMouseEnter={() => preloadSettings(item.to, item.targetId ?? item.id)}
+                      onFocus={() => preloadSettings(item.to, item.targetId ?? item.id)}
                       onClick={() => handleSearchResultClick(item)}
                     >
                       <SettingsSectionIcon to={item.to} />
@@ -365,6 +386,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                             isActive={isActive}
                             aria-label={item.label}
                             tooltip={item.label}
+                            onMouseEnter={() => preloadSettings(item.to)}
+                            onFocus={() => preloadSettings(item.to)}
                             onClick={() => handleSectionClick(item.to)}
                           >
                             <Icon />

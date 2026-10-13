@@ -144,6 +144,9 @@ export class DocumentPersistenceCoordinator<
   private connected = true;
   private disposed = false;
   private renameHold: object | null = null;
+  private renameRelease: (() => void) | null = null;
+  /** Where saves and reads go; replaced only by the holder of a rename. */
+  private io: Pick<DocumentPersistenceOptions<R>, "write" | "read" | "classifyFailure">;
   private publicationUncertain = false;
   private reconciliationCount = 0;
   private reconciliationDeferred = false;
@@ -184,6 +187,11 @@ export class DocumentPersistenceCoordinator<
 
   constructor(options: DocumentPersistenceOptions<R>) {
     this.options = options;
+    this.io = {
+      write: options.write,
+      read: options.read,
+      classifyFailure: options.classifyFailure,
+    };
     const draftSource = options.draftSource ?? options.source;
     this.snapshot = {
       mode: "write",
@@ -335,12 +343,29 @@ export class DocumentPersistenceCoordinator<
     this.renameHold = hold;
     this.clearDebounce();
     this.publish();
-    return () => {
+    const release = () => {
       if (this.disposed || this.renameHold !== hold) return;
       this.renameHold = null;
+      this.renameRelease = null;
       this.publish();
       this.drive();
     };
+    this.renameRelease = release;
+    return release;
+  }
+
+  /**
+   * The file was renamed while held: saves and reads go to the new path from
+   * now on. Only the current rename's holder may do this, and only while held.
+   */
+  replaceIo(
+    renameRelease: () => void,
+    io: Pick<DocumentPersistenceOptions<R>, "write" | "read" | "classifyFailure">,
+  ): boolean {
+    if (this.disposed || this.renameHold === null || this.renameRelease !== renameRelease)
+      return false;
+    this.io = { write: io.write, read: io.read, classifyFailure: io.classifyFailure };
+    return true;
   }
 
   /**
@@ -400,6 +425,7 @@ export class DocumentPersistenceCoordinator<
       return false;
     this.disposed = true;
     this.renameHold = null;
+    this.renameRelease = null;
     this.readOperation?.request.resolve?.(false);
     this.readRequest?.resolve?.(false);
     this.readOperation = null;
@@ -556,7 +582,7 @@ export class DocumentPersistenceCoordinator<
 
   private async performWrite(id: number, intent: DocumentSaveIntent): Promise<void> {
     try {
-      const result = await this.options.write(intent);
+      const result = await this.io.write(intent);
       if (this.writeOperation?.id !== id) return;
       this.writeOperation = null;
       this.ambiguousIntent = null;
@@ -614,7 +640,7 @@ export class DocumentPersistenceCoordinator<
 
   private async performRead(operation: ActiveRead): Promise<void> {
     try {
-      const disk = await this.options.read();
+      const disk = await this.io.read();
       if (this.readOperation?.id !== operation.id) return;
       this.readOperation = null;
       if (
@@ -869,7 +895,7 @@ export class DocumentPersistenceCoordinator<
   private classify(error: unknown): DocumentPersistenceFailureKind {
     if (error === this.disconnectedError) return "disconnected";
     try {
-      return this.options.classifyFailure(error);
+      return this.io.classifyFailure(error);
     } catch {
       return "terminal";
     }

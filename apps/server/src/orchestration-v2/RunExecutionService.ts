@@ -46,20 +46,15 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
-import type {
-  ProviderAdapterV2Event,
-  ProviderAdapterV2EventSubscription,
-  ProviderAdapterV2RuntimePolicy,
-  ProviderAdapterV2SessionRuntime,
-  ProviderAdapterV2TurnMessage,
-  ProviderTextSnapshotConsumerOwner,
-} from "./ProviderAdapter.ts";
-import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
-import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import {
+  makeProviderFailure,
+  makeProviderFailureTurnItem,
+} from "@t3tools/provider-core/server/failure";
 import {
   ThreadCommandExecutor,
   layer as threadCommandExecutorLayer,
@@ -94,8 +89,12 @@ import {
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
   // Set once this run's root turn ended. A child thread created after that
-  // belongs to the run that is live then, so this one no longer adopts it.
+  // belongs to the run that is live then, so this one no longer adopts it,
+  // except a workflow member enrolled below: its coordinator keeps this run
+  // open, so the member is this run's to follow.
   readonly rootTurnEnded: boolean;
+  /** Member thread id to the coordinator child thread that spawned it. */
+  readonly workflowMemberParents: ReadonlyMap<ThreadId, ThreadId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
   readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
@@ -118,7 +117,10 @@ export interface InheritedBackgroundTurnItemRoute {
   readonly runId: OrchestrationV2Run["id"];
 }
 
-type ProviderTerminalEvent = Extract<ProviderAdapterV2Event, { readonly type: "turn.terminal" }>;
+type ProviderTerminalEvent = Extract<
+  ProviderAdapter.ProviderAdapterV2Event,
+  { readonly type: "turn.terminal" }
+>;
 
 function isTerminalProviderTurnStatus(status: OrchestrationV2ProviderTurn["status"]): boolean {
   return (
@@ -380,6 +382,7 @@ export function makeProviderEventRoutingState(input: {
   return {
     ownedThreadIds: new Set([input.identity.threadId, ...(input.relatedThreadIds ?? [])]),
     rootTurnEnded: false,
+    workflowMemberParents: new Map(),
     ownedProviderThreadIds: new Set([
       input.identity.providerThreadId,
       ...(input.relatedProviderThreadIds ?? []),
@@ -396,7 +399,7 @@ export function makeProviderEventRoutingState(input: {
 }
 
 export function routeProviderEvent(
-  event: ProviderAdapterV2Event,
+  event: ProviderAdapter.ProviderAdapterV2Event,
   input: ProviderEventRouteIdentity,
   state: ProviderEventRoutingState,
 ): readonly [boolean, ProviderEventRoutingState] {
@@ -430,10 +433,12 @@ export function routeProviderEvent(
         return [true, state];
       }
       const isOwnedSubagent =
-        !state.rootTurnEnded &&
         event.appThread.lineage.relationshipToParent === "subagent" &&
         event.appThread.lineage.parentThreadId !== null &&
-        ownsThread(event.appThread.lineage.parentThreadId);
+        ownsThread(event.appThread.lineage.parentThreadId) &&
+        (!state.rootTurnEnded ||
+          state.workflowMemberParents.get(event.appThread.id) ===
+            event.appThread.lineage.parentThreadId);
       if (!isOwnedSubagent) {
         return [false, state];
       }
@@ -466,7 +471,7 @@ export function routeProviderEvent(
         ownsRun(event.node.runId) ||
         ownsChildThread(event.node.threadId) ||
         // SCIENT-FORK:START — an accepted runless native workflow member's node.
-        isWorkflowMemberNode(event, state.workflowMembers.get(event.node.id));
+        isWorkflowMemberNode(event.node, state.workflowMembers.get(event.node.id), event.driver);
       // SCIENT-FORK:END
       if (!belongs || event.node.providerThreadId === null) {
         return [belongs, state];
@@ -570,7 +575,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly commandId: CommandId;
   readonly appThread: OrchestrationV2AppThread;
   readonly providerSessionId: ProviderSessionId;
-  readonly session: ProviderAdapterV2SessionRuntime;
+  readonly session: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly nativeModelCapacityOwner?: NativeModelCapacityOwner;
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
@@ -593,9 +598,9 @@ export interface RunExecutionServiceV2StartRootRunInput {
   >;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
-  readonly message: ProviderAdapterV2TurnMessage;
+  readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
-  readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
 
 export interface RunExecutionServiceV2Shape {
@@ -836,7 +841,6 @@ export const layer: Layer.Layer<
                     providerInstanceId: input.run.providerInstanceId,
                     occurredAt: completedAt,
                     payload: makeProviderFailureTurnItem({
-                      idAllocator,
                       driver: input.terminal.driver,
                       threadId: input.run.threadId,
                       runId: input.run.id,
@@ -1070,7 +1074,7 @@ export const layer: Layer.Layer<
             input.session.subscribeTextSnapshotEvents === undefined
               ? null
               : yield* input.session.subscribeTextSnapshotEvents;
-          const eventSubscription: ProviderAdapterV2EventSubscription =
+          const eventSubscription: ProviderAdapter.ProviderAdapterV2EventSubscription =
             snapshotSubscription ??
             (input.session.subscribeEvents === undefined
               ? { events: input.session.events, close: Effect.void }
@@ -1079,7 +1083,7 @@ export const layer: Layer.Layer<
           const subscriptionLifetime = yield* makeRunEventSubscriptionLifetime(
             eventSubscription.close,
           );
-          const textSnapshotOwner: ProviderTextSnapshotConsumerOwner = {
+          const textSnapshotOwner: ProviderAdapter.ProviderTextSnapshotConsumerOwner = {
             threadId: input.run.threadId,
             runId: input.run.id,
             activeAttemptId: input.attempt.id,
@@ -1194,7 +1198,10 @@ export const layer: Layer.Layer<
               }
               yield* Ref.set(rootRunFinalized, true);
             });
-          const trackChildLifecycle = (event: ProviderAdapterV2Event, deliverable: boolean) =>
+          const trackChildLifecycle = (
+            event: ProviderAdapter.ProviderAdapterV2Event,
+            deliverable: boolean,
+          ) =>
             Effect.gen(function* () {
               const routing = yield* Ref.get(eventRouting);
               if (event.type === "provider_turn.updated") {
@@ -1233,7 +1240,15 @@ export const layer: Layer.Layer<
                 // Preserve childThreadId linkage for the root-run lifetime even
                 // after the subagent row terminalizes, so open child-thread
                 // nodes can still be proven linked on a later root interrupt.
-                if (belongsToRootRun || routing.workflowMembers.has(event.subagent.id)) {
+                // A provider records nested native subagents on the child
+                // thread, runless; they die with this run too.
+                if (
+                  belongsToRootRun ||
+                  routing.workflowMembers.has(event.subagent.id) ||
+                  (belongsToOwnedChildThread &&
+                    event.subagent.runId === null &&
+                    event.subagent.origin === "provider_native")
+                ) {
                   yield* Ref.update(openRunOwnedSubagents, (current) => {
                     const withLink = withLinkedChildThreadId(current, event.subagent.childThreadId);
                     const subagents = new Map(withLink.subagents);
@@ -1258,7 +1273,10 @@ export const layer: Layer.Layer<
                   routing.ownedThreadIds.has(event.node.threadId);
                 if (
                   !belongsToRootSubagent &&
-                  !belongsToOwnedChildThread &&
+                  !(
+                    belongsToOwnedChildThread &&
+                    (event.node.runId === null || event.node.runId === input.run.id)
+                  ) &&
                   !routing.workflowMembers.has(event.node.id)
                 ) {
                   return;
@@ -1298,7 +1316,11 @@ export const layer: Layer.Layer<
                     return next;
                   });
                 }
-                if (belongsToOwnedChildThread && deliverable) {
+                if (
+                  belongsToOwnedChildThread &&
+                  (event.turnItem.runId === null || belongsToRootRun) &&
+                  deliverable
+                ) {
                   yield* Ref.update(openRunOwnedSubagents, (current) => {
                     const childTurnItems = new Map(current.childTurnItems);
                     if (isSettledTurnItemStatus(event.turnItem.status)) {
@@ -1723,7 +1745,7 @@ export const layer: Layer.Layer<
           const startTurn = compact
             ? (input.session.compactThread?.(turnInput) ??
               Effect.fail(
-                new ProviderAdapterTurnStartError({
+                new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: input.session.driver,
                   threadId: input.run.threadId,
                   providerThreadId: input.providerThread.id,
@@ -1825,7 +1847,7 @@ export const layer: Layer.Layer<
 ).pipe(Layer.provide(threadCommandExecutorLayer));
 
 export function makeInterruptResultTurnItem(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;

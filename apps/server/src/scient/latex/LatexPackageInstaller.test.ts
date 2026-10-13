@@ -5,7 +5,7 @@ import {
   type ExecutionProcessRequest,
 } from "@scientfactory/execution";
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -147,7 +147,7 @@ const harness = (input: {
         Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
         Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, runner)),
         Layer.provide(NodeServices.layer),
-        Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+        Layer.provide(Layer.succeed(HostProcess.Platform, "win32")),
       ),
       runs,
       started,
@@ -575,7 +575,7 @@ describe("LatexPackageInstaller", () => {
           ),
         ),
         Layer.provide(NodeServices.layer),
-        Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+        Layer.provide(Layer.succeed(HostProcess.Platform, "win32")),
       );
 
       // A distribution without a tlmgr leaves the build the error it had.

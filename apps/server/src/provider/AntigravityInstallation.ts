@@ -1,11 +1,13 @@
+/**
+ * SCIENT-FORK: retain T3's native paired installer and service identity.
+ * Scient adds qualified release receipts/selection, Windows filesystem handling,
+ * and verified process teardown before publication or deletion. Catalog service
+ * composition lives in scient/providerLifecycle/ScientAntigravityInstallation.ts.
+ */
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest or free-space query.
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
 import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isManagedRuntimeUpdate } from "@scientfactory/provider-runtime";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
@@ -32,12 +34,7 @@ import * as NodeFSP from "node:fs/promises";
 import { ServerConfig } from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
 import { makeInstallerFilesystem } from "./runtimeFilesystem.ts";
-import { writeFileStringAtomically } from "../atomicWrite.ts";
-import { ManagedRuntimeCatalog } from "../scient/providerLifecycle/ManagedRuntimeCatalog.ts";
-import {
-  bundledAntigravityAcpAsset,
-  resolveAntigravityAcpCatalogAsset,
-} from "../scient/providerLifecycle/antigravityAcpCatalog.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
 import {
   buildAntigravityAcpSpawnInput,
@@ -128,26 +125,7 @@ export class AntigravityInstallation extends Context.Service<
     AntigravityInstallation,
     Effect.gen(function* () {
       const config = yield* ServerConfig;
-      const catalog = yield* ManagedRuntimeCatalog;
-      const platform = yield* HostProcessPlatform;
-      const arch = yield* HostProcessArchitecture;
-      return yield* makeAntigravityInstallation({
-        baseDir: config.baseDir,
-        refreshLatestRelease: catalog.refresh.pipe(
-          Effect.map(
-            (current) =>
-              resolveAntigravityAcpCatalogAsset(current, platform, arch) ??
-              bundledAntigravityAcpAsset(platform, arch),
-          ),
-        ),
-        latestRelease: catalog.current.pipe(
-          Effect.map(
-            (current) =>
-              resolveAntigravityAcpCatalogAsset(current, platform, arch) ??
-              bundledAntigravityAcpAsset(platform, arch),
-          ),
-        ),
-      });
+      return yield* makeAntigravityInstallation({ baseDir: config.baseDir });
     }),
   );
 }
@@ -194,10 +172,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serviceScope = yield* Effect.scope;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const installerFs = makeInstallerFilesystem(fs, platform);
-  const arch = yield* HostProcessArchitecture;
-  const environment = yield* HostProcessEnvironment;
+  const arch = yield* HostProcess.Architecture;
+  const environment = yield* HostProcess.Environment;
   const releaseAsset =
     options.releaseAsset === undefined
       ? resolveAntigravityReleaseAsset(platform, arch)
@@ -488,7 +466,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       yield* resolveNodeExecutable("Antigravity", environment).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(HostProcessPlatform, platform),
+        Effect.provideService(HostProcess.Platform, platform),
         Effect.mapError((cause) =>
           installationError("verify", nodeRuntimeUnavailableMessage("Antigravity"), cause),
         ),

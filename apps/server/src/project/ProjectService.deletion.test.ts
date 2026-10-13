@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -26,7 +27,7 @@ import * as ServerConfig from "../config.ts";
 import { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutbox.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
-import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -35,6 +36,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -85,6 +87,7 @@ const layerServices = Layer.mergeAll(
       ),
     ),
   ),
+  Layer.provideMerge(ServerSettings.layerTest()),
 );
 const layerDatabase = SqlitePersistence.layerMemory.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-deletion-test-" })),
@@ -222,6 +225,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(
         partialCleanup.map((effect) => [effect.thread_id, effect.effect_type]),
         [
+          [firstThreadId, "preview.cleanup"],
           [firstThreadId, "scient.release-thread-files"],
           [firstThreadId, "terminal.cleanup"],
         ],
@@ -246,7 +250,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(finalEvents[0], partialEvents[0]);
       assert.equal(finalEvents[2]?.command_id, commandId);
       const finalCleanup = yield* readCleanup;
-      assert.lengthOf(finalCleanup, 4);
+      assert.lengthOf(finalCleanup, 6);
       assert.deepEqual(
         finalCleanup.filter((effect) => effect.thread_id === firstThreadId),
         partialCleanup,
@@ -255,12 +259,26 @@ it.effect("retries a partial project deletion without repeating child events or 
         const expectedCommandId = `${commandId}:delete-thread:${threadId}`;
         assert.deepEqual(
           finalCleanup.filter((effect) => effect.thread_id === threadId),
-          ["scient.release-thread-files", "terminal.cleanup"].map((effectType) => ({
-            effect_id: `effect:${expectedCommandId}:${effectType}`,
-            thread_id: threadId,
-            command_id: expectedCommandId,
-            effect_type: effectType,
-          })),
+          [
+            {
+              effect_id: `effect:${expectedCommandId}:preview.cleanup`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "preview.cleanup",
+            },
+            {
+              effect_id: `effect:${expectedCommandId}:scient.release-thread-files`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "scient.release-thread-files",
+            },
+            {
+              effect_id: `effect:${expectedCommandId}:terminal.cleanup`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "terminal.cleanup",
+            },
+          ],
         );
       }
     }).pipe(Effect.provide(layerServices));
@@ -540,7 +558,7 @@ it.effect("shared V2 deletion stops a real pending clone only after deletion com
             (cause) =>
               new SourceControlRepositoryError({
                 operation: "discard-clone",
-                provider: "github",
+                provider: SourceControlProviderKind.make("github"),
                 detail: "Fixture checkout cleanup failed.",
                 cause,
               }),
@@ -694,7 +712,7 @@ it.effect.each(
             (cause) =>
               new SourceControlRepositoryError({
                 operation: "discard-clone",
-                provider: "github",
+                provider: SourceControlProviderKind.make("github"),
                 detail: "Fixture checkout cleanup failed.",
                 cause,
               }),
@@ -830,4 +848,32 @@ it.effect("force-deleting a project releases a fork lineage's shared files after
       );
     }).pipe(Effect.provide(layerServices));
   }).pipe(Effect.provide(layerDatabase)),
+);
+
+it.effect(
+  "clears a deleted project's settings overrides so a machine-disabled instance cannot stay alive",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:overrides-cleanup");
+      const instanceId = ProviderInstanceId.make("codex_work");
+      yield* seedProject(projectId);
+
+      yield* Effect.gen(function* () {
+        const service = yield* ProjectService.make;
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        yield* serverSettings.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+          },
+        });
+
+        yield* service.delete({
+          commandId: CommandId.make("command:overrides-cleanup:project-delete"),
+          projectId,
+        });
+
+        const settingsAfterDelete = yield* serverSettings.getSettings;
+        assert.isUndefined(settingsAfterDelete.projectSettingsOverrides[projectId]);
+      }).pipe(Effect.provide(layerServices));
+    }).pipe(Effect.provide(layerDatabase)),
 );

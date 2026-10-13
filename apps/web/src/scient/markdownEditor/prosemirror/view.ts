@@ -348,6 +348,9 @@ export class ScientMarkdownEditorView {
   private snapshotVersion = 0;
   private snapshot: ScientMarkdownEditorSnapshot;
 
+  /** Replaces `options.ariaLabel` once the document is renamed in place. */
+  private ariaLabel: string | null = null;
+
   constructor(private readonly options: ScientMarkdownEditorViewOptions) {
     this.mode = options.mode ?? "read";
     this.session = new ScientProseMirrorSession(options);
@@ -436,6 +439,13 @@ export class ScientMarkdownEditorView {
     this.refreshFootnoteNodeViews();
     this.publishSnapshot();
     if (!wasEditable && modeIsEditable(mode)) this.editorView?.focus();
+  }
+
+  /** The document was renamed in place; only its accessible name changes. */
+  setAriaLabel(label: string): void {
+    if ((this.ariaLabel ?? this.options.ariaLabel) === label) return;
+    this.ariaLabel = label;
+    this.syncViewProps();
   }
 
   focus(): void {
@@ -997,7 +1007,7 @@ export class ScientMarkdownEditorView {
       state: this.session.state,
       attributes: accessibilityAttributes(
         this.mode,
-        this.options.ariaLabel,
+        this.ariaLabel ?? this.options.ariaLabel,
         documentIsEmpty(this.session.state.doc),
       ),
       editable: () => modeIsEditable(this.mode),
@@ -1678,7 +1688,7 @@ export class ScientMarkdownEditorView {
     view.setProps({
       attributes: accessibilityAttributes(
         this.mode,
-        this.options.ariaLabel,
+        this.ariaLabel ?? this.options.ariaLabel,
         documentIsEmpty(view.state.doc),
       ),
       editable: () => modeIsEditable(this.mode),

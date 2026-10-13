@@ -5,8 +5,13 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import { type ProviderAdapterV2Event } from "../ProviderAdapter.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  resolveClaudeModelSlug,
+} from "../../provider/ClaudeModelCatalog.ts";
 import {
   makeWakeHarness,
   makeSubagentAssistantFrames,
@@ -110,7 +115,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           FINAL_REPORT,
         ]);
         assert.deepEqual(routing.assistantTexts(harness.threadId), ["The auditor finished."]);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -124,6 +133,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const toolUseId = "toolu-subagent-model";
           const parentModel = "claude-opus-4-6";
           const observedModel = "claude-haiku-4-5-20251001";
+          const requestedModel = "haiku";
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId: harness.threadId,
@@ -169,7 +179,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                       subagent_type: "general-purpose",
                       ...(source === "unknown"
                         ? {}
-                        : { model: source === "inherit" ? "inherit" : "haiku" }),
+                        : { model: source === "inherit" ? "inherit" : requestedModel }),
                       prompt: "Solve the puzzle.",
                     },
                   },
@@ -202,22 +212,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           yield* Queue.take(harness.terminalReceipts);
           const subagents = harness.events.filter((event) => event.type === "subagent.updated");
+          // Provenance determines which model wins; aliases and dated ids use catalog identity.
+          const requestedSlug = resolveClaudeModelSlug(
+            BUNDLED_CLAUDE_MODEL_CATALOG,
+            requestedModel,
+          );
+          const observedSlug = resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, observedModel);
           const initialModel =
             source === "observed-before"
-              ? observedModel
+              ? observedSlug
               : source === "inherit"
                 ? parentModel
                 : source === "unknown"
                   ? null
-                  : "haiku";
+                  : requestedSlug;
           assert.equal(subagents[0]?.subagent.model, initialModel);
           assert.equal(
             subagents.at(-1)?.subagent.model,
-            source.startsWith("observed") ? observedModel : initialModel,
+            source.startsWith("observed") ? observedSlug : initialModel,
           );
           const child = harness.events.find((event) => event.type === "app_thread.created");
           assert.equal(child?.appThread.modelSelection?.model, initialModel ?? parentModel);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -298,7 +318,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -387,7 +411,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         assert.equal(subagentEvents().at(-1)?.subagent.status, "cancelled");
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -637,7 +665,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // The completion keeps the resuming run's attribution.
         assert.equal(finalSubagent?.runId, "run-attempt-claude-wake-9c");
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

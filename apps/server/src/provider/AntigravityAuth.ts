@@ -19,8 +19,12 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
-import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+// SCIENT-FORK:START — bounded native failure metadata, without provider payloads.
+import { recordAntigravityAuthFailure } from "../scient/providerLifecycle/antigravityAuthDiagnostics.ts";
+// SCIENT-FORK:END
 import {
+  antigravityAuthStageFailure,
   parseAntigravityAuthorizationUrl,
   type AntigravityAuthorizationUrl,
 } from "./antigravityAuthSupport.ts";
@@ -47,6 +51,7 @@ interface AuthFlow {
   state: ProviderAuthState;
   pending: AntigravityAuthorizationUrl | undefined;
   callbackSent: boolean;
+  authorizationUrlReceived: boolean;
   fiber: Fiber.Fiber<void> | undefined;
   forwarding: Fiber.Fiber<void, ProviderSetupError> | undefined;
 }
@@ -68,19 +73,19 @@ export interface AntigravityAuth {
 }
 
 export type AntigravityAuthRuntime = Pick<
-  AcpSessionRuntime["Service"],
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
   "initialize" | "start" | "logout"
 >;
 
 export interface AntigravityAuthOptions<
-  Runtime extends AntigravityAuthRuntime = AcpSessionRuntime["Service"],
+  Runtime extends AntigravityAuthRuntime = AcpSessionRuntime.AcpSessionRuntime["Service"],
 > {
   readonly instanceId: ProviderInstanceId;
   readonly makeRuntime: (input: {
     readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
   }) => Effect.Effect<Runtime, AcpErrors.AcpError | ProviderSetupError, Scope.Scope>;
   readonly onAuthenticated: (
-    result: AcpSessionRuntimeStartResult,
+    result: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     runtime: Runtime,
   ) => Effect.Effect<void>;
   readonly onSignedOut: Effect.Effect<void>;
@@ -104,12 +109,16 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
   };
 }
 
-function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): string {
+// SCIENT-FORK:START — safe failure presentation; native OAuth and account checks stay upstream.
+function safeAuthFailure(
+  cause: Cause.Cause<unknown>,
+  usesBrowser: boolean,
+  beforeAuthorizationUrl: boolean,
+): string {
   const error = Cause.findErrorOption(cause);
   if (Option.isSome(error)) {
-    if (isSetupError(error.value)) {
-      return error.value.detail;
-    }
+    const stageFailure = antigravityAuthStageFailure(error.value, beforeAuthorizationUrl);
+    if (stageFailure !== undefined) return stageFailure;
     if (isAcpRequestError(error.value)) {
       if (error.value.errorMessage.includes("SUBSCRIPTION_REQUIRED")) {
         return "Google requires an eligible Antigravity subscription for this account.";
@@ -130,6 +139,7 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
     : "Antigravity could not authenticate with the configured credentials.";
 }
 
+// SCIENT-FORK:END
 /** Owns one instance's explicit sign-in and all process admission around sign-out. */
 export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   Runtime extends AntigravityAuthRuntime,
@@ -223,6 +233,11 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     lock.withPermits(1)(
       Effect.gen(function* () {
         if (activeFlow !== flow) return;
+        // SCIENT-FORK:START — only the current failed attempt emits diagnostics.
+        if (Exit.isFailure(result)) {
+          yield* recordAntigravityAuthFailure(result.cause, !flow.authorizationUrlReceived);
+        }
+        // SCIENT-FORK:END
         activeFlow = undefined;
         operation = "idle";
         flow.pending = undefined;
@@ -235,7 +250,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             ? usesBrowser
               ? "Signed in with Google."
               : "Connected to Antigravity."
-            : safeAuthFailure(result.cause, usesBrowser),
+            : safeAuthFailure(result.cause, usesBrowser, !flow.authorizationUrlReceived),
         });
       }),
     );
@@ -254,6 +269,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               });
             }
             flow.pending = authorization;
+            flow.authorizationUrlReceived = true;
             yield* publishFlow(flow, {
               ...flow.state,
               phase: "waiting",
@@ -371,6 +387,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               state,
               pending: undefined,
               callbackSent: false,
+              authorizationUrlReceived: false,
               fiber: undefined,
               forwarding: undefined,
             };

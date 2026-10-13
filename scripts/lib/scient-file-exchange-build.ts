@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Schema from "effect/Schema";
 
 export const FILE_EXCHANGE_RESOURCE = {
@@ -46,7 +46,7 @@ export async function validatePackagedFileExchange(
   ).sort();
   if (actual.join(" ") !== expected.join(" "))
     throw new Error("Packaged file exchange has the wrong architecture.");
-  if (arch === "universal" || arch === HostProcessArchitecture.defaultValue()) {
+  if (arch === "universal" || arch === HostProcess.Architecture.defaultValue()) {
     const version = NodeChildProcess.execFileSync(helper, ["--version"], {
       encoding: "utf8",
       timeout: 10_000,
@@ -65,10 +65,10 @@ export interface BuildFileExchangeInput {
 
 /** Compile from the owned source for the requested target; never reuse a stale binary. */
 export async function buildFileExchange(input: BuildFileExchangeInput): Promise<string> {
-  if (HostProcessPlatform.defaultValue() !== input.platform) {
+  if (HostProcess.Platform.defaultValue() !== input.platform) {
     throw new Error("File exchange must be built on its target operating system.");
   }
-  if (input.platform === "linux" && input.arch !== HostProcessArchitecture.defaultValue()) {
+  if (input.platform === "linux" && input.arch !== HostProcess.Architecture.defaultValue()) {
     throw new Error("Linux file exchange must be built for the host architecture.");
   }
   const source = NodePath.join(input.repoRoot, "native/file-exchange/exchange.c");

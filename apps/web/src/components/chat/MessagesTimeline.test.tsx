@@ -288,10 +288,11 @@ function stubDomGlobals() {
 }
 
 beforeEach(stubDomGlobals);
+// Cold transformation of the full chat dependency graph needs extra time on slower CI workers.
 beforeAll(async () => {
   stubDomGlobals();
   ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
-}, 30_000);
+}, 120_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
@@ -1580,6 +1581,77 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
+  it.each([true, false])(
+    "keeps the reading row in place when tool output toggles at the end: %s",
+    async (isAtEnd) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let nextFrame = 0;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const flushFrame = () =>
+        act(() => {
+          const callbacks = [...frames.values()];
+          frames.clear();
+          callbacks.forEach((callback) => callback(0));
+        });
+      const viewport = { scrollTop: 400, scrollHeight: 1000 };
+      const props = buildProps();
+      props.listRef.current = {
+        getState: () => ({ isAtEnd }),
+        getScrollableNode: () => viewport,
+      } as unknown as LegendListRef;
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...props}
+              timelineEntries={[
+                {
+                  id: "tool",
+                  kind: "work",
+                  createdAt: MESSAGE_CREATED_AT,
+                  entry: {
+                    id: "tool",
+                    createdAt: MESSAGE_CREATED_AT,
+                    label: "Run command",
+                    tone: "tool",
+                    toolLifecycleStatus: "completed",
+                    detail: "Command output",
+                  },
+                },
+              ]}
+            />,
+          );
+        });
+        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
+        const list = renderer!.root.find(
+          (node) => node.props.ListFooterComponent !== undefined && node.props.onItemSizeChanged,
+        );
+        for (const scrollHeight of [1300, 900]) {
+          await act(() => toggle.props.onClick());
+          // The rows grow or shrink once the list measures them.
+          viewport.scrollHeight = scrollHeight;
+          await flushFrame();
+          expect(viewport.scrollTop).toBe(400);
+          // Late tool output must not move the reading row either.
+          viewport.scrollHeight = scrollHeight + 200;
+          await act(() => list.props.onItemSizeChanged());
+          expect(viewport.scrollTop).toBe(400);
+          await flushFrame();
+          await flushFrame();
+          viewport.scrollTop = 400;
+        }
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    },
+  );
+
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -2380,6 +2452,7 @@ describe("MessagesTimeline", () => {
       attemptOrdinal: 1,
       rootNodeId: "node-attempt-1" as never,
       status: "superseded" as const,
+      completedAt: null,
     };
     const activeAttempt = {
       id: "attempt-2" as never,
@@ -2387,6 +2460,7 @@ describe("MessagesTimeline", () => {
       attemptOrdinal: 2,
       rootNodeId: "node-attempt-2" as never,
       status: "running" as const,
+      completedAt: null,
     };
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -2435,7 +2509,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-superseded-attempt-id="attempt-1"');
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain("Superseded attempt");
-    expect(markup).toContain("Partial output retained");
+    expect(markup).toContain("Cut off by a steer");
     expect(markup).toContain("Current response remains visible");
     expect(markup).not.toContain("Partial response from the old attempt");
   });
@@ -3038,11 +3112,97 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Ran 2 commands");
-    expect(markup).toContain("lucide-terminal");
-    expect(markup).not.toContain("lucide-x");
+    expect(markup).toContain("lucide-square-terminal-lowered");
+    expect(markup).not.toContain("lucide-circle-x");
     expect(markup).not.toContain("text-destructive");
     // The failure stays discoverable for screen readers.
     expect(markup).toContain("tool call failed");
+  });
+
+  it.each([
+    [
+      "a command",
+      { itemType: "command_execution", command: "make build" },
+      "lucide-square-terminal-lowered",
+    ],
+    [
+      "a command that lists files",
+      { itemType: "command_execution", command: "ls -la src" },
+      "lucide-folder-open",
+    ],
+    [
+      "a tree command",
+      { itemType: "command_execution", command: "cd app && tree -L 2" },
+      "lucide-folder-open",
+    ],
+    [
+      "a find command",
+      { itemType: "command_execution", command: "find . -name '*.ts'" },
+      "lucide-folder-open",
+    ],
+    [
+      "a command that fetches from the web",
+      { itemType: "command_execution", command: "curl -s https://example.com" },
+      "lucide-globe",
+    ],
+    ["an image view", { itemType: "dynamic_tool", viewedImagePath: "chart.png" }, "lucide-image"],
+    [
+      "a Scient skill tool",
+      { itemType: "dynamic_tool", toolTitle: "mcp__t3-code__scient_skill_load" },
+      "lucide-layers",
+    ],
+    ["an approval", { itemType: "approval_request", tone: "info" }, "lucide-shield-check"],
+  ] as const)("marks %s with its trace icon", (_name, fields, iconClass) => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-trace-icon",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-trace-icon",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Tool call",
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+              ...fields,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toMatch(new RegExp(`\\b${iconClass}[" ]`));
+  });
+
+  it.each([
+    ["shares one trace icon", ["ls src", "find . -name x"], "lucide-folder-open"],
+    ["mixes trace icons", ["ls src", "curl https://example.com"], "lucide-square-terminal-lowered"],
+  ] as const)("gives a folded group that %s its icon", (_name, commands, iconClass) => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={commands.map((command, index) => ({
+          id: `entry-group-${index}`,
+          kind: "work" as const,
+          createdAt: MESSAGE_CREATED_AT,
+          entry: {
+            id: `work-group-${index}`,
+            createdAt: MESSAGE_CREATED_AT,
+            label: command,
+            tone: "tool" as const,
+            itemType: "command_execution" as const,
+            command,
+            toolLifecycleStatus: "completed" as const,
+          },
+        }))}
+      />,
+    );
+
+    expect(markup).toContain("Ran 2 commands");
+    expect(markup).toMatch(new RegExp(`\\b${iconClass}[" ]`));
   });
 
   it("renders trailing tool calls as part of the terminal assistant block", () => {
@@ -3368,32 +3528,84 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-v2-event-disclosure="true"');
   });
 
-  it("marks an agent's own tool with the one-colour Scient symbol", () => {
+  it.each([
+    ["single row", 1, false],
+    ["collapsed group", 2, false],
+    ["expanded group", 2, true],
+  ] as const)("marks generic dynamic tools with a wrench in a %s", (_name, count, expanded) => {
+    activityTestState.expanded = expanded;
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
+        timelineEntries={Array.from({ length: count }, (_, index) => ({
+          id: `entry-dynamic-tool-${index}`,
+          kind: "work" as const,
+          createdAt: MESSAGE_CREATED_AT,
+          entry: {
+            id: `work-dynamic-tool-${index}`,
+            createdAt: MESSAGE_CREATED_AT,
+            toolCallId: `call-dynamic-tool-${index}`,
+            label: "lsp",
+            toolTitle: "lsp",
+            tone: "tool" as const,
+            itemType: "dynamic_tool" as const,
+            toolLifecycleStatus: "completed" as const,
+          },
+        }))}
+      />,
+    );
+
+    expect(markup.match(/\blucide-wrench\b/g)).toHaveLength(expanded ? count + 1 : 1);
+    expect(markup).not.toContain('data-scient-symbol="mono"');
+    expect(markup).not.toContain("lucide-hammer");
+    expect(markup).not.toContain("lucide-blocks");
+  });
+
+  it.each([
+    ["Edit", "completed"],
+    ["Write", "completed"],
+    ["MultiEdit", "completed"],
+    ["Edit", "inProgress"],
+    ["Write", "inProgress"],
+    ["MultiEdit", "inProgress"],
+  ] as const)("marks native %s calls with a pencil while %s", (toolName, status) => {
+    activityTestState.expandedRuns = true;
+    const working = status === "inProgress";
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking={working}
+        activeTurnInProgress={working}
+        latestRun={{
+          runId: RunId.make("run-1"),
+          status: working ? "running" : "completed",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: working ? null : MESSAGE_CREATED_AT,
+        }}
         timelineEntries={[
           {
-            id: "entry-dynamic-tool",
+            id: "entry-native-edit",
             kind: "work",
             createdAt: MESSAGE_CREATED_AT,
             entry: {
-              id: "work-dynamic-tool",
+              id: "work-native-edit",
+              runId: RunId.make("run-1"),
               createdAt: MESSAGE_CREATED_AT,
-              toolCallId: "call-dynamic-tool",
-              label: "lsp",
-              toolTitle: "lsp",
+              label: toolName,
+              toolTitle: toolName,
+              toolData: { toolName, input: { file_path: "src/example.ts" } },
               tone: "tool",
               itemType: "dynamic_tool",
-              toolLifecycleStatus: "completed",
+              toolLifecycleStatus: status,
             },
           },
         ]}
       />,
     );
 
-    expect(markup).toContain('data-scient-symbol="mono"');
-    expect(markup).not.toContain("lucide-hammer");
+    expect(markup).toContain("lucide-pencil");
+    expect(markup).not.toContain("lucide-wrench");
+    expect(markup).not.toContain('data-scient-symbol="mono"');
   });
 
   it("keeps inherited V2 work provenance on the rendered row", async () => {
@@ -3538,8 +3750,8 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    // Known historical MCP namespaces retain the current Scient product symbol.
-    expect(markup).toContain("scient-symbol.svg");
+    // Known historical MCP namespaces use the current Scient trace symbol.
+    expect(markup).toContain("scient-trace-symbol.svg");
     expect(markup).toContain("Read a Scient thread");
     expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
   });
@@ -3807,7 +4019,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("lucide-zap");
+    expect(markup).toContain("lucide-folder-open");
     expect(markup).toContain('aria-label="Tool call failed"');
     // Ordinary tool failures render muted, not red.
     expect(markup).not.toContain("text-destructive");
@@ -3912,6 +4124,11 @@ describe("MessagesTimeline", () => {
           )[0]!;
         await act(() => row().props.onClick());
         expect(renderer!.root.findAllByType("strong")).toHaveLength(strongCount);
+        expect(
+          renderer!.root.findAll(
+            (node) => node.type === "div" && node.props["data-scient-reasoning-trace"] === true,
+          ),
+        ).toHaveLength(1);
         await act(() => row().props.onClick());
         expect(previewText()).toContain(expected);
         expect(renderer!.root.findAllByType("strong")).toHaveLength(0);
@@ -4240,6 +4457,71 @@ describe("sub-agent rows: what runs, whether it is alive, how it ended", () => {
       expect(text).toContain("Audit scient-desktop code smells|explorer");
       expect(text).toContain("Stopped");
       expect(text).toContain("Cancelled when you sent a follow-up message.");
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
+  it("keeps explicitly opened Scient members visible when the last background child settles", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const members = subagents.map((item) => ({
+      ...item,
+      driver: ProviderDriverKind.make("scient"),
+      status: "running" as const,
+      result: null,
+      completedAt: null,
+      childThreadId: ThreadId.make(`child-${item.subagentId}`),
+    }));
+    const parentSettled = {
+      isWorking: false,
+      runningRunId: null,
+      latestRun: {
+        runId,
+        status: "completed" as const,
+        startedAt: MESSAGE_CREATED_AT,
+        completedAt: at(120),
+      },
+    };
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline {...buildProps()} {...timeline(members)} {...parentSettled} />,
+        );
+      });
+      const group = () =>
+        renderer!.root
+          .findAllByType("button")
+          .find(
+            (row) =>
+              row.props["aria-expanded"] !== undefined &&
+              row
+                .findAll(() => true)
+                .some((node) =>
+                  node.children.some(
+                    (child) => typeof child === "string" && child.includes("2 subagents"),
+                  ),
+                ),
+          )!;
+      await act(() => group().props.onClick());
+      expect(renderer!.root.findAllByProps({ role: "button" })).toHaveLength(2);
+      const completed = members.map((item) => ({
+        ...item,
+        status: "completed" as const,
+        result: "Observed child result",
+        completedAt: DateTime.makeUnsafe(at(125)),
+      }));
+      await act(() => {
+        renderer!.update(
+          <MessagesTimeline {...buildProps()} {...timeline(completed)} {...parentSettled} />,
+        );
+      });
+      expect(renderer!.root.findAllByProps({ role: "button" })).toHaveLength(2);
+      expect(group().props["aria-expanded"]).toBe(true);
+      await act(() => group().props.onClick());
+      expect(renderer!.root.findAllByProps({ role: "button" })).toHaveLength(0);
     } finally {
       await act(() => renderer?.unmount());
     }

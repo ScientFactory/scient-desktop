@@ -30,6 +30,11 @@ mobile app.
 Installation and sign-in continue if you leave the setup surface. Background
 status checks never open a browser or start a sign-in flow.
 
+Google sign-in allows five minutes for runtime startup, browser authorization,
+and account verification. If Scient cannot open the browser, choose **Reopen
+Google sign-in** to retry the same attempt. Once the attempt expires, start a
+new one rather than reusing its old link.
+
 ### Sign in from another device
 
 Google returns to a `127.0.0.1` URL on the device running the browser. When the
@@ -156,6 +161,10 @@ instances can use different accounts on one environment.
 | Sign out or disconnect      | Stops that instance's sessions and clears its official ACP profile credentials; keeps runtime, threads, and files. |
 | Remove managed installation | Removes only Scient's shared ACP runtime; keeps account profiles, threads, files, and external installations.      |
 
+Open **Usage > Limits** to see the remaining Gemini and shared Claude/GPT allowances
+for Google sign-ins. Each group has separate five-hour and weekly limits and reset
+times. Limits refresh with provider status and include usage outside T3 Code.
+
 A server restart keeps your Google sign-in. The provider shows the saved account
 until a session, a refresh, or a sign-out reports something new.
 
@@ -181,8 +190,10 @@ switch authentication methods to bypass an account restriction.
 
 - **Antigravity is missing:** install the managed runtime, use an official
   system installation, or set its absolute binary path.
-- **Sign-in did not open:** retry from the explicit setup action. Passive
-  refreshes intentionally do not launch a browser.
+- **Sign-in did not open:** use **Reopen Google sign-in** while the attempt is
+  waiting. Helper preparation, runtime startup, and link-capture failures show
+  which stage stopped; these failures require a new attempt. Passive refreshes
+  intentionally do not launch a browser.
 - **Remote sign-in stopped at localhost:** paste the full return URL through
   the collapsed remote-device control.
 - **Credentials are incomplete:** return to provider configuration and supply

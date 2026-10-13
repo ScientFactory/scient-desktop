@@ -30,11 +30,6 @@ export const PROVIDER_PRESENTATION = {
     color: "color-mix(in oklab, var(--contrast-foreground) 72%, var(--background))",
     driverKind: ProviderDriverKind.make("grok"),
   },
-  pi: {
-    label: "Custom models (pi)",
-    color: "#6d8ee8",
-    driverKind: ProviderDriverKind.make("pi"),
-  },
   cursor: { label: "Cursor", color: "#8b8b8b", driverKind: ProviderDriverKind.make("cursor") },
   opencode: {
     label: "OpenCode",
@@ -45,6 +40,11 @@ export const PROVIDER_PRESENTATION = {
     label: "Antigravity",
     color: "#8c7bd1",
     driverKind: ProviderDriverKind.make("antigravity"),
+  },
+  pi: {
+    label: "Pi",
+    color: "#4d9f8a",
+    driverKind: ProviderDriverKind.make("pi"),
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 

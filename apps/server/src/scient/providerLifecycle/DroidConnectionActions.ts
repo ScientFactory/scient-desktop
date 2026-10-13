@@ -20,7 +20,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import type {
   ProviderConnectionActions,
   ProviderConnectionActionFailure,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   buildDroidAcpSpawnInput,
   droidAccountCapabilitiesFromInitializeResult,

@@ -44,7 +44,14 @@ When setup completes, the model list mounts and subscribes to its own current me
 Provider-specific views and server-advertised actions remain the owners of the next step.
 Scient Agent's composer model connection dialog reuses its Model accounts view alongside Custom
 models. Agents without advertised account support retain their existing model connection path.
-Opening the picker or dialog does not start installation or authentication.
+Opening the picker or dialog does not start installation or authentication. Setup portals retain
+the composer floating-layer identity, and their forms do not submit the surrounding composer. While a model
+connection dialog is open, its picker card stays mounted but hidden and inert. Only the owned
+dialog accepts scrolling; background scrolling and picker shortcuts remain blocked. Provider
+rechecks and newly ready catalogs retain that dialog and its operation-scoped draft until it
+closes. Nested model editors return keyboard focus to their opener or the retained connection dialog. Closing
+the connection dialog returns to the current setup or catalog without cancelling sign-in. Environment
+and instance changes reset local dialog state instead of carrying a draft to another runtime.
 
 ## Ownership boundaries
 
@@ -93,6 +100,21 @@ qualified update catalog, repair/remove planning, supervision, and compact UI.
 Legacy `agy` remains a separate compatibility path for existing conversations,
 explicit legacy executables, and hosts without an official ACP artifact. See
 [the provider architecture](./providers.md#antigravity-ownership-and-protocol) for these boundaries.
+
+Its explicit auth controller owns one five-minute deadline, including helper
+preparation, native startup, link capture, and verification. The bridge waits
+for a browser link or terminal auth state without a separate startup cutoff;
+closing the attempt scope cancels the owned flow. Pre-browser errors expose
+only fixed, allowlisted runtime-resolution, helper-preparation, runtime-startup,
+or link-capture messages; unknown causes remain generic. A failed current attempt
+records its authorization phase, known error type, and available numeric exit or
+allowlisted system error code. The diagnostic never retains native output, paths,
+credentials, or OAuth URLs, and logging does not determine the attempt's outcome.
+The lifecycle handoff accepts the same 16,384-character authorization URL bound
+as native provider auth without truncating the link. Browser-opening errors in the compact
+desktop/web view belong to the provider instance, operation, and opening
+invocation. They are visible only while waiting for browser authorization,
+not after verification begins.
 
 ## Independent lifecycle state
 
@@ -159,7 +181,7 @@ an opener; completion is observed through the canonical server provider snapshot
 The additive lifecycle contract is defined in
 [`providerLifecycle.ts`](../../packages/contracts/src/providerLifecycle.ts). A materialized provider
 instance may expose two optional seams through
-[`ProviderDriver.ts`](../../apps/server/src/provider/ProviderDriver.ts):
+[`ScientProviderInstanceSeams.ts`](../../apps/server/src/provider/ScientProviderInstanceSeams.ts):
 
 - `connectionActions` starts and cancels official provider account flows and disconnects when the
   provider can truthfully do so;
@@ -297,7 +319,9 @@ The app ships both provider packaging policy and a last-known-good release catal
 catalog service may fetch a newer qualified catalog from the generated
 `automation/managed-runtime-catalog-v1` branch when provider update checks are enabled. It starts an
 immediate non-blocking refresh, revalidates successful results at most hourly using HTTP ETags, and
-retries a failed fetch after five minutes. Re-enabling update checks also triggers a refresh. Memory
+retries a failed fetch after five minutes. The first permitted refresh in each process fetches the
+complete catalog; ETags remain in memory because an older app may have filtered entries out of its
+disk cache. Re-enabling update checks also triggers a refresh. Memory
 and an atomic disk cache keep provider status available while offline. An explicit Install, Update,
 or Repair click may wait for the same TTL-gated refresh. The Settings **Refresh providers** action
 bypasses those automatic success/retry windows while still honoring the update-check setting, request

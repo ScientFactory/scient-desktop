@@ -3,6 +3,7 @@ import {
   CheckpointId,
   CheckpointScopeId,
   CommandId,
+  NodeId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -96,7 +97,7 @@ function makeExecutorLayer(input: {
         interruptPendingStart:
           input.pendingInterrupt ??
           (() => Effect.die("Pending-start interruption is not used in this fixture.")),
-        interrupt: input.interrupt ?? (() => Effect.void),
+        interrupt: input.interrupt ?? (() => Effect.succeed("adapter-stopped" as const)),
         steer: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
@@ -1051,5 +1052,36 @@ it.effect("keeps retrying a file release past the attempt budget while its files
     );
     assert.equal(yield* Ref.get(retries), 1);
     assert.equal(yield* Ref.get(failures), 0);
+  }),
+);
+
+it.effect("a native subagent stop does not settle its owner's background work", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layer = makeExecutorLayer({
+      events,
+      interrupt: (input) => {
+        assert.equal(input.subagent?.nativeTaskId, "native-task");
+        return Ref.update(events, (current) => [...current, "stop-child"]).pipe(
+          Effect.as("adapter-stopped" as const),
+        );
+      },
+      threads: { dispatch: () => Effect.die("The owner's background work must stay running") },
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor.execute({
+        ...restartEffect(now, { type: "detach" }),
+        request: {
+          type: "provider-turn.interrupt",
+          providerSessionId: oldSessionId,
+          providerThreadId,
+          providerTurnId,
+          subagent: { id: NodeId.make("subagent"), nativeTaskId: "native-task" },
+        },
+      });
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(yield* Ref.get(events), ["stop-child"]);
   }),
 );

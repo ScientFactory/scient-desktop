@@ -23,7 +23,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { ConversationImportAttemptBinding } from "./ConversationImporter.ts";
 import { ConversationImportIds } from "./conversationImportPlan.ts";
 

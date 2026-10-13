@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { RunId, type ChatAttachment } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as ServerConfig from "../../config.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   testLayer,
   THREAD_ID,
@@ -187,10 +187,10 @@ describe("PiAdapterV2", () => {
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
         const { runtime, takeEvent } = yield* openRuntime(fake);
-        const config = yield* ServerConfig.ServerConfig;
+        const host = yield* ProviderHost.ProviderHost;
         const fs = yield* FileSystem.FileSystem;
-        yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
-        yield* fs.writeFileString(`${config.attachmentsDir}/pi-image.png`, "image");
+        yield* fs.makeDirectory(host.paths.attachmentsDir, { recursive: true });
+        yield* fs.writeFileString(`${host.paths.attachmentsDir}/pi-image`, "image");
         const attachment: ChatAttachment = {
           type: "image",
           id: "pi-image",

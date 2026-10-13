@@ -1,11 +1,10 @@
 import { WS_METHODS } from "@t3tools/contracts";
+import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import {
-  createEnvironmentRpcCommand,
-  createEnvironmentRpcSubscriptionAtomFamily,
-} from "./runtime.ts";
+import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
 
 /**
  * Document PDF export is two commands: capture a saved document on the server,
@@ -18,9 +17,14 @@ export function createScientDocumentPdfEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
-    hostRequests: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    hostRequests: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:scient-document-pdf:host-requests",
-      tag: WS_METHODS.documentsHostConnect,
+      // The server ends the stream when it evicts an unresponsive host; reconnect to
+      // re-register. An atom publishes only a chunk's last value, so keep one event each.
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.documentsHostConnect>) =>
+        subscribe(WS_METHODS.documentsHostConnect, input, {
+          resubscribeOnCompleteAfter: "1 second",
+        }).pipe(Stream.rechunk(1)),
       idleTtlMs: 0,
     }),
     respondToHost: createEnvironmentRpcCommand(runtime, {

@@ -34,7 +34,6 @@ describe("buildEnableProviderPatch", () => {
   it("enables an existing instance and removes a conflicting legacy flag", () => {
     const patch = buildEnableProviderPatch(
       {
-        providers: DEFAULT_SERVER_SETTINGS.providers,
         providerInstances: {
           [codex.instanceId]: {
             driver: codex.driver,
@@ -53,28 +52,14 @@ describe("buildEnableProviderPatch", () => {
     });
   });
 
-  it("promotes a default legacy provider without losing its configuration", () => {
-    const patch = buildEnableProviderPatch(
-      {
-        providers: {
-          ...DEFAULT_SERVER_SETTINGS.providers,
-          codex: {
-            ...DEFAULT_SERVER_SETTINGS.providers.codex,
-            enabled: false,
-            binaryPath: "/opt/codex",
-          },
-        },
-        providerInstances: {},
-      },
-      codex,
-    );
+  it("enables an unconfigured default instance through the instance envelope", () => {
+    const patch = buildEnableProviderPatch(DEFAULT_SERVER_SETTINGS, codex);
 
     expect(patch?.providerInstances?.[codex.instanceId]).toEqual({
       driver: codex.driver,
       enabled: true,
-      config: expect.objectContaining({ binaryPath: "/opt/codex" }),
     });
-    expect(patch?.providers?.codex).toEqual(DEFAULT_SERVER_SETTINGS.providers.codex);
+    expect(patch).not.toHaveProperty("providers");
   });
 
   it("does not invent configuration for an unknown custom instance", () => {

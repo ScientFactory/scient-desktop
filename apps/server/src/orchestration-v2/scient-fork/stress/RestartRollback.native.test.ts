@@ -14,9 +14,9 @@ import { PROVIDER_ID } from "../../../scient/conversationImport/conversationImpo
 import { ProjectionStoreV2, layer as projectionLayer } from "../../ProjectionStore.ts";
 import { ProjectionMaintenanceV2, layer as maintenanceLayer } from "../../ProjectionMaintenance.ts";
 import { OrchestratorV2 } from "../../Orchestrator.ts";
-import { AcpProviderCapabilitiesV2 } from "../../Adapters/AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import { makeNativeSessionAdapterV2 } from "../../Adapters/NativeSessionAdapterV2.ts";
-import { IdAllocatorV2, layer as allocatorLayer } from "../../IdAllocator.ts";
+import { IdAllocatorV2, layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
 import { layerFromAdapters } from "../../ProviderAdapterRegistry.ts";
 import { fork, inertRegistry, remove, runtimeOptions, seed } from "./stressHarness.ts";
 import { rollbackToBaseline } from "./rollbackFixture.ts";
@@ -33,7 +33,7 @@ it.live(
         );
         const runtime = nativeImportRuntimeTestLayer(inertRegistry, {
           ...runtimeOptions,
-          layerDatabase: persistence,
+          databaseLayer: persistence,
         });
         const frozen = yield* Effect.scoped(
           Effect.gen(function* () {

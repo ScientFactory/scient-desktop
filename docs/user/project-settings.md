@@ -27,6 +27,14 @@ again.
 Providers and diagnostics are per machine: they show one environment at a time, the primary
 one until you pick another. Every other setting fans out to the selection.
 
+With a project selected, a provider's switch in **Settings → Providers** turns it on or off for
+that project only, in either direction: a provider off on the machine can be used in one project,
+and one on everywhere can be kept out of another. That project's model pickers follow the switch,
+and no new turn there can start on a provider it turned off, including queued messages and
+follow-ups from delegated tasks. A turn already running when the switch flips finishes. A delegated
+task's result still lands in its parent thread, which sees it on its next turn. Reset returns the project to the
+machine's setting. Every other provider setting stays per machine.
+
 On mobile, open **Settings** and use the filter in its header to choose connected environments
 and a project. The filter stays available in server-setting pages. With **All projects** selected,
 the **Server settings** categories and auto-settle controls in **Thread behavior** edit the
@@ -37,6 +45,10 @@ connected checkouts and see where those checkouts live.
 Settings that are environment-wide stay read-only while a project is selected. When selected
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
+
+When switching Settings pages, a short **Loading settings…** message appears if the page needs
+more time to open. If it fails to open, use **Reload app** to retry loading it.
+Choosing another provider or scheduled task within the same scope keeps the page in place.
 
 ## Worktree branch names
 
@@ -153,6 +165,9 @@ Enable **Delete worktrees with deleted threads** to remove safe worktrees after 
 thread is deleted, including archived threads and worktrees left by earlier deletions. The
 server waits for sessions and terminals to stop and retries skipped worktrees after restart.
 Existing prompts for deleting a worktree manually remain available when this policy is off.
+
+Choose **Delete now** to run the enabled rules immediately. The latest results show which
+worktrees were removed or kept and why, plus any failures.
 
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.

@@ -22,7 +22,7 @@ import {
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
 export interface AntigravityAcpRuntimeInput extends Omit<
@@ -102,7 +102,6 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
-// SCIENT-FORK:START
 function antigravityModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {
@@ -130,7 +129,6 @@ function resolveAntigravityModel(input: {
     ? input.defaultModel
     : current;
 }
-// SCIENT-FORK:END
 
 /** Never replace a saved selection with the default returned by a cold resume. */
 export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpModelSelection")(

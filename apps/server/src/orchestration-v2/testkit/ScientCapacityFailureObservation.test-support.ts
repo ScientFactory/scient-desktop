@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeFailure = Schema.decodeUnknownSync(OrchestrationV2ProviderFailure);

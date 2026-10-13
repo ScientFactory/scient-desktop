@@ -1,17 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Standalone host compiler invocation, no server runtime.
-import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodePath from "node:path";
 import { buildFileExchange } from "./lib/scient-file-exchange-build.ts";
 
 if (
-  HostProcessPlatform.defaultValue() !== "darwin" &&
-  HostProcessPlatform.defaultValue() !== "linux"
+  HostProcess.Platform.defaultValue() !== "darwin" &&
+  HostProcess.Platform.defaultValue() !== "linux"
 ) {
   throw new Error("File exchange is available on macOS and Linux only.");
 }
 const repoRoot = NodePath.resolve(import.meta.dirname, "..");
-const platform = HostProcessPlatform.defaultValue();
-const arch = HostProcessArchitecture.defaultValue();
+const platform = HostProcess.Platform.defaultValue();
+const arch = HostProcess.Architecture.defaultValue();
 if ((platform !== "darwin" && platform !== "linux") || (arch !== "arm64" && arch !== "x64")) {
   throw new Error("File exchange requires a macOS/Linux arm64/x64 build host.");
 }

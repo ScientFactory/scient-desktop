@@ -13,14 +13,14 @@ import { MANAGED_RUNTIME_CATALOG_PROVIDERS } from "@scientfactory/provider-runti
 import { CodexDriver } from "../../provider/Drivers/CodexDriver.ts";
 import { ClaudeDriver } from "../../provider/Drivers/ClaudeDriver.ts";
 import { AntigravityDriver } from "../../provider/Drivers/AntigravityDriver.ts";
-import { CursorDriver } from "../../provider/Drivers/CursorDriver.ts";
+import { CursorDriver } from "../../provider/Drivers/CursorDriverComposition.ts";
 import { DroidDriver } from "../../provider/Drivers/DroidDriver.ts";
-import { GrokDriver } from "../../provider/Drivers/GrokDriver.ts";
+import { GrokDriver } from "../../provider/AppProviderDriverComposition.ts";
 import { OmpDriver } from "../../provider/Drivers/OmpDriver.ts";
-import { PiDriver } from "../../provider/Drivers/PiDriver.ts";
+import { PiDriver } from "../../provider/PiDriverComposition.ts";
 import { ScientAgentDriver } from "../../provider/Drivers/ScientAgentDriver.ts";
 
-import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
+import type { ProviderManagedRuntimeActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import {

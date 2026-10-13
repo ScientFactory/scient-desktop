@@ -142,7 +142,8 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "    });",
           "  }",
           "});",
-          "setInterval(() => {}, 1_000);",
+          "const keepAlive = setInterval(() => {}, 1_000);",
+          'lines.on("close", () => clearInterval(keepAlive));',
           "",
         ].join("\n"),
       );
@@ -162,6 +163,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
         email: "dev@example.com",
         subscriptionType: "pro",
         tokenSource: "oauth",
+        apiKeySource: undefined,
         apiProvider: undefined,
         slashCommands: [
           {

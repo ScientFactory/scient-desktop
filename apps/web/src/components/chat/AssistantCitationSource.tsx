@@ -7,6 +7,7 @@ import {
 } from "~/lib/assistantTextSelection";
 import { toastManager } from "../ui/toast";
 import { AssistantCitationContext } from "./assistantCitationContext";
+import { observeResize } from "~/lib/observeResize";
 
 const CITATION_PULSE_DURATION_MS = 650;
 // The second pulse settles into a held highlight so late glances still find the quote.
@@ -30,6 +31,7 @@ export function observeAssistantCitationCommentSource({
   onUnavailable: () => void;
 }): () => void {
   const { source, range, viewport } = anchor;
+  const releaseSelection = anchor.retainSelection?.();
   const registry = typeof CSS !== "undefined" ? CSS.highlights : undefined;
   let highlight: Highlight | null = null;
   let stopped = false;
@@ -41,6 +43,7 @@ export function observeAssistantCitationCommentSource({
   const dispose = () => {
     if (stopped) return;
     stopped = true;
+    releaseSelection?.();
     observer.disconnect();
     if (!highlight) return;
     highlight.delete(range);
@@ -57,6 +60,13 @@ export function observeAssistantCitationCommentSource({
     if (!source.isConnected || !viewport.contains(source)) {
       unavailable();
       return false;
+    }
+    if (anchor.resolveRects) {
+      if (!anchor.resolveRects().length) {
+        unavailable();
+        return false;
+      }
+      return true;
     }
     if (
       sourceChanged ||
@@ -80,7 +90,7 @@ export function observeAssistantCitationCommentSource({
   };
 
   if (!validate(false)) return dispose;
-  if (typeof Highlight !== "undefined" && registry) {
+  if (!anchor.resolveRects && typeof Highlight !== "undefined" && registry) {
     const existing = registry.get(COMMENT_HIGHLIGHT_NAME);
     highlight = existing ?? new Highlight();
     highlight.add(range);
@@ -308,9 +318,7 @@ export function observeAssistantCitationSource({
     }
   });
   observer.observe(scrollNode, { childList: true, characterData: true, subtree: true });
-  const resizeObserver = new ResizeObserver(schedule);
-  resizeObserver.observe(root);
-  resizeObserver.observe(scrollNode);
+  const stopObservingResize = observeResize([root, scrollNode], schedule);
   const state = list.getState();
   const unsubscribe = [
     state.listenToPosition(itemKey, schedule),
@@ -339,7 +347,7 @@ export function observeAssistantCitationSource({
     pulseAnimation?.cancel();
     if (frame !== null) cancelAnimationFrame(frame);
     observer.disconnect();
-    resizeObserver.disconnect();
+    stopObservingResize();
     for (const stop of unsubscribe) stop();
     if (activation.cancelScroll === cancelScroll) delete activation.cancelScroll;
     clear();

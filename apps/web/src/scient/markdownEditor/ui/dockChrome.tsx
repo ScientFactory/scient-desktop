@@ -24,6 +24,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
 import type { ScientMarkdownShortcutPresentation } from "../shortcuts";
@@ -375,13 +376,11 @@ export function DockOverflowRow(props: {
 
   useEffect(() => {
     const dock = dockRef.current;
-    if (!dock || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(recompute);
-    observer.observe(dock);
-    dock
-      .querySelectorAll<HTMLElement>("[data-dock-group], [data-dock-reserved]")
-      .forEach((element) => observer.observe(element));
-    return () => observer.disconnect();
+    if (!dock) return;
+    return observeResize(
+      [dock, ...dock.querySelectorAll<HTMLElement>("[data-dock-group], [data-dock-reserved]")],
+      recompute,
+    );
   }, [layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey]);
 
   return (

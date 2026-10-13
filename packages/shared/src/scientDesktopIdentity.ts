@@ -10,6 +10,7 @@ export type DesktopUpdateChannelPolicy = "stable-only" | "user-selectable";
  */
 export const SCIENT_DESKTOP_IDENTITY = {
   baseName: "Scient",
+  cliCommandName: "scient",
   developmentName: "Scient (Dev)",
   appId: "com.scientfactory.scient",
   developmentAppId: "com.scientfactory.scient.next.dev",
@@ -42,7 +43,7 @@ export const SCIENT_DESKTOP_IDENTITY = {
   projectlessThreadsEnabled: true,
   createProjectFromNameEnabled: false,
   // SCIENT-FORK:END
-  desktopUpdateChannelPolicy: "stable-only" as DesktopUpdateChannelPolicy,
+  desktopUpdateChannelPolicy: "user-selectable" as DesktopUpdateChannelPolicy,
   outboundTelemetryEnabled: false,
 } as const;
 

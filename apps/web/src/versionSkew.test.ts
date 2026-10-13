@@ -101,6 +101,18 @@ describe("versionSkew", () => {
     expect(resolveVersionMismatch("9.9.9")).toBeNull();
   });
 
+  it("compares Beta builds fully and resolves Beta server packages in the isolated feed", () => {
+    branding.APP_VERSION = "0.6.23-beta.20261010.2";
+    expect(resolveVersionMismatch("0.6.23-beta.20261010.1")?.serverVersion).toBe(
+      "0.6.23-beta.20261010.1",
+    );
+    expect(resolveVersionMismatch("0.6.23-beta.20261010.2")).toBeNull();
+    expect(resolveVersionMismatch("0.6.23")).toBeNull();
+    expect(manualServerUpdateCommand("0.6.23-beta.20261010.2")).toContain(
+      "/scient-desktop-beta/releases/download/v0.6.23-beta.20261010.2/",
+    );
+  });
+
   it("does not warn when a nightly and a stable build share a core version", () => {
     expect(resolveVersionMismatch("0.0.34-nightly.20260818.1124")).toBeNull();
 

@@ -58,14 +58,24 @@ export function openFileCitation(
       ? citation.path
       : `${root}/${citation.path}`;
   runAfterPendingSave(`file:${path}`, () => {
-    useRightPanelStore
-      .getState()
-      .openFile(
-        { environmentId: citation.environmentId, threadId: citation.threadId },
-        path,
-        undefined,
-        sameWorkspace ? { fileCitation: citation } : undefined,
-      );
+    useRightPanelStore.getState().openFile(
+      { environmentId: citation.environmentId, threadId: citation.threadId },
+      path,
+      citation.sourceSelection ? citation.startLine : undefined,
+      sameWorkspace
+        ? {
+            fileCitation: citation,
+            ...(citation.sourceSelection
+              ? { latexPreviewMode: "source" as const, htmlPreviewMode: "source" as const }
+              : {}),
+            ...(citation.sourceSelection && citation.latex
+              ? {
+                  latexRootRelativePath: citation.latex.rootRelativePath,
+                }
+              : {}),
+          }
+        : undefined,
+    );
     if (!sameWorkspace)
       toastManager.add({
         type: "info",

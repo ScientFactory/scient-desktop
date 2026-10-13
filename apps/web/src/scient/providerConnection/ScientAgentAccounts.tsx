@@ -275,7 +275,7 @@ export function ScientAgentAccounts(props: {
             type="search"
             value={query}
           />
-          <div className="max-h-64 overflow-y-auto rounded-lg border">
+          <div className="max-h-64 overflow-y-auto overscroll-contain rounded-lg border">
             <AccountGroup
               accounts={sections.yours}
               busy={busy}

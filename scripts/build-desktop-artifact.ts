@@ -12,19 +12,25 @@ import {
 import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
+// plist is CommonJS; Node cannot load its named exports from an ES module.
+import Plist from "plist";
 
 import {
   createPackageWithOptions,
   extractAll,
   getRawHeader,
+  listPackage,
   statFile,
   type DirectoryRecord,
 } from "@electron/asar";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
-import { isExactScientReleaseVersion } from "@t3tools/shared/scientRelease";
+import {
+  isExactScientReleaseVersion,
+  scientDesktopUpdateFeed,
+} from "@t3tools/shared/scientRelease";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import rootPackageJson from "../package.json" with { type: "json" };
@@ -43,6 +49,7 @@ import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
+import { analyzeWindowsPayloadInventory, windowsNativeIgnoreGlobs } from "./lib/windows-payload.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import {
   buildConversationPreview,
@@ -105,9 +112,27 @@ const StageWorkspaceConfig = Schema.Struct({
   allowBuilds: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
   patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  packageExtensions: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        peerDependenciesMeta: Schema.Record(
+          Schema.String,
+          Schema.Struct({ optional: Schema.Boolean }),
+        ),
+      }),
+    ),
+  ),
   nodeLinker: Schema.optional(Schema.Literals(["hoisted"])),
 });
 type StageWorkspaceConfig = typeof StageWorkspaceConfig.Type;
+
+// electron-webauthn declares TypeScript as a peer only for its typings. pnpm
+// auto-installs missing peers, which would ship a compiler inside the app.
+const STAGE_PACKAGE_EXTENSIONS = {
+  "electron-webauthn": { peerDependenciesMeta: { typescript: { optional: true } } },
+  "@electron-webauthn/macos": { peerDependenciesMeta: { typescript: { optional: true } } },
+} as const;
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
@@ -548,7 +573,7 @@ export class DesktopIconSourceMissingError extends Schema.TaggedError<DesktopIco
 export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedError<DesktopDmgBackgroundSourceMissingError>()(
   "DesktopDmgBackgroundSourceMissingError",
   {
-    channel: Schema.Literals(["latest", "nightly"]),
+    channel: Schema.Literals(["latest", "beta", "nightly"]),
     sourcePath: Schema.String,
   },
 ) {
@@ -785,6 +810,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "wsl-runtime-missing",
   "wsl-runtime-invalid",
   "file-limit-exceeded",
+  "component-inventory-invalid",
 ]);
 
 export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<WindowsPackagedPayloadValidationError>()(
@@ -793,6 +819,8 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
     reason: WindowsPackagedPayloadValidationReason,
     packagedAppDir: Schema.String,
     missingFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+    unexpectedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+    breakdown: Schema.optionalKey(Schema.String),
     fileCount: Schema.optionalKey(Schema.Int),
     fileLimit: Schema.optionalKey(Schema.Int),
     cause: Schema.optionalKey(Schema.Defect()),
@@ -800,7 +828,10 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
 ) {
   override get message(): string {
     if (this.reason === "file-limit-exceeded") {
-      return `Windows packaged payload contains ${String(this.fileCount)} files; expected at most ${String(this.fileLimit)}.`;
+      return `Windows packaged payload contains ${String(this.fileCount)} files; expected at most ${String(this.fileLimit)} (${this.breakdown ?? "no inventory breakdown"}).`;
+    }
+    if (this.reason === "component-inventory-invalid") {
+      return `Windows payload inventory is invalid (${this.breakdown ?? ""}); missing: ${(this.missingFiles ?? []).join(", ")}; unexpected: ${(this.unexpectedFiles ?? []).join(", ")}.`;
     }
     if (this.reason === "unpacked-native-missing") {
       return `Windows server sidecar is missing ${String(this.missingFiles?.length ?? 0)} unpacked native files.`;
@@ -925,7 +956,7 @@ const resolveGitCommitHash = Effect.fn("resolveGitCommitHash")(function* (repoRo
 const resolvePythonForNodeGyp = Effect.fn("resolvePythonForNodeGyp")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
   const env = yield* Config.all({
     configuredPython: Config.String("npm_config_python").pipe(
       Config.orElse(() => Config.String("PYTHON")),
@@ -1004,6 +1035,7 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
+  readonly t3codeWebAuthn?: MacWebAuthnEntitlements;
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
@@ -1040,6 +1072,14 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!**/node_modules/@cursor/sdk-*/**/*",
   "!apps/desktop/prod-resources/cursor-sdk",
   "!apps/desktop/prod-resources/cursor-sdk/**/*",
+  // Packaged consumers use extraResources, not these staging copies. Keep
+  // individual exclusions so prod-resources/icon.png remains available.
+  "!apps/desktop/prod-resources/resource-monitor",
+  "!apps/desktop/prod-resources/resource-monitor/**/*",
+  "!apps/desktop/prod-resources/whisper-runtime",
+  "!apps/desktop/prod-resources/whisper-runtime/**/*",
+  "!apps/desktop/prod-resources/synctex-runtime",
+  "!apps/desktop/prod-resources/synctex-runtime/**/*",
   // Scient always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
@@ -1071,6 +1111,10 @@ export const MAC_FILE_EXCLUSIONS = [
 export const LINUX_FILE_EXCLUSIONS = [
   ...MAC_FILE_EXCLUSIONS,
   "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
+  "!apps/desktop/prod-resources/kde-capture",
+  "!apps/desktop/prod-resources/kde-capture/**/*",
+  "!apps/desktop/prod-resources/hyprland-capture",
+  "!apps/desktop/prod-resources/hyprland-capture/**/*",
 ] as const;
 
 // Scient's packaged runtimes are emitted once at Electron's top-level
@@ -1123,6 +1167,14 @@ export const WINDOWS_NATIVE_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
 // Python reads these scripts directly, including MATLAB's shared protocol import.
 export const COMPUTE_BRIDGE_ASAR_UNPACK_DIR = "apps/server/dist/scient-compute-bridge";
+// The server sidecar unpacks .node files separately, keeping only Windows ones.
+export const WINDOWS_SERVER_ASAR_UNPACK_GLOBS = [
+  "**/*.dll",
+  "**/*.exe",
+  "**/*.so",
+  "**/*.so.*",
+  "**/*.dylib",
+] as const;
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
@@ -1138,29 +1190,13 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
 ] as const;
 
 export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type) {
-  const unusedArch = arch === "arm64" ? "x64" : "arm64";
-  const unusedPrebuild = `**/node_modules/node-pty/prebuilds/win32-${unusedArch}`;
-  const unusedConpty = `**/node_modules/node-pty/third_party/conpty/*/win10-${unusedArch}`;
-
   return [
     ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
-    unusedPrebuild,
-    `${unusedPrebuild}/**`,
-    unusedConpty,
-    `${unusedConpty}/**`,
+    ...windowsNativeIgnoreGlobs(arch === "universal" ? "x64" : arch, true),
   ];
 }
 
 export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 80;
-/**
- * Loose files the Scient voice runtime adds to the Windows payload on top of
- * the inherited T3 inventory the limit above was sized for: whisper-server.exe,
- * 14 DLLs (11 ggml variants, whisper, parakeet, SDL2), LICENSE.whisper.cpp,
- * and provenance.json. Counted from the staged v1.9.1 win/x64 runtime; a
- * whisper release that ships a different inventory should trip the payload
- * validation and get this number re-counted, not estimated.
- */
-export const SCIENT_VOICE_RUNTIME_PAYLOAD_FILES = 17;
 export const WINDOWS_SERVER_RESOURCE_SOURCE_DIR = "apps/desktop/prod-resources/windows-server";
 export const WINDOWS_SERVER_EXTRA_RESOURCES = [
   {
@@ -1201,6 +1237,11 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/@ff-labs/fff-bin-win32-",
   "node_modules/@yuuang/ffi-rs-win32-",
   "node_modules/@msgpackr-extract/msgpackr-extract-win32-",
+  // These loaders select separate Linux packages when the WSL Node host runs.
+  // Exclude only their Windows variants from this tarball, not the sidecar.
+  "node_modules/@napi-rs/canvas-win32-",
+  "node_modules/@napi-rs/keyring-win32-",
+  "node_modules/@cursor/sdk-win32-",
 ] as const;
 // A packaged WSL runtime is only usable when a Linux pty.node is bundled with
 // it, so this one predicate decides both whether the archive is built and
@@ -1440,12 +1481,80 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
+/**
+ * Passkey entitlements for the in-app browser. Each is granted only when the
+ * provisioning profile authorizes it: macOS refuses to launch an app that
+ * claims a restricted entitlement its embedded profile does not carry.
+ */
+export interface MacWebAuthnEntitlements {
+  /** Keychain group for Electron's Touch ID passkeys. */
+  readonly touchIdKeychainAccessGroup: string | undefined;
+  /** Apple's managed browser entitlement, which allows passkeys for any site. */
+  readonly browserPasskeys: boolean;
+}
+
+const BROWSER_PASSKEYS_ENTITLEMENT = "com.apple.developer.web-browser.public-key-credential";
+
+const ProvisioningProfilePlist = Schema.Struct({
+  Entitlements: Schema.Struct({
+    "keychain-access-groups": Schema.optional(Schema.Array(Schema.String)),
+    [BROWSER_PASSKEYS_ENTITLEMENT]: Schema.optional(Schema.Boolean),
+  }),
+});
+const isProvisioningProfilePlist = Schema.is(ProvisioningProfilePlist);
+
+/**
+ * Reads the Entitlements dict of the XML plist a provisioning profile wraps in
+ * its CMS envelope. Anything unreadable grants nothing.
+ */
+const readProfileEntitlements = (provisioningProfile: string) => {
+  const start = provisioningProfile.indexOf("<?xml");
+  const end = provisioningProfile.indexOf("</plist>", start);
+  if (start === -1 || end === -1) return undefined;
+  try {
+    const profile: unknown = Plist.parse(provisioningProfile.slice(start, end + "</plist>".length));
+    return isProvisioningProfilePlist(profile) ? profile.Entitlements : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export function resolveMacWebAuthnEntitlements(
+  provisioningProfile: string,
+  configuration: Pick<MacPasskeySigningConfiguration, "appId" | "teamId">,
+): MacWebAuthnEntitlements {
+  const entitlements = readProfileEntitlements(provisioningProfile);
+  const keychainAccessGroup = `${configuration.teamId}.${configuration.appId}.webauthn`;
+  const keychainGroupAuthorized = (entitlements?.["keychain-access-groups"] ?? []).some((group) =>
+    group.endsWith("*")
+      ? keychainAccessGroup.startsWith(group.slice(0, -1))
+      : group === keychainAccessGroup,
+  );
+  return {
+    touchIdKeychainAccessGroup: keychainGroupAuthorized ? keychainAccessGroup : undefined,
+    browserPasskeys: entitlements?.[BROWSER_PASSKEYS_ENTITLEMENT] === true,
+  };
+}
+
 export function renderMacPasskeyEntitlements(
   configuration: MacPasskeySigningConfiguration,
+  webAuthn: MacWebAuthnEntitlements,
 ): string {
   const associatedDomains = configuration.rpDomains
     .map((domain) => `      <string>webcredentials:${escapeXml(domain)}</string>`)
     .join("\n");
+  const keychainAccessGroups = webAuthn.touchIdKeychainAccessGroup
+    ? `
+    <key>keychain-access-groups</key>
+    <array>
+      <string>${escapeXml(webAuthn.touchIdKeychainAccessGroup)}</string>
+    </array>`
+    : "";
+  const browserPasskeys = webAuthn.browserPasskeys
+    ? `
+    <key>${BROWSER_PASSKEYS_ENTITLEMENT}</key>
+    <true/>`
+    : "";
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1458,7 +1567,7 @@ export function renderMacPasskeyEntitlements(
     <key>com.apple.developer.associated-domains</key>
     <array>
 ${associatedDomains}
-    </array>
+    </array>${keychainAccessGroups}${browserPasskeys}
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
@@ -1734,6 +1843,7 @@ export function createStageWorkspaceConfig(input: {
       : {}),
     ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
     ...(linuxServerBackend ? { nodeLinker: "hoisted" as const } : {}),
+    packageExtensions: STAGE_PACKAGE_EXTENSIONS,
   };
 }
 
@@ -1828,7 +1938,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const path = yield* Path.Path;
   const repoRoot = yield* RepoRoot;
   const env = yield* BuildEnvConfig;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
 
   const platform = mergeOptions(
     input.platform,
@@ -2522,7 +2632,7 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
   // silently. `universal` is a mac-only arch the option type still admits;
   // the helper script rejects it, so it maps to the concrete x64 the Linux
   // resource monitor uses for the same request.
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
   if (hostPlatform !== "linux") {
     return yield* new LinuxBrowserSecretHostError({ hostPlatform });
   }
@@ -2609,12 +2719,13 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
 
 export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(function* (
   stageResourcesDir: string,
-  channel: "latest" | "nightly",
+  channel: "latest" | "beta" | "nightly",
   verbose: boolean,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const sourcePath = path.join(stageResourcesDir, "dmg", `dmg-background-${channel}.svg`);
+  const artworkChannel = channel === "beta" ? "latest" : channel;
+  const sourcePath = path.join(stageResourcesDir, "dmg", `dmg-background-${artworkChannel}.svg`);
   if (!(yield* fs.exists(sourcePath))) {
     return yield* new DesktopDmgBackgroundSourceMissingError({ channel, sourcePath });
   }
@@ -2626,7 +2737,7 @@ export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(
     const targetPath = path.join(
       stageResourcesDir,
       "dmg",
-      `dmg-background-${channel}${output.suffix}.png`,
+      `dmg-background-${artworkChannel}${output.suffix}.png`,
     );
     yield* runCommand(
       ChildProcess.make(
@@ -2795,8 +2906,15 @@ export function resolveServerRuntimeDependencies(
 }
 
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
-  updateChannel: "latest" | "nightly",
+  updateChannel: "latest" | "beta" | "nightly",
 ) {
+  if (updateChannel === "beta") {
+    return {
+      ...scientDesktopUpdateFeed("beta"),
+      releaseType: "prerelease",
+      channel: "beta" as const,
+    };
+  }
   const env = yield* Config.all({
     updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
     githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.option),
@@ -2820,7 +2938,8 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   };
 });
 
-export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
+export function resolveDesktopUpdateChannel(version: string): "latest" | "beta" | "nightly" {
+  if (/-beta\.\d{8}\.\d+$/u.test(version)) return "beta";
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
@@ -2829,7 +2948,9 @@ function isDesktopPreviewVersion(version: string): boolean {
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
-  return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
+  return resolveWebAssetBrandForChannel(
+    resolveDesktopUpdateChannel(version) === "nightly" ? "nightly" : "latest",
+  );
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
@@ -2929,7 +3050,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         : platform === "linux"
           ? LINUX_FILE_EXCLUSIONS
           : []),
-      ...(platform === "win" ? WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS : []),
+      ...(platform === "win"
+        ? [
+            ...WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS,
+            ...windowsNativeIgnoreGlobs(arch === "arm64" ? "arm64" : "x64", false).map(
+              (glob) => `!${glob}`,
+            ),
+          ]
+        : []),
     ],
     directories: {
       buildResources: "apps/desktop/resources",
@@ -2979,13 +3107,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         CFBundleDocumentTypes: macConversationDocumentTypes(),
         UTExportedTypeDeclarations: DESKTOP_MAC_EXPORTED_TYPES,
         // SCIENT-FORK:END
+        NSLocalNetworkUsageDescription:
+          "Scient connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
       },
+      // SCIENT-FORK:START — do not register http(s) or HTML associations while activation is held.
       protocols: [
         {
           name: SCIENT_DESKTOP_IDENTITY.baseName,
           schemes: [SCIENT_DESKTOP_IDENTITY.productionScheme],
         },
       ],
+      // SCIENT-FORK:END
       ...(signed
         ? {
             sign: path.join(repoRoot, "scripts/sign-macos.ts"),
@@ -3009,7 +3141,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // DMG window backgrounds by volume name, so reusing a generic name can
       // make a newly built background look unchanged during testing.
       title: `${resolveDesktopProductName(version)} ${version} Installer`,
-      background: `dmg/dmg-background-${updateChannel}.png`,
+      background: `dmg/dmg-background-${updateChannel === "nightly" ? "nightly" : "latest"}.png`,
       window: {
         width: 640,
         // The DMG backend derives bounds from the image, including Finder's
@@ -3096,6 +3228,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",
+      // Smart App Control validates unpacked native addons independently from
+      // the signed desktop executable. Extend release signing to every native
+      // Windows library that Electron or the server sidecar loads at runtime.
+      signExts: [".node", ".dll"],
       // Resource editing applies the product metadata and icon independently
       // of code signing. Disabling it for local unsigned builds leaves the
       // packaged executable with Electron's stock icon.
@@ -3145,6 +3281,9 @@ export const buildWslRuntimeArchiveArgs = (
 ): ReadonlyArray<string> => [
   "-czf",
   archivePath,
+  // GNU tar and bsdtar match this against nested paths. Leave build maps in
+  // dist for debugging; only omit them from the installed WSL runtime.
+  "--exclude=*.map",
   ...WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.map((prefix) => `--exclude=${prefix}*`),
   ...WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS,
 ];
@@ -3193,11 +3332,33 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
   readonly arch: typeof BuildArch.Type;
 }) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Native addons are unpacked only when they are Windows PE ("MZ") binaries.
+  // Signed builds Authenticode-sign every unpacked .node file, which fails on
+  // the darwin and linux prebuilds some packages (node-pty) ship alongside
+  // their win32 ones. The Windows primary never loads those, so they stay packed.
+  const unpackGlobs: string[] = [...WINDOWS_SERVER_ASAR_UNPACK_GLOBS];
+  for (const entry of yield* fs.readDirectory(input.sourceDir, { recursive: true })) {
+    if (!entry.endsWith(".node")) continue;
+    const addonPath = path.join(input.sourceDir, entry);
+    if ((yield* fs.stat(addonPath)).type !== "File") continue;
+    const bytes = yield* fs.readFile(addonPath);
+    if (bytes[0] !== 0x4d || bytes[1] !== 0x5a) continue;
+    const posixPath = entry.split(path.sep).join("/");
+    // Backslash escapes are path separators to minimatch on Windows.
+    if (/[\\*?[\]{}(),]/.test(posixPath)) {
+      return yield* new WindowsServerSidecarPackError({
+        asarPath: input.asarPath,
+        cause: new Error(`native addon path contains glob syntax: ${posixPath}`),
+      });
+    }
+    unpackGlobs.push(`**/${posixPath}`);
+  }
   yield* Effect.tryPromise({
     try: () =>
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
-        unpack: WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
+        unpack: `{${unpackGlobs.join(",")}}`,
         unpackDir: COMPUTE_BRIDGE_ASAR_UNPACK_DIR,
         // glob 13 (via @electron/asar 4) matches `ignore` relative to `cwd`,
         // not against the absolute paths it crawls, so anchor it at the source.
@@ -3384,6 +3545,90 @@ export const validatePackagedComputeBridges = Effect.fn("validatePackagedCompute
   },
 );
 
+// Inspect the emitted archive and every staged runtime file after packaging
+// (and signing). Signatures may change bytes, so compare presence and mode,
+// rather than demanding equality with the unsigned staging input.
+export const validatePackagedDesktopRuntimeResources = Effect.fn(
+  "validatePackagedDesktopRuntimeResources",
+)(function* (input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly resourcesDir: string;
+  readonly stageResourcesDir: string;
+}) {
+  const path = yield* Path.Path;
+  yield* Effect.tryPromise({
+    try: async () => {
+      const runtimeTrees = [
+        "resource-monitor",
+        "whisper-runtime",
+        "synctex-runtime",
+        ...(input.platform === "linux" ? ["kde-capture", "hyprland-capture"] : []),
+      ];
+      const asarPath = path.join(input.resourcesDir, "app.asar");
+      const members = listPackage(asarPath, { isPack: false }).map((member) =>
+        member.replaceAll("\\", "/").replace(/^\//, ""),
+      );
+      for (const tree of runtimeTrees) {
+        const prefix = `apps/desktop/prod-resources/${tree}`;
+        if (members.some((member) => member === prefix || member.startsWith(`${prefix}/`))) {
+          throw new Error(`Duplicate runtime staging tree in app.asar: ${prefix}`);
+        }
+        const stagedRoot = path.join(input.stageResourcesDir, tree);
+        const entries = await NodeFSP.readdir(stagedRoot, { recursive: true });
+        let fileCount = 0;
+        for (const relative of entries) {
+          const staged = await NodeFSP.stat(path.join(stagedRoot, relative));
+          if (!staged.isFile()) continue;
+          fileCount++;
+          const packagedPath = path.join(input.resourcesDir, tree, relative);
+          const packaged = await NodeFSP.stat(packagedPath);
+          if (!packaged.isFile() || packaged.size === 0) {
+            throw new Error(`Missing or empty external runtime file: ${packagedPath}`);
+          }
+          if (
+            input.platform !== "win" &&
+            (staged.mode & 0o111) !== 0 &&
+            (packaged.mode & 0o111) === 0
+          ) {
+            throw new Error(`External runtime lost executable mode: ${packagedPath}`);
+          }
+        }
+        if (fileCount === 0) throw new Error(`Empty staged runtime: ${stagedRoot}`);
+      }
+      const requiredExecutables = [
+        `resource-monitor/${resourceMonitorExecutableName(input.platform)}`,
+        `whisper-runtime/whisper-server${input.platform === "win" ? ".exe" : ""}`,
+        `synctex-runtime/synctex${input.platform === "win" ? ".exe" : ""}`,
+        ...(input.platform === "linux"
+          ? ["kde-capture/t3-kde-snap-shot", "hyprland-capture/t3-hyprland-snap-shot"]
+          : []),
+      ];
+      for (const relative of requiredExecutables) {
+        const executable = await NodeFSP.stat(path.join(input.resourcesDir, relative));
+        if (
+          !executable.isFile() ||
+          executable.size === 0 ||
+          (input.platform !== "win" && (executable.mode & 0o111) === 0)
+        ) {
+          throw new Error(`Required external runtime is not executable: ${relative}`);
+        }
+      }
+      if (input.platform === "linux") {
+        const icon = statFile(asarPath, path.join("apps", "desktop", "prod-resources", "icon.png"));
+        if (!("size" in icon) || icon.size === 0) {
+          throw new Error("Missing Linux registration icon in app.asar");
+        }
+      }
+    },
+    catch: (cause) =>
+      new BuildCommandFailedError({
+        command: "verify packaged Desktop runtime resources",
+        exitCode: 1,
+        stderrTail: String(cause),
+      }),
+  });
+});
+
 function collectUnpackedAsarFiles(
   directory: DirectoryRecord,
   parentPath = "",
@@ -3400,11 +3645,11 @@ function collectUnpackedAsarFiles(
   return output;
 }
 
-const countPayloadFiles = Effect.fn("desktopArtifact.countPayloadFiles")(function* (root: string) {
+const listPayloadFiles = Effect.fn("desktopArtifact.listPayloadFiles")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const pendingDirectories = [root];
-  let count = 0;
+  const files: string[] = [];
 
   while (pendingDirectories.length > 0) {
     const directory = pendingDirectories.pop();
@@ -3416,12 +3661,12 @@ const countPayloadFiles = Effect.fn("desktopArtifact.countPayloadFiles")(functio
       if (stat.type === "Directory") {
         pendingDirectories.push(entryPath);
       } else if (stat.type === "File") {
-        count += 1;
+        files.push(path.relative(root, entryPath).replaceAll("\\", "/"));
       }
     }
   }
 
-  return count;
+  return files.sort();
 });
 
 export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
@@ -3433,8 +3678,8 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
   readonly targetArch: typeof BuildArch.Type;
   readonly verbose: boolean;
 }) {
-  const hostPlatform = yield* HostProcessPlatform;
-  const hostArchitecture = yield* HostProcessArchitecture;
+  const hostPlatform = yield* HostProcess.Platform;
+  const hostArchitecture = yield* HostProcess.Architecture;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const executablePath = path.join(input.packagedAppDir, input.appExecutableName);
@@ -3451,10 +3696,7 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
   const probeRoot = yield* fs.makeTempDirectoryScoped({
     prefix: "t3code-windows-primary-native-probe-",
   });
-  const fffEntryPath = path.join(
-    input.asarPath,
-    "node_modules/@ff-labs/fff-node/dist/src/index.js",
-  );
+  const fffEntryPath = path.join(input.asarPath, "node_modules/@ff-labs/fff-node/dist/index.js");
   const probeEnv = { ...process.env };
   delete probeEnv.ELECTRON_NO_ASAR;
   delete probeEnv.NODE_OPTIONS;
@@ -3516,11 +3758,12 @@ export const validateWindowsPackagedPayload = Effect.fn(
   readonly targetArch: typeof BuildArch.Type;
   readonly expectWslRuntime?: boolean;
   readonly fileLimit?: number;
+  readonly previewFiles?: readonly string[];
   readonly verbose?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const fileLimit = input.fileLimit ?? WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT;
+  const coreFileLimit = input.fileLimit ?? WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT;
   const isFile = (filePath: string) =>
     fs.stat(filePath).pipe(
       Effect.map((stat) => stat.type === "File"),
@@ -3698,8 +3941,10 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
     const members = parseWslRuntimeArchiveMembers(listing.stdout);
-    const forbiddenMember = members.find((member) =>
-      WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
+    const forbiddenMember = members.find(
+      (member) =>
+        member.endsWith(".map") ||
+        WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
     );
     if (forbiddenMember !== undefined) {
       return yield* invalidWslRuntime(
@@ -3733,13 +3978,31 @@ export const validateWindowsPackagedPayload = Effect.fn(
     }
   }
 
-  const fileCount = yield* countPayloadFiles(packagedAppDir);
+  const payloadFiles = yield* listPayloadFiles(packagedAppDir);
+  const inventory = analyzeWindowsPayloadInventory({
+    files: payloadFiles,
+    arch: input.targetArch === "universal" ? "x64" : input.targetArch,
+    ...(input.previewFiles ? { previewFiles: input.previewFiles } : {}),
+  });
+  yield* Effect.log(`[desktop-artifact] Windows payload inventory: ${inventory.breakdown}.`);
+  if (inventory.missingFiles.length > 0 || inventory.unexpectedFiles.length > 0) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "component-inventory-invalid",
+      packagedAppDir,
+      missingFiles: inventory.missingFiles,
+      unexpectedFiles: inventory.unexpectedFiles,
+      breakdown: inventory.breakdown,
+    });
+  }
+  const fileCount = payloadFiles.length;
+  const fileLimit = coreFileLimit + inventory.allowance;
   if (fileCount > fileLimit) {
     return yield* new WindowsPackagedPayloadValidationError({
       reason: "file-limit-exceeded",
       packagedAppDir,
       fileCount,
       fileLimit,
+      breakdown: inventory.breakdown,
     });
   }
 
@@ -3757,7 +4020,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
   });
 
   yield* Effect.log(
-    `[desktop-artifact] Validated Windows payload (${String(fileCount)} files, ${String(unpackedFiles.length)} sidecar natives).`,
+    `[desktop-artifact] Validated Windows payload (${String(fileCount)} files, ${inventory.breakdown}, ${String(unpackedFiles.length)} sidecar natives).`,
   );
   return { packagedAppDir, fileCount, unpackedFiles } as const;
 });
@@ -3768,7 +4031,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const repoRoot = yield* RepoRoot;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
   if (hostPlatform === "linux" && options.platform === "linux") {
     yield* preflightLinuxDesktopBuild(options.arch);
   }
@@ -4093,7 +4356,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
   const previewChannel: ConversationPreviewChannel = isDesktopPreviewVersion(appVersion)
     ? "preview"
-    : resolveDesktopUpdateChannel(appVersion);
+    : resolveDesktopUpdateChannel(appVersion) === "nightly"
+      ? "nightly"
+      : "latest";
   const nativePreviewStage =
     nativePreviewSetting === "1"
       ? yield* Effect.tryPromise({
@@ -4166,13 +4431,24 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const macEntitlementsPath = macPasskeySigning
     ? path.join(stageAppDir, "entitlements.mac.plist")
     : undefined;
+  let macWebAuthn: MacWebAuthnEntitlements | undefined;
   if (macPasskeySigning && macEntitlementsPath) {
     if (!(yield* fs.exists(macPasskeySigning.provisioningProfilePath))) {
       return yield* new MacProvisioningProfileNotFoundError({
         provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
       });
     }
-    yield* fs.writeFileString(macEntitlementsPath, renderMacPasskeyEntitlements(macPasskeySigning));
+    macWebAuthn = resolveMacWebAuthnEntitlements(
+      yield* fs.readFileString(macPasskeySigning.provisioningProfilePath),
+      macPasskeySigning,
+    );
+    yield* Effect.log(
+      `[desktop-artifact] In-app browser passkeys: Touch ID ${macWebAuthn.touchIdKeychainAccessGroup ? "enabled" : "disabled"}, browser passkeys ${macWebAuthn.browserPasskeys ? "enabled" : "disabled"}.`,
+    );
+    yield* fs.writeFileString(
+      macEntitlementsPath,
+      renderMacPasskeyEntitlements(macPasskeySigning, macWebAuthn),
+    );
   }
 
   // Windows splits dependencies per process: app.asar carries only the
@@ -4202,6 +4478,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
+    // Read by apps/desktop/src/preview/Passkeys.ts; must match the signed entitlements.
+    ...(macWebAuthn ? { t3codeWebAuthn: macWebAuthn } : {}),
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "Scient desktop build",
@@ -4458,25 +4736,21 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // Windows validates and executes the separately packed server
   // sidecar after electron-builder copies it into the final payload.
   if (options.platform === "win") {
-    // Native static dependencies ship their license notices beside the DLL.
-    // Account for the exact staged inventory rather than weakening the general cap.
-    const nativePreviewPayloadFiles = nativePreviewPath
-      ? 1 + (yield* fs.readDirectory(`${nativePreviewPath}.licenses`)).length
-      : 0;
+    // Preview licenses are verified by the native preview staging authority.
+    // Admit only those staged names; an extra emitted file still fails.
+    const previewFiles = nativePreviewPath
+      ? [
+          WINDOWS_PREVIEW_DLL,
+          ...(yield* fs.readDirectory(`${nativePreviewPath}.licenses`)).map(
+            (name) => `licenses/${name}`,
+          ),
+        ]
+      : [];
     const validatedPayload = yield* validateWindowsPackagedPayload({
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
-      // The upstream limit is sized for T3's own payload. Scient additionally
-      // stages the pinned whisper.cpp voice runtime — 17 loose files on
-      // win/x64 (whisper-server.exe, 14 DLLs, LICENSE.whisper.cpp,
-      // provenance.json) — which the cap must admit without loosening the
-      // guard for anything else. A whisper release that changes its file
-      // inventory should fail here and get this allowance re-counted.
-      fileLimit:
-        WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT +
-        SCIENT_VOICE_RUNTIME_PAYLOAD_FILES +
-        nativePreviewPayloadFiles,
+      previewFiles,
       expectWslRuntime: bundlesWslRuntime({
         arch: options.arch,
         prebuildPath: options.wslPrebuild,
@@ -4527,6 +4801,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* validatePackagedComputeBridges(
       path.join(resources, options.platform === "win" ? WINDOWS_SERVER_ASAR_RESOURCE : "app.asar"),
     );
+    yield* validatePackagedDesktopRuntimeResources({
+      platform: options.platform,
+      resourcesDir: resources,
+      stageResourcesDir: stageProdResourcesDir,
+    });
   }
   yield* fs.makeDirectory(options.outputDir, { recursive: true });
 

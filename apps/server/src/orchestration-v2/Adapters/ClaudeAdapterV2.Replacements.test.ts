@@ -11,11 +11,12 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { type ProviderAdapterV2Event } from "../ProviderAdapter.ts";
-import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   DEFAULT_CLAUDE_SETTINGS,
   CLAUDE_TEST_MODEL_SELECTION,
@@ -49,7 +50,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
           const events: Array<ProviderAdapterV2Event> = [];
           const continuationRequests: Array<ProviderContinuationRequest> = [];
-          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
             crypto: yield* Crypto.Crypto,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -71,6 +72,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
@@ -220,7 +222,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           );
           assert.isFalse(yield* hasPendingBackgroundWork);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -286,7 +292,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
           const events: Array<ProviderAdapterV2Event> = [];
           const continuationRequests: Array<ProviderContinuationRequest> = [];
-          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
             crypto: yield* Crypto.Crypto,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -308,6 +314,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
@@ -464,7 +471,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           assert.equal(subagentNodeEvents.at(-1)?.node.status, "completed");
           assert.isFalse(yield* hasPendingBackgroundWork);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 
@@ -480,7 +491,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         const processQueues: Array<Queue.Queue<SDKMessage>> = [];
         const events: Array<ProviderAdapterV2Event> = [];
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -497,6 +508,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                 processQueues.push(sdkMessages);
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(sdkMessages),
@@ -631,7 +643,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         assert.lengthOf(processQueues, 3);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -648,7 +664,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           let openCount = 0;
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
           const events: Array<ProviderAdapterV2Event> = [];
-          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
             crypto: yield* Crypto.Crypto,
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -676,6 +692,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
@@ -761,7 +778,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           // no replacement is opened.
           assert.equal(openCount, 1);
           assert.isTrue(yield* hasPendingBackgroundWork);
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+          ),
+        ),
       ),
   );
 });

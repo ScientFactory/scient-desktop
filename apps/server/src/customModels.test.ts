@@ -23,6 +23,7 @@ import {
 } from "./customModels.ts";
 
 const pi = ProviderInstanceId.make("pi");
+const droid = ProviderInstanceId.make("droid");
 const second = ProviderInstanceId.make("pi_work");
 const connection: Omit<CustomModelConnection, "credentialId"> = {
   id: "connection",
@@ -63,7 +64,15 @@ function fixture() {
     getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
   };
   let catalog: CustomModelsSettings = { revision: 0, connections: [] };
-  const settings = () => ({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog });
+  const settings = () => ({
+    ...DEFAULT_SERVER_SETTINGS,
+    providerInstances: {
+      ...DEFAULT_SERVER_SETTINGS.providerInstances,
+      [pi]: { driver: ProviderDriverKind.make("pi"), enabled: true, config: {} },
+      [droid]: { driver: ProviderDriverKind.make("droid"), enabled: true, config: {} },
+    },
+    customModels: catalog,
+  });
   const save = (input: Partial<CustomModelSaveInput> = {}, failCommit = false) =>
     saveCustomModel(
       settings(),
@@ -100,6 +109,44 @@ it.effect("rejects a missing recheck target and describes duplicate per-model at
       "This model already includes that agent",
     );
     expect(f.values.size).toBe(0);
+  }),
+);
+
+it.effect("rejects unknown instances when canonical settings omit the legacy providers map", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const unknown = ProviderInstanceId.make("unknown_agent");
+    yield* rejects(
+      f.save({
+        connection: {
+          ...connection,
+          models: [{ ...connection.models[0]!, instanceIds: [unknown] }],
+        },
+      }),
+      "This agent does not support custom models",
+    );
+    expect(f.values.size).toBe(0);
+  }),
+);
+
+it.effect("accepts supported default instances without an explicit settings entry", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    for (const driver of ["pi", "droid", "omp", "scient"]) {
+      const saved = yield* saveCustomModel(
+        DEFAULT_SERVER_SETTINGS,
+        {
+          revision: 0,
+          connection: {
+            ...connection,
+            models: [{ ...connection.models[0]!, instanceIds: [ProviderInstanceId.make(driver)] }],
+          },
+        },
+        f.secrets,
+        (next) => Effect.succeed(next),
+      );
+      expect(saved.connections[0]?.models[0]?.instanceIds).toEqual([driver]);
+    }
   }),
 );
 
@@ -446,8 +493,8 @@ it.effect("keeps saving a connection whose models name a removed or default-only
         { ...connection.models[0]!, id: "other", modelId: "model/two", instanceIds: [droid] },
       ],
     };
-    // droid_work was deleted; "droid" runs from the legacy providers map after
-    // "Reset default instance" removed its providerInstances entry.
+    // droid_work was deleted; "droid" still runs after "Reset default instance"
+    // removed its providerInstances entry.
     let committed: CustomModelsSettings | undefined;
     yield* saveCustomModel(
       { ...f.settings(), customModels: { revision: 3, connections: [saved] } },
@@ -526,7 +573,6 @@ it.effect("keeps a Pi key with a space or control character inside usable", () =
 );
 it.effect("says a key with a space or control character inside cannot be used with Droid", () =>
   Effect.gen(function* () {
-    const droid = ProviderInstanceId.make("droid");
     const attached = {
       ...connection,
       models: [{ ...connection.models[0]!, instanceIds: [pi, droid] }],

@@ -15,11 +15,11 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { acpSelectionTransition } from "./ProviderSelectionTransition.ts";
+import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
 const currentInstanceId = ProviderInstanceId.make("codex_primary");
@@ -71,11 +71,13 @@ function deadSessionRecord(
 
 function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
-  planSelectionTransition: ProviderAdapterV2Shape["planSelectionTransition"] = () =>
+  planSelectionTransition: ProviderAdapter.ProviderAdapterV2["Service"]["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
   realPath?: FileSystem.FileSystem["realPath"],
 ) {
-  const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape => ({
+  const adapter = (
+    instanceId: ProviderInstanceId,
+  ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
     instanceId,
     driver,
     getCapabilities: () => Effect.succeed(capabilitiesWithoutModelSwitch),

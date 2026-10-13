@@ -81,6 +81,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "src/scient/analysis/AnalysisService.test.ts",
+      "purpose": "Record CI durations for analysis behavioral tests in the shared server shard profile; scheduling changes retain every test and assertion (weightedShardSequencer.test.ts and the full current-file assignment check)."
+    },
+    {
       "path": "apps/server/src/observability/RpcInstrumentation.ts",
       "anchor": "[WS_METHODS.computeInspectRuntimes]: \"compute\"",
       "purpose": "Retain analysis and compute aggregate labels in the native typed RPC instrumentation middleware without changing telemetry authority."
@@ -106,7 +111,7 @@
       "purpose": "Resolve typed analysis artifacts and compute session outputs through the shared asset service."
     },
     {
-      "path": "apps/server/src/atomicWrite.ts",
+      "path": "packages/shared/src/atomicWrite.ts",
       "anchor": "fs.chmod",
       "purpose": "Preserve executable mode through the inherited atomic-write primitive."
     },
@@ -159,6 +164,11 @@
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
       "anchor": "ScientComputeFileSurface",
       "purpose": "Mount additive analysis and compute actions, generic freshness controls, and plain-language file failure copy in the file viewer."
+    },
+    {
+      "path": "apps/web/src/components/files/fileLineReveal.ts",
+      "anchor": "resolveFileRevealLine",
+      "purpose": "Resolve source citation reveals to their verified current line while preserving recorded-line fallback and ordinary file links in the inherited scroll guard."
     },
     {
       "path": "apps/web/src/components/files/AttachmentFilePreview.tsx",

@@ -160,6 +160,9 @@ describe("ScientMarkdownFileSurface", () => {
     });
     const persistence = {
       target: { environmentId, cwd: "/workspace", relativePath },
+      documentId: "fixture-document",
+      owner: undefined,
+      beginMove: () => null,
       getSnapshot: coordinator.getSnapshot,
       getPendingInput: () => null,
       canEditPendingInput: () => true,

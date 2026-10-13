@@ -9,6 +9,7 @@ import {
   NodeId,
   EventId,
   CommandId,
+  CodexSettings,
   MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -40,9 +41,12 @@ import {
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { ConversationForkService } from "../../orchestration-v2/scient-fork/ConversationForkService.ts";
 import { layerFromAdapters as makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import type { ProviderAdapterV2TurnInput } from "../../orchestration-v2/ProviderAdapter.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
-import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
+import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
@@ -62,6 +66,7 @@ import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCleanupService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
+import { PreviewManager } from "../../preview/Manager.ts";
 import {
   createAttachmentId,
   parseThreadSegmentFromAttachmentId,
@@ -74,7 +79,7 @@ import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,
 } from "../../orchestration-v2/ProjectionMaintenance.ts";
-import { historicalMessage } from "../../orchestration-v2/ContextHandoffBudget.ts";
+import { historicalMessage } from "../../orchestration-v2/ScientHistoricalContext.ts";
 import {
   ConversationImporter,
   conversationContentDigest,
@@ -248,7 +253,7 @@ const withImporter = <A, E, R>(
                     ? {}
                     : {
                         steer: (
-                          input: import("../../orchestration-v2/ProviderAdapter.ts").ProviderAdapterV2SteerInput,
+                          input: import("@t3tools/provider-core/server/ProviderAdapter").ProviderAdapterV2SteerInput,
                         ) => options.onSteer!(input.message.text),
                       }),
                   send: (turn, nativeTurnId) =>
@@ -1968,7 +1973,7 @@ it.live(
         );
         const config = yield* ServerConfig;
         const runtimeOptions = {
-          layerDatabase: database,
+          databaseLayer: database,
           layerServerConfig: Layer.succeed(ServerConfig, config),
         };
         const replacing = yield* Deferred.make<void>();
@@ -3215,7 +3220,12 @@ it.live(
       {
         runtimeOptions: {
           resourceCleanupLayer: resourceCleanupLayer.pipe(
-            Layer.provide(Layer.mock(TerminalManager)({ close: () => Effect.void })),
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(TerminalManager)({ close: () => Effect.void }),
+                Layer.mock(PreviewManager)({ close: () => Effect.void }),
+              ),
+            ),
           ),
         },
       },
@@ -3346,7 +3356,7 @@ it.live(
         ).pipe(Layer.provide(NodeServices.layer));
         const config = yield* ServerConfig;
         const runtimeOptions = {
-          layerDatabase: database,
+          databaseLayer: database,
           layerServerConfig: Layer.succeed(ServerConfig, config),
         };
         const projectScope = yield* Scope.Scope;
@@ -3487,9 +3497,18 @@ it.live(
             assert.equal(otherInstance.itemIds.length, original.items.length);
             assert.deepEqual(otherInstance.omittedItemIds, []);
             const current = yield* settings.getSettings;
+            const currentConfig = yield* Schema.decodeUnknownEffect(CodexSettings)(
+              current.providerInstances[PROVIDER_ID]?.config ?? {},
+            );
             yield* settings.updateSettings({
-              providers: {
-                codex: { ...current.providers.codex, homePath: "/synthetic/different-runtime" },
+              providerInstances: {
+                [PROVIDER_ID]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: {
+                    ...currentConfig,
+                    homePath: "/synthetic/different-runtime",
+                  },
+                },
               },
             });
             const otherConfiguration = yield* deliver("other-configuration", selected);
@@ -3555,7 +3574,7 @@ it.live(
             {
               modelContextWindow: () => undefined,
               runtimeOptions: {
-                layerDatabase: freshDatabase,
+                databaseLayer: freshDatabase,
                 layerServerConfig: Layer.succeed(ServerConfig, freshConfig),
               },
             },

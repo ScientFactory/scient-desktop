@@ -21,13 +21,13 @@ import * as TestClock from "effect/testing/TestClock";
 import type {
   ProviderManagedRuntimeActions,
   ProviderVoiceTranscriptCorrection,
-} from "../../provider/ProviderDriver.ts";
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   ProviderSessionCloseError,
   ProviderSessionManagerV2,
   type ProviderSessionManagerV2Shape,
 } from "../../orchestration-v2/ProviderSessionManager.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   ProviderRegistry,
   ProviderRegistryRefreshError,

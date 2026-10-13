@@ -20,7 +20,8 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   DEFAULT_CLAUDE_SETTINGS,
   CLAUDE_TEST_MODEL_SELECTION,
@@ -39,7 +40,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           prefix: "t3-claude-v2-attachments-",
         });
         const offeredMessages: Array<SDKUserMessage> = [];
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -52,6 +53,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             allocateSessionId: Effect.succeed("native-thread-claude-attachments"),
             open: () =>
               Effect.succeed({
+                stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                 setPermissionMode: () =>
                   Effect.die("Permission-mode mutation is outside this fixture."),
                 messages: Stream.never,
@@ -168,7 +170,11 @@ describe("ClaudeAdapterV2 attachments", () => {
             text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
         ]);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 
@@ -181,7 +187,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           prefix: "t3-claude-v2-unsupported-attachment-",
         });
         let openCount = 0;
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -196,6 +202,7 @@ describe("ClaudeAdapterV2 attachments", () => {
               Effect.sync(() => {
                 openCount += 1;
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
@@ -251,7 +258,11 @@ describe("ClaudeAdapterV2 attachments", () => {
         assert.equal(error._tag, "ProviderAdapterTurnStartError");
         assert.include(String(error.cause), "Unsupported Claude image attachment type");
         assert.equal(openCount, 0);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

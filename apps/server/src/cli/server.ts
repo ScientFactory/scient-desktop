@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -9,6 +9,7 @@ import * as CliError from "effect/cli/CliError";
 import * as ServerConfig from "../config.ts";
 import { runServer } from "../server.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
+import { resolveCliCommand } from "./invocation.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
@@ -32,7 +33,7 @@ export const runDefaultServerCommand = (flags: CliServerFlags) =>
     if (Option.isSome(flags.cwd)) {
       const cwd = flags.cwd.value.trim();
       const fs = yield* FileSystem.FileSystem;
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const explicitPath =
         cwd === "." ||
         cwd === ".." ||
@@ -43,9 +44,11 @@ export const runDefaultServerCommand = (flags: CliServerFlags) =>
         !explicitPath &&
         (!(yield* fs.exists(cwd)) || (yield* fs.stat(cwd)).type !== "Directory")
       ) {
+        const helpCommand = yield* resolveCliCommand(["--help"]);
+        const exampleCommand = yield* resolveCliCommand(["./my-project"]);
         return yield* new CliError.UserError({
           cause: cwd,
-          userMessage: `Unknown command ${yield* encodeCommand(cwd)}. Use "t3 --help" for commands or an explicit path such as "t3 ./my-project" for a new directory.`,
+          userMessage: `Unknown command ${yield* encodeCommand(cwd)}. Use "${helpCommand}" for commands or an explicit path such as "${exampleCommand}" for a new directory.`,
         });
       }
     }

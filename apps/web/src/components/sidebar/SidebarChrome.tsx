@@ -1,3 +1,4 @@
+import { useSettingsIntentPreload } from "../settings/useSettingsIntentPreload";
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
@@ -36,6 +37,7 @@ import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { observeResize } from "~/lib/observeResize";
 
 import { APP_BASE_NAME } from "../../branding";
 import { ScientReleaseNotes } from "../../scient/releaseNotes/ScientReleaseNotes";
@@ -103,11 +105,9 @@ export function SidebarBrandWidthProbe({
 }) {
   const observeWidth = useCallback(
     (probe: HTMLDivElement) => {
-      const observer = new ResizeObserver(([entry]) => {
+      return observeResize(probe, ([entry]) => {
         if (entry) onWidthChange(entry.borderBoxSize[0]?.inlineSize ?? probe.offsetWidth);
       });
-      observer.observe(probe);
-      return () => observer.disconnect();
     },
     [onWidthChange],
   );
@@ -138,7 +138,7 @@ function SidebarBrand({
     <Link
       aria-label={`Go to ${APP_BASE_NAME} threads`}
       className={cn(
-        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink items-center gap-1.5 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 group-data-[collapsible=icon]:hidden",
+        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink items-center gap-1.5 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset group-data-[collapsible=icon]:hidden",
         onBackdrop ? "sidebar-brand-on-stage" : "text-foreground",
       )}
       data-stage-variant={stageVariant ?? undefined}
@@ -169,11 +169,13 @@ function SidebarUtilityItem({
   label,
   onClick,
   secondary = false,
+  onIntent,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
   secondary?: boolean;
+  onIntent?: () => void;
 }) {
   return (
     <SidebarMenuItem
@@ -183,7 +185,13 @@ function SidebarUtilityItem({
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+            <SidebarMenuButton
+              aria-label={label}
+              onClick={onClick}
+              onMouseEnter={onIntent}
+              onFocus={onIntent}
+              size="icon"
+            >
               {icon}
             </SidebarMenuButton>
           }
@@ -195,6 +203,7 @@ function SidebarUtilityItem({
 }
 
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+  const preloadSettings = useSettingsIntentPreload();
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -259,6 +268,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<SettingsIcon />}
               label="Settings"
               onClick={handleSettingsClick}
+              onIntent={() => preloadSettings("/settings")}
             />
             {pullRequestsSupported ? (
               <SidebarUtilityItem

@@ -177,8 +177,10 @@ that conversation's folder. Scratch conversations do not have Git branches, chec
 or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
 conversation and its files into another project is not yet supported.
 
-The option is available only on a connected machine whose data directory is outside a
-Git checkout. Dev candidates keep their profile inside the worktree but use a
+The option is available on a connected machine whose configured scratch location is outside
+Git. Git does not need to be installed: the server verifies its own scratch folders through
+canonical filesystem paths and repository markers. Other detection or permission failures
+leave the option unavailable. Dev candidates keep their profile inside the worktree but use a
 separate persistent scratch location outside Git.
 
 ## Group threads into sections
@@ -393,6 +395,17 @@ Stop on a thread also stops the subagents it delegated to.
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
 thread asks for it.
+
+Scient Agent groups show only their summary while collapsed. Expand a group for
+compact member rows, then expand a member to inspect its full assignment and any
+supplied result. **Open child thread** navigates to that member's child, separately
+from its detail disclosure. An explicitly opened group stays visible as its
+background children finish.
+
+Native Scient child inspection contains the assignment and result the agent
+actually supplied, not a reconstructed tool or thinking transcript. Missing
+results remain unavailable; the member row and **Agents** panel show observed
+progress, model and usage rather than borrowing those details from the parent.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

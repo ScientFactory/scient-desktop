@@ -110,6 +110,7 @@ import {
   ProviderInteractionMode,
   ProviderDriverKind,
   resolveEnvironmentMachineKind,
+  resolveProjectProviderInstanceEnabled,
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
@@ -282,7 +283,7 @@ import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { useElementWidth } from "../hooks/useElementWidth";
+import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
 import { usePreviewPanelInlineSize } from "../hooks/usePreviewPanelInlineSize";
 import {
   RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY,
@@ -358,10 +359,11 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
+  MessageCircleIcon,
+  PaperclipIcon,
   ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
-  PaperclipIcon,
   TargetIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -523,6 +525,7 @@ import {
   useThreadStatus,
   useThreadHistory,
   useThreadShell,
+  useChildThreadInputs,
   useThreadRefs,
   useThreadVisibleTurnItems,
   waitForThreadShell,
@@ -599,7 +602,10 @@ import {
   shouldOfferResumeCompaction,
   shouldCompactBeforeSend,
 } from "./chat/ContextWindowMeter.logic";
-import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderTurnTokenUsage,
+} from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_EASING,
@@ -720,10 +726,8 @@ import { useAssetUrls } from "../assets/assetUrls";
 // SCIENT-FORK:START — effective skill inventory.
 import { useEffectiveActiveProviderSkills } from "../scient/skills/useEffectiveActiveProviderSkills";
 // SCIENT-FORK:END
-import {
-  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-  recallableComposerPrompt,
-} from "./chat/composerPromptHistory";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { recallableComposerPrompt } from "./chat/composerPromptHistory";
 // SCIENT-FORK:START — compute tab close and figure follower wiring.
 import {
   useCloseComputeOwnedSurfaces,
@@ -734,6 +738,8 @@ import {
   useOpenStaticArtifacts,
 } from "~/scient/compute/chatComputeFigureFollower";
 // SCIENT-FORK:END
+import { observeResize } from "~/lib/observeResize";
+
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
@@ -1846,6 +1852,10 @@ function ChatViewContent(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
+  const activeThreadLiveTokenUsage = useMemo(
+    () => latestProviderTurnTokenUsage(serverProjection?.providerTurns ?? []),
+    [serverProjection?.providerTurns],
+  );
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
   const threadHistoryControls = useMemo<MessagesTimelineHistoryControls | undefined>(() => {
@@ -2063,9 +2073,6 @@ function ChatViewContent(props: ChatViewProps) {
   const isRevertingCheckpoint = useComposerDraftStore((store) =>
     store.rewindingThreadKeys.has(routeThreadKey),
   );
-  const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
-    null,
-  );
   const userInputResponsesInFlight = useRef(new Set<string>());
   const [respondingRequestIds, setRespondingRequestIds] = useState<RuntimeRequestId[]>([]);
 
@@ -2089,7 +2096,7 @@ function ChatViewContent(props: ChatViewProps) {
     useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
-  const [workspaceLayoutRef, workspaceLayoutWidth] = useElementWidth<HTMLDivElement>();
+  const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
@@ -2461,7 +2468,7 @@ function ChatViewContent(props: ChatViewProps) {
   // Electron hosts its own browser tabs; other clients need the environment to host them.
   const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
   const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
-    containerWidth: workspaceLayoutWidth ?? undefined,
+    container: workspaceLayoutElement,
     widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
   });
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
@@ -2618,8 +2625,7 @@ function ChatViewContent(props: ChatViewProps) {
           renderedRightPanelSurface,
         );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
-  const rightPanelMaximized =
-    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+  const rightPanelMaximized = canMaximizeRightPanel && rightPanelState.maximized === true;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
@@ -2795,7 +2801,6 @@ function ChatViewContent(props: ChatViewProps) {
       return {
         id: `project-clone:${projectId}`,
         variant: "info",
-        compact: true,
         priority: "activity",
         icon: <DownloadIcon />,
         title: `Cloning ${name}`,
@@ -2819,7 +2824,6 @@ function ChatViewContent(props: ChatViewProps) {
     return {
       id: `project-clone:${projectId}`,
       variant: cancelled ? "warning" : "error",
-      compact: true,
       icon: <DownloadIcon />,
       title: cancelled ? `Cancelled cloning ${name}` : `Failed to clone ${name}`,
       description: cancelled ? "Retry to bring in the repository." : activeProjectClone.error,
@@ -3486,9 +3490,13 @@ function ChatViewContent(props: ChatViewProps) {
   const providerInstanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+        applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(providerStatuses),
+          settings,
+          activeProject?.id ?? null,
+        ),
       ),
-    [providerStatuses, settings],
+    [providerStatuses, settings, activeProject?.id],
   );
   const { selectedProviderEntry, requestedDriverKind } = useMemo(
     () =>
@@ -3544,8 +3552,15 @@ function ChatViewContent(props: ChatViewProps) {
   // V2 derives these from projected turn items and checkpoint scopes; the V1
   // activity stream the fork used to read no longer exists on the wire.
   const activeContextWindow = useMemo(
-    () => deriveLatestContextWindowSnapshot(serverVisibleTurnItems),
-    [serverVisibleTurnItems],
+    () =>
+      deriveLatestContextWindowSnapshot(
+        serverVisibleTurnItems,
+        activeThreadLiveTokenUsage,
+        serverProjection?.providerThreads.find(
+          (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
+        ),
+      ),
+    [activeThreadLiveTokenUsage, serverVisibleTurnItems, serverProjection],
   );
   const { turnDiffSummaries } = useTurnDiffSummaries(serverProjection);
   const latestCheckpointCompletedAt = turnDiffSummaries.at(-1)?.completedAt ?? null;
@@ -3906,6 +3921,10 @@ function ChatViewContent(props: ChatViewProps) {
     compactRequestIsActive &&
     !compactionSettled;
   const activeRunPreparing = activeActivityRun?.status === "preparing";
+  // Once the server owns the setup run, follow-ups queue behind it.
+  const sendQueuesBehindSetup =
+    isServerThread && (activeRunPreparing || activeActivityRun?.status === "starting");
+  const [setupQueueSendThreadKey, setSetupQueueSendThreadKey] = useState<string | null>(null);
   const worktreeSetupOwnerKey = draftId ?? routeThreadKey;
   const worktreeSetupActive =
     worktreeSetupRef !== null && worktreeSetupRef.ownerKey === worktreeSetupOwnerKey;
@@ -4337,11 +4356,13 @@ function ChatViewContent(props: ChatViewProps) {
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
   // follow-up must not be held behind a slow install. Before the first
-  // snapshot arrives the starting session stands in for it.
+  // snapshot arrives the starting session stands in for it. Once the server
+  // has the thread, a send queues behind the setup run instead.
   const worktreeSetupBlocksSend =
-    worktreeSetup !== null
+    !sendQueuesBehindSetup &&
+    (worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
-      : isPreparingWorktree;
+      : isPreparingWorktree);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
@@ -4723,7 +4744,14 @@ function ChatViewContent(props: ChatViewProps) {
                     (activeProviderInstanceId === null ||
                       provider.instanceId === activeProviderInstanceId) &&
                     provider.driver === selectedProvider &&
-                    provider.enabled &&
+                    // The destination project may override the machine switch.
+                    (environment.serverConfig?.settings
+                      ? resolveProjectProviderInstanceEnabled(
+                          environment.serverConfig.settings,
+                          candidate.projectId,
+                          provider.instanceId,
+                        )
+                      : provider.enabled) &&
                     provider.installed &&
                     provider.status !== "error" &&
                     provider.auth.status !== "unauthenticated" &&
@@ -6093,7 +6121,7 @@ function ChatViewContent(props: ChatViewProps) {
           .getState()
           .open(activeThreadRef, { kind: "device", ...activeRightPanelSurface.target });
       }
-      setMaximizedRightPanelThreadKey(null);
+      useRightPanelStore.getState().setMaximized(activeThreadRef, false);
       useRightPanelStore.getState().close(activeThreadRef);
     });
   }, [activeRightPanelSurface, activeThreadRef, runAfterPendingFileSave]);
@@ -6282,12 +6310,17 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().toggleThreadPanel(activeThreadRef, threadPanelPresentation);
   }, [activeThreadRef, threadPanelPresentation]);
-  const toggleRightPanelMaximized = useCallback(() => {
+  // A thread started for a link the OS opened shows its browser maximized, like a browser window.
+  useEffect(() => {
     if (!canMaximizeRightPanel) return;
-    setMaximizedRightPanelThreadKey((threadKey) =>
-      threadKey === routeThreadKey ? null : routeThreadKey,
-    );
-  }, [canMaximizeRightPanel, routeThreadKey]);
+    if (useRightPanelStore.getState().consumeMaximizeRequest(routeThreadRef)) {
+      useRightPanelStore.getState().setMaximized(routeThreadRef, true);
+    }
+  }, [canMaximizeRightPanel, routeThreadRef]);
+  const toggleRightPanelMaximized = useCallback(() => {
+    if (!canMaximizeRightPanel || !activeThreadRef) return;
+    useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
+  }, [activeThreadRef, canMaximizeRightPanel, rightPanelMaximized]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
@@ -6519,6 +6552,13 @@ function ChatViewContent(props: ChatViewProps) {
     rightPanelState.surfaces,
     runAfterPendingSurfaceSave,
   ]);
+  const moveRightPanelSurface = useCallback(
+    (surfaceId: string, toIndex: number) => {
+      if (activeThreadRef)
+        useRightPanelStore.getState().moveSurface(activeThreadRef, surfaceId, toIndex);
+    },
+    [activeThreadRef],
+  );
   const copyRightPanelFilePath = useCallback(
     (path: FileSurfacePath, format: FilePathCopyFormat) => {
       const value = resolveFilePathCopyValue({
@@ -7430,13 +7470,7 @@ function ChatViewContent(props: ChatViewProps) {
     };
 
     updateHeight();
-    if (typeof ResizeObserver === "undefined") return;
-
-    const resizeObserver = new ResizeObserver(updateHeight);
-    resizeObserver.observe(composerOverlayElement);
-    return () => {
-      resizeObserver.disconnect();
-    };
+    return observeResize(composerOverlayElement, updateHeight);
   }, [composerOverlayElement, publishComposerOverlayHeight, showScrollToBottom]);
   // Swapping the composer for the status bar (or back) changes what the
   // overlay holds, so rebuild the reservation from the new content.
@@ -7797,6 +7831,42 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [environmentId, navigate],
   );
+  const childThreadInputs = useChildThreadInputs(activeThreadRef);
+  const childInputBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    const first = childThreadInputs[0];
+    const parentAwaitingUser =
+      activePendingApproval || activePendingUserInput || activeThreadShell?.hasPendingUserInput;
+    if (!first || parentAwaitingUser) return null;
+    return {
+      id: `child-input:${first.id}`,
+      variant: "info",
+      priority: "activity",
+      icon: <MessageCircleIcon />,
+      title:
+        childThreadInputs.length === 1
+          ? "Subagent needs input"
+          : `${childThreadInputs.length} subagents need input`,
+      description: childThreadInputs.map((child, index) => (
+        <Fragment key={child.id}>
+          {index > 0 ? ", " : null}
+          <InlineButton tone="muted" onClick={() => onOpenRelatedThread(child.id)}>
+            {child.title}
+          </InlineButton>
+        </Fragment>
+      )),
+      actions: (
+        <Button size="xs" variant="ghost" onClick={() => onOpenRelatedThread(first.id)}>
+          Open question
+        </Button>
+      ),
+    };
+  }, [
+    childThreadInputs,
+    activePendingApproval,
+    activePendingUserInput,
+    activeThreadShell?.hasPendingUserInput,
+    onOpenRelatedThread,
+  ]);
 
   // Commands such as /compact and /goal clear run as their own turn. The draft
   // and its attachments stay local.
@@ -8095,6 +8165,8 @@ function ChatViewContent(props: ChatViewProps) {
       provider: selectedProvider,
       usedTokens: activeContextWindow.usedTokens,
       updatedAt: activeContextWindow.updatedAt,
+      // Only the live report carries a TTL, and only when it is the window's source.
+      promptCacheTtlMs: activeThreadLiveTokenUsage?.promptCacheTtlMs,
       now: `${nowMinute}:00.000Z`,
     })
       ? activeContextWindow.usedTokens
@@ -8179,9 +8251,11 @@ function ChatViewContent(props: ChatViewProps) {
     });
     // SCIENT-FORK:END
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
-    const backgroundWorkItems = [goalBannerItem, backgroundWorkBannerItem].filter(
-      (item) => item !== null,
-    );
+    const backgroundWorkItems = [
+      childInputBannerItem,
+      goalBannerItem,
+      backgroundWorkBannerItem,
+    ].filter((item) => item !== null);
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
@@ -8209,6 +8283,7 @@ function ChatViewContent(props: ChatViewProps) {
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
         variant: "info",
+        compact: true,
         icon: <GitBranchIcon />,
         title: (
           <span className="flex min-w-0 items-baseline gap-1.5">
@@ -8272,6 +8347,7 @@ function ChatViewContent(props: ChatViewProps) {
     queueEditsReady,
     queueEdit,
     backgroundWorkBannerItem,
+    childInputBannerItem,
     goalBannerItem,
     localCheckoutBranchMismatch,
     projectCloneBannerItem,
@@ -8381,11 +8457,6 @@ function ChatViewContent(props: ChatViewProps) {
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
   const openThreadFind = useCallback(() => threadFindControlsRef.current?.open(), []);
   const closeThreadFind = useCallback(() => threadFindControlsRef.current?.close(), []);
-  // The details popover hangs off the header over the find bar; opening find dismisses it.
-  useEffect(() => {
-    if (!isThreadFindActive || threadPanelPresentation !== "popover" || !activeThreadRef) return;
-    useRightPanelStore.getState().setThreadPanelOpen(activeThreadRef, "popover", false);
-  }, [activeThreadRef, isThreadFindActive, threadPanelPresentation]);
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
@@ -8498,6 +8569,13 @@ function ChatViewContent(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         toggleRightPanel();
+        return;
+      }
+
+      if (command === "rightPanel.toggleMaximized") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) toggleRightPanelMaximized();
         return;
       }
 
@@ -8738,6 +8816,7 @@ function ChatViewContent(props: ChatViewProps) {
     closeThreadFind,
     isThreadFindActive,
     toggleRightPanel,
+    toggleRightPanelMaximized,
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -8750,6 +8829,14 @@ function ChatViewContent(props: ChatViewProps) {
     logicalProjectEnvironments,
     onEnvironmentChange,
   ]);
+
+  // A focused desktop browser page forwards these chords as menu actions.
+  useEffect(() => {
+    return window.desktopBridge?.onMenuAction((action) => {
+      if (action === "rightPanel.toggle") toggleRightPanel();
+      else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximized();
+    });
+  }, [toggleRightPanel, toggleRightPanelMaximized]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
   // so a paste that follows has no editable target and would be dropped.
@@ -9157,6 +9244,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const threadId = activeThread.id;
+    const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
     sendInFlightRef.current = true;
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
     setThreadError(threadId, null);
@@ -9181,6 +9269,7 @@ function ChatViewContent(props: ChatViewProps) {
           input: {
             threadId,
             manualContinuationOfRunId: resumableRunId,
+            ...(modelSelection ? { modelSelection } : {}),
             message: {
               messageId: newMessageId(),
               role: "user",
@@ -9269,7 +9358,7 @@ function ChatViewContent(props: ChatViewProps) {
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
       !queueEditsReady ||
-      isSendBusy ||
+      (isSendBusy && !sendQueuesBehindSetup) ||
       isConnecting ||
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
@@ -9281,6 +9370,9 @@ function ChatViewContent(props: ChatViewProps) {
       notifyDirectAnnotationAttached();
       return;
     }
+    // Capture before queue recovery yields: submitting releases the typing hold,
+    // but a revealed question must not replace this draft's attachment snapshot.
+    const sendCtx = composerRef.current?.getSendContext();
     let extractedIntent: ExtractedIntentRecord | undefined;
     sendInFlightRef.current = true;
     try {
@@ -9347,7 +9439,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
-    if (activePendingProgress) {
+    if (activePendingProgress && sendCtx?.answeringPendingUserInput !== false) {
       if (directAnnotation) {
         notifyDirectAnnotationAttached();
         return;
@@ -9358,8 +9450,7 @@ function ChatViewContent(props: ChatViewProps) {
     const runtimeMode =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.runtimeMode ??
       activeThread.runtimeMode;
-    const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx || sendCtx.pendingAttachments) {
+    if (!sendCtx?.providerAvailable || sendCtx.pendingAttachments) {
       notifyDirectAnnotationAttached();
       return;
     }
@@ -9670,7 +9761,7 @@ function ChatViewContent(props: ChatViewProps) {
     // upload, and the sent turn must carry what the user actually submitted.
     const composerThreadContextsSnapshot = [...composerThreadContexts];
     const submissionTargetKey = composerTargetKey(scopeThreadRef(environmentId, threadIdForSend));
-    const isFirstMessage = !isServerThread || activeMessageCount === 0;
+    const isFirstMessage = !sendQueuesBehindSetup && (!isServerThread || activeMessageCount === 0);
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
         ? activeThreadBranch
@@ -9720,7 +9811,7 @@ function ChatViewContent(props: ChatViewProps) {
       keepFullHistory,
       messageText: messageTextForSend,
     });
-    const turnDispatchMode = compactBeforeSend ? "queue" : dispatchMode;
+    const turnDispatchMode = compactBeforeSend || sendQueuesBehindSetup ? "queue" : dispatchMode;
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
@@ -9897,19 +9988,23 @@ function ChatViewContent(props: ChatViewProps) {
         );
         return;
       }
-      beginLocalDispatch({
-        preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
-        submissionIntent: resolvedSubmissionIntent,
-      });
-      setWorktreeSetupRef(
-        multipleModelSelections === null && baseBranchForWorktree
-          ? {
-              environmentId: activeThread.environmentId,
-              threadId: threadIdForSend,
-              ownerKey: worktreeSetupOwnerKey,
-            }
-          : null,
-      );
+      if (sendQueuesBehindSetup) {
+        setSetupQueueSendThreadKey(activeThreadKey);
+      } else {
+        beginLocalDispatch({
+          preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
+          submissionIntent: resolvedSubmissionIntent,
+        });
+        setWorktreeSetupRef(
+          multipleModelSelections === null && baseBranchForWorktree
+            ? {
+                environmentId: activeThread.environmentId,
+                threadId: threadIdForSend,
+                ownerKey: worktreeSetupOwnerKey,
+              }
+            : null,
+        );
+      }
 
       const submissionIdentityResult = await settlePromise(async () => {
         if (options?.steer || directAnnotation) return undefined;
@@ -9938,7 +10033,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (submissionIdentityResult._tag === "Failure") {
         sendInFlightRef.current = false;
-        resetLocalDispatch();
+        if (!sendQueuesBehindSetup) resetLocalDispatch();
         setThreadError(
           threadIdForSend,
           chatActionErrorMessage(squashAtomCommandFailure(submissionIdentityResult)),
@@ -10137,7 +10232,7 @@ function ChatViewContent(props: ChatViewProps) {
           // Each request now owns its background thread. The original draft is
           // ready for another prompt while checkout and setup scripts finish.
           sendInFlightRef.current = false;
-          resetLocalDispatch();
+          if (!sendQueuesBehindSetup) resetLocalDispatch();
           releasedComposer = true;
           await starts;
           if (startedCount > 0) {
@@ -10229,7 +10324,7 @@ function ChatViewContent(props: ChatViewProps) {
           }
           if (!releasedComposer) {
             sendInFlightRef.current = false;
-            resetLocalDispatch();
+            if (!sendQueuesBehindSetup) resetLocalDispatch();
           }
         }
         return;
@@ -10257,6 +10352,7 @@ function ChatViewContent(props: ChatViewProps) {
       );
       const previewQueueAdmission =
         compactBeforeSend ||
+        sendQueuesBehindSetup ||
         shouldPreviewQueueAdmission({
           ordinaryServerSend: isServerThread && !options?.steer && !directAnnotation,
           phase,
@@ -10568,7 +10664,7 @@ function ChatViewContent(props: ChatViewProps) {
             settleQueueAdmissionPreview(existing, messageIdForSend, queued),
           );
           if (queued) {
-            resetLocalDispatch();
+            if (!sendQueuesBehindSetup) resetLocalDispatch();
             void threadQueue.refresh();
           } else {
             if (previewQueueAdmission)
@@ -10678,9 +10774,9 @@ function ChatViewContent(props: ChatViewProps) {
         setDockedDraftHeroThreadKey((currentThreadKey) =>
           currentThreadKey === activeThreadKey ? null : currentThreadKey,
         );
-        resetLocalDispatch();
+        if (!sendQueuesBehindSetup) resetLocalDispatch();
       }
-      if (turnStartSucceeded && submissionId) resetLocalDispatch();
+      if (turnStartSucceeded && submissionId) if (!sendQueuesBehindSetup) resetLocalDispatch();
     } catch (cause) {
       if (!requestAccepted && submittedMessageId) {
         setOptimisticUserMessages((existing) =>
@@ -10688,11 +10784,14 @@ function ChatViewContent(props: ChatViewProps) {
         );
       }
       setThreadError(threadIdForSend, chatActionErrorMessage(cause));
-      resetLocalDispatch();
+      if (!sendQueuesBehindSetup) resetLocalDispatch();
     } finally {
       // Release only this settled attempt. Its durable identity handles an
       // ambiguous response; navigation does not manufacture another send.
-      if (composerSendGenerationRef.current === sendGeneration) sendInFlightRef.current = false;
+      if (composerSendGenerationRef.current === sendGeneration) {
+        sendInFlightRef.current = false;
+        setSetupQueueSendThreadKey((current) => (current === activeThreadKey ? null : current));
+      }
     }
   }
 
@@ -11868,6 +11967,13 @@ function ChatViewContent(props: ChatViewProps) {
               : null
           }
           onOpenFile={openFileSurface}
+          // SCIENT-FORK:START — an in-place rename moves the tab with its state
+          onFileMoved={(fromPath, toPath) =>
+            useRightPanelStore
+              .getState()
+              .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true })
+          }
+          // SCIENT-FORK:END
           onOpenFileSource={openFileSourceSurface}
           onHtmlPresentationRequestHandled={handleHtmlPresentationRequestHandled}
           onLatexPresentationRequestHandled={handleLatexPresentationRequestHandled}
@@ -11953,7 +12059,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const threadPanelHeaderControl = (
     <div
-      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
+      // Inset from the chat header's edge, not the window's: --workspace-controls-right also
+      // clears the native window buttons, which sit over the right panel, not this header.
+      className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
       <PanelLayoutControls
@@ -12003,9 +12111,9 @@ function ChatViewContent(props: ChatViewProps) {
     addFolders: (folders) => composerRef.current?.addDroppedFolders(folders),
   });
 
-  return (
+  const content = (
     <div
-      ref={workspaceLayoutRef}
+      ref={setWorkspaceLayoutElement}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
       <Dialog
@@ -12076,6 +12184,8 @@ function ChatViewContent(props: ChatViewProps) {
             isServerThread={isServerThread}
             activeThreadTitle={activeThread.title}
             activeProject={activeProject ?? null}
+            parentThreadLink={parentThreadLink}
+            onOpenThread={onOpenRelatedThread}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
             onNewThreadInProject={handleNewThreadInActiveProject}
             {...(activeDraftLogicalProjectKey
@@ -12122,7 +12232,7 @@ function ChatViewContent(props: ChatViewProps) {
               </div>
             ) : null}
             {/* Banners overlay the timeline without changing its content height. */}
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-col">
+            <div className="chat-banner-lane pointer-events-none absolute top-0 z-20 flex flex-col">
               <ProviderStatusBanner
                 status={visibleProviderStatus}
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
@@ -12517,7 +12627,12 @@ function ChatViewContent(props: ChatViewProps) {
                               phase={phase}
                               canInterrupt={canInterruptRunningThread}
                               isConnecting={isConnecting || !queueEditsReady}
-                              isSendBusy={isSendBusy || isResuming}
+                              isSendBusy={
+                                (isSendBusy && !sendQueuesBehindSetup) ||
+                                (setupQueueSendThreadKey !== null &&
+                                  setupQueueSendThreadKey === activeThreadKey) ||
+                                isResuming
+                              }
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
@@ -12535,7 +12650,7 @@ function ChatViewContent(props: ChatViewProps) {
                                             ? "Preparing worktree"
                                             : projectCloneSendBlockReason
                               }
-                              isPreparingWorktree={isPreparingWorktree}
+                              isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               queuedRunsControl={null}
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
@@ -12656,7 +12771,7 @@ function ChatViewContent(props: ChatViewProps) {
                               aria-hidden={showComposerModelStrip ? undefined : true}
                               inert={showComposerModelStrip ? undefined : true}
                               className={cn(
-                                "ps-2 group-data-model-strip-transition/composer-surface:before:backdrop-blur-(--glass-blur) group-data-model-strip-transition/composer-surface:before:bg-(--chat-composer-glass-surface)/(--glass-opacity)",
+                                "group-data-model-strip-transition/composer-surface:before:backdrop-blur-(--glass-blur) group-data-model-strip-transition/composer-surface:before:bg-(--chat-composer-glass-surface)/(--glass-opacity)",
                                 !showComposerModelStrip &&
                                   "pointer-events-none invisible absolute inset-x-0 top-full",
                               )}
@@ -12842,6 +12957,7 @@ function ChatViewContent(props: ChatViewProps) {
           onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
           onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
+          onMoveSurface={moveRightPanelSurface}
           onCopyFilePath={copyRightPanelFilePath}
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurface}
@@ -12908,6 +13024,7 @@ function ChatViewContent(props: ChatViewProps) {
             onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
             onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
+            onMoveSurface={moveRightPanelSurface}
             onCopyFilePath={copyRightPanelFilePath}
             onAddBrowser={() => createBrowserSurface()}
             onAddBrowserInProfile={createBrowserSurface}
@@ -13005,6 +13122,15 @@ function ChatViewContent(props: ChatViewProps) {
       />
       {/* SCIENT-FORK:END */}
     </div>
+  );
+  return (
+    <FileMetadataThreadProvider
+      threadRef={activeThreadRef}
+      cwd={activeWorkspaceRoot}
+      checkpoints={serverProjection?.checkpoints}
+    >
+      {content}
+    </FileMetadataThreadProvider>
   );
 }
 

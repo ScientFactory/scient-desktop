@@ -5,19 +5,19 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Path from "effect/Path";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import type { ServerConfig } from "../../config.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
-import type * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
@@ -35,13 +35,15 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
-import type { IdAllocatorV2 } from "../IdAllocator.ts";
+// SCIENT-FORK:START Scient ACP application bridge
+import { scientAcpProviderBridge } from "./ScientAcpApplicationBridge.ts";
+// SCIENT-FORK:END Scient ACP application bridge
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
-} from "./AcpAdapterV2.ts";
+} from "@t3tools/provider-acp/server/adapter";
 
 const ANTIGRAVITY_PROVIDER = ProviderDriverKind.make("antigravity");
 
@@ -64,12 +66,7 @@ const AntigravityProviderCapabilitiesV2 = {
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
-  readonly crypto: Crypto.Crypto;
   readonly selfInvocation: SelfInvocation;
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly idAllocator: IdAllocatorV2["Service"];
-  readonly serverConfig: ServerConfig["Service"];
   /** Spawns the official agent with the instance's Google profile. */
   readonly makeRuntime: (
     input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
@@ -120,22 +117,28 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
   };
 };
 
+/** The services the Antigravity flavor runs its runtime and session files with. */
+interface AntigravityFlavorServices {
+  readonly crypto: Crypto.Crypto;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly host: ProviderHost.ProviderHost["Service"];
+}
+
 export function makeAntigravityAcpAdapterFlavor(
-  options: AntigravityAdapterV2Options,
+  options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   // The attachments dir grant lets the agent read pasted files at the paths
   // the turn text references. It is a leaf directory of uploads. A session
   // without a workspace gets no workspace root rather than the server's cwd.
   const antigravityClientFileRoots = (cwd: string | null) =>
-    cwd === null
-      ? [options.serverConfig.attachmentsDir]
-      : [cwd, options.serverConfig.attachmentsDir];
+    cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
     Effect.gen(function* () {
       // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
       // process by closing it, and the adapter respawns on the next turn.
       const scope = yield* Scope.fork(yield* Effect.scope);
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void).pipe(
@@ -159,7 +162,7 @@ export function makeAntigravityAcpAdapterFlavor(
             ownDetachedProcessGroup: true,
             ownDescendantProcessGroups: platform === "linux",
             processGroupPlatform: platform,
-            additionalDirectories: [options.serverConfig.attachmentsDir],
+            additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -187,6 +190,11 @@ export function makeAntigravityAcpAdapterFlavor(
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
+    // SCIENT-FORK:START Scient native-delivery observation mount
+    // The official Antigravity ACP runtime has no private system-prompt or
+    // rules channel, so only native-delivery observations are bridged here.
+    application: scientAcpProviderBridge,
+    // SCIENT-FORK:END Scient native-delivery observation mount
     makeRuntime,
     // Loading history replays every tool call; resume restores the session
     // without the replay and is what the official client does.
@@ -254,19 +262,23 @@ export function makeAntigravityAcpAdapterFlavor(
   };
 }
 
-export function makeAntigravityAdapterV2(options: AntigravityAdapterV2Options) {
-  return makeAcpAdapterV2({
+export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(function* (
+  options: AntigravityAdapterV2Options,
+) {
+  const services: AntigravityFlavorServices = {
+    crypto: yield* Crypto.Crypto,
+    fileSystem: yield* FileSystem.FileSystem,
+    path: yield* Path.Path,
+    host: yield* ProviderHost.ProviderHost,
+  };
+  return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeAntigravityAcpAdapterFlavor(options),
-    ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
-    crypto: options.crypto,
-    fileSystem: options.fileSystem,
-    idAllocator: options.idAllocator,
-    serverConfig: options.serverConfig,
+    flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services }),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined
       ? {}
       : { continuationRequests: options.continuationRequests }),
+    ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
   });
-}
+});

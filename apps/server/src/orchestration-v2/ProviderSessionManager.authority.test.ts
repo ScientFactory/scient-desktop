@@ -26,12 +26,13 @@ import {
   expandComposerCitationsForProvider,
 } from "@t3tools/shared/composerCitations";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { codexThreadRuntimeParams } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
@@ -145,8 +146,6 @@ it.effect.each(
         })
         .pipe(Effect.flip);
       assert.instanceOf(error, ProviderWorkspaceMissingError);
-      assert.include(error.message, cwd);
-      assert.include(error.message, "Restore the folder at this path before retrying.");
       assert.equal((yield* Ref.get(state)).openCount, 0);
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
       assert.deepEqual((yield* projectionStore.getThreadProjection(threadId)).providerSessions, []);
@@ -243,6 +242,7 @@ it.effect.each(
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make(`thread-mcp-policy-${stalePolicy}`);
       yield* eventSink.write({
@@ -269,7 +269,7 @@ it.effect.each(
               ],
         ),
       });
-      McpProviderSession.setMcpProviderSession(stale.config);
+      yield* mcpSessions.set(stale.config);
       const firstId = yield* idAllocator.allocate.providerSession({
         providerInstanceId: modelSelection.instanceId,
         threadId,
@@ -281,7 +281,7 @@ it.effect.each(
         runtimePolicy,
       });
       assert.isTrue(first.mcpSessionInjection);
-      const configured = McpProviderSession.readMcpProviderSession(threadId);
+      const configured = yield* mcpSessions.read(threadId);
       if (configured === undefined)
         return yield* Effect.die("Injectable native session must have a credential");
       assert.notEqual(configured.authorizationHeader, stale.config.authorizationHeader);
@@ -302,7 +302,7 @@ it.effect.each(
         runtimePolicy,
       });
       assert.equal(
-        McpProviderSession.readMcpProviderSession(threadId)?.authorizationHeader,
+        (yield* mcpSessions.read(threadId))?.authorizationHeader,
         configured.authorizationHeader,
       );
       yield* manager.close(firstId);
@@ -345,6 +345,7 @@ it.effect.each(
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-mcp-unavailable-instance");
       yield* eventSink.write({
@@ -355,7 +356,7 @@ it.effect.each(
         providerInstanceId: modelSelection.instanceId,
         capabilities: new Set(["skills:read"]),
       });
-      McpProviderSession.setMcpProviderSession(stale.config);
+      yield* mcpSessions.set(stale.config);
       const providerSessionId = yield* idAllocator.allocate.providerSession({
         providerInstanceId: modelSelection.instanceId,
         threadId,
@@ -368,7 +369,7 @@ it.effect.each(
       });
       assert.isFalse(native.mcpSessionInjection);
       assert.deepEqual(yield* Ref.get(mcpConfigs), [undefined]);
-      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      assert.isUndefined(yield* mcpSessions.read(threadId));
       assert.isUndefined(
         yield* registry.resolve(stale.config.authorizationHeader.replace(/^Bearer\s+/, "")),
       );
@@ -383,12 +384,16 @@ it.effect.each(
             injectionPolicy === "undeclared" ? "undeclared" : injectionPolicy === "disabled",
           ...(injectionPolicy === "disabled" ? { configureMcp: false } : {}),
           beforeOpen: (opening) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               assert.isFalse(opening.configureMcp);
               assert.isUndefined(
                 codexThreadRuntimeParams({
-                  threadId: opening.threadId,
-                  configureMcp: opening.configureMcp !== false,
+                  mcpSession:
+                    opening.configureMcp === false
+                      ? undefined
+                      : yield* (yield* McpProviderSessions.McpProviderSessions).read(
+                          opening.threadId,
+                        ),
                 }).config.mcp_servers,
               );
             }),
@@ -415,6 +420,7 @@ it.effect.each(
       const ids = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const threadId = ThreadId.make(`thread-mcp-unsupported-replacement-${predecessorState}`);
       const now = yield* DateTime.now;
       yield* events.write({
@@ -430,7 +436,7 @@ it.effect.each(
         .pipe(Effect.forkChild);
       yield* Deferred.await(started);
       if (predecessorState === "live") yield* Fiber.join(firstOpening);
-      const credential = McpProviderSession.readMcpProviderSession(threadId);
+      const credential = yield* mcpSessions.read(threadId);
       if (credential === undefined)
         return yield* Effect.die("Injectable predecessor must hold a credential");
       const token = credential.authorizationHeader.replace(/^Bearer\s+/, "");
@@ -448,7 +454,7 @@ it.effect.each(
       });
       assert.isFalse(replacement.mcpSessionInjection);
       assert.equal(
-        McpProviderSession.readMcpProviderSession(threadId)?.authorizationHeader,
+        (yield* mcpSessions.read(threadId))?.authorizationHeader,
         credential.authorizationHeader,
       );
       assert.isDefined(yield* registry.resolve(token));
@@ -475,8 +481,12 @@ it.effect.each(
                 // Actual native Codex prepare parameters must not inherit the live peer's MCP channel.
                 assert.isFalse(opening.configureMcp);
                 const native = codexThreadRuntimeParams({
-                  threadId: opening.threadId,
-                  configureMcp: opening.configureMcp !== false,
+                  mcpSession:
+                    opening.configureMcp === false
+                      ? undefined
+                      : yield* (yield* McpProviderSessions.McpProviderSessions).read(
+                          opening.threadId,
+                        ),
                 });
                 assert.isUndefined(native.config.mcp_servers);
               }

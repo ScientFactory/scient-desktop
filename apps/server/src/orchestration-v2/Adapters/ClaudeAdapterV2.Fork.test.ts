@@ -18,9 +18,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { DEFAULT_CLAUDE_SETTINGS } from "./ClaudeAdapterV2.fixture.ts";
 
 describe("ClaudeAdapterV2 native fork", () => {
@@ -39,7 +40,7 @@ describe("ClaudeAdapterV2 native fork", () => {
           readonly threadId: ThreadId;
           readonly providerSessionId: ProviderSessionId;
         }> = [];
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           crypto: yield* Crypto.Crypto,
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -54,6 +55,7 @@ describe("ClaudeAdapterV2 native fork", () => {
               Effect.sync(() => {
                 openedQueries.push(input);
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.empty,
@@ -198,7 +200,11 @@ describe("ClaudeAdapterV2 native fork", () => {
 
         assert.equal(openedQueries[0]?.options.resume, "forked-native-session");
         assert.equal(openedQueries[0]?.options.sessionId, undefined);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+        ),
+      ),
     ),
   );
 });

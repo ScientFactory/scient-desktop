@@ -245,46 +245,71 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           }
-          case "provider-turn.interrupt":
+          case "provider-turn.interrupt": {
+            const request = effect.request;
             return providerTurnControl
               .interrupt({
                 threadId: effect.threadId,
-                providerSessionId: effect.request.providerSessionId,
-                providerThreadId: effect.request.providerThreadId,
-                providerTurnId: effect.request.providerTurnId,
+                providerSessionId: request.providerSessionId,
+                providerThreadId: request.providerThreadId,
+                providerTurnId: request.providerTurnId,
+                ...(request.subagent === undefined ? {} : { subagent: request.subagent }),
               })
               .pipe(
                 Effect.catch((cause) =>
-                  isNonRetryableProviderTurnControlFailure(
-                    effect.request.type,
-                    Cause.pretty(Cause.fail(cause)),
-                  )
-                    ? Effect.void
-                    : Effect.fail(cause),
-                ),
-                // The provider has stopped what it still ran and reported it.
-                // Whatever the thread still shows on that provider thread is
-                // work no process will report on, so the Stop ends it too.
-                // One Stop can interrupt several provider threads, so the
-                // settle is keyed by effect, not by the Stop command.
-                Effect.andThen(
-                  threads.dispatch({
-                    type: "thread.background-work.settle",
-                    commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                    threadId: effect.threadId,
-                    providerThreadId: effect.request.providerThreadId,
-                    providerTurnId: effect.request.providerTurnId,
+                  Effect.gen(function* () {
+                    if (
+                      !isNonRetryableProviderTurnControlFailure(
+                        request.type,
+                        Cause.pretty(Cause.fail(cause)),
+                      )
+                    ) {
+                      return yield* Effect.fail(cause);
+                    }
+                    // An adapter failure is not a stop receipt. A concurrent
+                    // release can still prove that this child's producer is gone.
+                    if (
+                      request.subagent !== undefined &&
+                      Option.isNone(yield* providerSessions.get(request.providerSessionId))
+                    ) {
+                      return "session-absent" as const;
+                    }
+                    return "not-interrupted" as const;
                   }),
+                ),
+                // Live native children remain SDK-authoritative. Only a released
+                // session permits repairing the captured child locally.
+                Effect.flatMap((outcome) =>
+                  request.subagent !== undefined && outcome !== "session-absent"
+                    ? Effect.void
+                    : threads
+                        .dispatch({
+                          type: "thread.background-work.settle",
+                          commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                          threadId: effect.threadId,
+                          providerThreadId: request.providerThreadId,
+                          providerTurnId: request.providerTurnId,
+                          ...(request.subagent === undefined
+                            ? {}
+                            : {
+                                subagent: {
+                                  ...request.subagent,
+                                  providerSessionId: request.providerSessionId,
+                                },
+                              }),
+                        })
+                        .pipe(Effect.asVoid),
                 ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
                       effectId: effect.id,
-                      effectType: effect.request.type,
+                      effectType: request.type,
                       cause,
                     }),
                 ),
               );
+          }
           case "provider-turn.steer":
             return providerTurnControl
               .steer({
@@ -334,44 +359,64 @@ export const layerExecutor: Layer.Layer<
                     if (message === undefined || run === undefined) return yield* error;
                     // Reuse the message identity and a stable command receipt so an outbox
                     // retry cannot append a duplicate message or start a second follow-up.
-                    yield* threads.dispatch({
-                      type: "message.dispatch",
-                      commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
-                      threadId: effect.threadId,
-                      messageId: message.id,
-                      text: message.text,
-                      ...(message.context ? { context: message.context } : {}),
-                      attachments: message.attachments,
-                      ...(message.selectedScientSkillNames === undefined
-                        ? {}
-                        : { selectedScientSkillNames: message.selectedScientSkillNames }),
-                      // A user's follow-up starts on the thread's saved selection,
-                      // which already holds the steer's choice. A delegated
-                      // completion stays pinned to the run it reports to.
-                      ...(message.delegatedCompletion === undefined
-                        ? {}
-                        : { modelSelection: run.modelSelection }),
-                      dispatchMode: {
-                        type:
-                          message.delegatedCompletion === undefined
-                            ? "start_immediately"
-                            : "queue_after_active",
-                      },
-                      createdBy: message.createdBy,
-                      creationSource: message.creationSource,
-                      ...(message.delegatedCompletion === undefined
-                        ? {}
-                        : { delegatedCompletion: message.delegatedCompletion }),
-                      ...(message.notification === undefined
-                        ? {}
-                        : { notification: message.notification }),
-                      ...(message.scheduledTaskId === undefined
-                        ? {}
-                        : { scheduledTaskId: message.scheduledTaskId }),
-                      ...(message.senderThreadId === undefined
-                        ? {}
-                        : { senderThreadId: message.senderThreadId }),
-                    });
+                    yield* threads
+                      .dispatch({
+                        type: "message.dispatch",
+                        commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
+                        threadId: effect.threadId,
+                        messageId: message.id,
+                        text: message.text,
+                        ...(message.context ? { context: message.context } : {}),
+                        attachments: message.attachments,
+                        ...(message.selectedScientSkillNames === undefined
+                          ? {}
+                          : { selectedScientSkillNames: message.selectedScientSkillNames }),
+                        // A user's follow-up starts on the thread's saved selection,
+                        // which already holds the steer's choice. A delegated
+                        // completion stays pinned to the run it reports to.
+                        ...(message.delegatedCompletion === undefined
+                          ? {}
+                          : { modelSelection: run.modelSelection }),
+                        dispatchMode: {
+                          type:
+                            message.delegatedCompletion === undefined
+                              ? "start_immediately"
+                              : "queue_after_active",
+                        },
+                        createdBy: message.createdBy,
+                        creationSource: message.creationSource,
+                        ...(message.delegatedCompletion === undefined
+                          ? {}
+                          : { delegatedCompletion: message.delegatedCompletion }),
+                        ...(message.notification === undefined
+                          ? {}
+                          : { notification: message.notification }),
+                        ...(message.scheduledTaskId === undefined
+                          ? {}
+                          : { scheduledTaskId: message.scheduledTaskId }),
+                        ...(message.senderThreadId === undefined
+                          ? {}
+                          : { senderThreadId: message.senderThreadId }),
+                      })
+                      .pipe(
+                        // The turn that just completed leaves no further retry
+                        // target once the instance is off: the completed turn
+                        // stands as the thread's result instead of going
+                        // through the outbox's bounded retry on a refusal that
+                        // retrying cannot change.
+                        Effect.catchTags({
+                          ThreadManagementProviderInstanceDisabledError: (disabledError) =>
+                            Effect.logInfo(
+                              "orchestration-v2.effect-worker.steer-follow-up-disabled",
+                              {
+                                threadId: effect.threadId,
+                                messageId: message.id,
+                                projectId: disabledError.projectId,
+                                instanceId: disabledError.instanceId,
+                              },
+                            ),
+                        }),
+                      );
                   }),
                 ),
                 Effect.mapError(
@@ -660,6 +705,17 @@ export const layerExecutor: Layer.Layer<
             );
           case "attachment.rollback-prune":
             return rollbackPrune.execute(effect.threadId, effect.request).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          case "preview.cleanup":
+            return resourceCleanup.cleanupPreviews(effect.threadId).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({

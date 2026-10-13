@@ -93,7 +93,7 @@ function FieldAction({ children, onClick }: { children: ReactNode; onClick: () =
   return (
     <button
       type="button"
-      className="rounded-sm text-xs font-normal text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+      className="rounded-sm text-xs font-normal text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       onClick={onClick}
     >
       {children}
@@ -218,6 +218,16 @@ export function ModelConnectionEditor({
   onSave: (input: CustomModelSaveInput) => Promise<void>;
   onClose: () => void;
 }) {
+  // This dialog opens programmatically, so retain its invoking control for closure.
+  const [opener] = useState(() => {
+    if (typeof document === "undefined" || typeof HTMLElement === "undefined") return null;
+    const control = document.activeElement;
+    return control instanceof HTMLElement &&
+      control !== document.body &&
+      control !== document.documentElement
+      ? { control, dialog: control.closest<HTMLElement>("[data-slot=dialog-popup]") }
+      : null;
+  });
   // A provider that already has a connection reuses it by default; the key
   // field offers "Enter a new API key" to start a second one.
   const initialConnection =
@@ -487,7 +497,16 @@ export function ModelConnectionEditor({
         if (!open && !busy) onClose();
       }}
     >
-      <DialogPopup className="max-w-lg">
+      <DialogPopup
+        className="max-w-lg"
+        finalFocus={() =>
+          opener?.control.isConnected
+            ? opener.control
+            : opener?.dialog?.isConnected
+              ? opener.dialog
+              : true
+        }
+      >
         <DialogHeader>
           <DialogTitle>{editing ? "Edit model" : "Add custom model"}</DialogTitle>
           <DialogDescription className="sr-only">
@@ -637,7 +656,7 @@ export function ModelConnectionEditor({
                   if (open || !limitsInvalid) setAdvancedOpen(open);
                 }}
               >
-                <CollapsibleTrigger className="group inline-flex items-center gap-1 rounded-md py-1 pr-2 text-sm/4 font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
+                <CollapsibleTrigger className="group inline-flex items-center gap-1 rounded-md py-1 pr-2 text-sm/4 font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
                   <ChevronRightIcon className="size-4 text-icon-muted transition-transform duration-200 group-data-panel-open:rotate-90" />
                   Advanced
                 </CollapsibleTrigger>

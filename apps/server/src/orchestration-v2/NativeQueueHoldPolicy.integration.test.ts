@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -51,13 +52,16 @@ import { RunFinalizationObserver } from "./RunFinalizationService.ts";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
-import { AcpProviderCapabilitiesV2 } from "./Adapters/AcpAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
   type NativeSessionUpdate,
 } from "./Adapters/NativeSessionAdapterV2.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import {
+  IdAllocatorV2,
+  layer as idAllocatorLayer,
+} from "@t3tools/provider-core/server/IdAllocator";
 import {
   OrchestratorV2,
   OrchestratorProjectionError,
@@ -69,7 +73,7 @@ import {
   type ProviderAdapterV2TurnInput,
   type ProviderAdapterV2SteerInput,
   type ProviderAdapterV2Event,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   layerFromAdapters as makeLayer,
   ProviderAdapterRegistryMetadataError,
@@ -81,7 +85,7 @@ import {
 } from "./testkit/ProviderReplayHarness.ts";
 import { nativeSettlementTrace } from "./testkit/OmpNativeConjunctions.ts";
 import * as SqlClient from "effect/sql/SqlClient";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
@@ -101,7 +105,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import { HttpServer } from "effect/http";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
-import { readMcpProviderSession } from "../mcp/McpProviderSession.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
 import * as ScientSkillRegistry from "../scient/skills/ScientSkillRegistry.ts";
@@ -196,6 +200,8 @@ const withNativeQueue = <A, E, R>(
     readonly takeOffer: Effect.Effect<NativeOffer, Cause.TimeoutError>;
     readonly captureEntered: Effect.Effect<void>;
     readonly releaseCapture: Effect.Effect<void>;
+    readonly terminalReactionEntered: Effect.Effect<void>;
+    readonly releaseTerminalReactions: Effect.Effect<void>;
     readonly beforeOffer: (
       check: (input: ProviderAdapterV2TurnInput) => Effect.Effect<void>,
     ) => void;
@@ -220,12 +226,13 @@ const withNativeQueue = <A, E, R>(
     readonly existingThread?: boolean;
     readonly databaseLayer?: NonNullable<
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
-    >["layerDatabase"];
+    >["databaseLayer"];
     readonly serverConfigLayer?: NonNullable<
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
     >["layerServerConfig"];
     readonly runEffectWorker?: boolean;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    readonly honorPreparedWorktree?: boolean;
     readonly holdFirstSend?: boolean;
     readonly holdSendOrdinal?: number;
     readonly refuseSend?: number;
@@ -238,6 +245,7 @@ const withNativeQueue = <A, E, R>(
     readonly refusePreparation?: boolean;
     readonly failCheckpointDiff?: boolean;
     readonly holdCheckpointCapture?: boolean;
+    readonly holdTerminalReactions?: boolean;
     readonly injectEvents?: boolean;
     readonly holdInterrupt?: boolean;
     readonly controlStartupFailures?: boolean;
@@ -261,6 +269,7 @@ const withNativeQueue = <A, E, R>(
         [];
       let startupRefusals = 0;
       const allocator = yield* IdAllocatorV2;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const scope = yield* Scope.Scope;
       const offered = yield* Queue.unbounded<NativeOffer>();
       const steering = yield* Queue.unbounded<ProviderAdapterV2SteerInput>();
@@ -273,6 +282,8 @@ const withNativeQueue = <A, E, R>(
       const preparationReleased = yield* Deferred.make<void>();
       const captureEntered = yield* Deferred.make<void>();
       const captureReleased = yield* Deferred.make<void>();
+      const terminalReactionEntered = yield* Deferred.make<void>();
+      const terminalReactionsReleased = yield* Deferred.make<void>();
       let heldCapture = false;
       let beforeOffer: (input: ProviderAdapterV2TurnInput) => Effect.Effect<void> = () =>
         Effect.void;
@@ -407,6 +418,32 @@ const withNativeQueue = <A, E, R>(
         ...adapterOptions,
         instanceId: preparationInstanceId,
       });
+      // Delay the committed terminal fact at the reactor's filtered live tail,
+      // not at a parent command lock that also serializes child follow-up intake.
+      const decorateEventSink: typeof options.decorateEventSink = options.holdTerminalReactions
+        ? (sink) => {
+            const decorated = options.decorateEventSink?.(sink) ?? sink;
+            return {
+              ...decorated,
+              stream: (input) =>
+                decorated
+                  .stream(input)
+                  .pipe(
+                    Stream.mapEffect((stored) =>
+                      input?.eventType === "run.updated" &&
+                      stored.event.type === "run.updated" &&
+                      (stored.event.payload.status === "failed" ||
+                        stored.event.payload.status === "interrupted")
+                        ? Deferred.succeed(terminalReactionEntered, undefined).pipe(
+                            Effect.andThen(Deferred.await(terminalReactionsReleased)),
+                            Effect.as(stored),
+                          )
+                        : Effect.succeed(stored),
+                    ),
+                  ),
+            };
+          }
+        : options.decorateEventSink;
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         {
           name,
@@ -480,6 +517,10 @@ const withNativeQueue = <A, E, R>(
         ]).pipe((registry) => withProviderEnabled(registry, options.providerEnabled)),
         {
           configureMcp: options.mcpSessionRegistryLayer !== undefined,
+          mcpProviderSessionsLayer: Layer.succeed(
+            McpProviderSessions.McpProviderSessions,
+            mcpSessions,
+          ),
           ...(options.mcpSessionRegistryLayer
             ? { mcpSessionRegistryLayer: options.mcpSessionRegistryLayer }
             : {}),
@@ -558,22 +599,53 @@ const withNativeQueue = <A, E, R>(
                 delegatedStops.push({ threadId: input.threadId, commandId: input.commandId });
               }),
           },
-          ...(options.databaseLayer === undefined ? {} : { layerDatabase: options.databaseLayer }),
+          ...(options.databaseLayer === undefined ? {} : { databaseLayer: options.databaseLayer }),
           ...(options.serverConfigLayer === undefined
             ? {}
             : { layerServerConfig: options.serverConfigLayer }),
           ...(options.runEffectWorker === undefined
             ? {}
             : { runEffectWorker: options.runEffectWorker }),
-          ...(options.runtimePolicyLayer === undefined
-            ? {}
-            : { runtimePolicyLayer: options.runtimePolicyLayer }),
+          ...(options.runtimePolicyLayer !== undefined
+            ? { runtimePolicyLayer: options.runtimePolicyLayer }
+            : options.honorPreparedWorktree
+              ? {
+                  // Use the production worktree/project resolver for relocation
+                  // witnesses instead of the fixture's fixed cwd override.
+                  runtimePolicyLayer: RuntimePolicy.layerFromProjectStore.pipe(
+                    Layer.provide(
+                      Layer.mergeAll(
+                        Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+                          getInstance: () => Effect.succeed(undefined),
+                        }),
+                        Layer.mock(ProjectStore.ProjectStoreV2)({
+                          get: (projectId) =>
+                            Effect.succeed(
+                              Option.some({
+                                projectId,
+                                title: name,
+                                workspaceRoot: cwd,
+                                defaultModelSelection: modelSelection,
+                                defaultThreadEnvMode: null,
+                                autoPull: false,
+                                faviconPath: null,
+                                projectIcon: null,
+                                scripts: [],
+                                createdAt: "2026-10-12T00:00:00.000Z",
+                                updatedAt: "2026-10-12T00:00:00.000Z",
+                                deletedAt: null,
+                              }),
+                            ),
+                        }),
+                      ),
+                    ),
+                  ),
+                }
+              : {}),
           ...(options.decorateProjectionStore === undefined
             ? {}
             : { decorateProjectionStore: options.decorateProjectionStore }),
-          ...(options.decorateEventSink === undefined
-            ? {}
-            : { decorateEventSink: options.decorateEventSink }),
+          ...(decorateEventSink === undefined ? {} : { decorateEventSink }),
         },
       ).pipe(
         Layer.provideMerge(options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer),
@@ -639,6 +711,10 @@ const withNativeQueue = <A, E, R>(
           takeOffer,
           captureEntered: Deferred.await(captureEntered),
           releaseCapture: Deferred.succeed(captureReleased, undefined).pipe(Effect.asVoid),
+          terminalReactionEntered: Deferred.await(terminalReactionEntered),
+          releaseTerminalReactions: Deferred.succeed(terminalReactionsReleased, undefined).pipe(
+            Effect.asVoid,
+          ),
           beforeOffer: (check) => {
             beforeOffer = check;
           },
@@ -648,9 +724,13 @@ const withNativeQueue = <A, E, R>(
           delegatedStops,
           interruptEntered: Deferred.await(interruptEntered),
           releaseInterrupt: Deferred.succeed(interruptReleased, undefined).pipe(Effect.asVoid),
-        });
+        }).pipe(Effect.ensuring(Deferred.succeed(terminalReactionsReleased, undefined)));
       }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(threadCommandExecutorLayer))));
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, idAllocatorLayer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
 const send = (
@@ -1823,9 +1903,17 @@ it.live.each(
 )("$caseTitle", ({ outcome }) =>
   withNativeQueue(
     `queue-policy-direct-send-pending-reactor:${outcome}`,
-    ({ orchestrator, threadId, takeOffer, waitFor, waitForThread, offers }) =>
+    ({
+      orchestrator,
+      threadId,
+      takeOffer,
+      waitFor,
+      waitForThread,
+      offers,
+      terminalReactionEntered,
+      releaseTerminalReactions,
+    }) =>
       Effect.gen(function* () {
-        const locks = yield* ThreadCommandExecutor;
         yield* send(orchestrator, threadId, "parent");
         const parent = yield* takeOffer;
         yield* waitFor((projection) =>
@@ -1852,21 +1940,11 @@ it.live.each(
         );
         yield* send(orchestrator, childThreadId, "first", true);
         yield* send(orchestrator, childThreadId, "second", true);
-        const entered = yield* Deferred.make<void>();
-        const unlock = yield* Deferred.make<void>();
-        // The child's terminal reactor takes its parent's lock first, so
-        // holding that lock delays the hold reaction to the child failure.
-        const parentLock = yield* locks
-          .withLock(
-            threadId,
-            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(unlock))),
-          )
-          .pipe(Effect.forkScoped);
-        yield* Deferred.await(entered);
         yield* child.settle("failed");
         const failed = yield* waitForThread(childThreadId, (projection) =>
           projection.runs.some((run) => run.id === child.input.runId && run.status === "failed"),
         );
+        yield* terminalReactionEntered;
         const queuedIds = failed.runs.filter((run) => run.status === "queued").map((run) => run.id);
         assert.equal(queuedIds.length, 2);
         assert.isTrue(
@@ -1885,8 +1963,7 @@ it.live.each(
             .every((run) => run.queueHeld === false),
           "The direct send releases every queued run",
         );
-        yield* Deferred.succeed(unlock, undefined);
-        yield* Fiber.join(parentLock);
+        yield* releaseTerminalReactions;
         yield* direct.settle(outcome);
         if (outcome === "completed") {
           // The earlier failure's late reaction must not hold the queue.
@@ -1914,6 +1991,7 @@ it.live.each(
           assert.deepEqual(offers, ["parent", "child-foreground", "direct"]);
         }
       }),
+    { holdTerminalReactions: true },
   ),
 );
 
@@ -1925,10 +2003,18 @@ it.live.each(
 )("$caseTitle", ({ release }) =>
   withNativeQueue(
     `queue-policy-terminal-echo:${release}`,
-    ({ orchestrator, threadId, takeOffer, waitFor, waitForThread, offers }) =>
+    ({
+      orchestrator,
+      threadId,
+      takeOffer,
+      waitFor,
+      waitForThread,
+      offers,
+      terminalReactionEntered,
+      releaseTerminalReactions,
+    }) =>
       Effect.gen(function* () {
         let stage = "parent offer";
-        const locks = yield* ThreadCommandExecutor;
         yield* send(orchestrator, threadId, "parent");
         const parent = yield* takeOffer;
         yield* waitFor((projection) =>
@@ -1962,18 +2048,9 @@ it.live.each(
         const second = before.runs.find((run) => run.ordinal === 3);
         assert.ok(first);
         assert.ok(second);
-        const entered = yield* Deferred.make<void>();
-        const unlock = yield* Deferred.make<void>();
-        const parentLock = yield* locks
-          .withLock(
-            threadId,
-            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(unlock))),
-          )
-          .pipe(Effect.forkScoped);
-        yield* Deferred.await(entered);
         yield* Effect.gen(function* () {
-          // The terminal reactor must finalize this real app-owned child under
-          // its parent's lock before it can react to the child's queue.
+          // Keep the committed interrupted/checkpoint facts pending at the
+          // reactor while real user commands advance the durable release.
           yield* orchestrator.dispatch({
             type: "run.interrupt",
             threadId: childThreadId,
@@ -1990,6 +2067,7 @@ it.live.each(
                 run.checkpointId !== null,
             ),
           );
+          yield* terminalReactionEntered;
           assert.isTrue(
             stopped.runs.filter((run) => run.status === "queued").every((run) => run.queueHeld),
           );
@@ -2009,13 +2087,13 @@ it.live.each(
           const released = yield* orchestrator.getThreadProjection(childThreadId);
           // Send on one message resumes the whole queue, like Resume.
           assert.isFalse(released.runs.find((run) => run.id === second.id)?.queueHeld);
-          let settledUnderParentLock = false;
+          let settledBeforeReactionRelease = false;
           if (release === "newer-failure") {
-            settledUnderParentLock = true;
-            // Commit the newer real failure while the older terminal reactor
-            // is still fenced by the parent lock. Failed runs do not capture.
+            settledBeforeReactionRelease = true;
+            // Commit the newer real failure while the older terminal reaction
+            // is still delayed at the event tail. Failed runs do not capture.
             yield* resumed.settle("failed");
-            stage = "newer failure committed under parent lock";
+            stage = "newer failure committed before reaction release";
             const failed = yield* waitForThread(
               childThreadId,
               (projection) =>
@@ -2085,9 +2163,8 @@ it.live.each(
               tail: { runId: second.id, status: "queued", held: false },
             });
           }
-          yield* Deferred.succeed(unlock, undefined);
-          yield* Fiber.join(parentLock);
-          if (!settledUnderParentLock)
+          yield* releaseTerminalReactions;
+          if (!settledBeforeReactionRelease)
             yield* resumed.settle(release === "newer-failure" ? "failed" : "completed");
           stage = "resumed head terminal";
           const completed = yield* waitForThread(childThreadId, (projection) =>
@@ -2187,9 +2264,10 @@ it.live.each(
               ),
             ),
           ),
-          Effect.ensuring(Deferred.succeed(unlock, undefined)),
+          Effect.ensuring(releaseTerminalReactions),
         );
       }),
+    { holdTerminalReactions: true },
   ),
 );
 
@@ -3815,7 +3893,9 @@ it.live(
             assert.equal(delivered.runId, foreground.input.runId);
             assert.equal(delivered.message.messageId, messageId);
             assert.equal(delivered.message.creationSource, "mobile");
-            const credential = readMcpProviderSession(threadId);
+            const credential = yield* (yield* McpProviderSessions.McpProviderSessions).read(
+              threadId,
+            );
             assert.ok(credential);
             const scope = yield* (yield* McpSessionRegistry.McpSessionRegistry).resolve(
               credential.authorizationHeader.replace(/^Bearer\s+/, ""),
@@ -4832,5 +4912,167 @@ it.live(
           ),
         );
       }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+);
+
+it.live.each(["failed", "interrupted"] as const)(
+  "Resume and queue-row Send retain a missing promised worktree after preparation %s",
+  (ending) =>
+    withNativeQueue(
+      `queue-missing-prepared-worktree-${ending}`,
+      ({ orchestrator, threadId, offers, takeOffer, waitFor }) =>
+        Effect.gen(function* () {
+          const worker = yield* OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:prepare`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:opening`),
+            text: "Opening message in a promised worktree",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: {
+              type: "defer_start",
+              workspaceStrategy: { type: "worktree", baseRef: "main" },
+            },
+          });
+          const preparing = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.status === "preparing",
+          );
+          assert.ok(preparing);
+          yield* send(orchestrator, threadId, "queued during preparation", true);
+          const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.status === "queued",
+          );
+          assert.ok(queued);
+          if (ending === "failed") {
+            yield* orchestrator.dispatch({
+              type: "prepared-run.fail",
+              commandId: CommandId.make(`${threadId}:preparation-failed`),
+              threadId,
+              runId: preparing.id,
+              failure: makeProviderFailure({
+                cause: "Synthetic worktree provisioning failure",
+                message: "Worktree was not created",
+                class: "validation_error",
+                retryable: false,
+              }),
+            });
+          } else {
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make(`${threadId}:preparation-interrupted`),
+              threadId,
+              runId: preparing.id,
+            });
+          }
+          yield* waitFor((projection) =>
+            projection.runs.some((run) => run.id === queued.id && run.queueHeld === true),
+          );
+          for (const [action, runId] of [
+            ["resume", undefined],
+            ["send-row", queued.id],
+          ] as const) {
+            yield* orchestrator.dispatch({
+              type: "queue.resume",
+              commandId: CommandId.make(`${threadId}:${action}`),
+              threadId,
+              ...(runId === undefined ? {} : { runId }),
+            });
+            // Production outbox/worker completion establishes that no accepted
+            // queue command has scheduled a hidden checkout provider start.
+            yield* worker.drain();
+            const held = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(held.thread.worktreePath, null);
+            assert.equal(held.runs.find((run) => run.id === queued.id)?.status, "queued");
+            assert.equal(held.runs.find((run) => run.id === queued.id)?.queueHeld, true);
+            assert.deepEqual(offers, []);
+            assert.deepEqual(held.providerTurns, []);
+          }
+          if (ending === "failed") {
+            // Retry reuses the failed preparation's authority, then the same
+            // production release command starts in its actual prepared repo.
+            const preparedCwd = yield* checkpointWorkspace("queue-retried-worktree");
+            yield* orchestrator.dispatch({
+              type: "prepared-run.retry",
+              commandId: CommandId.make(`${threadId}:retry`),
+              threadId,
+              runId: preparing.id,
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${threadId}:worktree-ready`),
+              threadId,
+              worktreePath: preparedCwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "prepared-run.release",
+              commandId: CommandId.make(`${threadId}:prepared-release`),
+              threadId,
+              runId: preparing.id,
+            });
+            yield* worker.drain();
+            const retry = yield* takeOffer;
+            assert.equal(retry.input.runId, preparing.id);
+            assert.equal(retry.input.runtimePolicy.cwd, preparedCwd);
+            yield* retry.settle("completed");
+            yield* waitFor((projection) =>
+              projection.runs.some((run) => run.id === preparing.id && run.status === "waiting"),
+            );
+            yield* worker.drain();
+            // The terminal listener commits queue promotion after checkpoint
+            // finalization. Wait for that persisted start before draining its
+            // newly published effect; this fixture has no background daemon.
+            yield* waitFor((projection) =>
+              projection.runs.some(
+                (run) =>
+                  run.id === queued.id && (run.status === "starting" || run.status === "running"),
+              ),
+            );
+            yield* worker.drain();
+            const next = yield* takeOffer;
+            assert.equal(next.input.runId, queued.id);
+            assert.equal(next.input.runtimePolicy.cwd, preparedCwd);
+          } else {
+            // An ordinary newly admitted user Send is a later release boundary.
+            // The older interrupted preparation must not rehold that new run.
+            yield* send(orchestrator, threadId, "explicit new checkout turn");
+            yield* worker.drain();
+            const direct = yield* takeOffer;
+            // Context handoff remains part of the production provider input.
+            // Decide the exact new user payload and identity beneath that context.
+            assert.match(direct.input.message.text, /^Context handoff \(/);
+            assert.isTrue(
+              direct.input.message.text.endsWith("User message:\nexplicit new checkout turn"),
+            );
+            assert.equal(
+              direct.input.message.messageId,
+              MessageId.make(`${threadId}:message:explicit new checkout turn`),
+            );
+            assert.notEqual(direct.input.runId, preparing.id);
+            yield* direct.settle("completed");
+            yield* waitFor((projection) =>
+              projection.runs.some(
+                (run) => run.id === direct.input.runId && run.status === "waiting",
+              ),
+            );
+            yield* worker.drain();
+            // The terminal listener commits queue promotion after checkpoint
+            // finalization. Wait for that persisted start before draining its
+            // newly published effect; this fixture has no background daemon.
+            yield* waitFor((projection) =>
+              projection.runs.some(
+                (run) =>
+                  run.id === queued.id && (run.status === "starting" || run.status === "running"),
+              ),
+            );
+            yield* worker.drain();
+            const next = yield* takeOffer;
+            assert.equal(next.input.runId, queued.id);
+            assert.equal(next.input.runtimePolicy.cwd, direct.input.runtimePolicy.cwd);
+          }
+        }),
+      { runEffectWorker: false, honorPreparedWorktree: true },
     ),
 );

@@ -62,6 +62,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { useScheduledTaskLink } from "./useScheduledTaskLink";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   matchesScheduledTaskScope,
@@ -289,7 +290,7 @@ export function ScheduledTasksSettings(target: {
           <div className="space-y-8">
             {environments.map((entry) => (
               <ScheduledTaskEnvironmentSection
-                key={`${entry.environmentId}:${target.taskId ?? ""}`}
+                key={entry.environmentId}
                 environment={entry}
                 showEnvironmentHeading={environments.length > 1}
                 taskId={
@@ -342,13 +343,9 @@ function ScheduledTaskEnvironmentSection({
     matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
   );
   const linkedTask = tasks?.find((task) => task.id === taskId);
-  const openedLink = useRef(false);
-  useEffect(() => {
-    if (!openedLink.current && linkedTask) {
-      openedLink.current = true;
-      onEdit(environment.environmentId, linkedTask);
-    }
-  }, [environment.environmentId, linkedTask, onEdit]);
+  useScheduledTaskLink(taskId, linkedTask?.id, () => {
+    if (linkedTask) onEdit(environment.environmentId, linkedTask);
+  });
   useRelativeTimeTick(60_000);
   return (
     <SettingsSection
@@ -804,13 +801,6 @@ function ScheduledTaskEditorDialog({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
-  const instanceEntries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
-      ),
-    [providers, settings],
-  );
   const [draft, setDraft] = useState<DraftState>(() =>
     task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
   );
@@ -827,13 +817,29 @@ function ScheduledTaskEditorDialog({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  // The task runs in selectedProject, so its model picker should reflect that
+  // project's effective enablement, not just the machine's.
+  const instanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(providers),
+          settings,
+          selectedProject?.id ?? null,
+        ),
+      ),
+    [providers, settings, selectedProject?.id],
+  );
 
   // The real model picker is keyed by a `${instanceId}:${model}` string, which
   // is exactly how the draft stores its selection.
   const firstInstance = instanceEntries[0];
-  const activeSelection = draft.modelKey
-    ? splitModelKey(draft.modelKey)
-    : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
+  const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
+  const activeSelection =
+    draftSelection &&
+    instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
+      ? draftSelection
+      : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
@@ -1122,6 +1128,7 @@ function ScheduledTaskEditorDialog({
 
             <Field label="Model">
               <ProviderModelPicker
+                environmentId={environmentId}
                 disabled={saving || !connected}
                 activeInstanceId={activeInstanceId}
                 model={activeModel}

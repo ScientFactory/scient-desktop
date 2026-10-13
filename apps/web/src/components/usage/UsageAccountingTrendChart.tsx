@@ -8,6 +8,8 @@ import {
   formatUsdPrecise,
 } from "@t3tools/shared/usageFormat";
 
+import { observeResize } from "../../lib/observeResize";
+
 import type { AccountingChartMetric, AccountingTrend } from "./usageAccountingPresentation";
 import {
   nearestCurveIndex,
@@ -142,11 +144,8 @@ export function UsageAccountingTrendChart({
     positionTooltip();
     const plot = plotRef.current;
     const tooltip = tooltipRef.current;
-    if (plot === null || tooltip === null || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(positionTooltip);
-    observer.observe(plot);
-    observer.observe(tooltip);
-    return () => observer.disconnect();
+    if (plot === null || tooltip === null) return;
+    return observeResize([plot, tooltip], positionTooltip);
   }, [activePeriod, positionTooltip]);
 
   const selectPeriod = useCallback(
@@ -273,7 +272,7 @@ export function UsageAccountingTrendChart({
           aria-valuemin={0}
           aria-valuenow={activePeriod ?? trend.periods.length - 1}
           aria-valuetext={activeDescription}
-          className="relative h-[calc(100%-1.5rem)] w-full touch-pan-y outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="relative h-[calc(100%-1.5rem)] w-full touch-pan-y outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           role="slider"
           tabIndex={0}
           onBlur={() => {

@@ -5,6 +5,7 @@ import { ChevronsUpDownIcon, SearchIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { OverlayScrollScope } from "./overlay-scroll-scope";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 
@@ -150,6 +151,7 @@ function ComboboxPopup({
   side?: ComboboxPrimitive.Positioner.Props["side"];
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
 }) {
+  const scrollScope = React.useContext(OverlayScrollScope);
   const { chipsRef, multiple } = React.use(ComboboxContext);
   const anchor = anchorProp ?? (multiple ? chipsRef : undefined);
 
@@ -173,6 +175,8 @@ function ComboboxPopup({
           <ComboboxPrimitive.Popup
             className="flex min-w-0 max-h-[min(var(--available-height),23rem)] flex-1 flex-col overflow-hidden text-foreground"
             data-slot="combobox-popup"
+            {...scrollScope?.portalProps}
+            data-overlay-scroll-scope={scrollScope?.id}
             {...props}
           >
             {children}

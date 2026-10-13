@@ -92,6 +92,7 @@ function ComposerPickerParent(props: {
         />
       ) : (
         <ProviderModelPicker
+          environmentId={null}
           activeInstanceId={selection.instanceId}
           model={selection.model}
           lockedProvider={null}

@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { SCIENT_DESKTOP_RELEASE_REPOSITORY } from "@t3tools/shared/scientRelease";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -285,6 +285,12 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
   });
   // SCIENT-FORK:END
+
+  it("embeds the runner in the launch script byte for byte", () => {
+    const runner = SshTunnel.buildRemoteT3RunnerScript(ARCHIVE);
+    assert.include(runner, 'printf \'%s\\n\' "$$" > "$T3_LOCK/pid.tmp"');
+    assert.include(SshTunnel.buildRemoteLaunchScript(ARCHIVE), runner);
+  });
 
   it("uses the remote t3 runner for launch and pairing scripts", () => {
     const stateKey = "711bc738002d72fd";
@@ -788,8 +794,8 @@ describe("ssh tunnel scripts", () => {
 // lock excludes concurrent installers. Run the real script against a tiny
 // fake archive served from a file:// mirror.
 describe("archive runner script", () => {
-  const hostPlatform = HostProcessPlatform.defaultValue();
-  const hostArch = HostProcessArchitecture.defaultValue();
+  const hostPlatform = HostProcess.Platform.defaultValue();
+  const hostArch = HostProcess.Architecture.defaultValue();
   const windowsHost = hostPlatform === "win32";
   const archiveVersion = "1.2.3-preview.20260911.4";
 

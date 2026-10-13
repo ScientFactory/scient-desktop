@@ -1,3 +1,7 @@
+import {
+  SettingsRoutePending,
+  SettingsRouteError,
+} from "../components/settings/SettingsRouteLoading";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
@@ -25,12 +29,23 @@ function SettingsProvidersRoute() {
     <ProviderSettingsPanel
       environmentId={environment.environmentId}
       {...(target.instanceId ? { instanceId: target.instanceId } : {})}
+      projectIds={
+        scope.kind === "project" || scope.kind === "checkout"
+          ? scope.members
+              .filter((member) => member.environmentId === environment.environmentId)
+              .map((member) => member.id)
+          : []
+      }
       scoped
     />
   );
 }
 
 export const Route = createFileRoute("/settings/providers")({
+  pendingComponent: SettingsRoutePending,
+  pendingMs: 80,
+  pendingMinMs: 0,
+  errorComponent: SettingsRouteError,
   validateSearch: (raw: Record<string, unknown>) => ({
     ...(typeof raw.environmentId === "string" && raw.environmentId.trim()
       ? { environmentId: EnvironmentId.make(raw.environmentId) }

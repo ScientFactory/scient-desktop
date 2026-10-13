@@ -6,8 +6,8 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makeAgySession } from "../../provider/antigravity/AgySession.ts";
-import { toJsonSchemaObject } from "../../textGeneration/TextGenerationUtils.ts";
-import type { ProviderVoiceTranscriptCorrection } from "../../provider/ProviderDriver.ts";
+import { toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
+import type { ProviderVoiceTranscriptCorrection } from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   buildVoiceTranscriptCorrectionPrompt,
   validateVoiceTranscriptCorrectionOutput,

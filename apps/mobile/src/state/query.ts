@@ -24,13 +24,28 @@ function formatError(cause: Cause.Cause<unknown>): string {
 export function useEnvironmentQuery<A, E>(
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null,
 ): EnvironmentQueryView<A> {
+  return useEnvironmentResultView(atom, (result) => result.waiting);
+}
+
+// An open stream marks every value as waiting, so a subscription is pending
+// only until its first value or failure arrives.
+export function useEnvironmentSubscription<A, E>(
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null,
+): EnvironmentQueryView<A> {
+  return useEnvironmentResultView(atom, AsyncResult.isInitial);
+}
+
+function useEnvironmentResultView<A, E>(
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null,
+  isWaiting: (result: AsyncResult.AsyncResult<A, E>) => boolean,
+): EnvironmentQueryView<A> {
   const selectedAtom = atom ?? EMPTY_ASYNC_RESULT_ATOM;
   const result = useAtomValue(selectedAtom);
   const refresh = useAtomRefresh(selectedAtom);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
     error: result._tag === "Failure" ? formatError(result.cause) : null,
-    isPending: atom !== null && result.waiting,
+    isPending: atom !== null && isWaiting(result),
     refresh,
   };
 }

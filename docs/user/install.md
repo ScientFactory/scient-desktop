@@ -45,6 +45,45 @@ Download the x64 AppImage, make it executable if your file manager did not do
 so, and open it. Keep the AppImage in a permanent location if you want Scient's
 built-in desktop updater to continue finding it.
 
+## Use Scient from a terminal
+
+In **Settings → General → About**, install the **scient command** to put the
+desktop app's bundled CLI on your terminal's PATH. Open a new terminal after
+installation. If Settings reports that the installation folder is outside PATH,
+add that folder to your shell's PATH.
+
+Run `scient --help` to see the available commands. With the desktop app already
+running on the same machine:
+
+```bash
+scient app
+scient app ../my-project
+```
+
+The first command opens a new thread for the current directory, adding the
+project if needed; the second opens another directory. A standalone server or
+an SSH session is not enough. If the command cannot reach the app, start or
+update the desktop app and try again. `scient start` and `scient serve` start
+a backend server; use `scient app` to open a project in the running desktop app.
+
+Settings offers **Install scient** when the command is not installed and
+**Remove** when a Scient-owned terminal shortcut exists. A fresh installation
+has nothing to remove. Older Scient-installed `t3` shortcuts are handled
+automatically and keep working after an update; no separate migration action
+is needed. **Remove** cleans up owned shortcuts and leaves unrelated commands
+and user-managed PATH entries alone. Internal bundled launchers remain
+available to the app; an update does not recreate a removed `t3` shortcut.
+
+If another `scient` command would run first, Settings refuses to overwrite or
+hide it and reports its path. Resolve that conflict yourself or run the
+bundled launcher directly at the path shown. You can still remove an owned
+legacy shortcut when this conflict prevents installation.
+
+Recovery commands printed by Scient may use an absolute launcher or runtime
+instead of the short name. Paste them as shown: they select the installation
+and profile that reported the problem, including Linux browser setup under
+`sudo`. Windows operational snippets use PowerShell.
+
 ## Start using Scient
 
 If the app shows **Scient could not load**, check your connection and select
@@ -61,28 +100,6 @@ when supported, install and verify a private Scient-managed copy. See
 [AI providers](./providers.md) for setup and lifecycle details, or
 [Projects](./projects.md) for adding a workspace.
 
-### The desktop command-line tool
-
-The desktop app includes the `t3` command-line tool. To run it from any
-terminal, open **Settings → General → About** and choose **Install** next to
-**t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
-`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If you already have `t3`
-from npm, it stays as it is.
-
-### Open a project from a terminal
-
-With the desktop app already running on the same machine:
-
-```bash
-t3 app
-```
-
-This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
-the desktop app, so a standalone server or an SSH session is not enough. If the
-command cannot reach the app, start or update the desktop app and try again.
-
 ## Providers
 
 Open **Settings → Providers** in the web or desktop app, select the environment,
@@ -98,7 +115,7 @@ computer.
 | Grok        | Install [Grok CLI](https://x.ai/cli), then run `grok login`.                                                                                              |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
 | Antigravity | Install and sign in with Google from Scient's provider settings.                                                                                          |
-| Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup.                                                                    |
+| Pi          | Use Scient's managed **Install** action or [set up Pi](./providers-pi.md#setup) with Node.js 22.19 or newer, then run `pi` and `/login`.                  |
 | Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
 
 Provider CLIs must be on the server's `PATH`. If Scient cannot find one, set its

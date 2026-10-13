@@ -27,8 +27,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import type * as ProviderAdapter from "../ProviderAdapter.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeLegacyAntigravityAdapterV2 } from "./LegacyAntigravityAdapterV2.ts";
 
 const decodeSettings = Schema.decodeEffect(AntigravitySettings);

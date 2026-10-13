@@ -235,7 +235,7 @@ export function ServerUpdateAction({
       toastManager.add({
         type: "success",
         title: "Relaunch command copied",
-        description: `Stop Scient on ${serverLabel}, then relaunch with \`${command}\` using the same subcommand and options. This does not update an installed t3 command.`,
+        description: `Stop Scient on ${serverLabel}, then relaunch with \`${command}\` using the same subcommand and options. This does not update an installed scient command.`,
       });
     },
     onError: (error) => {

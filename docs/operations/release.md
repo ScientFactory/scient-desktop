@@ -5,19 +5,24 @@ Observed source, promoted source, packaged artifacts, signed artifacts,
 published artifacts, installed updates, and accepted migration behavior are
 separate states and must be reported separately.
 
+For the automatic, isolated Beta lane and its updater checks, see
+[Beta releases](./beta-releases.md). The workflow defaults to Stable, preserving
+the stable scheduler and production gate.
+
 ## Authority and invariants
 
 - `main` is the reviewed integration branch.
 - `release/stable` contains an exact commit already present on `main`; promotion
   creates no commit and changes no tree.
 - `.github/workflows/promote-release.yml` is the only normal promotion path.
-- `.github/workflows/release.yml` is manual-only. Its default is a build-only
-  proof and creates no tag or release.
+- `.github/workflows/release.yml` is manual-only. Its Stable default is a build-only
+  proof and creates no tag or release. Selecting Beta authorizes automatic
+  publication without release notes or a second approval.
 - `.github/workflows/scheduled-stable-candidate.yml` may dispatch those two
   guarded workflows at 04:00 Asia/Jerusalem, but it has no direct publication
   or branch-write authority. The existing promotion and production gates remain
   authoritative.
-- Publication additionally requires the protected `production` environment and
+- Stable publication additionally requires the protected `production` environment and
   repository variable `SCIENT_DESKTOP_RELEASES_ENABLED=true`.
 - Never publish from an arbitrary branch, an unreviewed commit, or a dirty local
   build.
@@ -30,10 +35,84 @@ separate states and must be reported separately.
   monitor, omit unused Claude SDK platform executables, and package only the
   target Windows `node-pty` architecture. These optimizations do not relax the
   exact-source CI, signing, assembly, or publication gates.
+- CI calls Windows Packaging for changes affecting packaged code on pull
+  requests, merge groups, and main. Successful qualification is part of the
+  existing required `Test` check; an unresolved diff runs qualification, and
+  a failed detector or an unqualified skip fails the gate. It runs the release
+  payload validator, packaged terminal/Cursor native probes, and an install/upgrade
+  from the checksum-pinned 0.6.21 installer without signing
+  secrets or publication authority. Release Smoke uses synthetic artifacts and
+  remains a separate workflow/manifest check.
+- Linux Packaging builds an unsigned x64 AppImage on Ubuntu for desktop,
+  native, assembly, or dependency changes. Ordinary renderer/server source
+  edits alone do not select it. Unknown diffs run qualification; failure,
+  cancellation, or an unexplained skip blocks the existing required `Test`
+  check on PRs and merge groups. It has no signing secrets or publication step.
+  The job extracts the real AppImage, checks archived branding and external
+  runtimes, verifies x64 executable ELF metadata and dynamic-library resolution
+  (static helpers require no interpreter or needed libraries), executes
+  SyncTeX/Whisper and the resource-monitor protocol, and
+  verifies desktop survival/shutdown and archived-icon registration under
+  isolated XDG state, Xvfb, and a private D-Bus session. Capture helper execution
+  is checked without claiming live KDE/Hyprland compositor acceptance.
+  A second AppImage from the same retained stage restores only the five
+  duplicate ASAR trees for a controlled compressed-size comparison; retained
+  archive bytes and external resource bytes/modes must match. This measures
+  the cleanup on identical inputs, not a download comparison between releases.
+- The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
+  packages; their Linux variants remain, and the Windows sidecar is separate.
+  WSL installation restores execute permissions for Cursor's Linux `rg` and
+  `cursorsandbox` helpers in the verified cache because Windows-created archives
+  lose those permissions. Windows Packaging runs the same install script and
+  executes that exact packaged archive on Linux without installing replacement
+  dependencies, checking native loads, terminals, CLI,
+  HTTP startup, and shutdown. This qualifies the Linux payload; WSL distro and
+  Windows/Linux interoperability acceptance remain separate platform checks.
+- Windows loose-file validation retains an 80-file core budget. Pinned voice
+  and Windows/WSL Cursor inventories are admitted separately only after their
+  exact file sets pass validation; missing or extra component files fail even
+  below the total cap. Foreign native targets fail independently of the budget.
+  Dependency updates that change these inventories require reviewing the runtime
+  loaders and updating the inventories and regression fixtures together.
 
 Release versions follow the current stable line. A version does not imply
 proximity to `v1.0.0`; semantic versions permit any number of patch and minor
 releases before the product earns the `1.0.0` contract.
+
+## Runtime payload checks
+
+The WSL tarball omits `*.map` at every depth, matching the existing desktop
+ASAR and Windows server-sidecar source-map policy. Build output retains its
+maps for debugging; archive filtering does not delete them or change map
+generation. Packaged launchers do not enable source-map loading. Preserve the
+corresponding source revision and build output when diagnosing bundled stacks.
+
+Whisper, resource monitor, and SyncTeX run from external Electron resources.
+Their `apps/desktop/prod-resources` staging trees are excluded from `app.asar`
+on every platform; Linux also excludes the KDE and Hyprland capture staging
+trees. Keep individual exclusions: Linux registration reads
+`apps/desktop/prod-resources/icon.png` from the archive, and other branding
+files must remain available.
+
+The artifact builder inspects emitted ASAR contents and checks every staged
+runtime file exists and is nonempty in external resources, including libraries,
+provenance, and licenses. On POSIX targets it also checks that executable files
+retain executable permission and requires the named runtime binaries to be
+executable even if staging already lost their mode. Linux's archived
+registration icon is required.
+SyncTeX staging restores `0755` on the macOS/Linux executable after verifying
+its target receipt, size, and checksum. This handles loose CI artifacts arriving
+with mode `0644` without changing the downloaded source, licenses, receipt, or
+Windows executable.
+Windows validation separately inspects the actual WSL tar members and rejects
+maps even when the archive digest is valid.
+
+These are structural checks, not native acceptance. Payload changes still need
+macOS voice/resource-monitor/SyncTeX acceptance, Windows/WSL startup, terminal,
+provider, search and install/update checks, and Linux capture/runtime/registration
+acceptance. Record compressed artifact sizes separately from raw file sizes;
+repacking or compression models cannot establish installer download savings.
+Keep differential updates enabled and qualify the normal update path.
 
 ## Production identity and data safety
 
@@ -78,13 +157,13 @@ when current-main CI is missing or unsuccessful, the next release note is not
 approved, the stable tag history is inconsistent, promotion fails, or a target
 tag or release already exists.
 
-### Manual path
+### Manual Stable path
 
 1. Select the exact current `main` SHA after its CI workflow is successful.
 2. Manually run **Promote main to release/stable** with that full SHA. Promotion
    fails unless the SHA is current `origin/main`, has successful CI, and can
    fast-forward `release/stable`.
-3. Manually run **Scient stable release** from `release/stable` with the exact
+3. Manually run **Scient desktop release** from `release/stable` with the exact
    version and promoted SHA. For a real release candidate, select
    `publish_release=true`; this builds and assembles the candidate but does not
    publish it until the protected `production` job is separately approved. Use
@@ -135,8 +214,9 @@ Normal Windows publication requires Azure Trusted Signing secrets
 
 Build-only proof may produce unsigned artifacts when credentials are absent.
 It labels them unsigned and cannot publish them unless the explicit
-`allow_unsigned_windows=true` publication exception is selected. That exception
-applies only to Windows; macOS signing and notarization remain mandatory.
+`allow_unsigned_windows=true` publication exception is selected. Beta applies
+the same owner-approved Windows exception automatically. That exception applies
+only to Windows; macOS signing and notarization remain mandatory.
 
 Release jobs expose Apple credentials only to macOS packaging and Azure
 credentials only to Windows packaging. Publication additionally verifies the
@@ -155,6 +235,19 @@ Scient does not publish T3's npm package. Each release instead contains
 `scient-server-<version>.tgz`. SSH launches and background-service updates use
 that immutable GitHub asset at the exact desktop version. The tarball is built
 from the same source SHA and includes native resource monitors from the matrix.
+Its manifest shares the CLI bundler's runtime-external dependency boundary with
+both desktop backends. Ordinary JavaScript and patched SDKs remain bundled;
+only disk-loaded runtime roots and their npm shrinkwrapped closure are installed
+on the remote host. The Electron-only FFF ASAR loader patch is unnecessary in
+this plain filesystem package.
+
+Required CI qualification builds the real tarball on Linux, installs the same
+bytes outside the workspace on Linux, macOS and Windows, probes native file
+search, canvas, Cursor helpers and concurrent terminals, then verifies HTTP
+startup and POSIX graceful shutdown (Windows process termination) using disposable state. The existing required
+`Test` check fails if applicable remote qualification fails or is skipped.
+Release packaging repeats the Linux tarball check after adding native assets,
+before uploading the candidate.
 
 ## What's New ownership
 
@@ -163,10 +256,11 @@ and calls `validateScientReleaseNotesCatalog`; it does not define a second
 schema. The exact version normally requires an approved entry, and the
 publisher renders that same approved entry as the GitHub release body rather
 than generating a noisy changelog from inherited T3 history.
-`allow_note_free=true` is an explicit product decision, not a missing-work
-fallback.
+`allow_note_free=true` is an explicit product decision for Stable, not a missing-work
+fallback. Beta intentionally omits catalog notes and publishes automatically; see
+[Beta releases](./beta-releases.md).
 
-## Required manual acceptance
+## Required Stable manual acceptance
 
 The historical non-destructive old-app-to-new-app rehearsal is documented in
 the [v0.6.0 migration rehearsal](./v060-migration-rehearsal.md). Current

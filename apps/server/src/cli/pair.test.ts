@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -22,11 +22,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
-import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
-import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -64,15 +60,7 @@ const layerCliAuthority = Layer.mergeAll(
         Layer.provide(GitVcsDriver.layer),
         Layer.provide(
           SourceControlProviderRegistry.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                AzureDevOpsCli.layer,
-                BitbucketApi.layer,
-                GitHubApi.layerWithDependencies,
-                GitLabCli.layer,
-                ForgejoCli.layer,
-              ),
-            ),
+            Layer.provide(BuiltInDrivers.layer),
             Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
           ),
         ),
@@ -246,7 +234,7 @@ describe("t3 pair", () => {
       }),
     ).pipe(
       Effect.provide(NodeServices.layer),
-      Effect.provideService(HostProcessEnvironment, {
+      Effect.provideService(HostProcess.Environment, {
         ...process.env,
         [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
           protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -324,7 +312,7 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("directs to t3 serve or t3 connect when no server is running", () =>
+  it.effect("directs to scient serve when no server is running", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-none-test-"));
 
@@ -336,8 +324,8 @@ describe("t3 pair", () => {
         typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
       );
       assert.include(rendered, "No running Scient server found.");
-      assert.include(rendered, "npx t3 serve");
-      assert.include(rendered, "npx t3 connect");
+      assert.include(rendered, "scient serve");
+      assert.notInclude(rendered, "npx t3");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -456,7 +444,7 @@ describe("auth scope options", () => {
       if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
         assert.fail(`Expected ShowHelp, got ${String(error)}`);
       }
-      assert.deepEqual(error.commandPath, ["t3", ...command]);
+      assert.deepEqual(error.commandPath, ["scient", ...command]);
       const scopeError = error.errors[0];
       if (scopeError?._tag !== "InvalidValue") {
         assert.fail(`Expected InvalidValue, got ${String(scopeError?._tag)}`);

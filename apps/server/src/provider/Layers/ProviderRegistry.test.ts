@@ -1,3 +1,4 @@
+import { scientAntigravityInstallationLayer } from "../../scient/providerLifecycle/ScientAntigravityInstallation.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
@@ -46,9 +47,11 @@ import * as ModelManifest from "../ModelManifest.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { applyProviderCompatibility } from "../providerCompatibility.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
-import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "../OpenCodeServerLedger.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { layer as ProviderInstanceRegistryHydrationLive } from "../ProviderInstanceRegistryHydration.ts";
 import {
   mergeProviderSnapshot,
@@ -59,17 +62,17 @@ import {
 } from "../ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
-import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
-import { COMPACT_SLASH_COMMAND } from "../providerSnapshot.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
+import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../ProviderRegistry.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
@@ -80,6 +83,13 @@ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
   enabled: false,
 });
+const disabledDefaultProviderInstances = {
+  codex: { driver: "codex", enabled: false },
+  claudeAgent: { driver: "claudeAgent", enabled: false },
+  cursor: { driver: "cursor", enabled: false },
+  grok: { driver: "grok", enabled: false },
+  opencode: { driver: "opencode", enabled: false },
+} as unknown as ContractServerSettings["providerInstances"];
 
 process.env.T3CODE_CURSOR_ENABLED = "1";
 
@@ -107,7 +117,15 @@ const TestHttpClientLive = Layer.merge(
       spawn: () => Effect.die("PTY must not start in provider registry tests"),
     }),
   ),
-).pipe(Layer.provideMerge(ModelManifest.layerTest));
+).pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      ModelManifest.layerTest,
+      ProviderLatestVersions.layer,
+      McpProviderSessions.layer,
+    ),
+  ),
+);
 
 const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
@@ -166,6 +184,7 @@ type TestClaudeCapabilities = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  readonly apiKeySource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
@@ -176,6 +195,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       email: undefined,
       subscriptionType: undefined,
       tokenSource: undefined,
+      apiKeySource: undefined,
       apiProvider: undefined,
       slashCommands: [],
       ...overrides,
@@ -3039,24 +3059,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           const serverSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
-                providers: {
-                  // Disable every built-in probe that would otherwise spawn
-                  // on the CI host. `enabled: false` short-circuits each
-                  // driver's probe *before* it touches the spawner, so the
-                  // test environment stays isolated from the dev
-                  // machine's PATH.
-                  codex: { enabled: false },
-                  claudeAgent: { enabled: false },
-                  cursor: { enabled: false },
-                  grok: { enabled: false },
-                  opencode: { enabled: false },
-                },
                 // `providerInstances` keys are branded `ProviderInstanceId`;
                 // the branded index signature rejects plain string literals
                 // at the TS level even though the runtime schema happily
                 // accepts + decodes them. Cast the patch to `unknown` so
                 // the `Schema.decodeSync` below does the real validation.
                 providerInstances: {
+                  ...disabledDefaultProviderInstances,
                   // Matches the shape the user had in `.t3/dev/settings.json`
                   // when the bug was reported: a custom enabled Codex instance
                   // pointing at a binary the server has to actually spawn.
@@ -3077,7 +3086,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-            Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
+            Layer.provideMerge(scientAntigravityInstallationLayer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -3094,7 +3103,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(ModelManifest.layerTest),
+            Layer.provideMerge(
+              Layer.mergeAll(
+                ModelManifest.layerTest,
+                ProviderLatestVersions.layer,
+                McpProviderSessions.layer,
+              ),
+            ),
             Layer.provideMerge(OmpExecutableGate.layer),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
             Layer.provideMerge(
@@ -3158,13 +3173,14 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           const serverSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
-                providers: {
-                  codex: { enabled: true, binaryPath: firstMissing },
-                  claudeAgent: { enabled: false },
-                  cursor: { enabled: false },
-                  grok: { enabled: false },
-                  opencode: { enabled: false },
-                },
+                providerInstances: {
+                  ...disabledDefaultProviderInstances,
+                  codex: {
+                    driver: "codex",
+                    enabled: true,
+                    config: { binaryPath: firstMissing },
+                  },
+                } as unknown as ContractServerSettings["providerInstances"],
               }),
             ),
           );
@@ -3172,7 +3188,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-            Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
+            Layer.provideMerge(scientAntigravityInstallationLayer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -3189,7 +3205,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(ModelManifest.layerTest),
+            Layer.provideMerge(
+              Layer.mergeAll(
+                ModelManifest.layerTest,
+                ProviderLatestVersions.layer,
+                McpProviderSessions.layer,
+              ),
+            ),
             Layer.provideMerge(OmpExecutableGate.layer),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
             Layer.provideMerge(
@@ -3229,8 +3251,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             // fires `syncLiveSources`, which subscribes and launches a fresh
             // background refresh on the rebuilt instance.
             yield* serverSettings.updateSettings({
-              providers: {
-                codex: { enabled: true, binaryPath: secondMissing },
+              providerInstances: {
+                ...disabledDefaultProviderInstances,
+                [ProviderInstanceId.make("codex")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  enabled: true,
+                  config: { binaryPath: secondMissing },
+                },
               },
             });
             // Wait for the observable event this regression cares about:
@@ -3261,14 +3288,8 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           const serverSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
-                providers: {
-                  codex: { enabled: false },
-                  claudeAgent: { enabled: false },
-                  cursor: { enabled: false },
-                  grok: { enabled: false },
-                  opencode: { enabled: false },
-                },
                 providerInstances: {
+                  ...disabledDefaultProviderInstances,
                   ghost_main: {
                     driver: "ghostDriver",
                     displayName: "A fork-only driver we don't ship",
@@ -3283,7 +3304,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-            Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
+            Layer.provideMerge(scientAntigravityInstallationLayer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -3300,7 +3321,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(ModelManifest.layerTest),
+            Layer.provideMerge(
+              Layer.mergeAll(
+                ModelManifest.layerTest,
+                ProviderLatestVersions.layer,
+                McpProviderSessions.layer,
+              ),
+            ),
             Layer.provideMerge(OmpExecutableGate.layer),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
             Layer.provideMerge(
@@ -3333,14 +3360,16 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             const serverSettings = yield* makeMutableServerSettingsService(
               decodeServerSettings(
                 deepMerge(encodedDefaultServerSettings, {
-                  providers: {
+                  providerInstances: {
                     codex: {
+                      driver: "codex",
                       enabled: false,
                     },
                     grok: {
+                      driver: "grok",
                       enabled: false,
                     },
-                  },
+                  } as unknown as ContractServerSettings["providerInstances"],
                 }),
               ),
             );
@@ -3350,7 +3379,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const providerRegistryLayer = ProviderRegistryLive.pipe(
               Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-              Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
+              Layer.provideMerge(scientAntigravityInstallationLayer),
               Layer.provideMerge(
                 Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
               ),
@@ -3367,7 +3396,13 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                   ProviderEventLoggers.NoOpProviderEventLoggers,
                 ),
               ),
-              Layer.provideMerge(ModelManifest.layerTest),
+              Layer.provideMerge(
+                Layer.mergeAll(
+                  ModelManifest.layerTest,
+                  ProviderLatestVersions.layer,
+                  McpProviderSessions.layer,
+                ),
+              ),
               Layer.provideMerge(OmpExecutableGate.layer),
               Layer.provideMerge(ResetCreditCoordinator.layerTest),
               Layer.provideMerge(
@@ -3491,6 +3526,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               email: undefined,
               subscriptionType: undefined,
               tokenSource: undefined,
+              apiKeySource: undefined,
               apiProvider: undefined,
               slashCommands: [],
               models: [
@@ -3589,6 +3625,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                   email: undefined,
                   subscriptionType: undefined,
                   tokenSource: undefined,
+                  apiKeySource: undefined,
                   apiProvider: undefined,
                   slashCommands: [],
                   usage: { rate_limits_available: true, rate_limits: {} },

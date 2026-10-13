@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "vite-plus/test";
 import {
   buildFileExchange,
@@ -12,7 +12,7 @@ import {
 } from "./scient-file-exchange-build.ts";
 
 const repoRoot = NodePath.resolve(import.meta.dirname, "../..");
-describe.skipIf(HostProcessPlatform.defaultValue() !== "darwin")("file exchange packaging", () => {
+describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("file exchange packaging", () => {
   it.each(["arm64", "x64", "universal"] as const)("stages the exact %s slices", async (arch) => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-exchange-stage-"));
     try {

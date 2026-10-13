@@ -12,7 +12,8 @@ import {
 describe("shared raised settings surface", () => {
   let root: Root;
   let host: HTMLDivElement;
-  let observerCallback: () => void;
+  let observerCallback: (entries: readonly Pick<ResizeObserverEntry, "target">[]) => void;
+  let observed: Set<Element>;
   let labelLeft: number;
   let panelHeight: number;
   const disconnect = vi.fn();
@@ -20,13 +21,19 @@ describe("shared raised settings surface", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     labelLeft = 20;
     panelHeight = 200;
+    observed = new Set();
     vi.stubGlobal(
       "ResizeObserver",
       class {
-        constructor(callback: () => void) {
+        constructor(callback: typeof observerCallback) {
           observerCallback = callback;
         }
-        observe() {}
+        observe(element: Element) {
+          observed.add(element);
+        }
+        unobserve(element: Element) {
+          observed.delete(element);
+        }
         disconnect = disconnect;
       },
     );
@@ -83,7 +90,7 @@ describe("shared raised settings surface", () => {
     expect(host.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     const initial = host.querySelector("path")!.getAttribute("d");
     panelHeight = 400;
-    await act(() => observerCallback());
+    await act(() => observerCallback(Array.from(observed, (target) => ({ target }))));
     expect(host.querySelector("path")!.getAttribute("d")).not.toBe(initial);
     labelLeft = -200;
     await act(() =>

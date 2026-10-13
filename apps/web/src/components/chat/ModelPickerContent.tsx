@@ -2,14 +2,18 @@ import { getDroidModelSection } from "@t3tools/client-runtime/droid-model-presen
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
+  type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
+import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   memo,
+  useContext,
   useMemo,
   useState,
   useCallback,
@@ -19,6 +23,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { ModelPickerOverlayContext } from "../../scient/providerConnection/ModelPickerOverlayContext";
 import { ModelPickerNewChatFooter } from "./ModelPickerNewChatFooter";
 import { ModelListDisclosureContent } from "./ModelListDisclosureContent";
 import { ModelListRow } from "./ModelListRow";
@@ -48,7 +53,10 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../../keybindings";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import {
+  useEnvironmentModelPreferences,
+  useToggleEnvironmentModelFavorite,
+} from "~/hooks/useSettings";
 import {
   hasModelSourceSections,
   modelSourceSectionKey,
@@ -185,6 +193,7 @@ function ModelListSeparator() {
 }
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
+  environmentId: EnvironmentId | null;
   /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
   model: string;
@@ -241,7 +250,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const modelListRef = useRef<LegendListRef | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
-  const favorites = useClientSettings((s) => s.favorites ?? []);
+  const { favorites } = useEnvironmentModelPreferences(props.environmentId);
   const activeEntry = props.instanceEntries.find(
     (entry) => entry.instanceId === props.activeInstanceId,
   );
@@ -329,7 +338,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // SCIENT-FORK:END
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
-  const updateSettings = useUpdateClientSettings();
+  const navigate = useNavigate();
+  const toggleFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
 
   const focusSearchInput = useCallback(() => {
     searchInputRef.current?.focus({ preventScroll: true });
@@ -514,8 +524,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     props.renderProviderSetup,
     sidebarInstanceEntries,
   ]);
+  const overlay = useContext(ModelPickerOverlayContext);
   const selectedSetupEntry =
-    selectedInstanceId !== "favorites" && setupAvailableInstanceIds?.has(selectedInstanceId)
+    selectedInstanceId !== "favorites" &&
+    (setupAvailableInstanceIds?.has(selectedInstanceId) ||
+      overlay?.instanceId === selectedInstanceId)
       ? entryByInstanceId.get(selectedInstanceId)
       : undefined;
   const isShowingSetup = selectedSetupEntry !== undefined;
@@ -704,6 +717,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         )
       : [];
 
+  // Models the manifest announces that this provider's installed CLI is too
+  // old to run. Without this, a new model just seems missing until the user
+  // happens to update the CLI.
+  // A search spans every instance, so it can explain gated matches from any of them.
+  const updateRequiredNotices = (
+    isSearching
+      ? instanceEntries.filter(matchesLockedProvider)
+      : selectedEntry
+        ? [selectedEntry]
+        : []
+  ).flatMap((entry) => {
+    const notice = formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery);
+    return notice ? [{ instanceId: entry.instanceId, notice }] : [];
+  });
+
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
       const next = new Set(expanded);
@@ -754,20 +782,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       onInstanceModelChange,
       onToggleModel,
     ],
-  );
-
-  const toggleFavorite = useCallback(
-    (instanceId: ProviderInstanceId, model: string) => {
-      const newFavorites = [...favorites];
-      const index = newFavorites.findIndex((f) => f.provider === instanceId && f.model === model);
-      if (index >= 0) {
-        newFavorites.splice(index, 1);
-      } else {
-        newFavorites.push({ provider: instanceId, model });
-      }
-      updateSettings({ favorites: newFavorites });
-    },
-    [favorites, updateSettings],
   );
 
   const modelJumpCommandByKey = useMemo(() => {
@@ -904,7 +918,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen()) {
+      if (overlay?.instanceId || event.defaultPrevented || event.repeat || isCommandPaletteOpen()) {
         return;
       }
 
@@ -952,6 +966,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       window.removeEventListener("keydown", onWindowKeyDown, true);
     };
   }, [
+    overlay?.instanceId,
     handleModelSelect,
     handleSelectInstance,
     keybindings,
@@ -1289,6 +1304,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 onFork={handleContinueInNewChat}
               />
             ) : null}
+            {updateRequiredNotices.map(({ instanceId, notice }) => (
+              <p
+                key={instanceId}
+                className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
+              >
+                {notice}{" "}
+                <InlineButton
+                  onClick={() => {
+                    props.onRequestClose?.();
+                    void navigate({ to: "/settings/providers" });
+                  }}
+                >
+                  Provider settings
+                </InlineButton>
+              </p>
+            ))}
           </div>
         </Combobox>
       </div>

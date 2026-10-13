@@ -1,4 +1,4 @@
-import { type ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import { type ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -38,9 +38,14 @@ it.layer(
             modelSelection: selected,
             settings: {
               ...settings,
-              providers: {
-                ...settings.providers,
-                codex: { ...settings.providers.codex, homePath: "/different/runtime" },
+              providerInstances: {
+                ...settings.providerInstances,
+                [selected.instanceId]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: {
+                    homePath: "/different/runtime",
+                  },
+                },
               },
             },
           }),

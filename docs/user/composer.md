@@ -176,8 +176,7 @@ comment bubble used for assistant quotes. Text in paragraphs, lists, tables,
 and ordinary code blocks is supported; selecting an entire image, formula, or
 interactive chart is not part of this action. When an editable diagram's source
 is visible, selecting that source is supported like any other code block; selecting
-the rendered diagram is not. Source view and read-only host-file previews keep
-their existing controls.
+the rendered diagram is not.
 
 The chip retains the exact selected text, the original environment and workspace,
 file path, and the containing Markdown source lines. The line range describes
@@ -194,6 +193,20 @@ the captured quote and its source information, not an automatic read of a newer
 file version. If the conversation has moved to another worktree, the original
 file opens in the existing read-only host-file preview instead of resolving the
 same filename against the new workspace.
+
+## Quote code or source
+
+Select code in a workspace file's source editor and choose **Ask in chat**.
+This also works in Markdown and LaTeX Source/Split, compute source editors,
+and read-only code previews. The quote keeps the exact selected code, its
+file and UTF-16 offsets, and the captured saved or draft revision. Citing does
+not save or change the file.
+
+Click the quote chip to reopen Source. Scient selects the original range when
+the revision still matches, or a uniquely verified match after the source moves.
+If it cannot verify a location, the quote remains intact and the recorded line
+opens with a notice. Existing rendered Markdown quotes keep their rendered-view
+reopening behavior.
 
 ## Quote an assistant response
 
@@ -270,6 +283,13 @@ Later transcription works offline for that language. Recordings can be up to fiv
 minutes long. Canceling, leaving the screen, or an audio interruption discards the
 recording and preserves your existing draft. While recording, the screen stays
 awake; it can sleep normally once recording stops.
+
+Voice input records from the first connected microphone in **Settings → Microphone**.
+The list mixes kinds (built-in, other wired, other Bluetooth, CarPlay) with wired and
+Bluetooth devices you have dictated with, listed by name. Drag to rank them together:
+for example, put **Other Bluetooth** above your AirPods so a new headset is preferred
+while the AirPods microphone stays low. By default, CarPlay comes after the built-in
+microphone.
 
 Transcription runs on your device. Scient deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
@@ -649,12 +669,11 @@ waiting. Finishing a turn or starting another queued message does not submit
 your draft automatically. **Stash** saves it for later through the usual menu.
 
 **Stop**, interruptions, and failed starts leave the remaining queue held.
-You can send another ordinary message, but its successful answer does not release
-the queue. **Resume** releases it to advance automatically, one message at a time,
-after each successful answer. Restarting work or the server does not release a
-held queue. You can instead click **Send** on the first waiting message to send
-only that row; the rest stays held until you choose **Resume**. Reorder while idle
-to choose a different head.
+Sending another ordinary message releases the queue to follow it automatically,
+one message at a time after each successful answer. Restarting work or the server
+does not release a held queue. You can also click **Send** on any waiting message:
+that message starts first and the remaining queue is released in its retained
+order, with automatic completions first. Reorder while idle to choose the order.
 
 **Retry** is for a queued message whose provider failed to start; the message stays
 queued. It cannot bypass a running answer or silently release the held tail.

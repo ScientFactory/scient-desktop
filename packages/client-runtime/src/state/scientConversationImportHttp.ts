@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -37,8 +37,7 @@ export const createEnvironmentConversationImportUpload = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/conversation-import/v1/create-upload"),
+    url: (urls) => urls.createUpload(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientConversationImport",
     request: ({ client, headers }) => client.createUpload({ headers, payload: input.upload }),
@@ -58,8 +57,7 @@ export const previewEnvironmentConversationImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/conversation-import/v1/preview"),
+    url: (urls) => urls.preview(),
     timeoutMs: PREVIEW_TIMEOUT_MS,
     group: "scientConversationImport",
     request: ({ client, headers }) =>
@@ -80,8 +78,7 @@ export const confirmEnvironmentConversationImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/conversation-import/v1/import"),
+    url: (urls) => urls.import(),
     timeoutMs: IMPORT_TIMEOUT_MS,
     group: "scientConversationImport",
     request: ({ client, headers }) => client.import({ headers, payload: input.request }),
@@ -101,8 +98,7 @@ export const cancelEnvironmentConversationImport = Effect.fn(
     signer,
     remoteAuthorization,
     method: "POST",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, "/api/scient/conversation-import/v1/cancel"),
+    url: (urls) => urls.cancel(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientConversationImport",
     request: ({ client, headers }) =>

@@ -1,3 +1,4 @@
+import { investigationUnsupported } from "@t3tools/provider-core/server/textGenerationOperations";
 /** Structured one-shot generation through Antigravity's native NDJSON mode. */
 
 import {
@@ -24,13 +25,13 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
-} from "./TextGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
   toJsonSchemaObject,
-} from "./TextGenerationUtils.ts";
+} from "@t3tools/provider-core/server/textGenerationUtils";
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const DEFAULT_MODEL = "gemini-3.7-flash";
@@ -278,5 +279,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateReviewGuide: () =>
+      Effect.fail(investigationUnsupported("generateReviewGuide", "Antigravity")),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -1,8 +1,12 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
 import * as NodeFSP from "node:fs/promises";
 
-import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  ProviderSetupError,
+  type AntigravityAuthMethod,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -16,11 +20,11 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
 
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 // SCIENT-FORK:START — plugin skills are projected without their other components.
-import { projectAntigravityPluginSkills } from "./acp/AntigravityPluginSkillProjection.ts";
+import { projectAntigravityPluginSkills } from "../scient/skills/antigravityPluginSkillProjection.ts";
 // SCIENT-FORK:END
-import type { AcpSpawnInput } from "./acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
@@ -32,6 +36,17 @@ export const ANTIGRAVITY_AUTH_BROWSER_MARKER = "__T3_ANTIGRAVITY_AUTH_URL__";
 export const ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =
   "Sign in to Antigravity in Settings before you continue.";
 
+// SCIENT-FORK:START — safe pre-browser failure presentation.
+export const ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE =
+  "Antigravity could not prepare the sign-in helper. Try again.";
+export const ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE =
+  "Antigravity could not start its sign-in runtime. Try again.";
+export const ANTIGRAVITY_RUNTIME_RESOLUTION_FAILED_MESSAGE =
+  "Antigravity could not find a usable sign-in runtime. Review its installation and executable path, then try again.";
+export const ANTIGRAVITY_LINK_CAPTURE_FAILED_MESSAGE =
+  "Antigravity could not capture the Google sign-in link. Start sign-in again.";
+
+// SCIENT-FORK:END
 const maxAuthorizationUrlLength = 16_384;
 const maxBrowserHelperLineLength =
   Math.max(ANTIGRAVITY_AUTH_BROWSER_MARKER.length, ANTIGRAVITY_AUTH_STDOUT_PREFIX.length) +
@@ -53,7 +68,43 @@ const ProfileSettingsFile = Schema.Struct({
 const encodeProfileSettings = Schema.encodeSync(Schema.fromJsonString(ProfileSettingsFile));
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
+// SCIENT-FORK:START — allowlisted failure classification data.
+const isSetupError = Schema.is(ProviderSetupError);
+const isAcpSpawnError = Schema.is(AcpErrors.AcpSpawnError);
+const isAcpProcessExitedError = Schema.is(AcpErrors.AcpProcessExitedError);
+const isAcpInputStreamEndedError = Schema.is(AcpErrors.AcpInputStreamEndedError);
+const isAcpProtocolParseError = Schema.is(AcpErrors.AcpProtocolParseError);
+const helperPreparationDetails: Record<string, true> = {
+  "The T3 runtime path cannot be used to suppress Antigravity browser launches.": true,
+  "Antigravity browser suppression could not be verified.": true,
+  "Antigravity browser suppression verification timed out.": true,
+  "The Antigravity profile directory could not be created.": true,
+  "The Antigravity profile directory permissions could not be set.": true,
+  "The Antigravity profile settings could not be written.": true,
+};
+const linkCaptureDetails: Record<string, true> = {
+  "Antigravity returned an invalid Google sign-in URL.": true,
+  "Antigravity returned an invalid Google sign-in marker.": true,
+  "Antigravity sent a Google sign-in marker that is too large.": true,
+  "Antigravity started more than one Google sign-in request.": true,
+};
+// SCIENT-FORK:END
+const credentialConfigurationMessages: Record<
+  Exclude<AntigravityAuthMethod, "oauth-personal">,
+  string
+> = {
+  "oauth-business":
+    "Gemini Enterprise needs a GCP project and location in the Antigravity provider settings.",
+  "gemini-api-key": "Enter a Gemini API key in the Antigravity provider settings.",
+  "agent-platform":
+    "Agent Platform needs an API key, or a GCP project and location, in the Antigravity provider settings.",
+};
+const credentialConfigurationGuidance = Object.values(credentialConfigurationMessages);
+// SCIENT-FORK:START — fixed helper preparation guidance.
+const missingNodeMessage = nodeRuntimeUnavailableMessage("Antigravity sign-in");
+const missingNodeGuidance = `${ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE} ${missingNodeMessage}`;
 
+// SCIENT-FORK:END
 // Python splits BROWSER on the platform path separator before it parses quotes.
 // Keep this source free of both colons and semicolons. EPIPE must still exit 0
 // so Python does not fall back to an OS browser after cancellation.
@@ -142,13 +193,13 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
     case "oauth-business":
       return auth.gcpProject && auth.gcpLocation
         ? null
-        : "Gemini Enterprise needs a GCP project and location in the Antigravity provider settings.";
+        : credentialConfigurationMessages["oauth-business"];
     case "gemini-api-key":
-      return auth.apiKey ? null : "Enter a Gemini API key in the Antigravity provider settings.";
+      return auth.apiKey ? null : credentialConfigurationMessages["gemini-api-key"];
     case "agent-platform":
       return auth.apiKey || (auth.gcpProject && auth.gcpLocation)
         ? null
-        : "Agent Platform needs an API key, or a GCP project and location, in the Antigravity provider settings.";
+        : credentialConfigurationMessages["agent-platform"];
   }
 }
 
@@ -179,6 +230,66 @@ function authSupportError(detail: string) {
   return new AcpErrors.AcpTransportError({ detail, cause: undefined });
 }
 
+// SCIENT-FORK:START — map owned startup stages without disclosing native payloads.
+/** Only adapter-owned details and typed runtime stages may become public auth failures. */
+export function antigravityAuthStageFailure(
+  error: unknown,
+  beforeAuthorizationUrl: boolean,
+): string | undefined {
+  if (isSetupError(error)) {
+    if (beforeAuthorizationUrl && error.operation === "resolve") {
+      return ANTIGRAVITY_RUNTIME_RESOLUTION_FAILED_MESSAGE;
+    }
+    if (error.detail === "Google sign-in expired. Start sign-in again.") {
+      return "Google sign-in expired. Start sign-in again.";
+    }
+    if (error.operation === "configure") {
+      for (const message of credentialConfigurationGuidance) {
+        if (error.detail === message) return message;
+      }
+    }
+    if (
+      beforeAuthorizationUrl &&
+      (error.detail === "Could not create an Antigravity runtime temp directory." ||
+        error.detail === "Could not create an Antigravity setup workspace.")
+    ) {
+      return ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE;
+    }
+    if (error.detail === missingNodeMessage) {
+      return missingNodeGuidance;
+    }
+  }
+  if (isAcpTransportError(error)) {
+    if (Object.hasOwn(helperPreparationDetails, error.detail ?? "")) {
+      return ANTIGRAVITY_HELPER_PREPARATION_FAILED_MESSAGE;
+    }
+    if (error.detail === missingNodeMessage) {
+      return missingNodeGuidance;
+    }
+    if (Object.hasOwn(linkCaptureDetails, error.detail ?? "")) {
+      return ANTIGRAVITY_LINK_CAPTURE_FAILED_MESSAGE;
+    }
+    if (
+      beforeAuthorizationUrl &&
+      (error.method === "initialize" ||
+        error.detail === "Antigravity sent a protocol line that is too large.")
+    ) {
+      return ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE;
+    }
+  }
+  if (
+    beforeAuthorizationUrl &&
+    (isAcpSpawnError(error) ||
+      isAcpProcessExitedError(error) ||
+      isAcpInputStreamEndedError(error) ||
+      isAcpProtocolParseError(error))
+  ) {
+    return ANTIGRAVITY_RUNTIME_STARTUP_FAILED_MESSAGE;
+  }
+  return undefined;
+}
+
+// SCIENT-FORK:END
 /** Recognizes native auth failures and interactive login blocked by T3. */
 export function isAntigravitySignInRequiredError(error: unknown): boolean {
   return (
@@ -258,7 +369,7 @@ function antigravityEnvironment(
  * The agent reads its global skills under `GEMINI_HOME`, which T3 points at
  * the private profile. Link the loose and provider-managed skill directories
  * back to the user's real `~/.gemini`. Plugin skills use a separate projection
- * (`acp/AntigravityPluginSkillProjection.ts`) so the runtime never inherits
+ * (`scient/skills/antigravityPluginSkillProjection.ts`) so the runtime never inherits
  * plugin MCP servers, hooks, rules, or credentials. Best effort: an unavailable link only costs those skills,
  * never the session. A real directory at a link path is left alone.
  */
@@ -318,9 +429,14 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const platform = input.platform ?? (yield* HostProcessPlatform);
+  const platform = input.platform ?? (yield* HostProcess.Platform);
   const userHome =
-    input.userHome ?? resolveAntigravityUserHome(platform, input.baseEnv ?? process.env);
+    input.userHome ??
+    resolveAntigravityUserHome(
+      platform,
+      input.baseEnv ?? process.env,
+      yield* HostProcess.HomeDirectory,
+    );
   const runtimeExecutablePath =
     input.runtimeExecutablePath ??
     (yield* resolveNodeExecutable("Antigravity sign-in", input.baseEnv).pipe(
@@ -444,7 +560,7 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly auth?: AntigravityAuthConfig;
   /** Per-process temp directory. Defaults to the profile's shared temp directory. */
   readonly runtimeTempDirectory?: string;
-}): AcpSpawnInput {
+}): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
     args: input.profile.platform === "linux" ? ["--uid="] : [],
@@ -566,6 +682,7 @@ export function makeAntigravityStdoutTransform(
     });
 }
 
+// SCIENT-FORK:START — bounded stderr and fatal malformed authorization markers.
 /** Receives native 1.1.1 sign-in URLs and T3 browser-helper URLs without logging stderr. */
 export function makeAntigravityStderrHandler(
   input: {
@@ -575,33 +692,64 @@ export function makeAntigravityStderrHandler(
   } = {},
 ) {
   let pending = "";
+  let discardingLine = false;
   const handleLine = (line: string) => {
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
-    if (message.length > maxBrowserHelperLineLength) {
+    if (
+      !message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX) &&
+      !message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
+    ) {
       return Effect.void;
+    }
+    if (message.length > maxBrowserHelperLineLength) {
+      return Effect.fail(
+        authSupportError("Antigravity sent a Google sign-in marker that is too large."),
+      );
     }
     const url = message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX)
       ? Effect.succeed(message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length))
-      : message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
-        ? decodeBrowserHelperUrl(message.slice(ANTIGRAVITY_AUTH_BROWSER_MARKER.length))
-        : undefined;
-    if (url === undefined) return Effect.void;
+      : decodeBrowserHelperUrl(message.slice(ANTIGRAVITY_AUTH_BROWSER_MARKER.length)).pipe(
+          Effect.mapError(() =>
+            authSupportError("Antigravity returned an invalid Google sign-in marker."),
+          ),
+        );
     return url.pipe(
       Effect.flatMap(parseAntigravityAuthorizationUrl),
-      Effect.matchEffect({
-        onFailure: () => Effect.void,
-        onSuccess: (request) =>
-          input.onAuthorizationUrl
-            ? input.onAuthorizationUrl(request.authorizationUrl)
-            : Effect.fail(authSupportError(ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)),
-      }),
+      Effect.flatMap((request) =>
+        input.onAuthorizationUrl
+          ? input.onAuthorizationUrl(request.authorizationUrl)
+          : Effect.fail(authSupportError(ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)),
+      ),
     );
   };
 
   return Effect.fn("antigravityAuthSupport.handleStderr")(function* (text: string) {
-    const lines = `${pending}${text}`.split("\n");
-    pending = lines.pop() ?? "";
-    if (pending.length > maxBrowserHelperLineLength) pending = "";
-    yield* Effect.forEach(lines, handleLine, { discard: true });
+    let offset = 0;
+    while (offset < text.length) {
+      const newline = text.indexOf("\n", offset);
+      const end = newline === -1 ? text.length : newline;
+      if (!discardingLine) {
+        pending += text.slice(offset, end);
+        if (pending.length > maxBrowserHelperLineLength) {
+          if (
+            pending.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX) ||
+            pending.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
+          ) {
+            return yield* authSupportError(
+              "Antigravity sent a Google sign-in marker that is too large.",
+            );
+          }
+          pending = "";
+          discardingLine = true;
+        }
+      }
+      if (newline === -1) return;
+      if (!discardingLine) yield* handleLine(pending);
+      pending = "";
+      discardingLine = false;
+      offset = newline + 1;
+    }
   });
 }
+
+// SCIENT-FORK:END

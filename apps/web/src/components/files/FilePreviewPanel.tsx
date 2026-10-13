@@ -1,4 +1,5 @@
 import type { EditorSelection } from "@pierre/diffs/edit";
+import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
 // SCIENT-FORK:START
 import {
   FILE_ACTIVE_RANGE_ATTRIBUTE,
@@ -34,6 +35,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
 import {
   AuthPreviewOperateScope,
+  type AssetResource,
   type EditorId,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
@@ -130,7 +132,10 @@ import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence
 import { useMarkdownPersistenceGuards } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
 import { useMarkdownSourcePersistence } from "~/scient/markdownEditor/persistence/useMarkdownSourcePersistence";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
-import { documentSessionIsCurrent } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import {
+  documentIdentity,
+  documentSessionIsCurrent,
+} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -169,7 +174,7 @@ import {
   FileSurfaceLoading,
 } from "./fileSurfaceChrome";
 import SourceFilePreview from "./ReadOnlySourcePreview";
-import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
+import { resolveCenteredFileLineScrollTop, resolveFileRevealLine } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
 import { FileBreadcrumbNavigator } from "./FileBreadcrumbNavigator";
@@ -179,8 +184,10 @@ import {
   resolveMarkdownTaskPreviewUpdate,
   resolveFilePreviewPath,
   shouldShowFileExplorer,
+  workspaceAssetResource,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+import { useInPlaceRename } from "~/scient/fileSurfaces/useInPlaceRename";
 import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
@@ -204,6 +211,8 @@ interface FilePreviewPanelProps {
   latexPresentationRequest: LatexFilePresentationRequest | null;
   latexRootRelativePath: string | null;
   onOpenFile: (relativePath: string) => void;
+  /** The open file was moved in place: its tab follows it, keeping its state. */
+  onFileMoved?: (fromPath: string, toPath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -222,6 +231,33 @@ const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
+
+function useWorkspaceViewerAssetResource(
+  input: {
+    readonly threadRef: ScopedThreadRef;
+    readonly draft: boolean;
+    readonly absolutePath: string;
+    readonly workspaceRoot: string;
+    readonly relativePath: string;
+  },
+  kind: "workspace-file" | "media-file",
+  htmlDocument?: boolean,
+): AssetResource {
+  const threadResource = useScientViewerResource(input, htmlDocument);
+  return useMemo(
+    () =>
+      input.draft
+        ? workspaceAssetResource({
+            kind,
+            threadRef: input.threadRef,
+            draft: true,
+            workspaceRoot: input.workspaceRoot,
+            absolutePath: input.absolutePath,
+          })
+        : threadResource,
+    [input.draft, input.threadRef, input.workspaceRoot, input.absolutePath, threadResource, kind],
+  );
+}
 // SCIENT-FORK:START — the Markdown surface loads on first use
 const ScientMarkdownFileSurface = lazy(() =>
   import("~/scient/markdownEditor/ScientMarkdownFileSurface").then((module) => ({
@@ -233,14 +269,16 @@ const ScientMarkdownFileSurface = lazy(() =>
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly workspaceRoot: string;
   readonly relativePath: string;
   readonly absolutePath: string;
   readonly alt: string;
   readonly refreshKey: number;
 }) {
-  // SCIENT-FORK:START — the asset is named by the tab's own path
-  const resource = useScientViewerResource(props);
+  // SCIENT-FORK:START — persisted threads use the rooted tab-path locator; drafts use the upstream draft resource.
+  const resource = useWorkspaceViewerAssetResource(props, "workspace-file");
   // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -306,14 +344,22 @@ function WorkspaceImagePreview(props: {
 function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly relativePath: string;
   readonly title: string;
   readonly refreshKey: number;
 }) {
-  // SCIENT-FORK:START — the asset is named by the tab's own path
-  const resource = useScientViewerResource(props, !isPdfPreviewFile(props.absolutePath));
+  // SCIENT-FORK:START — preserve rooted file and HTML document semantics for persisted threads.
+  const insideWorkspace =
+    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
+  const resource = useWorkspaceViewerAssetResource(
+    props,
+    insideWorkspace ? "workspace-file" : "media-file",
+    !isPdfPreviewFile(props.absolutePath),
+  );
   // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   // SCIENT-FORK:START — reload when the file's watcher reports a change
@@ -349,6 +395,8 @@ function WorkspaceBrowserPreview(props: {
 function WorkspaceVideoPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly relativePath: string;
@@ -356,8 +404,8 @@ function WorkspaceVideoPreview(props: {
   readonly refreshKey: number;
 }) {
   const reference = mediaFileReference(props.absolutePath, props.workspaceRoot);
-  // SCIENT-FORK:START — the asset is named by the tab's own path
-  const resource = useScientViewerResource(props);
+  // SCIENT-FORK:START — persisted threads use rooted locators; drafts use the upstream draft resource.
+  const resource = useWorkspaceViewerAssetResource(props, "media-file");
   // SCIENT-FORK:END
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -392,19 +440,25 @@ function WorkspaceVideoPreview(props: {
 function WorkspaceAudioPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
+  readonly workspaceRoot: string;
   readonly name: string;
   readonly workspaceMutationId: string | null;
   /** Advances when the file's native watcher reports a change. */
   readonly refreshKey: number;
 }) {
   const resource = useMemo(
-    () => ({
-      _tag: "media-file" as const,
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [props.threadRef.threadId, props.absolutePath],
+    () =>
+      workspaceAssetResource({
+        kind: "media-file",
+        threadRef: props.threadRef,
+        draft: props.draft,
+        workspaceRoot: props.workspaceRoot,
+        absolutePath: props.absolutePath,
+      }),
+    [props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -443,20 +497,6 @@ function WorkspaceAudioPreview(props: {
   }
   if (url === null) return <FileSurfaceLoading />;
   return <AudioPreview src={url} name={props.name} onError={() => setFailedUrl(url)} />;
-}
-
-function clampFileLine(contents: string, requestedLine: number): number {
-  let lineCount = 1;
-  for (let index = 0; index < contents.length; index += 1) {
-    const character = contents.charCodeAt(index);
-    if (character === 10) {
-      lineCount += 1;
-    } else if (character === 13) {
-      lineCount += 1;
-      if (contents.charCodeAt(index + 1) === 10) index += 1;
-    }
-  }
-  return Math.min(Math.max(1, requestedLine), lineCount);
 }
 
 function updateFileLinkReveal(fileContainer: HTMLElement, line: number | null): void {
@@ -499,10 +539,21 @@ function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
-): FilePostRender {
+  citation?: FileCitation,
+): { readonly onPostRender: FilePostRender; readonly move: (from: string, to: string) => void } {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
-
-  return useCallback<FilePostRender>(
+  // SCIENT-FORK:START — an in-place rename carries a handled reveal along, never replays it
+  const move = useCallback(
+    (from: string, to: string) => {
+      const state = revealStatesByPath.get(from);
+      if (state === undefined) return;
+      revealStatesByPath.delete(from);
+      revealStatesByPath.set(to, state);
+    },
+    [revealStatesByPath],
+  );
+  // SCIENT-FORK:END
+  const onPostRender = useCallback<FilePostRender>(
     (fileContainer, instance, phase) => {
       if (relativePath === null) return;
 
@@ -530,7 +581,7 @@ function useFileLineReveal(
 
       const contents = instance.file?.contents;
       const targetLine =
-        revealLine === null || contents === undefined ? null : clampFileLine(contents, revealLine);
+        contents === undefined ? null : resolveFileRevealLine(contents, revealLine, citation);
       updateFileLinkReveal(fileContainer, targetLine);
 
       if (!(instance instanceof VirtualizedFile)) return;
@@ -541,7 +592,7 @@ function useFileLineReveal(
         state.handledRequestId = null;
       }
 
-      if (revealLine === null) {
+      if (revealLine === null && !citation?.sourceSelection) {
         fileContainer.style.minHeight = "";
         return;
       }
@@ -642,7 +693,9 @@ function useFileLineReveal(
           // and wrongly mark the request handled.
           const currentContents = instance.file?.contents;
           const line =
-            currentContents === undefined ? null : clampFileLine(currentContents, revealLine);
+            currentContents === undefined
+              ? null
+              : resolveFileRevealLine(currentContents, revealLine, citation);
           const targetTop = line === null ? null : resolveScrollTarget(line);
           if (line === null || targetTop === null) {
             if (attempt < REVEAL_MAX_ATTEMPTS) scheduleReveal(attempt + 1);
@@ -658,8 +711,9 @@ function useFileLineReveal(
 
       scheduleReveal(0);
     },
-    [revealStatesByPath, relativePath, revealLine, revealRequestId],
+    [revealStatesByPath, relativePath, revealLine, revealRequestId, citation],
   );
+  return { onPostRender, move };
 }
 
 const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
@@ -725,6 +779,11 @@ function useEditableAfterHighlight(file: FileContents) {
 }
 
 interface EditableFileSurfaceProps {
+  threadRef?: ScopedThreadRef | undefined;
+  onCite?: MarkdownCiteHandler | undefined;
+  citationReveal?: FileCitation | undefined;
+  citationBaseline?: string | undefined;
+  citationRootRelativePath?: string | undefined;
   environmentId: EnvironmentId;
   cwd: string;
   relativePath: string;
@@ -789,6 +848,11 @@ export function MarkdownSourceSurface({
 }
 
 function EditableFileEditor({
+  threadRef,
+  onCite,
+  citationReveal,
+  citationBaseline,
+  citationRootRelativePath,
   environmentId,
   cwd,
   relativePath,
@@ -854,6 +918,13 @@ function EditableFileEditor({
   const [externalFile, setExternalFile] = useState(() =>
     editableFileContents(environmentId, cwd, relativePath, contents),
   );
+  // SCIENT-FORK:START — a document session's source undo belongs to the document,
+  // which keeps its id across an in-place rename and across reopening the file.
+  const [fileEditStateKey] = useState(() => `scient-file:${environmentId}:${cwd}:${relativePath}`);
+  const editStateKey = externalPersistence
+    ? `scient-document:${documentIdentity(externalPersistence)}`
+    : fileEditStateKey;
+  // SCIENT-FORK:END
   const [editedContents, setEditedContents] = useState<string | null>(null);
   if (contents !== (editedContents ?? externalFile.contents)) {
     setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
@@ -1014,6 +1085,25 @@ function EditableFileEditor({
     onEditorSelectionChange,
     onRunShortcut,
   });
+  const readCitationBaseline = useCallback(
+    () =>
+      externalBindings.current.externalPersistence?.getSnapshot().baselineSource ??
+      citationBaseline ??
+      contents,
+    [citationBaseline, contents],
+  );
+  const citationReady = useCallback(() => {
+    const current = editorRef.current;
+    const lease = externalBindings.current.externalPersistence;
+    return Boolean(
+      current &&
+      !restorationBlocked &&
+      (!lease ||
+        (projectionReady.current &&
+          lease.getSnapshot().draftSource === current.getText() &&
+          lease.getPendingInput() === null)),
+    );
+  }, [restorationBlocked]);
 
   const removeAnnotationEntry = useCallback(
     (entryId: string) => {
@@ -1180,6 +1270,23 @@ function EditableFileEditor({
         onCompositionEnd={onCompositionEnd}
         onKeyDownCapture={onKeyDownCapture}
       >
+        {threadRef ? (
+          <SourceCitationActions
+            editor={editor}
+            viewport={surfaceRef.current}
+            target={{
+              ...threadRef,
+              cwd,
+              path: relativePath,
+              latexRootRelativePath: citationRootRelativePath,
+            }}
+            baseline={readCitationBaseline}
+            ready={citationReady}
+            onCite={onCite}
+            reveal={citationReveal}
+            revealId={revealRequestId}
+          />
+        ) : null}
         {/* SCIENT-FORK:START — Explain source refusal without discarding retained edits. */}
         {restorationBlocked ? (
           <div role="alert" className="p-2 text-xs text-muted-foreground">
@@ -1203,7 +1310,7 @@ function EditableFileEditor({
           <File<FileCommentAnnotationGroup>
             file={externalFile}
             edit={editable && !editingBlocked && !restorationBlocked}
-            editStateKey={`scient-file:${environmentId}:${cwd}:${relativePath}`}
+            editStateKey={editStateKey}
             editorOptions={editorOptions}
             onEditChange={handleEditChange}
             options={{
@@ -1361,6 +1468,7 @@ export default function FilePreviewPanel({
   latexPresentationRequest,
   latexRootRelativePath,
   onOpenFile,
+  onFileMoved,
   onOpenFileSource,
   onHtmlPresentationRequestHandled,
   onLatexPresentationRequestHandled,
@@ -1370,6 +1478,8 @@ export default function FilePreviewPanel({
 }: FilePreviewPanelProps) {
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
+  // A draft's composer target is its draft id; a thread the server knows is a ref.
+  const draft = typeof composerDraftTarget === "string";
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const updateClientSettings = useUpdateClientSettings();
@@ -1510,6 +1620,7 @@ export default function FilePreviewPanel({
     fileCitation !== undefined && dismissedCitationReveal !== revealRequestId;
   const renderMarkdown =
     isMarkdownDocument &&
+    !(citationRevealActive && fileCitation?.sourceSelection) &&
     resolveMarkdownRenderedState(renderMarkdownPreferred, citationRevealActive, revealHandled);
   const requestedHtmlMode =
     htmlPresentationRequest?.id === revealRequestId ? htmlPresentationRequest.mode : null;
@@ -1520,7 +1631,11 @@ export default function FilePreviewPanel({
   const rendered = isMarkdownDocument ? renderMarkdown : isHtml ? renderBrowserFile : false;
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
-  const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
+  const renderTable =
+    tableDelimiter !== null &&
+    renderTablePreferred &&
+    revealHandled &&
+    !(citationRevealActive && fileCitation?.sourceSelection);
   const renderedMode = isMarkdownDocument
     ? ("markdown" as const)
     : tableDelimiter
@@ -1676,7 +1791,41 @@ export default function FilePreviewPanel({
       }),
     [absolutePath, cwd, environmentId, relativePath, threadRef.threadId],
   );
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const { onPostRender: onFilePostRender, move: moveFileLineReveal } = useFileLineReveal(
+    relativePath,
+    revealLine,
+    revealRequestId,
+    citationRevealActive ? fileCitation : undefined,
+  );
+  // SCIENT-FORK:START — an open Markdown document renames in place, keeping its editor
+  const { moveInPlace, surfaceGeneration } = useInPlaceRename({
+    threadRef,
+    environmentId,
+    cwd,
+    relativePath,
+    lease: markdownLease,
+    // Markdown only for now; other document kinds keep the ordinary rename.
+    canMove: (from, to) => isScientMarkdownDocumentPath(from) && isScientMarkdownDocumentPath(to),
+    reopen: (from, to, revision) =>
+      applyScientMarkdownRename({
+        environmentId,
+        cwd,
+        relativePath: from,
+        fileData: file.data,
+        destinationRelativePath: to,
+        revision,
+        onOpenFile,
+      }),
+    moveTab: (from, to) => (onFileMoved ? onFileMoved(from, to) : onOpenFile(to)),
+    moveViewState: (from, to) => {
+      setHandledReveal((current) => (current?.path === from ? { ...current, path: to } : current));
+      moveFileLineReveal(from, to);
+    },
+  });
+  const documentSurfaceKey = markdownLease
+    ? `${documentIdentity(markdownLease)}:${surfaceGeneration}`
+    : relativePath;
+  // SCIENT-FORK:END
   const handlePendingChange = useCallback(
     (path: string, pending: boolean) => {
       setPendingPaths((current) => {
@@ -1725,7 +1874,6 @@ export default function FilePreviewPanel({
       const result = await openFileInPreview({
         threadRef,
         workspaceRoot: cwd,
-        relativePath,
         filePath: absolutePath,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,
@@ -1812,6 +1960,13 @@ export default function FilePreviewPanel({
                     <ScientMarkdownRenameButton
                       {...(markdownLease
                         ? { beforeRename: () => markdownLease.holdForRename() }
+                        : {})}
+                      {...(moveInPlace ? { moveInPlace } : {})}
+                      {...(markdownLease
+                        ? {
+                            prepareRename: () =>
+                              markdownLease.settleRecoveryCopy?.() ?? Promise.resolve(true),
+                          }
                         : {})}
                       environmentId={environmentId}
                       cwd={cwd}
@@ -1912,7 +2067,7 @@ export default function FilePreviewPanel({
       ) : null}
       {markdownLease ? (
         <ScientMarkdownPersistenceNotice
-          key={relativePath}
+          key={documentSurfaceKey}
           persistence={markdownLease}
           {...(!renderMarkdown ? { onReturnToRich: () => applyMarkdownViewChange(true) } : {})}
           {...(markdownRefreshCopy ? { refreshCopy: markdownRefreshCopy } : {})}
@@ -1981,6 +2136,7 @@ export default function FilePreviewPanel({
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               relativePath={relativePath}
@@ -1992,7 +2148,9 @@ export default function FilePreviewPanel({
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
+              workspaceRoot={cwd}
               name={relativePath}
               workspaceMutationId={workspaceMutationId}
               refreshKey={viewerRefreshKey}
@@ -2002,6 +2160,7 @@ export default function FilePreviewPanel({
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               workspaceRoot={cwd}
               relativePath={relativePath}
               absolutePath={absolutePath}
@@ -2022,6 +2181,7 @@ export default function FilePreviewPanel({
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               relativePath={relativePath}
@@ -2082,6 +2242,10 @@ export default function FilePreviewPanel({
                 // SCIENT-FORK:START
                 <StaticTextFileSurface
                   key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
+                  threadRef={threadRef}
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
+                  revealRequestId={revealRequestId}
                   cwd={cwd}
                   relativePath={relativePath}
                   contents={file.data.contents}
@@ -2108,6 +2272,9 @@ export default function FilePreviewPanel({
                   revealLine={revealLine}
                   revealRequestId={revealRequestId}
                   latexPresentationRequest={latexPresentationRequest}
+                  threadRef={threadRef}
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
                   wordWrap={wordWrap}
                   onPostRender={onFilePostRender}
                   onOpenFileSource={onOpenFileSource}
@@ -2117,6 +2284,9 @@ export default function FilePreviewPanel({
             ) : computeSourceLanguage !== null && !file.data.truncated ? (
               <ScientSurfaceSuspense>
                 <ScientComputeFileSurface
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
+                  citationBaseline={file.authoritativeData?.contents}
                   key={`${computeContextId}:${resolvedTheme}`}
                   language={computeSourceLanguage}
                   environmentId={environmentId}
@@ -2146,7 +2316,7 @@ export default function FilePreviewPanel({
             ) : usesScientMarkdownEditor && markdownLease ? (
               <ScientSurfaceSuspense>
                 <ScientMarkdownFileSurface
-                  key={relativePath}
+                  key={documentSurfaceKey}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}
@@ -2164,7 +2334,10 @@ export default function FilePreviewPanel({
               </ScientSurfaceSuspense>
             ) : markdownLease ? (
               <MarkdownSourceSurface
-                key={relativePath}
+                threadRef={threadRef}
+                onCite={onCiteFile}
+                citationReveal={citationRevealActive ? fileCitation : undefined}
+                key={documentSurfaceKey}
                 persistence={markdownLease}
                 environmentId={environmentId}
                 cwd={cwd}
@@ -2203,6 +2376,10 @@ export default function FilePreviewPanel({
               // SCIENT-FORK:START
               <StaticTextFileSurface
                 key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
+                threadRef={threadRef}
+                onCite={onCiteFile}
+                citationReveal={citationRevealActive ? fileCitation : undefined}
+                revealRequestId={revealRequestId}
                 cwd={cwd}
                 relativePath={relativePath}
                 contents={file.data.contents}
@@ -2212,14 +2389,24 @@ export default function FilePreviewPanel({
               />
             ) : // SCIENT-FORK:END
             isHostFile || !canWriteFiles ? (
-              <SourceFilePreview
-                name={relativePath}
-                text={file.data.contents}
-                cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
+              <StaticTextFileSurface
+                threadRef={threadRef}
+                onCite={onCiteFile}
+                citationReveal={citationRevealActive ? fileCitation : undefined}
+                revealRequestId={revealRequestId}
+                cwd={cwd}
+                relativePath={relativePath}
+                contents={file.data.contents}
+                resolvedTheme={resolvedTheme}
+                wordWrap={wordWrap}
                 onPostRender={onFilePostRender}
               />
             ) : (
               <EditableFileSurface
+                threadRef={threadRef}
+                onCite={onCiteFile}
+                citationReveal={citationRevealActive ? fileCitation : undefined}
+                citationBaseline={file.authoritativeData?.contents}
                 key={`${relativePath}:${resolvedTheme}`}
                 environmentId={environmentId}
                 cwd={cwd}

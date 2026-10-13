@@ -26,7 +26,9 @@ import {
   type OmpRpcImage,
 } from "effect-omp-rpc/schema";
 import type { OmpRpcFrameTrace, OmpRpcNotification } from "effect-omp-rpc/client";
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import {
   assertReadableOmpSessionFile,
@@ -34,16 +36,14 @@ import {
 } from "../../provider/omp/OmpSessionFile.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import type { ServerConfig } from "../../config.ts";
-import {
-  readMcpProviderSession,
-  withAgentDeviceEnvironment,
-} from "../../mcp/McpProviderSession.ts";
+import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
 import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
-import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
+import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   decodeOmpModelSlug,
   encodeOmpModelSlug,
@@ -73,8 +73,8 @@ import {
   browserActionText,
   browserActionDiagnostic,
 } from "../../provider/omp/OmpBrowserAction.ts";
-import type * as ProviderAdapter from "../ProviderAdapter.ts";
-import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
   nativeSessionFailure,
@@ -134,7 +134,11 @@ const boundedToolInput = (value: unknown) => {
       };
 };
 
-export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
+export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
+  options: OmpAdapterV2Options,
+) {
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const target = options.target ?? ompTarget;
   const locks = makeOmpSessionLockRegistry();
   return makeNativeSessionAdapterV2({
@@ -186,9 +190,9 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
     },
     open: (input, onUpdate) =>
       Effect.gen(function* () {
-        let redaction = makeOmpRedaction(options.environment, [
-          readMcpProviderSession(input.threadId)?.authorizationHeader,
-        ]);
+        const mcp =
+          input.configureMcp === false ? undefined : yield* mcpSessions.read(input.threadId);
+        let redaction = makeOmpRedaction(options.environment, [mcp?.authorizationHeader]);
         const safeFailure = (cause: unknown) => {
           const failure = nativeSessionFailure(cause);
           return new NativeSessionOperationError({
@@ -267,8 +271,6 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             )
               yield* fs.remove(path.join(root, name), { force: true });
           }
-          const mcp =
-            input.configureMcp === false ? undefined : readMcpProviderSession(input.threadId);
           if (mcp && mcp.providerInstanceId !== options.instanceId)
             return yield* Effect.fail(
               new NativeSessionOperationError({
@@ -283,7 +285,9 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             bootstrap: {
               endpoint: mcp?.endpoint ?? null,
               authorization: mcp?.authorizationHeader ?? null,
-              awareness: buildScientAwareness(mcp?.capabilities),
+              awareness: buildScientAwareness(
+                mcp?.capabilities === undefined ? undefined : toMcpCapabilities(mcp.capabilities),
+              ),
             },
           }).pipe(
             Effect.provideService(FileSystem.FileSystem, fs),
@@ -401,6 +405,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               options.environment.HOME?.trim() ||
               options.environment.USERPROFILE?.trim() ||
               "",
+            homeDirectory,
           );
           const identity = {
             providerInstanceId: String(options.instanceId),
@@ -628,7 +633,10 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 return onUpdate({
                   type: "subagent",
                   id: update.id,
-                  title: update.title,
+                  title:
+                    target.driverKind === "scient"
+                      ? client.redaction.text(update.title)
+                      : update.title,
                   status:
                     update.status === "inProgress"
                       ? "running"
@@ -638,6 +646,42 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   ...(update.detail === undefined
                     ? {}
                     : { detail: client.redaction.text(update.detail) }),
+                  ...(target.driverKind !== "scient"
+                    ? {}
+                    : {
+                        ...(update.prompt === undefined
+                          ? {}
+                          : { prompt: client.redaction.text(update.prompt) }),
+                        ...(update.progress === undefined
+                          ? {}
+                          : { progress: client.redaction.text(update.progress) }),
+                        ...(update.result === undefined
+                          ? {}
+                          : { result: client.redaction.text(update.result) }),
+                        ...(update.model === undefined
+                          ? {}
+                          : { model: client.redaction.text(update.model) }),
+                        ...(update.presentation === undefined
+                          ? {}
+                          : {
+                              presentation: {
+                                ...update.presentation,
+                                ...(update.presentation.role === undefined
+                                  ? {}
+                                  : { role: client.redaction.text(update.presentation.role) }),
+                                ...(update.presentation.effort === undefined
+                                  ? {}
+                                  : { effort: client.redaction.text(update.presentation.effort) }),
+                                ...(update.presentation.lastToolName === undefined
+                                  ? {}
+                                  : {
+                                      lastToolName: client.redaction.text(
+                                        update.presentation.lastToolName,
+                                      ),
+                                    }),
+                              },
+                            }),
+                      }),
                 });
               case "session-settled":
                 return onUpdate({ type: "background", pending: false });
@@ -1266,4 +1310,4 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
         );
       }),
   });
-}
+});

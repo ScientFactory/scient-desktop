@@ -1,5 +1,4 @@
 import {
-  DEFAULT_SERVER_SETTINGS,
   defaultInstanceIdForDriver,
   type ProviderInstanceConfig,
   type ServerProvider,
@@ -36,32 +35,18 @@ export function withProviderInstanceEnabled(
  * them; custom instances must already have a persisted envelope.
  */
 export function buildEnableProviderPatch(
-  settings: Pick<ServerSettings, "providers" | "providerInstances">,
+  settings: Pick<ServerSettings, "providerInstances">,
   provider: Pick<ServerProvider, "driver" | "instanceId">,
 ): ServerSettingsPatch | null {
   const existing = settings.providerInstances[provider.instanceId];
   const isDefault = provider.instanceId === defaultInstanceIdForDriver(provider.driver);
-  const legacyProviders = settings.providers as Record<string, unknown>;
-  const legacyDefaults = DEFAULT_SERVER_SETTINGS.providers as Record<string, unknown>;
-  const legacyConfig = isDefault ? legacyProviders[provider.driver] : undefined;
 
-  if (!existing && legacyConfig === undefined) return null;
+  if (!existing && !isDefault) return null;
 
-  const source = existing ?? {
-    driver: provider.driver,
-    config: legacyConfig,
-  };
+  const source = existing ?? { driver: provider.driver };
   const enabledInstance = withProviderInstanceEnabled(source, true);
 
   return {
-    ...(isDefault && legacyDefaults[provider.driver] !== undefined
-      ? {
-          providers: {
-            ...settings.providers,
-            [provider.driver]: legacyDefaults[provider.driver],
-          } as ServerSettings["providers"],
-        }
-      : {}),
     providerInstances: {
       ...settings.providerInstances,
       [provider.instanceId]: enabledInstance,

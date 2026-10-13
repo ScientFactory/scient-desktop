@@ -18,8 +18,8 @@ import { type AcpError, AcpRequestError } from "effect-acp/errors";
 
 import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
-import type { AcpSessionRuntime } from "../provider/acp/AcpSessionRuntime.ts";
-import * as TextGenerationOperations from "./TextGenerationOperations.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const MAX_OUTPUT_CHARS = 128_000;
@@ -30,7 +30,7 @@ const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(Configurat
 const decodeConfigurationObject = Schema.decodeUnknownEffect(Configuration);
 
 type AntigravityTextRuntime = Pick<
-  AcpSessionRuntime["Service"],
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
   | "start"
   | "setMode"
   | "getConfigOptions"
@@ -66,6 +66,7 @@ export interface AntigravityTextGenerationOptions {
   ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
 }
 
+// SCIENT-FORK:START — typed structured generation for the Scient voice capability.
 export interface AntigravityStructuredGenerationInput<A> {
   readonly operation: string;
   readonly prompt: string;
@@ -77,6 +78,7 @@ export type AntigravityStructuredGeneration = <A>(
   input: AntigravityStructuredGenerationInput<A>,
 ) => Effect.Effect<A, TextGenerationError>;
 
+// SCIENT-FORK:END
 /** Global hooks and MCP servers can run before a helper can deny a tool request. */
 export const isAntigravityTextGenerationAvailable = Effect.fn(
   "isAntigravityTextGenerationAvailable",
@@ -107,6 +109,7 @@ export const isAntigravityTextGenerationAvailable = Effect.fn(
   return true;
 });
 
+// SCIENT-FORK:START — one guarded runner also serves structured Scient capabilities.
 /**
  * Runs short-lived subscription helpers without giving them the user's workspace.
  * The structured generator is shared with narrowly scoped provider capabilities,
@@ -116,6 +119,7 @@ export const isAntigravityTextGenerationAvailable = Effect.fn(
 export const makeAntigravityGeneration = Effect.fn("makeAntigravityGeneration")(function* (
   options: AntigravityTextGenerationOptions,
 ) {
+  // SCIENT-FORK:END
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const available = isAntigravityTextGenerationAvailable(options.profileDirectory).pipe(
@@ -126,7 +130,9 @@ export const makeAntigravityGeneration = Effect.fn("makeAntigravityGeneration")(
   // Ignores `cwd`: the helper runs in an empty temp directory, away from the project.
   const runAntigravityJson = Effect.fn("AntigravityTextGeneration.runJson")(
     function* <S extends Schema.Top>(input: {
+      // SCIENT-FORK:START — capability operation labels also use this same runner.
       readonly operation: string;
+      // SCIENT-FORK:END
       readonly prompt: string;
       readonly outputSchema: S;
       readonly modelSelection: ModelSelection;
@@ -343,17 +349,22 @@ export const makeAntigravityGeneration = Effect.fn("makeAntigravityGeneration")(
       ),
   );
 
+  // SCIENT-FORK:START — preserve the standard service alongside the shared capability runner.
   return {
     textGeneration: TextGenerationOperations.fromRunner(
       "AntigravityTextGeneration",
-      runAntigravityJson,
+      TextGenerationOperations.withoutInvestigation("Antigravity", runAntigravityJson),
     ),
     generateStructured: runAntigravityJson,
   };
+  // SCIENT-FORK:END
 });
 
+// SCIENT-FORK:START — the upstream entry point keeps returning the standard service.
 export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGeneration")(function* (
   options: AntigravityTextGenerationOptions,
 ) {
   return (yield* makeAntigravityGeneration(options)).textGeneration;
 });
+
+// SCIENT-FORK:END

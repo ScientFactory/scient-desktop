@@ -19,10 +19,12 @@ import {
   type AcpRegistryUrlAuthAction,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
+  type ProjectId,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type ProviderManagedRuntimeAction,
   resolveEnvironmentMachineKind,
+  resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
@@ -33,7 +35,6 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
-import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -42,8 +43,9 @@ import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import {
   useEnvironmentSettings,
   usePersistEnvironmentProviderInstanceMutation,
-  useUpdateClientSettings,
   useUpdateEnvironmentSettings,
+  useUpdateEnvironmentModelPreferences,
+  useToggleEnvironmentModelFavorite,
 } from "../../hooks/useSettings";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
@@ -55,7 +57,7 @@ import {
 } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getRelativeTimeState } from "../../timestampFormat";
 import {
@@ -119,6 +121,7 @@ import {
 } from "./settingsLayout";
 import {
   buildProviderEnvironmentOptions,
+  buildProviderInstanceOverridePatch,
   classifyProviderEnvironmentAccess,
   isProviderSettingsEnvironmentAvailable,
   type ProviderEnvironmentAccess,
@@ -127,20 +130,12 @@ import {
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
 
-function withoutProviderInstanceKey<V>(
-  record: Readonly<Record<ProviderInstanceId, V>> | undefined,
-  key: ProviderInstanceId,
-): Record<ProviderInstanceId, V> {
-  const next = { ...record } as Record<ProviderInstanceId, V>;
-  delete next[key];
-  return next;
-}
-
-function withoutProviderInstanceFavorites(
-  favorites: ReadonlyArray<{ readonly provider: ProviderInstanceId; readonly model: string }>,
-  instanceId: ProviderInstanceId,
-) {
-  return favorites.filter((favorite) => favorite.provider !== instanceId);
+function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {
+  const currentSet = new Set(current);
+  const nextSet = new Set(next.map((model) => model.trim()).filter(Boolean));
+  return [...new Set([...currentSet, ...nextSet])]
+    .filter((model) => currentSet.has(model) !== nextSet.has(model))
+    .map((model) => ({ model, selected: nextSet.has(model) }));
 }
 
 function providerConfigString(config: unknown, key: string): string | null {
@@ -151,6 +146,7 @@ function providerConfigString(config: unknown, key: string): string | null {
 
 const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
   provider: definition.value,
+  hasDefaultInstance: definition.hasDefaultInstance !== false,
 }));
 
 function configuredBinaryPath(config: unknown): string {
@@ -289,11 +285,16 @@ interface ProviderSettingsTarget {
   readonly instanceId?: ProviderInstanceId;
   readonly scoped?: boolean;
   readonly environmentIds?: readonly EnvironmentId[];
+  /**
+   * The project's checkouts on the selected environment, if a project is in
+   * scope. The enable toggle writes each one's override so they never diverge.
+   */
+  readonly projectIds?: readonly ProjectId[];
 }
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
-    <SettingsPageContainer width="wide" className="@container/providers gap-8">
+    <SettingsPageContainer className="@container/providers gap-8">
       <ProviderSettingsPanelContent
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}
@@ -460,6 +461,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
               ? target.instanceId
               : undefined
           }
+          projectIds={target.projectIds ?? []}
         />
       ) : null}
     </>
@@ -470,16 +472,19 @@ function SelectedEnvironmentProviderSettings({
   environment,
   deviceTabs,
   targetInstanceId,
+  projectIds,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
+  readonly projectIds: readonly ProjectId[];
 }) {
   return (
     <RemoteSessionGatedProviderSettings
       environment={environment}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
+      projectIds={projectIds}
     />
   );
 }
@@ -488,10 +493,12 @@ function RemoteSessionGatedProviderSettings({
   environment,
   deviceTabs,
   targetInstanceId,
+  projectIds,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
+  readonly projectIds: readonly ProjectId[];
 }) {
   const sessionState = useEnvironmentSessionState(environment.environmentId);
   const operateAccess = resolveRemoteOperateAccess({
@@ -505,6 +512,7 @@ function RemoteSessionGatedProviderSettings({
       operateAccess={operateAccess}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
+      projectIds={projectIds}
     />
   );
 }
@@ -514,11 +522,13 @@ function AccessGatedProviderSettings({
   operateAccess,
   deviceTabs,
   targetInstanceId,
+  projectIds,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly operateAccess: ProviderOperateAccess;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
+  readonly projectIds: readonly ProjectId[];
 }) {
   const access = classifyProviderEnvironmentAccess({
     connectionPhase: environment.connection.phase,
@@ -541,6 +551,7 @@ function AccessGatedProviderSettings({
       readOnly={access.kind === "read-only"}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
+      projectIds={projectIds}
     />
   );
 }
@@ -551,11 +562,14 @@ export function EnvironmentProviderSettings({
   readOnly = false,
   deviceTabs,
   targetInstanceId,
+  projectIds = [],
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
+  /** The project's checkouts on this environment, if a project is in scope. */
+  readonly projectIds?: readonly ProjectId[];
   /**
    * Grey out and freeze every write control when this session's credential
    * lacks `providers:manage` on the environment. Selecting providers
@@ -568,11 +582,18 @@ export function EnvironmentProviderSettings({
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const updateModelPreferences = useUpdateEnvironmentModelPreferences(environmentId);
+  const toggleModelFavorite = useToggleEnvironmentModelFavorite(environmentId);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
-  const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  // Older servers decode an unknown providerInstances key away, so sending
+  // a project override patch would silently do nothing. Hide the switch
+  // instead of offering a control that can never take effect.
+  const supportsProjectProviderOverrides =
+    useServerConfigs().get(environmentId)?.environment.capabilities
+      .projectProviderInstanceOverrides === true;
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -588,9 +609,21 @@ export function EnvironmentProviderSettings({
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
-  const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
-    targetInstanceId ?? null,
-  );
+  const [selection, setSelection] = useState({
+    targetInstanceId,
+    selectedInstanceId: targetInstanceId ?? null,
+  });
+  // A new deep link is new selection intent; status refreshes retain manual picks.
+  const selectedInstanceId =
+    selection.targetInstanceId === targetInstanceId
+      ? selection.selectedInstanceId
+      : (targetInstanceId ?? null);
+  if (selection.targetInstanceId !== targetInstanceId) {
+    setSelection({ targetInstanceId, selectedInstanceId });
+  }
+  const setSelectedInstanceId = (instanceId: ProviderInstanceId) => {
+    setSelection({ targetInstanceId, selectedInstanceId: instanceId });
+  };
   const [connectionRequest, setConnectionRequest] = useState<{
     readonly instanceId: ProviderInstanceId;
     readonly initialRuntimeAction?: ProviderManagedRuntimeAction;
@@ -637,14 +670,6 @@ export function EnvironmentProviderSettings({
           .map((candidate) => [candidate.instanceId, candidate]),
       ),
     [serverProviders],
-  );
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
   );
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
@@ -754,53 +779,26 @@ export function EnvironmentProviderSettings({
   }
 
   const defaultSlotIdsBySource = new Set<string>(
-    visibleProviderSettings.map((providerSettings) =>
+    PROVIDER_SETTINGS.map((providerSettings) =>
       String(defaultInstanceIdForDriver(providerSettings.provider)),
     ),
   );
 
   const rows: InstanceRow[] = [];
   const visibleDriverKinds = new Set<ProviderDriverKind>(
-    visibleProviderSettings.map((providerSettings) => providerSettings.provider),
+    PROVIDER_SETTINGS.map((providerSettings) => providerSettings.provider),
   );
 
-  for (const providerSettings of visibleProviderSettings) {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings
-    >;
+  for (const providerSettings of PROVIDER_SETTINGS) {
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    // A remote device may run a server version whose settings predate this
-    // driver, so the legacy mirror can be absent. Without either an explicit
-    // instance or a legacy blob there is nothing to render for the slot.
-    const legacyConfig = legacyProviders[providerSettings.provider];
-    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider];
-    // The envelope is the single enabled flag: keep the legacy in-config
-    // flag out of the synthesized blob, or an explicit `enabled: false`
-    // would keep winning over the envelope and the Switch could never
-    // turn a default-off provider on.
-    const synthesizedInstance = (): ProviderInstanceConfig | undefined => {
-      if (legacyConfig === undefined) {
-        return undefined;
-      }
-      const { enabled: legacyEnabled, ...legacyConfigRest } = legacyConfig;
-      return {
-        driver,
-        enabled: legacyEnabled,
-        config: legacyConfigRest,
-      } satisfies ProviderInstanceConfig;
-    };
-    const effectiveInstance: ProviderInstanceConfig | undefined =
-      explicitInstance ?? synthesizedInstance();
-    // Only the default slot depends on the legacy blob; custom instances for
-    // the driver must still render even when the slot has nothing to show.
-    if (effectiveInstance !== undefined) {
-      const isDirty =
-        explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
+    const effectiveInstance: ProviderInstanceConfig = explicitInstance ?? { driver };
+    const isDirty = explicitInstance !== undefined;
+    // Settings exposes built-in default slots without enabling or configuring
+    // them. Drivers without a default slot list only their configured instances.
+    const hasDefaultSlot = providerSettings.hasDefaultInstance || explicitInstance !== undefined;
+    if (hasDefaultSlot) {
       rows.push({
         instanceId: defaultInstanceId,
         instance: effectiveInstance,
@@ -841,11 +839,13 @@ export function EnvironmentProviderSettings({
     connectionRequest === null
       ? undefined
       : rows.find((row) => row.instanceId === connectionRequest.instanceId);
-  const connectionDisplayName = connectionRow
-    ? connectionRow.instance.displayName?.trim() ||
-      getDriverOption(connectionRow.driver)?.label ||
-      String(connectionRow.driver)
-    : null;
+  const connectionDriver = connectionRow?.driver ?? connectionProvider?.driver;
+  const connectionDisplayName =
+    connectionRow?.instance.displayName?.trim() ||
+    connectionProvider?.displayName?.trim() ||
+    (connectionDriver
+      ? (getDriverOption(connectionDriver)?.label ?? String(connectionDriver))
+      : null);
 
   const updateProviderInstance = async (
     row: InstanceRow,
@@ -860,8 +860,6 @@ export function EnvironmentProviderSettings({
       settings,
       instanceId: row.instanceId,
       instance: next,
-      driver: row.driver,
-      isDefault: row.isDefault,
       textGenerationModelSelection: options?.textGenerationModelSelection,
     });
     const result = await persistProviderInstance(
@@ -915,73 +913,11 @@ export function EnvironmentProviderSettings({
     }
   };
 
-  const updateProviderModelPreferences = (
-    instanceId: ProviderInstanceId,
-    next: {
-      readonly hiddenModels: ReadonlyArray<string>;
-      readonly modelOrder: ReadonlyArray<string>;
-    },
-  ) => {
-    const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
-    const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
-    const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
-    const driver = rows.find((row) => row.instanceId === instanceId)?.driver;
-    updateClientSettings({
-      providerModelPreferences:
-        hiddenModels.length === 0 &&
-        modelOrder.length === 0 &&
-        driver !== "pi" &&
-        driver !== "omp" &&
-        driver !== "scient"
-          ? rest
-          : {
-              ...rest,
-              [instanceId]: {
-                hiddenModels,
-                modelOrder,
-              },
-            },
-    });
-  };
-
-  const updateProviderFavoriteModels = (
-    instanceId: ProviderInstanceId,
-    nextFavoriteModels: ReadonlyArray<string>,
-  ) => {
-    const favoriteModels = [
-      ...new Set(
-        Arr.filterMap(nextFavoriteModels, (slug) => {
-          const trimmedSlug = slug.trim();
-          return trimmedSlug.length > 0 ? Result.succeed(trimmedSlug) : Result.failVoid;
-        }),
-      ),
-    ];
-    updateClientSettings({
-      favorites: [
-        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
-        ...favoriteModels.map((model) => ({ provider: instanceId, model })),
-      ],
-    });
-  };
-
   const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings | undefined
-    >;
-    const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
-    const defaultLegacyProvider = defaultLegacyProviders[driverKind];
-    if (defaultLegacyProvider === undefined) return;
-    const result = await persistProviderInstance(
-      { operation: "remove", instanceId: defaultInstanceId },
-      {
-        providers: {
-          ...settings.providers,
-          [driverKind]: defaultLegacyProvider,
-        } as typeof settings.providers,
-      },
-    );
+    const result = await persistProviderInstance({
+      operation: "remove",
+      instanceId: defaultInstanceIdForDriver(driverKind),
+    });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -1012,12 +948,40 @@ export function EnvironmentProviderSettings({
       favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
     );
     const resetLabel = driverOption?.label ?? String(row.driver);
+    const representativeProjectId = projectIds[0];
+    const writeProjectOverride = (next: boolean | undefined) => {
+      updateSettings({
+        projectSettingsOverrides: buildProviderInstanceOverridePatch(
+          settings,
+          projectIds,
+          row.instanceId,
+          next,
+        ),
+      });
+    };
+    const projectOverride =
+      representativeProjectId === undefined || !supportsProjectProviderOverrides
+        ? undefined
+        : {
+            value:
+              settings.projectSettingsOverrides[representativeProjectId]?.providerInstances?.[
+                row.instanceId
+              ]?.enabled,
+            effectiveEnabled: resolveProjectProviderInstanceEnabled(
+              settings,
+              representativeProjectId,
+              row.instanceId,
+            ),
+            onChange: (next: boolean) => writeProjectOverride(next),
+            onReset: () => writeProjectOverride(undefined),
+          };
 
     return (
       <ProviderInstanceCard
         key={row.instanceId}
         environmentId={environmentId}
         acpProjects={projects}
+        projectOverride={projectOverride}
         onAcceptUrlAuth={
           readOnly ? undefined : (action) => acceptUrlAuthentication(row.instanceId, action)
         }
@@ -1144,20 +1108,39 @@ export function EnvironmentProviderSettings({
         hiddenModels={modelPreferences.hiddenModels}
         favoriteModels={favoriteModels}
         modelOrder={modelPreferences.modelOrder}
-        onHiddenModelsChange={(hiddenModels) =>
-          updateProviderModelPreferences(row.instanceId, {
-            ...modelPreferences,
-            hiddenModels,
-            modelOrder: settings.providerModelPreferences?.[row.instanceId]?.modelOrder ?? [],
-          })
-        }
-        onFavoriteModelsChange={(next) => updateProviderFavoriteModels(row.instanceId, next)}
-        onModelOrderChange={(modelOrder) =>
-          updateProviderModelPreferences(row.instanceId, {
-            ...modelPreferences,
-            modelOrder,
-          })
-        }
+        onHiddenModelsChange={(next, affectedModels) => {
+          const hidden = new Set(next);
+          const models =
+            affectedModels ??
+            modelListChanges(modelPreferences.hiddenModels, next).map((change) => change.model);
+          void updateModelPreferences({
+            setModelsHidden: models.map((model) => ({
+              provider: row.instanceId,
+              model,
+              hidden: hidden.has(model),
+              initialPreferences: modelPreferences,
+            })),
+          });
+        }}
+        onToggleFavorite={(model) => {
+          void toggleModelFavorite(row.instanceId, model);
+        }}
+        onFavoriteModelsChange={(next) => {
+          void updateModelPreferences({
+            setModelFavorites: modelListChanges(favoriteModels, next).map(
+              ({ model, selected }) => ({ provider: row.instanceId, model, favorite: selected }),
+            ),
+          });
+        }}
+        onModelOrderChange={(modelOrder) => {
+          void updateModelPreferences({
+            setProviderModelOrder: {
+              provider: row.instanceId,
+              modelOrder,
+              initialPreferences: modelPreferences,
+            },
+          });
+        }}
         onInstallRecommended={
           !readOnly &&
           liveProvider?.compatibilityAdvisory?.message &&

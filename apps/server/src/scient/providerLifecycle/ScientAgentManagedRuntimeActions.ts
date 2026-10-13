@@ -8,13 +8,14 @@ import {
   MANAGED_RUNTIME_POLICY,
   type ManagedScientAgentRuntime,
   detectManagedRuntimeTarget,
+  downloadManagedScientAgentRuntime,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
   smokeManagedRuntimeExecutable,
 } from "@scientfactory/provider-runtime";
 import type { ScientAgentSettings } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -29,7 +30,7 @@ import {
   type OmpExecutableGateShape,
 } from "../../provider/omp/OmpExecutableGate.ts";
 import { OMP_ISOLATED_ARGS, makeOmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
-import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { scientAgentTarget } from "../../provider/scient/ScientAgentTarget.ts";
 import {
   makeManagedProviderRuntimeResolution,
@@ -216,7 +217,11 @@ export const makeQualifiedManagedScientAgentRuntime = Effect.fn(
     target: scientAgentTarget,
     gate,
     qualification,
-    dependencies: { ...input.dependencies, smoke },
+    dependencies: {
+      ...input.dependencies,
+      download: input.dependencies?.download ?? downloadManagedScientAgentRuntime,
+      smoke,
+    },
   });
 });
 
@@ -272,8 +277,8 @@ export const makeScientAgentManagedRuntimeResolution = Effect.fn(
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly managedInstallationAllowed: boolean;
 }): Effect.fn.Return<ManagedProviderRuntimeResolution, never, OmpExecutableGate> {
-  const platform = yield* HostProcessPlatform;
-  const arch = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const arch = yield* HostProcess.Architecture;
   const target = detectTargetSafely({ platform, arch });
   const gate = yield* OmpExecutableGate;
   return yield* makeManagedProviderRuntimeResolution({

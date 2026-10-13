@@ -7,19 +7,15 @@
  */
 import {
   CustomModelError,
-  DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
-  DEFAULT_TEXT_GENERATION_MODEL,
-  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   type CustomModelSaveInput,
   type CustomModelsSettings,
-  type ModelSelection,
-  ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   type ServerSettings,
   type ServerSettingsError,
 } from "@t3tools/contracts";
+import { fallbackScientTextGenerationModelSelection } from "@t3tools/shared/scientTextGenerationSelection";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import type * as Semaphore from "effect/Semaphore";
@@ -186,63 +182,14 @@ export function makeCustomModelSettingsMethods(
   };
 }
 
-const LAST_RESORT_TEXT_GENERATION_DRIVER = "scient";
-
+/** Preserve the environment selection when no enabled provider can replace it. */
 export function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  // Same precedence as isModelSelectionProviderEnabled: an explicit provider
-  // instance wins over the legacy providers map, which decodes to defaults
-  // (codex enabled) when the Providers UI has only written providerInstances.
-  const enabledBuiltIns = Object.entries(settings.providers)
-    .filter(([driver, provider]) => {
-      const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
-      return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
-    })
-    .map(([driver]) => ({ instanceId: ProviderInstanceId.make(driver), driver }));
-  // Scient Agent is on by default, so its being enabled is not a choice the
-  // user made and does not say it is installed. It generates text only when
-  // nothing else is enabled.
-  const fallback =
-    enabledBuiltIns.find(({ driver }) => driver !== LAST_RESORT_TEXT_GENERATION_DRIVER) ??
-    enabledNamedInstance(settings) ??
-    enabledBuiltIns[0];
-  if (!fallback) {
-    return settings;
-  }
-
-  const driver = ProviderDriverKind.make(fallback.driver);
-  return {
-    ...settings,
-    textGenerationModelSelection: {
-      instanceId: fallback.instanceId,
-      model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
-        DEFAULT_MODEL_BY_PROVIDER[driver] ??
-        DEFAULT_TEXT_GENERATION_MODEL,
-    } satisfies ModelSelection,
-  };
-}
-
-/**
- * With no built-in instance enabled, an enabled instance under another id (a
- * second account, a named setup) generates text. Instances of a driver this
- * build does not have are skipped. The choice is stable: drivers in the
- * built-in order, then instance ids in code-point order.
- */
-function enabledNamedInstance(
-  settings: ServerSettings,
-): { readonly instanceId: ProviderInstanceId; readonly driver: string } | undefined {
-  const drivers = Object.keys(settings.providers);
-  const [first] = Object.entries(settings.providerInstances)
-    .filter(
-      ([, instance]) =>
-        drivers.includes(instance.driver) && resolveProviderInstanceEnabled(instance),
-    )
-    .toSorted(
-      ([leftId, left], [rightId, right]) =>
-        drivers.indexOf(left.driver) - drivers.indexOf(right.driver) ||
-        (leftId < rightId ? -1 : leftId > rightId ? 1 : 0),
-    );
-  return first
-    ? { instanceId: ProviderInstanceId.make(first[0]), driver: first[1].driver }
-    : undefined;
+  const selection = fallbackScientTextGenerationModelSelection(
+    settings.providerInstances,
+    (instanceId, driver) =>
+      resolveProviderInstanceEnabled(
+        settings.providerInstances[instanceId] ?? { driver, config: {} },
+      ),
+  );
+  return selection === null ? settings : { ...settings, textGenerationModelSelection: selection };
 }

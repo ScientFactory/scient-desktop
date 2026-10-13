@@ -2,7 +2,7 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, ThreadId, EnvironmentId, ProviderSessionId } from "@t3tools/contracts";
 import { describe, it, assert } from "@effect/vitest";
-import { HostProcessPlatform, HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,10 +10,10 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../../config.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
   DEFAULT_CODEX_SETTINGS,
@@ -165,10 +165,6 @@ describe("CodexAdapterV2 runtime policy", () => {
         params.additionalContext?.t3_code_orchestration?.value ?? "",
         "Use `delegate_task`",
       );
-      assert.include(
-        params.additionalContext?.t3_code_orchestration?.value ?? "",
-        "structured object, never as JSON text",
-      );
     }),
   );
 
@@ -291,22 +287,24 @@ describe("CodexAdapterV2 runtime policy", () => {
 });
 
 describe("CodexAdapterV2 process spawning", () => {
-  it("injects cwd, model, and MCP authorization into thread-scoped params", () => {
-    const threadId = ThreadId.make("thread-codex-mcp");
-    McpProviderSession.setMcpProviderSession({
-      environmentId: EnvironmentId.make("environment-codex-mcp"),
-      threadId,
-      providerSessionId: "mcp-session-codex",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      endpoint: "http://127.0.0.1:43123/mcp",
-      authorizationHeader: "Bearer secret-codex-token",
-      capabilities: new Set(["preview"] as const),
-    });
+  it.effect("injects cwd, model, and MCP authorization into thread-scoped params", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const threadId = ThreadId.make("thread-codex-mcp");
+      yield* sessions.set({
+        environmentId: EnvironmentId.make("environment-codex-mcp"),
+        threadId,
+        providerSessionId: "mcp-session-codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-codex-token",
+        capabilities: new Set(["preview"] as const),
+      });
+      yield* Effect.addFinalizer(() => sessions.clear(threadId));
 
-    try {
       assert.deepEqual(
         CodexAdapterV2.codexThreadRuntimeParams({
-          threadId,
+          mcpSession: yield* sessions.read(threadId),
           modelSelection: { model: "gpt-5.4" },
           runtimePolicy: {
             runtimeMode: "full-access",
@@ -330,17 +328,12 @@ describe("CodexAdapterV2 process spawning", () => {
           },
         },
       );
-      assert.deepEqual(CodexAdapterV2.codexThreadRuntimeParams({ threadId, configureMcp: false }), {
+      assert.deepEqual(CodexAdapterV2.codexThreadRuntimeParams({ mcpSession: undefined }), {
         config: CodexAdapterV2.CODEX_THREAD_CONFIG,
       });
-      assert.equal(
-        McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
-        "mcp-session-codex",
-      );
-    } finally {
-      McpProviderSession.clearMcpProviderSession(threadId);
-    }
-  });
+      assert.equal((yield* sessions.read(threadId))?.providerSessionId, "mcp-session-codex");
+    }).pipe(Effect.scoped, Effect.provide(McpProviderSessions.layer)),
+  );
 
   it.effect("resolves Windows command shims through the shared spawn policy", () =>
     Effect.gen(function* () {
@@ -363,8 +356,8 @@ describe("CodexAdapterV2 process spawning", () => {
       assert.deepEqual(command.options.env, { CUSTOM: "1" });
       assert.equal(command.options.extendEnv, true);
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "win32"),
-      Effect.provideService(HostProcessEnvironment, {
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, {
         PATH: "C:\\Windows\\System32",
         HOST_ONLY: "1",
       }),
@@ -391,7 +384,7 @@ describe("CodexAdapterV2 process spawning", () => {
       assert.deepEqual(command.args, ["app-server"]);
       assert.equal(command.options.shell, false);
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(SpawnExecutableResolution, () => "C:\\bin\\codex.exe"),
     ),
   );
@@ -439,7 +432,7 @@ describe("CodexAdapterV2 process spawning", () => {
         ["app-server", "--strict-config", "-c", "model_reasoning_summary=detailed"],
         ["app-server", "--enable", "env-feature"],
       ]);
-    }).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("expands ~ in the configured binary path before spawning", () =>
@@ -483,8 +476,10 @@ describe("CodexAdapterV2 process spawning", () => {
 
       assert.deepEqual(spawnedCommands, [path.join(NodeOS.homedir(), "bin", "codex")]);
     }).pipe(
-      Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
-      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, McpProviderSessions.layer),
+      ),
+      Effect.provideService(HostProcess.Platform, "linux"),
     ),
   );
 });

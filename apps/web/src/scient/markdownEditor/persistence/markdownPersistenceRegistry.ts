@@ -68,7 +68,12 @@ export interface DocumentPendingInput {
 }
 
 export interface MarkdownPersistenceLease {
+  /** Follows the document: after an in-place rename this is the new path. */
   readonly target: MarkdownPersistenceTarget;
+  /** Stable for the open document, including across an in-place rename. */
+  readonly documentId: string;
+  /** Who acquired this lease; an in-place rename needs every lease to share one owner. */
+  readonly owner: object | undefined;
   readonly getSnapshot: () => MarkdownPersistenceSnapshot;
   readonly subscribe: (listener: () => void) => () => void;
   readonly getPendingInput: () => DocumentPendingInput | null;
@@ -90,20 +95,36 @@ export interface MarkdownPersistenceLease {
   readonly resolveWithDisk: () => Promise<boolean>;
   readonly restoreRecovery: () => boolean;
   readonly holdForRename: () => (() => void) | null;
+  /**
+   * Before any rename: removes this document's recovery copy, which must not
+   * outlive its name. False if a copy with unsaved work is due or removal
+   * failed; the rename must then wait. Absent in leases from older code.
+   */
+  readonly settleRecoveryCopy?: () => Promise<boolean>;
+  /**
+   * Starts an in-place rename to `destination`, or null when this document
+   * cannot move in place (the caller then renames the ordinary way).
+   */
+  readonly beginMove: (
+    destination: MarkdownPersistenceTarget,
+  ) => MarkdownPersistenceMoveTransaction | null;
   readonly registerExternalProjection: (prepare: PrepareMarkdownExternalUpdate) => () => void;
   readonly resumeExternalUpdates: () => void;
   readonly release: () => void;
 }
 
 interface RegistryEntry {
-  readonly target: MarkdownPersistenceTarget;
+  readonly id: string;
+  /** Changes only through an in-place rename (`beginMove`). */
+  target: MarkdownPersistenceTarget;
   readonly coordinator: DocumentPersistenceCoordinator<DocumentPatchReconciliation>;
   readonly reconcile: DocumentReconcileStrategy;
-  readonly transport: MarkdownPersistenceTransport;
-  readonly leases: Set<object>;
+  transport: MarkdownPersistenceTransport;
+  /** Each lease token and the owner it was acquired for. */
+  readonly leases: Map<object, object | undefined>;
   readonly projections: Map<object, PrepareMarkdownExternalUpdate>;
   readonly unsubscribe: () => void;
-  readonly checkpoint: MarkdownDraftCheckpointWriter | undefined;
+  checkpoint: MarkdownDraftCheckpointWriter | undefined;
   pendingInput: DocumentPendingInput | null;
   pendingInputOwner: object | null;
   pendingInputOwnerLease: object | null;
@@ -115,11 +136,57 @@ interface RegistryEntry {
   evictionTimer: ReturnType<typeof setTimeout> | undefined;
 }
 
+/** An open document moved to a new path without being reopened. */
+export interface MarkdownPersistenceMove {
+  readonly documentId: string;
+  readonly from: MarkdownPersistenceTarget;
+  readonly to: MarkdownPersistenceTarget;
+}
+
+/**
+ * An in-place rename of one open document, from `beginMove` to `finish`. The
+ * document is held (no saves, no edits) for the whole transaction.
+ */
+export interface MarkdownPersistenceMoveTransaction {
+  readonly documentId: string;
+  /**
+   * Whether the destination has no recovery copy. `unknown` (storage could not
+   * be read) counts as not empty.
+   */
+  readonly preflight: () => Promise<"empty" | "occupied" | "unknown">;
+  /**
+   * After the server renamed the file: moves the open document to the new path.
+   * False only if nothing was changed, so the caller can reopen the destination
+   * the ordinary way.
+   */
+  readonly commit: () => boolean;
+  /** Ends the transaction: releases the hold and reservations. Idempotent. */
+  readonly finish: () => void;
+}
+
+let nextDocumentId = 1;
+
+/**
+ * The open document's identity for keys that must survive an in-place rename.
+ * A registry from older code (kept after a hot reload) has no document ids;
+ * its documents are known by path, as before.
+ */
+export function documentIdentity(lease: MarkdownPersistenceLease): string {
+  return typeof lease.documentId === "string"
+    ? lease.documentId
+    : projectFileOperationKey(lease.target);
+}
+
+/** Whether this lease can move its document in place (not from older code). */
+export function canMoveInPlace(lease: MarkdownPersistenceLease): boolean {
+  return typeof lease.beginMove === "function" && typeof lease.documentId === "string";
+}
+
 /**
  * Raised whenever a registry built from older code could not serve this code:
  * a new lease method, a new rule for which strategy a file gets.
  */
-const REGISTRY_GENERATION = 6;
+const REGISTRY_GENERATION = 7;
 
 export class MarkdownPersistenceRegistry {
   readonly generation = REGISTRY_GENERATION;
@@ -137,6 +204,15 @@ export class MarkdownPersistenceRegistry {
    * Admission at that path waits, so a new file there never meets the old copy.
    */
   private readonly retiring = new Map<string, Promise<void>>();
+  /**
+   * Each path's document id. It outlives eviction, so a file reopened later is
+   * the same document to its views (Source keeps its undo, as it did by path),
+   * and it moves with an in-place rename.
+   */
+  private readonly documentIds = new Map<string, string>();
+  /** Paths an in-place rename is using; admission there waits for it to end. */
+  private readonly reserved = new Map<string, Promise<void>>();
+  private readonly moveListeners = new Set<(move: MarkdownPersistenceMove) => void>();
   private readonly listeners = new Set<() => void>();
   private state: readonly MarkdownPersistenceRegistryState[] = [];
 
@@ -170,9 +246,18 @@ export class MarkdownPersistenceRegistry {
     return this.entries.has(projectFileOperationKey(target));
   }
 
+  /** Told synchronously when an open document moves to a new path in place. */
+  readonly onMoved = (listener: (move: MarkdownPersistenceMove) => void): (() => void) => {
+    this.moveListeners.add(listener);
+    return () => this.moveListeners.delete(listener);
+  };
+
   /** New documents are admitted from an ordered read, never an SWR/optimistic cache. */
-  async open(target: MarkdownPersistenceTarget): Promise<MarkdownPersistenceLease> {
+  async open(target: MarkdownPersistenceTarget, owner?: object): Promise<MarkdownPersistenceLease> {
     const key = projectFileOperationKey(target);
+    // An in-place rename is using this path; admit only once it has ended.
+    for (let wait = this.reserved.get(key); wait !== undefined; wait = this.reserved.get(key))
+      await wait;
     if (!this.entries.has(key)) {
       let opening = this.initializing.get(key);
       if (opening === undefined) {
@@ -258,12 +343,12 @@ export class MarkdownPersistenceRegistry {
           }
           this.createEntry(target, baseline, draft, transport, checkpoint, conflict);
         }
-        return this.acquire(target, null)!;
+        return this.acquire(target, null, undefined, owner)!;
       } finally {
         if (this.initializing.get(key) === opening) this.initializing.delete(key);
       }
     }
-    const lease = this.acquire(target, null);
+    const lease = this.acquire(target, null, undefined, owner);
     if (lease === null) throw new Error("The Markdown document could not be opened for editing.");
     return lease;
   }
@@ -298,12 +383,16 @@ export class MarkdownPersistenceRegistry {
       },
       ...(this.options.debounceMs === undefined ? {} : { debounceMs: this.options.debounceMs }),
     });
+    const entryKey = projectFileOperationKey(target);
+    let id = this.documentIds.get(entryKey);
+    if (id === undefined) this.documentIds.set(entryKey, (id = `document-${nextDocumentId++}`));
     const entry: RegistryEntry = {
+      id,
       target,
       coordinator,
       reconcile,
       transport,
-      leases: new Set(),
+      leases: new Map(),
       projections,
       unsubscribe: coordinator.subscribe(() => this.changed(entry)),
       checkpoint: this.options.checkpointStore
@@ -332,6 +421,7 @@ export class MarkdownPersistenceRegistry {
     target: MarkdownPersistenceTarget,
     initial: ProjectReadFileResult | null,
     draftSource?: string,
+    owner?: object,
   ): MarkdownPersistenceLease | null {
     const key = projectFileOperationKey(target);
     let entry = this.entries.get(key);
@@ -345,10 +435,12 @@ export class MarkdownPersistenceRegistry {
     // rendered pane). Each registration is its own participant.
     const registrations = new Set<object>();
     let active = true;
-    ownedEntry.leases.add(token);
+    ownedEntry.leases.set(token, owner);
     ownedEntry.lastUsed = Date.now();
     this.changed(ownedEntry);
-    const isActive = () => active && this.entries.get(key) === ownedEntry;
+    // By identity, not by the path it was acquired at: the document may move.
+    const isActive = () =>
+      active && this.entries.get(projectFileOperationKey(ownedEntry.target)) === ownedEntry;
     const guarded = (action: () => Promise<boolean>) =>
       isActive() ? action() : Promise.resolve(false);
     const notifyInput = () => {
@@ -362,7 +454,11 @@ export class MarkdownPersistenceRegistry {
       }
     };
     return {
-      target: entry.target,
+      get target() {
+        return ownedEntry.target;
+      },
+      documentId: ownedEntry.id,
+      owner,
       getSnapshot: entry.coordinator.getSnapshot,
       subscribe: (listener) => {
         const unsubscribe = ownedEntry.coordinator.subscribe(listener);
@@ -494,6 +590,10 @@ export class MarkdownPersistenceRegistry {
         isActive() && ownedEntry.pendingInput === null
           ? ownedEntry.coordinator.holdForRename()
           : null,
+      settleRecoveryCopy: () =>
+        guarded(() => ownedEntry.checkpoint?.settle() ?? Promise.resolve(true)),
+      beginMove: (destination) =>
+        isActive() ? this.beginMove(ownedEntry, owner, destination) : null,
       registerExternalProjection: (prepare) => {
         const registration = {};
         if (isActive()) {
@@ -533,17 +633,126 @@ export class MarkdownPersistenceRegistry {
     );
   }
 
+  private beginMove(
+    entry: RegistryEntry,
+    owner: object | undefined,
+    destination: MarkdownPersistenceTarget,
+  ): MarkdownPersistenceMoveTransaction | null {
+    const from = entry.target;
+    const fromKey = projectFileOperationKey(from);
+    const toKey = projectFileOperationKey(destination);
+    if (
+      owner === undefined ||
+      fromKey === toKey ||
+      destination.environmentId !== from.environmentId ||
+      destination.cwd !== from.cwd ||
+      this.entries.get(fromKey) !== entry ||
+      // Every view of this document must belong to the one renaming it.
+      [...entry.leases.values()].some((leaseOwner) => leaseOwner !== owner) ||
+      entry.pendingInput !== null ||
+      // Same kind of document: same merge rule at both paths.
+      this.strategyFor(destination) !== entry.reconcile ||
+      this.entries.has(toKey) ||
+      this.initializing.has(toKey) ||
+      this.reserved.has(fromKey) ||
+      this.reserved.has(toKey) ||
+      this.retiring.has(toKey)
+    )
+      return null;
+    const release = entry.coordinator.holdForRename();
+    if (release === null) return null;
+    let finishReservation!: () => void;
+    const reservation = new Promise<void>((done) => (finishReservation = done));
+    this.reserved.set(fromKey, reservation);
+    this.reserved.set(toKey, reservation);
+    let committed = false;
+    let finished = false;
+    const store = this.options.checkpointStore;
+    return {
+      documentId: entry.id,
+      preflight: async () => {
+        // The old name's copy goes first: if it cannot, a file later created
+        // under the old name could take its text.
+        if (entry.checkpoint !== undefined && !(await entry.checkpoint.settle())) return "unknown";
+        if (store === undefined) return "empty";
+        try {
+          return (await store.read(toKey)) === undefined ? "empty" : "occupied";
+        } catch {
+          return "unknown";
+        }
+      },
+      commit: () => {
+        if (committed || finished || this.entries.get(fromKey) !== entry) return false;
+        if (this.entries.has(toKey) || this.initializing.has(toKey)) return false;
+        let transport: MarkdownPersistenceTransport;
+        try {
+          transport = (this.options.createTransport ?? createMarkdownPersistenceTransport)(
+            destination,
+          );
+        } catch (error) {
+          console.error("The renamed document could not be moved in place:", error);
+          return false;
+        }
+        if (
+          !entry.coordinator.replaceIo(release, {
+            write: transport.write,
+            read: transport.read,
+            classifyFailure: transport.classifyFailure,
+          })
+        )
+          return false;
+        // From here only assignments: the document now lives at the new path.
+        committed = true;
+        this.stopWatching(entry);
+        this.entries.delete(fromKey);
+        this.entries.set(toKey, entry);
+        // The old path's next file is another document.
+        this.documentIds.delete(fromKey);
+        this.documentIds.set(toKey, entry.id);
+        entry.target = destination;
+        entry.transport = transport;
+        const previousCheckpoint = entry.checkpoint;
+        entry.checkpoint = store ? new MarkdownDraftCheckpointWriter(toKey, store) : undefined;
+        if (previousCheckpoint !== undefined) this.retireCheckpoint(fromKey, previousCheckpoint);
+        const move = { documentId: entry.id, from, to: destination };
+        for (const listener of this.moveListeners) {
+          try {
+            listener(move);
+          } catch (error) {
+            console.error("Document move observer failed:", error);
+          }
+        }
+        // Presentation and the watcher at the new path; failures here are
+        // isolated and never touch the old path.
+        this.changed(entry);
+        return true;
+      },
+      finish: () => {
+        if (finished) return;
+        finished = true;
+        if (this.reserved.get(fromKey) === reservation) this.reserved.delete(fromKey);
+        if (this.reserved.get(toKey) === reservation) this.reserved.delete(toKey);
+        finishReservation();
+        release();
+      },
+    };
+  }
+
   /** Only after a successful rename: the old path is no longer this document's identity. */
   forgetClean(target: MarkdownPersistenceTarget): boolean {
     const key = projectFileOperationKey(target);
     const entry = this.entries.get(key);
-    if (entry === undefined) return true;
+    if (entry === undefined) {
+      this.documentIds.delete(key);
+      return true;
+    }
     if (entry.pendingInput !== null) return false;
     if (!entry.coordinator.retireClean()) return false;
     if (entry.evictionTimer !== undefined) clearTimeout(entry.evictionTimer);
     this.stopWatching(entry);
     entry.unsubscribe();
     this.entries.delete(key);
+    this.documentIds.delete(key);
     if (entry.checkpoint !== undefined) this.retireCheckpoint(key, entry.checkpoint);
     this.publish();
     return true;
