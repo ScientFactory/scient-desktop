@@ -226,7 +226,8 @@ import { useProject, useThreadShell } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
-  rememberTimelinePosition,
+  // SCIENT-FORK:START — the reading position has one writer (readerScrolling.ts).
+  // SCIENT-FORK:END
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -250,7 +251,8 @@ import {
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
   resolveAssistantMessageCopyState,
-  resolveTimelineIsAtEnd,
+  // SCIENT-FORK:START — the reading position has one writer (readerScrolling.ts).
+  // SCIENT-FORK:END
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
   resolveTimelineMinimapHeightStyle,
@@ -1545,29 +1547,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
-    const anchorIsAtEnd = resolveTimelineIsAtEnd(state);
-    const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
-    if (position && state && anchorIsAtEnd !== undefined) {
-      const index = state.indexByKey(position.rowId);
-      const row = index === undefined ? undefined : state.elementAtIndex(index);
-      const element = listRef.current?.getScrollableNode();
-      if (row && element) {
-        rememberTimelinePosition(listIdentityKey, {
-          ...position,
-          // DOM geometry includes the header and the virtualizer's layout adjustment.
-          offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
-          scrollOffset: element.scrollTop,
-          atEnd: anchorIsAtEnd,
-          disclosures: {
-            runs: paintedExpandedRunIds,
-            workGroups: paintedExpandedWorkGroupIds,
-            attempts: paintedExpandedAttemptIds,
-            workGroupState: workGroupViewState,
-          },
-        });
-      }
-    }
+    // SCIENT-FORK:START — one writer for the reading position: Scient's saver
+    // records message identity and a follow still going, and skips while a
+    // placement is in flight; upstream's raw record would overwrite that.
     saveReadingPosition();
+    // SCIENT-FORK:END
     const viewport = listRef.current?.getScrollableNode();
     if (state && viewport && onUnreadBelowChange) {
       const messages = timelineEntries.flatMap((entry) =>

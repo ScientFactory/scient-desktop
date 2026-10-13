@@ -51,10 +51,15 @@ follows the whole response's end, traces and tools included, at a calmer pace): 
 reaching the top margin, past it only to show a message pushed below the fold, never
 past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
 cancels pending placement and bounded following; scrolling down, clicks and selection do not.
+Keys count only when they scroll the timeline: focus in it or nowhere, no modifier, not in a
+field (a menu's arrow keys or a shortcut leave the follow be).
 While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
 writes the scroll position (a write cancels the browser's smooth scroll in motion); it resumes
-from rest 250ms after their input stops. `onIsAtEndChange` reacts to
-transitions only. The existing Scroll to end button is a one-shot action with an
+from rest 250ms after their input stops. ChatView hands every end report to
+`useTimelineEndControl`, which reacts to transitions only and changes the follow modes there.
+The timeline never pins to its end, so a report of leaving it is never swallowed (upstream's
+handler swallows it because its list pins; restoring that hides Scroll to end while an answer
+grows below). The existing Scroll to end button is a one-shot action with an
 unread badge counting responses, not a follow toggle, and it ends the follow. Do not add a
 second navigation button. A reader who leaves while the follow is still going (saved as
 `followingPromptId`; never inferred from resting at the end) comes back to where the follow
@@ -64,7 +69,9 @@ the screen; a later prompt (from another window) never moves it further. The fol
 on while that prompt's run works. Reading positions resolve by message/turn identity, load up to two pages of missing
 history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
-Capture native scroll positions synchronously before Legend's deferred callbacks;
+The reading position has one writer, `useSaveReadingPosition` (`chat/readerScrolling.ts`);
+upstream's raw write in `handleScroll` is removed, so a placement in flight never replaces a
+record that names its message. Capture native scroll positions synchronously before Legend's deferred callbacks;
 debounce only session storage and flush captured positions on navigation/page exit.
 A remounted list must finish restoration before saving again. Reserved anchor padding
 is excluded from both end-control visibility and send eligibility.
