@@ -22,7 +22,7 @@ export type ArtifactRevisionId = typeof ArtifactRevisionId.Type;
 export const LogicalDocumentKey = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(1_024),
-  Schema.isPattern(/^[^\0]+$/u),
+  Schema.isPattern(/^[^\x00]+$/u),
 ).pipe(Schema.brand("LogicalDocumentKey"));
 export type LogicalDocumentKey = typeof LogicalDocumentKey.Type;
 
@@ -159,7 +159,7 @@ const PdfSourceBase = {
   fileName: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(255),
-    Schema.isPattern(/^[^/\\\0]+\.pdf$/iu),
+    Schema.isPattern(/^[^/\\\x00]+\.pdf$/iu),
   ),
   capabilities: PdfSourceCapabilities,
   /** Producer-known page count; existing file sources may omit it. */
@@ -221,7 +221,7 @@ export const AssetCopyRequest = Schema.Struct({
   suggestedFileName: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(255),
-    Schema.isPattern(/^[^/\\\0]+$/u),
+    Schema.isPattern(/^[^/\\\x00]+$/u),
   ),
 });
 export type AssetCopyRequest = typeof AssetCopyRequest.Type;

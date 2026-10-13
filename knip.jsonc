@@ -49,6 +49,7 @@
         // Spawned by scripts/qualify-managed-runtime-catalog.ts for RPC qualification.
         "scripts/qualify-omp-rpc.ts",
         "scripts/qualifyScientAgentManagedRuntime.ts",
+        "scripts/qualify-muse-runtime.ts",
         "scripts/evaluate-thread-titles.ts",
         "scripts/measure-pr-preview.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",

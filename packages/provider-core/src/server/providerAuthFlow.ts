@@ -66,6 +66,11 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   readonly defaultMethodId?: string;
   /** Stored account profiles can change the advertised methods after auth/logout. */
   readonly refreshMethodsAfterAuth?: boolean;
+  // SCIENT-FORK:START — native credential writes that cannot verify the account.
+  /** `false`: a completed flow settles to idle, so no client infers a verified sign-in. */
+  readonly accountVerified?: boolean;
+  readonly successMessage?: string;
+  // SCIENT-FORK:END
   /** Fail with ProviderSetupError containing safe text for the user, never native token data. */
   readonly authenticate: (
     methodId: string,
@@ -87,7 +92,14 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     message: null,
     interaction: null,
     credentialOwner: options.credentialBinding.owner,
+    // SCIENT-FORK:START — native credential writes that cannot verify the account.
+    ...(options.accountVerified === undefined ? {} : { accountVerified: options.accountVerified }),
+    // SCIENT-FORK:END
   };
+  // SCIENT-FORK:START — native credential writes that cannot verify the account.
+  const completedPhase = options.accountVerified === false ? "idle" : "succeeded";
+  const completedMessage = options.successMessage ?? "Sign-in complete.";
+  // SCIENT-FORK:END
   const snapshot = yield* SubscriptionRef.make({ owner: null as string | null, state: empty });
   let active: Flow | undefined;
   let operation: "idle" | "auth" | "stopping" | "closed" = "idle";
@@ -167,7 +179,9 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
         const state: ProviderAuthState = {
           ...empty,
           methods: snapshot.value.state.methods ?? [],
-          phase: Exit.isSuccess(result) ? "succeeded" : "failed",
+          // SCIENT-FORK:START — unverified completion phase.
+          phase: Exit.isSuccess(result) ? completedPhase : "failed",
+          // SCIENT-FORK:END
           message: Exit.isSuccess(result) ? null : failureMessage(result.cause),
         };
         yield* lock.withPermit(
@@ -340,13 +354,17 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
                     if (active !== flow) return;
                     if (options.refreshMethodsAfterAuth) yield* refreshMethods;
                     yield* publish(flow, {
-                      phase: Exit.isSuccess(result) ? "succeeded" : "failed",
+                      // SCIENT-FORK:START — unverified completion phase and copy.
+                      phase: Exit.isSuccess(result) ? completedPhase : "failed",
+                      // SCIENT-FORK:END
                       interaction: null,
                       authorizationUrl: null,
                       expiresAt: null,
+                      // SCIENT-FORK:START — provider-owned success copy.
                       message: Exit.isSuccess(result)
-                        ? "Sign-in complete."
+                        ? completedMessage
                         : failureMessage(result.cause),
+                      // SCIENT-FORK:END
                     });
                     active = undefined;
                     operation = "idle";

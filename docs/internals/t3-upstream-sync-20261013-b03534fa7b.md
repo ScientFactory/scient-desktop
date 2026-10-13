@@ -450,3 +450,22 @@ runtime evidence after inspecting their exact diff; final pushed-head CI,
 merge-group checks and actual delivery remain separate. No new official target,
 release, qualification-policy substitution, live-profile access or OOM incident
 repair is performed.
+
+## Later owned-main catch-up to `ff9bdf8512d4`
+
+Main subsequently landed Muse lifecycle work and portable NUL-schema patterns
+at `ff9bdf8512d43915b424279ddb260edfa5444221`. The existing alignment retains
+that exact main through an ordinary merge; the official target remains frozen.
+Independent server and client reviews accepted source composition at raw tree
+`da746b88d38e8af672f5b09268e5d44aabbc764d`. All seven clean overlaps preserve
+both inputs. The Muse account/generation concerns recorded by reviewers are
+unchanged from landed main, not demonstrated alignment regressions; they remain
+separate follow-ups, without a claim that every Muse flow is qualified.
+
+Qualification of this later composition is pending. The complete `72b423e9`
+gate remains evidence only for unchanged inputs; fresh shared-lifecycle,
+provider, schema/document and affected-client checks are required before the
+receipt/cursor can identify this main as qualified. The early full typecheck
+passed in 19.744 s. Evidence: `reviews/pr-merge-readiness-20261013/pr534-ff9-*`.
+No unrelated feature fix, test weakening, publication or profile access is
+part of this catch-up. The isolated app remains verified stopped.

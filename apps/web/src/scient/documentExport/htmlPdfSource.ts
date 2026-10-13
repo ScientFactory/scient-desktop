@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 const TrackedPath = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(4_096),
-  Schema.isPattern(/^[^\0]+$/u),
+  Schema.isPattern(/^[^\x00]+$/u),
 );
 
 export const TrackedHtmlSourceSchema = Schema.Union([

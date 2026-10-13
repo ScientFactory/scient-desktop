@@ -300,14 +300,17 @@ describe("managed provider runtime update workflow", () => {
     const dependencies = reusable.jobs.qualify.steps.find(
       (step: { name: string }) => step.name === "Install RPC qualification dependencies",
     );
-    expect(dependencies.if).toBe("inputs.provider == 'omp' || inputs.provider == 'scient'");
+    expect(dependencies.if).toBe(
+      "inputs.provider == 'omp' || inputs.provider == 'scient' || inputs.provider == 'muse'",
+    );
     const script = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "qualify-managed-runtime-catalog.ts"),
       "utf8",
     );
     expect(script).toContain("apps/server/scripts/qualifyScientAgentManagedRuntime.ts");
     expect(script).toContain('SCIENT_AGENT_ROOT: NodePath.join(home, "scient-agent")');
-    expect(script).toContain('verifyRpc("scient", executablePath, installed.version, signal)');
+    expect(script).toContain('provider === "scient" || provider === "muse"');
+    expect(script).toContain("verifyRpc(provider, executablePath, installed.version, signal)");
     expect(script).toContain("...qualification");
   });
 

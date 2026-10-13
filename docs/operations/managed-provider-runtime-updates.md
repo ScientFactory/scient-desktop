@@ -43,6 +43,14 @@ release that passes native qualification can add the first entry. No placeholder
 download URL is an installable artifact. A cached qualified release and a durable installation
 receipt remain usable after an offline restart; the receipt can also select the repair artifact.
 
+Muse's official stable channel and manifest identify six raw executables with
+SHA-256 and exact size. The app binds the download host, pathname, channel, full numeric
+`major.minor.patch-Rrevision[.subrevision]` identity and target filename. Native
+qualification checks exact revision, read-only MSP initialization, `model/list`,
+close, activation and removal, plus repair in qualify-only runs. These checks do not verify authentication
+or account entitlement; private filesystem paths alone do not isolate OS stores.
+Muse revisions compare numerically (`R10` follows `R9`), never lexically.
+
 When a provider's new releases require changed extraction or execution policy,
 advance only that family's revision and list the previously published revision
 as historical. Published historical entries are preserved as data, without

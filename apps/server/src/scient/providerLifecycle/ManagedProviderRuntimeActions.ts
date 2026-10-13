@@ -1,10 +1,12 @@
 import {
   ManagedProviderRuntimeError,
   compareManagedRuntimeReleases,
+  parseManagedMuseVersion,
   type ManagedRuntimeArtifactReceipt,
   hydrateManagedRuntimeArtifact,
   type ManagedProviderRuntime,
   type ManagedProviderRuntimeProgress,
+  type ManagedProviderRuntimeQualificationInput,
   ManagedRuntimeFileError,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeArtifactPolicy,
@@ -109,9 +111,11 @@ export function parseConfiguredRuntimeVersion(
   provider: ManagedRuntimeCatalogProvider,
   output: string,
 ): string | null {
-  return provider === "cursor"
-    ? (CURSOR_CLI_VERSION.exec(output)?.[0] ?? null)
-    : parseGenericCliVersion(output);
+  return provider === "muse"
+    ? (parseManagedMuseVersion(output) ?? null)
+    : provider === "cursor"
+      ? (CURSOR_CLI_VERSION.exec(output)?.[0] ?? null)
+      : parseGenericCliVersion(output);
 }
 
 /**
@@ -284,6 +288,9 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   readonly environment: NodeJS.ProcessEnv;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly configuredRuntimeProbeAllowed?: boolean | undefined;
+  readonly qualify?:
+    | ((input: ManagedProviderRuntimeQualificationInput) => Promise<void>)
+    | undefined;
   /** A provider whose processes need more than a plain `--version` run supplies its own. */
   readonly probeConfiguredRuntime?: ConfiguredRuntimeProbe | undefined;
   readonly managedInstallationAllowed: boolean;
@@ -627,6 +634,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
           runtime.install({
             artifact: actionArtifact,
             signal,
+            ...(input.qualify ? { qualify: input.qualify } : {}),
             beforeActivate: (activationSignal) =>
               runPromise(awaitActivationWindow, { signal: activationSignal }),
             onProgress: (progress) => {

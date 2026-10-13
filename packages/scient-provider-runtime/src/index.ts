@@ -24,3 +24,6 @@ export * from "./managedCursorRuntime.ts";
 export * from "./runtimeFiles.ts";
 export * from "./runtimeFilesystem.ts";
 export * from "./target.ts";
+export * from "./museManifest.ts";
+export * from "./museVersion.ts";
+export * from "./managedMuseRuntime.ts";

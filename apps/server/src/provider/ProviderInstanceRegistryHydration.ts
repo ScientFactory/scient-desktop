@@ -46,6 +46,9 @@ import * as ProviderHostLive from "./ProviderHostLive.ts";
 import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import type * as ServerConfig from "../config.ts";
+// SCIENT-FORK:START — drivers share the process-wide lifecycle coordinator.
+import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
+// SCIENT-FORK:END
 
 type ProviderInstanceRegistryHydrationEnv =
   | Exclude<
@@ -53,6 +56,9 @@ type ProviderInstanceRegistryHydrationEnv =
       | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure
       | AcpRegistrySupport.AcpRegistryCatalog
       | ProviderHost.ProviderHost
+      // SCIENT-FORK:START — supplied below.
+      | ProviderLifecycleCoordinator.ProviderLifecycleCoordinator
+      // SCIENT-FORK:END
     >
   | Settings.ServerSettingsService
   // Requirements of the `ProviderHost.ProviderHost` the drivers receive.
@@ -174,4 +180,9 @@ export const layer = Layer.unwrap(
 
     return layerSettingsWatcher(settingsChanges).pipe(Layer.provideMerge(layerMutable));
   }),
+).pipe(
+  // SCIENT-FORK:START — the same memoized layer the server and runtime actions use, so
+  // account and runtime changes share one provider-wide lease.
+  Layer.provideMerge(ProviderLifecycleCoordinator.layer),
+  // SCIENT-FORK:END
 );
