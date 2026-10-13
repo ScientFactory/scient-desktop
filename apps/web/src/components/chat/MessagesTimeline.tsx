@@ -106,7 +106,7 @@ import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 // SCIENT-FORK:START — live activity.
-import { LiveActivityDot, observeLiveActivitySweep } from "./liveActivity";
+import { LiveActivityDot, LiveStepElapsed, observeLiveActivitySweep } from "./liveActivity";
 // SCIENT-FORK:END
 import {
   createContext,
@@ -4017,42 +4017,6 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   );
 }
 
-/** A step this young shows no timer: only one that runs long needs to prove it is alive. */
-const LIVE_STEP_TIMER_AFTER_MS = 10_000;
-
-function liveStepElapsedSuffix(startedAt: string): string {
-  const elapsedMs = Date.now() - Date.parse(startedAt);
-  return Number.isFinite(elapsedMs) && elapsedMs >= LIVE_STEP_TIMER_AFTER_MS
-    ? ` · ${formatWorkingTimerNow(startedAt)}`
-    : "";
-}
-
-/**
- * How long a step that is still running has run, once it has run long enough
- * to wonder. Ticks through DOM writes, like the turn's own timer.
- */
-function LiveStepElapsed({ startedAt }: { startedAt: string }) {
-  const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = liveStepElapsedSuffix(startedAt);
-
-  useEffect(() => {
-    const updateText = () => {
-      if (textRef.current) {
-        textRef.current.textContent = liveStepElapsedSuffix(startedAt);
-      }
-    };
-    updateText();
-    const id = setInterval(updateText, 1000);
-    return () => clearInterval(id);
-  }, [startedAt]);
-
-  return (
-    <span ref={textRef} className="shrink-0 whitespace-pre tabular-nums">
-      {initialText}
-    </span>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Extracted row sections — own their state / store subscriptions so changes
 // re-render only the affected row, not the entire list.
@@ -4695,12 +4659,17 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             >
               {row.entry.detail ?? label}
             </ReactMarkdown>
-          ) : row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
+          ) : // SCIENT-FORK:START — a long-running step shows how long it has run (chat/liveActivity.tsx).
+          row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
             <span className="flex min-w-0">
               <span className="min-w-0 truncate">{pathLabel}</span>
-              <LiveStepElapsed startedAt={row.entry.createdAt} />
+              <LiveStepElapsed
+                startedAt={row.entry.createdAt}
+                formatElapsed={formatWorkingTimerNow}
+              />
             </span>
           ) : threadLabel ? (
+            // SCIENT-FORK:END
             <ThreadReadLabel
               label={threadLabel}
               environmentId={ctx.activeThreadEnvironmentId}
