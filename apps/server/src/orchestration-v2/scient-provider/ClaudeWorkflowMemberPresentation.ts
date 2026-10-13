@@ -273,7 +273,12 @@ export function makeClaudeWorkflowMembers<
       const coordinator =
         context.subagentsByTaskId.get(taskId) ??
         (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
-      if (coordinator === undefined || coordinator.task.status !== "running") return;
+      if (
+        coordinator === undefined ||
+        coordinator.task.status !== "running" ||
+        (coordinator.task.workflow?.agents.length ?? 0) > 0
+      )
+        return;
       const now = yield* DateTime.now;
       for (const entry of progress.agents) {
         const id = claudeSubagentIds(context, `${taskId}:wf:${entry.index}`).nodeId;
@@ -310,6 +315,7 @@ export function makeClaudeWorkflowMembers<
         const coordinator = (yield* Ref.get(sessionSubagentsByTaskId)).get(owner.taskId);
         if (
           coordinator === undefined ||
+          (coordinator.task.workflow?.agents.length ?? 0) > 0 ||
           ["completed", "failed", "cancelled", "interrupted"].includes(coordinator.task.status)
         )
           continue;

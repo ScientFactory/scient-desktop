@@ -65,6 +65,7 @@ it.each([1280, 384])("keeps the new-chat footer at the bottom at %ipx", async (w
   root = createRoot(host);
   root.render(
     <ModelPickerContent
+      environmentId={null}
       activeInstanceId={providers[0]!.instanceId}
       model="model-0"
       lockedProvider={null}

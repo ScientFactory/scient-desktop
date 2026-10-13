@@ -54,6 +54,7 @@ import {
 } from "./serverRuntimeState.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as ServerSettings from "./serverSettings.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { layerAuthenticatedAuth as environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 
@@ -164,6 +165,7 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
       ),
     ),
     Layer.provideMerge(WorkspacePaths.layer),
+    Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
     Layer.provideMerge(database),
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(ServerConfig.layer(config)),

@@ -27,6 +27,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
 import { withComputeWorkspaceReservation } from "./scient/compute/ComputeWorkspaceLifetime.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -261,6 +262,8 @@ const cleanupFixture = Effect.gen(function* () {
   let ignoredBeforeIsolation: string | undefined;
   let recreateOriginal = false;
   let isolatedPath: string | undefined;
+  let openSessionCwd: string | null = null;
+  let fullStatusCalls = 0;
   const context = yield* Layer.build(StorageCleanup.layer).pipe(
     Effect.provideService(ServerConfig.ServerConfig, config),
     Effect.provideService(GitVcsDriver.GitVcsDriver, {
@@ -294,6 +297,10 @@ const cleanupFixture = Effect.gen(function* () {
           }
           return yield* git.execute(input);
         }),
+      statusDetailsLocal: (...args) => {
+        fullStatusCalls++;
+        return git.statusDetailsLocal(...args);
+      },
     }),
     Effect.provideService(Settings.ServerSettingsService, {
       getSettings: Effect.sync(() => settings),
@@ -315,8 +322,27 @@ const cleanupFixture = Effect.gen(function* () {
     Effect.provideService(EffectOutbox.EffectOutboxV2, {
       subscribeCompletions: Effect.succeed(Stream.empty),
     } as unknown as EffectOutbox.EffectOutboxV2["Service"]),
-    Effect.provideService(SqlClient.SqlClient, (() =>
-      Effect.succeed([])) as unknown as SqlClient.SqlClient),
+    Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
+      Effect.sync(() =>
+        openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
+          ? [
+              {
+                payload_json: JSON.stringify({
+                  id: "session-1",
+                  driver: "codex",
+                  providerInstanceId: "codex",
+                  status: "ready",
+                  cwd: openSessionCwd,
+                  model: null,
+                  capabilities: CodexProviderCapabilitiesV2,
+                  createdAt: "2026-06-01T12:00:00.000Z",
+                  updatedAt: "2026-06-01T12:00:00.000Z",
+                  lastError: null,
+                }),
+              },
+            ]
+          : [],
+      )) as unknown as SqlClient.SqlClient),
     Effect.provideService(GitManager.GitManager, {
       invalidateStatus: () => Effect.void,
     } as unknown as GitManager.GitManager["Service"]),
@@ -363,6 +389,10 @@ const cleanupFixture = Effect.gen(function* () {
     setThreads: (next: typeof threads) => {
       threads = next;
     },
+    setOpenSessionCwd: (cwd: string | null) => {
+      openSessionCwd = cwd;
+    },
+    fullStatusCalls: () => fullStatusCalls,
   };
 });
 const cleanupTestLayer = GitVcsDriver.layer.pipe(
@@ -460,6 +490,73 @@ describe("storage cleanup reports and local file policies", () => {
         expect(report.bytesFreed).toBe(0);
         expect(yield* fs.exists(fixture.worktree)).toBe(true);
         expect(yield* fs.readFileString(`${fixture.worktree}/notes.txt`)).toBe("untracked\n");
+      }),
+    ),
+  );
+  it.live("does not measure a worktree kept for an open provider session", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const walked: Array<string> = [];
+        const fixture = yield* cleanupFixture.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: (directory, options) => {
+              walked.push(directory);
+              return fs.readDirectory(directory, options);
+            },
+          }),
+        );
+        const root = yield* fs.realPath(fixture.worktree);
+        fixture.setOpenSessionCwd(fixture.worktree);
+        const kept = yield* fixture.service.runNow;
+        expect(kept.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Provider session is still open",
+          bytes: null,
+        });
+        expect(walked.filter((directory) => directory.startsWith(root))).toEqual([]);
+        fixture.setOpenSessionCwd(null);
+        const removed = yield* fixture.service.runNow;
+        expect(removed.entries[0]).toMatchObject({ outcome: "removed" });
+        expect(removed.entries[0]?.bytes).toBeGreaterThan(0);
+        expect(walked).toContain(root);
+      }),
+    ),
+  );
+  it.live("compares the checked-out branch without a full status", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command, setThreads, fullStatusCalls } =
+          yield* cleanupFixture;
+        const changed = { outcome: "kept", reason: "Repository or branch changed" };
+        yield* command(worktree, ["checkout", "--detach"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+        // A branch that has no commit yet is still a different branch.
+        yield* command(worktree, ["switch", "--orphan", "other"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+        // Status output reserves a leading "(" for a detached HEAD.
+        yield* command(worktree, ["switch", "-c", "(feature)", "feature"]);
+        setThreads([shell({ branch: "(feature)", worktreePath: worktree })]);
+        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+        setThreads([shell({ branch: "feature", worktreePath: worktree })]);
+        // Tags named after the branch or HEAD make Git's short names ambiguous.
+        yield* command(worktree, ["tag", "feature", "feature"]);
+        // Newer Git refuses to create a tag named HEAD, but still reads one.
+        yield* command(worktree, ["update-ref", "refs/tags/HEAD", "refs/heads/feature"]);
+        yield* command(worktree, ["switch", "feature"]);
+        const index = (yield* command(worktree, ["rev-parse", "--git-path", "index"])).stdout;
+        yield* fs.writeFileString(`${index.trim()}.lock`, "");
+        const locked = (yield* service.runNow).entries[0];
+        expect(locked).toMatchObject({ outcome: "failed" });
+        expect(locked?.reason).toContain("Git index is locked");
+        yield* fs.remove(`${index.trim()}.lock`);
+        const gitFile = yield* fs.readFileString(`${worktree}/.git`);
+        yield* fs.writeFileString(`${worktree}/.git`, "gitdir: /missing-git-directory\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+        yield* fs.writeFileString(`${worktree}/.git`, gitFile);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(fullStatusCalls()).toBe(0);
       }),
     ),
   );

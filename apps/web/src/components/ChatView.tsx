@@ -110,6 +110,7 @@ import {
   ProviderInteractionMode,
   ProviderDriverKind,
   resolveEnvironmentMachineKind,
+  resolveProjectProviderInstanceEnabled,
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
@@ -601,7 +602,10 @@ import {
   shouldOfferResumeCompaction,
   shouldCompactBeforeSend,
 } from "./chat/ContextWindowMeter.logic";
-import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderTurnTokenUsage,
+} from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_EASING,
@@ -722,10 +726,8 @@ import { useAssetUrls } from "../assets/assetUrls";
 // SCIENT-FORK:START — effective skill inventory.
 import { useEffectiveActiveProviderSkills } from "../scient/skills/useEffectiveActiveProviderSkills";
 // SCIENT-FORK:END
-import {
-  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-  recallableComposerPrompt,
-} from "./chat/composerPromptHistory";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { recallableComposerPrompt } from "./chat/composerPromptHistory";
 // SCIENT-FORK:START — compute tab close and figure follower wiring.
 import {
   useCloseComputeOwnedSurfaces,
@@ -1850,6 +1852,10 @@ function ChatViewContent(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
+  const activeThreadLiveTokenUsage = useMemo(
+    () => latestProviderTurnTokenUsage(serverProjection?.providerTurns ?? []),
+    [serverProjection?.providerTurns],
+  );
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
   const threadHistoryControls = useMemo<MessagesTimelineHistoryControls | undefined>(() => {
@@ -3484,9 +3490,13 @@ function ChatViewContent(props: ChatViewProps) {
   const providerInstanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+        applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(providerStatuses),
+          settings,
+          activeProject?.id ?? null,
+        ),
       ),
-    [providerStatuses, settings],
+    [providerStatuses, settings, activeProject?.id],
   );
   const { selectedProviderEntry, requestedDriverKind } = useMemo(
     () =>
@@ -3542,8 +3552,15 @@ function ChatViewContent(props: ChatViewProps) {
   // V2 derives these from projected turn items and checkpoint scopes; the V1
   // activity stream the fork used to read no longer exists on the wire.
   const activeContextWindow = useMemo(
-    () => deriveLatestContextWindowSnapshot(serverVisibleTurnItems),
-    [serverVisibleTurnItems],
+    () =>
+      deriveLatestContextWindowSnapshot(
+        serverVisibleTurnItems,
+        activeThreadLiveTokenUsage,
+        serverProjection?.providerThreads.find(
+          (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
+        ),
+      ),
+    [activeThreadLiveTokenUsage, serverVisibleTurnItems, serverProjection],
   );
   const { turnDiffSummaries } = useTurnDiffSummaries(serverProjection);
   const latestCheckpointCompletedAt = turnDiffSummaries.at(-1)?.completedAt ?? null;
@@ -3904,6 +3921,10 @@ function ChatViewContent(props: ChatViewProps) {
     compactRequestIsActive &&
     !compactionSettled;
   const activeRunPreparing = activeActivityRun?.status === "preparing";
+  // Once the server owns the setup run, follow-ups queue behind it.
+  const sendQueuesBehindSetup =
+    isServerThread && (activeRunPreparing || activeActivityRun?.status === "starting");
+  const [setupQueueSendThreadKey, setSetupQueueSendThreadKey] = useState<string | null>(null);
   const worktreeSetupOwnerKey = draftId ?? routeThreadKey;
   const worktreeSetupActive =
     worktreeSetupRef !== null && worktreeSetupRef.ownerKey === worktreeSetupOwnerKey;
@@ -4335,11 +4356,13 @@ function ChatViewContent(props: ChatViewProps) {
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
   // follow-up must not be held behind a slow install. Before the first
-  // snapshot arrives the starting session stands in for it.
+  // snapshot arrives the starting session stands in for it. Once the server
+  // has the thread, a send queues behind the setup run instead.
   const worktreeSetupBlocksSend =
-    worktreeSetup !== null
+    !sendQueuesBehindSetup &&
+    (worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
-      : isPreparingWorktree;
+      : isPreparingWorktree);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
@@ -4721,7 +4744,14 @@ function ChatViewContent(props: ChatViewProps) {
                     (activeProviderInstanceId === null ||
                       provider.instanceId === activeProviderInstanceId) &&
                     provider.driver === selectedProvider &&
-                    provider.enabled &&
+                    // The destination project may override the machine switch.
+                    (environment.serverConfig?.settings
+                      ? resolveProjectProviderInstanceEnabled(
+                          environment.serverConfig.settings,
+                          candidate.projectId,
+                          provider.instanceId,
+                        )
+                      : provider.enabled) &&
                     provider.installed &&
                     provider.status !== "error" &&
                     provider.auth.status !== "unauthenticated" &&
@@ -8135,6 +8165,8 @@ function ChatViewContent(props: ChatViewProps) {
       provider: selectedProvider,
       usedTokens: activeContextWindow.usedTokens,
       updatedAt: activeContextWindow.updatedAt,
+      // Only the live report carries a TTL, and only when it is the window's source.
+      promptCacheTtlMs: activeThreadLiveTokenUsage?.promptCacheTtlMs,
       now: `${nowMinute}:00.000Z`,
     })
       ? activeContextWindow.usedTokens
@@ -9212,6 +9244,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const threadId = activeThread.id;
+    const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
     sendInFlightRef.current = true;
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
     setThreadError(threadId, null);
@@ -9236,6 +9269,7 @@ function ChatViewContent(props: ChatViewProps) {
           input: {
             threadId,
             manualContinuationOfRunId: resumableRunId,
+            ...(modelSelection ? { modelSelection } : {}),
             message: {
               messageId: newMessageId(),
               role: "user",
@@ -9324,7 +9358,7 @@ function ChatViewContent(props: ChatViewProps) {
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
       !queueEditsReady ||
-      isSendBusy ||
+      (isSendBusy && !sendQueuesBehindSetup) ||
       isConnecting ||
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
@@ -9727,7 +9761,7 @@ function ChatViewContent(props: ChatViewProps) {
     // upload, and the sent turn must carry what the user actually submitted.
     const composerThreadContextsSnapshot = [...composerThreadContexts];
     const submissionTargetKey = composerTargetKey(scopeThreadRef(environmentId, threadIdForSend));
-    const isFirstMessage = !isServerThread || activeMessageCount === 0;
+    const isFirstMessage = !sendQueuesBehindSetup && (!isServerThread || activeMessageCount === 0);
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
         ? activeThreadBranch
@@ -9777,7 +9811,7 @@ function ChatViewContent(props: ChatViewProps) {
       keepFullHistory,
       messageText: messageTextForSend,
     });
-    const turnDispatchMode = compactBeforeSend ? "queue" : dispatchMode;
+    const turnDispatchMode = compactBeforeSend || sendQueuesBehindSetup ? "queue" : dispatchMode;
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
@@ -9954,19 +9988,23 @@ function ChatViewContent(props: ChatViewProps) {
         );
         return;
       }
-      beginLocalDispatch({
-        preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
-        submissionIntent: resolvedSubmissionIntent,
-      });
-      setWorktreeSetupRef(
-        multipleModelSelections === null && baseBranchForWorktree
-          ? {
-              environmentId: activeThread.environmentId,
-              threadId: threadIdForSend,
-              ownerKey: worktreeSetupOwnerKey,
-            }
-          : null,
-      );
+      if (sendQueuesBehindSetup) {
+        setSetupQueueSendThreadKey(activeThreadKey);
+      } else {
+        beginLocalDispatch({
+          preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
+          submissionIntent: resolvedSubmissionIntent,
+        });
+        setWorktreeSetupRef(
+          multipleModelSelections === null && baseBranchForWorktree
+            ? {
+                environmentId: activeThread.environmentId,
+                threadId: threadIdForSend,
+                ownerKey: worktreeSetupOwnerKey,
+              }
+            : null,
+        );
+      }
 
       const submissionIdentityResult = await settlePromise(async () => {
         if (options?.steer || directAnnotation) return undefined;
@@ -9995,7 +10033,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (submissionIdentityResult._tag === "Failure") {
         sendInFlightRef.current = false;
-        resetLocalDispatch();
+        if (!sendQueuesBehindSetup) resetLocalDispatch();
         setThreadError(
           threadIdForSend,
           chatActionErrorMessage(squashAtomCommandFailure(submissionIdentityResult)),
@@ -10194,7 +10232,7 @@ function ChatViewContent(props: ChatViewProps) {
           // Each request now owns its background thread. The original draft is
           // ready for another prompt while checkout and setup scripts finish.
           sendInFlightRef.current = false;
-          resetLocalDispatch();
+          if (!sendQueuesBehindSetup) resetLocalDispatch();
           releasedComposer = true;
           await starts;
           if (startedCount > 0) {
@@ -10286,7 +10324,7 @@ function ChatViewContent(props: ChatViewProps) {
           }
           if (!releasedComposer) {
             sendInFlightRef.current = false;
-            resetLocalDispatch();
+            if (!sendQueuesBehindSetup) resetLocalDispatch();
           }
         }
         return;
@@ -10314,6 +10352,7 @@ function ChatViewContent(props: ChatViewProps) {
       );
       const previewQueueAdmission =
         compactBeforeSend ||
+        sendQueuesBehindSetup ||
         shouldPreviewQueueAdmission({
           ordinaryServerSend: isServerThread && !options?.steer && !directAnnotation,
           phase,
@@ -10625,7 +10664,7 @@ function ChatViewContent(props: ChatViewProps) {
             settleQueueAdmissionPreview(existing, messageIdForSend, queued),
           );
           if (queued) {
-            resetLocalDispatch();
+            if (!sendQueuesBehindSetup) resetLocalDispatch();
             void threadQueue.refresh();
           } else {
             if (previewQueueAdmission)
@@ -10735,9 +10774,9 @@ function ChatViewContent(props: ChatViewProps) {
         setDockedDraftHeroThreadKey((currentThreadKey) =>
           currentThreadKey === activeThreadKey ? null : currentThreadKey,
         );
-        resetLocalDispatch();
+        if (!sendQueuesBehindSetup) resetLocalDispatch();
       }
-      if (turnStartSucceeded && submissionId) resetLocalDispatch();
+      if (turnStartSucceeded && submissionId) if (!sendQueuesBehindSetup) resetLocalDispatch();
     } catch (cause) {
       if (!requestAccepted && submittedMessageId) {
         setOptimisticUserMessages((existing) =>
@@ -10745,11 +10784,14 @@ function ChatViewContent(props: ChatViewProps) {
         );
       }
       setThreadError(threadIdForSend, chatActionErrorMessage(cause));
-      resetLocalDispatch();
+      if (!sendQueuesBehindSetup) resetLocalDispatch();
     } finally {
       // Release only this settled attempt. Its durable identity handles an
       // ambiguous response; navigation does not manufacture another send.
-      if (composerSendGenerationRef.current === sendGeneration) sendInFlightRef.current = false;
+      if (composerSendGenerationRef.current === sendGeneration) {
+        sendInFlightRef.current = false;
+        setSetupQueueSendThreadKey((current) => (current === activeThreadKey ? null : current));
+      }
     }
   }
 
@@ -12017,7 +12059,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const threadPanelHeaderControl = (
     <div
-      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
+      // Inset from the chat header's edge, not the window's: --workspace-controls-right also
+      // clears the native window buttons, which sit over the right panel, not this header.
+      className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
       <PanelLayoutControls
@@ -12583,7 +12627,12 @@ function ChatViewContent(props: ChatViewProps) {
                               phase={phase}
                               canInterrupt={canInterruptRunningThread}
                               isConnecting={isConnecting || !queueEditsReady}
-                              isSendBusy={isSendBusy || isResuming}
+                              isSendBusy={
+                                (isSendBusy && !sendQueuesBehindSetup) ||
+                                (setupQueueSendThreadKey !== null &&
+                                  setupQueueSendThreadKey === activeThreadKey) ||
+                                isResuming
+                              }
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
@@ -12601,7 +12650,7 @@ function ChatViewContent(props: ChatViewProps) {
                                             ? "Preparing worktree"
                                             : projectCloneSendBlockReason
                               }
-                              isPreparingWorktree={isPreparingWorktree}
+                              isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               queuedRunsControl={null}
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}

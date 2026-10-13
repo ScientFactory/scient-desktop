@@ -151,6 +151,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const queue = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push({ nativeThreadId, queue });
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(queue),
@@ -404,6 +405,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                 processQueues.push(sdkMessages);
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(sdkMessages),
@@ -603,6 +605,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),

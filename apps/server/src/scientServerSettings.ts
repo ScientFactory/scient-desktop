@@ -7,21 +7,15 @@
  */
 import {
   CustomModelError,
-  DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
-  DEFAULT_TEXT_GENERATION_MODEL,
-  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   type CustomModelSaveInput,
   type CustomModelsSettings,
-  type ModelSelection,
-  ProviderDriverKind,
   ProviderInstanceId,
-  defaultInstanceIdForDriver,
-  isProviderDriverKind,
   resolveProviderInstanceEnabled,
   type ServerSettings,
   type ServerSettingsError,
 } from "@t3tools/contracts";
+import { fallbackScientTextGenerationModelSelection } from "@t3tools/shared/scientTextGenerationSelection";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import type * as Semaphore from "effect/Semaphore";
@@ -188,79 +182,14 @@ export function makeCustomModelSettingsMethods(
   };
 }
 
-const TEXT_GENERATION_FALLBACK_DRIVERS = [
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "droid",
-  "grok",
-  "muse",
-  "pi",
-  "opencode",
-  "omp",
-  "antigravity",
-  // Scient Agent is enabled by default, so it is a last resort rather than a
-  // signal that the user opted into a provider.
-  "scient",
-].map((driver) => ProviderDriverKind.make(driver));
-
+/** Preserve the environment selection when no enabled provider can replace it. */
 export function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const enabledBuiltIns = TEXT_GENERATION_FALLBACK_DRIVERS.filter((driver) => {
-    const instanceId = defaultInstanceIdForDriver(driver);
-    const instance = settings.providerInstances[instanceId] ?? { driver, config: {} };
-    return resolveProviderInstanceEnabled(instance);
-  });
-  const selectedBuiltIn = enabledBuiltIns.find((driver) => driver !== "scient");
-  const lastResort = enabledBuiltIns.find((driver) => driver === "scient");
-  const fallback = selectedBuiltIn
-    ? { instanceId: defaultInstanceIdForDriver(selectedBuiltIn), driver: selectedBuiltIn }
-    : (enabledNamedInstance(settings) ??
-      (lastResort
-        ? { instanceId: defaultInstanceIdForDriver(lastResort), driver: lastResort }
-        : undefined));
-  if (!fallback) {
-    return settings;
-  }
-
-  const driver = fallback.driver;
-  return {
-    ...settings,
-    textGenerationModelSelection: {
-      instanceId: fallback.instanceId,
-      model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
-        DEFAULT_MODEL_BY_PROVIDER[driver] ??
-        DEFAULT_TEXT_GENERATION_MODEL,
-    } satisfies ModelSelection,
-  };
-}
-
-/**
- * With no built-in instance enabled, an enabled instance under another id (a
- * second account, a named setup) generates text. Instances of a driver this
- * build does not have are skipped. The choice is stable: drivers in the
- * built-in order, then instance ids in code-point order.
- */
-function enabledNamedInstance(
-  settings: ServerSettings,
-): { readonly instanceId: ProviderInstanceId; readonly driver: ProviderDriverKind } | undefined {
-  const driverOrder = new Map(
-    TEXT_GENERATION_FALLBACK_DRIVERS.map((driver, index) => [driver, index]),
+  const selection = fallbackScientTextGenerationModelSelection(
+    settings.providerInstances,
+    (instanceId, driver) =>
+      resolveProviderInstanceEnabled(
+        settings.providerInstances[instanceId] ?? { driver, config: {} },
+      ),
   );
-  const [first] = Object.entries(settings.providerInstances)
-    .filter(
-      ([instanceId, instance]) =>
-        instanceId !== defaultInstanceIdForDriver(instance.driver) &&
-        isProviderDriverKind(instance.driver) &&
-        driverOrder.has(instance.driver) &&
-        resolveProviderInstanceEnabled(instance),
-    )
-    .toSorted(
-      ([leftId, left], [rightId, right]) =>
-        driverOrder.get(left.driver)! - driverOrder.get(right.driver)! ||
-        (leftId < rightId ? -1 : leftId > rightId ? 1 : 0),
-    );
-  return first
-    ? { instanceId: ProviderInstanceId.make(first[0]), driver: first[1].driver }
-    : undefined;
+  return selection === null ? settings : { ...settings, textGenerationModelSelection: selection };
 }

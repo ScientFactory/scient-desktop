@@ -318,7 +318,7 @@ application seams. No publication authority or general extraction-line waiver
 is added. The development candidate is held stopped until requested for app
 acceptance; hosted CI qualifies the pushed revision separately.
 
-The current locally qualified alignment through `74dfbb697235b0db87355d3f8575dc2ba45dddf7`
+The prior locally qualified alignment through `74dfbb697235b0db87355d3f8575dc2ba45dddf7`
 is recorded in [the 2026-10-11 receipt](docs/internals/t3-upstream-sync-20261011-74dfbb6972.md)
 ([Scient PR #513](https://github.com/ScientFactory/scient-desktop/pull/513)).
 It receives all 54 official first-parent commits after the previous boundary.
@@ -333,6 +333,26 @@ independent source review and final isolated desktop visual/interaction checks
 from hosted CI, optional platform/account skips and the user's approval.
 The isolated review candidate remains open for user acceptance; the layer
 requires separate merge approval and does not alter its parent PR's policy.
+
+The current local alignment through `f23d0084b6e023ffb1af9e332d8666affc99d542`
+is recorded in [the 2026-10-12 receipt](docs/internals/t3-upstream-sync-20261012-f23d0084b6.md)
+([Scient PR #530](https://github.com/ScientFactory/scient-desktop/pull/530)).
+It retains all 72 ordinary official commits through literal merge
+`de8482724fa062fbea7daa4549cd70dc9e665b85`, whose exact second parent is the
+frozen official target. The initial owned-main catch-up retains `f8babe1313`;
+the later separate catch-up `43779ee83b358cb929e32cafa1a3e53f7eb147cd` retains
+landed owned main `887e363db1eae11ca7d1566a48bd5c6c71d17f8f`, including the
+reviewed model-account overlay repair. Neither catch-up changes the official boundary.
+Scient provider instances/defaults, scoped guidance, native ownership and queue
+holds, immutable migration identities, scientific surfaces and publication
+controls compose with the incoming host behavior. The receipt distinguishes the
+passing canonical local gate and physical native/platform checks from blocked
+mobile UI, account/platform exclusions, hosted CI and the user's acceptance.
+External PR #521 checks supplement qualification without importing its source
+or ancestry; no alignment-speed gain is asserted. The owner approved the bounded
+visual review and requested the installer-review candidate's shutdown; its owned
+service, processes and ports were confirmed stopped. Merge and auto-merge are
+owner-authorized through the required GitHub queue; release remains separate.
 
 ## Receiving T3 updates
 
@@ -912,10 +932,12 @@ server's scratch project, with verified non-Git evidence. It rejects the shared
 parent, nested descendants, and symlink escapes, while retaining ordinary Git
 worktree lineage and existing authority-generation/publication checks.
 
-The server still withholds `ServerConfig.scratchWorkspaceRoot` and
-`projects.ensureScratch` when the selected scratch root's parent is inside a Git
-checkout or VCS detection fails. Clients gate on the advertised root, including remote/mobile
-entry points. The dev runner selects persistent scratch storage outside the
+The upstream managed-folder service owns scratch advertisement, project creation and thread
+allocation for RPC, MCP and launch. It withholds the capability when the configured root has
+Git ancestry or inspection fails. Missing Git alone does not disable scratch: both unavailable-
+executable and spawn-NotFound errors use canonical filesystem evidence limited to host-owned
+scratch folders. Other Git failures remain closed, and failed admission is retried on the next
+request. Clients gate on the advertised root, including remote/mobile entry points. The dev runner selects persistent scratch storage outside the
 checkout without moving its existing profile; that selected parent must also be
 outside Git.
 Thread deletion retains scratch files. Moving a started scratch conversation and

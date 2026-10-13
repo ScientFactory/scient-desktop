@@ -135,6 +135,7 @@ function render(
   const Picker = composed ? ProviderModelPicker : ModelPickerContent;
   const picker = (
     <Picker
+      environmentId={environmentId}
       {...(composed
         ? { triggerAriaLabel: "Choose test model", isComposerOwned: composerOwned }
         : {})}

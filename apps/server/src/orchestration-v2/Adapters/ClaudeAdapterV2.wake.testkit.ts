@@ -208,8 +208,15 @@ const makeWakeHarnessWithOptions = (options?: {
   readonly environment?: NodeJS.ProcessEnv;
   // A reopened CLI process must not inherit the exited process's message queue.
   readonly freshQueueOnReopen?: boolean;
+  /** Synthetic SDK EOF observation; does not signal adapter cleanup completion. */
+  readonly onStreamExit?: Effect.Effect<void>;
+  readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
 }) =>
   Effect.gen(function* () {
+    const observeStreamExit = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
+      options?.onStreamExit === undefined
+        ? stream
+        : stream.pipe(Stream.ensuring(options.onStreamExit));
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -260,12 +267,13 @@ const makeWakeHarnessWithOptions = (options?: {
               const processMessages = yield* Queue.unbounded<SDKMessage>();
               processQueues.push(processMessages);
               return {
-                messages: Stream.fromQueue(processMessages),
+                messages: observeStreamExit(Stream.fromQueue(processMessages)),
                 offer: (message: SDKUserMessage) =>
                   Effect.sync(() => {
                     offeredMessages.push(message);
                   }),
                 setModel: () => Effect.void,
+                stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                 setPermissionMode: () => Effect.void,
                 interrupt: Effect.void,
                 close: Queue.shutdown(processMessages),
@@ -289,12 +297,14 @@ const makeWakeHarnessWithOptions = (options?: {
                     ),
                   ),
                 ),
+                observeStreamExit,
               ),
               offer: (message) =>
                 Effect.sync(() => {
                   offeredMessages.push(message);
                 }),
               setModel: () => Effect.void,
+              stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
               setPermissionMode: (mode) =>
                 Effect.sync(() => {
                   permissionModeChanges.push(mode);
@@ -306,7 +316,7 @@ const makeWakeHarnessWithOptions = (options?: {
               close: options?.close?.(sdkMessages) ?? Effect.void,
             };
           }),
-        forkSession: () => Effect.die("unused forkSession"),
+        forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),
         subagentLaunchToolUseId: () => Effect.succeed(null),
         assertComplete: Effect.void,
       },

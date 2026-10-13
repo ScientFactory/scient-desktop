@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 import * as NodeStreamPromises from "node:stream/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import * as Tar from "tar";
 import * as Yauzl from "yauzl";
@@ -16,6 +17,8 @@ import type {
 } from "./managedRuntimeArtifact.ts";
 
 const MAX_REDIRECTS = 5;
+const TRANSIENT_DOWNLOAD_STATUSES = new Set([500, 502, 503, 504]);
+const MAX_TRANSIENT_RETRIES = 2;
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 // Compressed downloads and expanded payloads have independent budgets.
 // Providers must explicitly opt in above the unchanged default below.
@@ -57,11 +60,25 @@ async function fetchWithAllowedRedirects(input: {
   readonly url: string;
   readonly allowedHosts: ReadonlySet<string>;
   readonly signal: AbortSignal;
+  readonly retryTransientResponses?: boolean;
 }): Promise<Response> {
   let current = new URL(input.url);
-  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+  let redirectCount = 0;
+  let retryCount = 0;
+  for (;;) {
     assertAllowedHttpsUrl(current, input.allowedHosts);
+    input.signal.throwIfAborted();
     const response = await fetch(current, { redirect: "manual", signal: input.signal });
+    if (
+      input.retryTransientResponses &&
+      TRANSIENT_DOWNLOAD_STATUSES.has(response.status) &&
+      retryCount < MAX_TRANSIENT_RETRIES
+    ) {
+      await response.body?.cancel().catch(() => undefined);
+      retryCount += 1;
+      await NodeTimersPromises.setTimeout(500 * retryCount, undefined, { signal: input.signal });
+      continue;
+    }
     if (response.status < 300 || response.status >= 400) return response;
     const location = response.headers.get("location");
     await response.body?.cancel().catch(() => undefined);
@@ -72,8 +89,8 @@ async function fetchWithAllowedRedirects(input: {
       throw new ManagedRuntimeFileError("Managed runtime download exceeded the redirect limit.");
     }
     current = new URL(location, current);
+    redirectCount += 1;
   }
-  throw new ManagedRuntimeFileError("Managed runtime download redirect handling failed.");
 }
 
 export async function downloadManagedRuntime(input: {
@@ -83,6 +100,8 @@ export async function downloadManagedRuntime(input: {
   readonly expectedSize: number;
   readonly signal: AbortSignal;
   readonly onProgress?: (downloaded: number, total: number) => void;
+  /** Retry transient server responses before accepting any bytes; other failures remain final. */
+  readonly retryTransientResponses?: boolean;
 }): Promise<void> {
   const allowedHosts = new Set(input.allowedHosts.map((host) => host.toLowerCase()));
   const idleController = new AbortController();
@@ -100,8 +119,10 @@ export async function downloadManagedRuntime(input: {
       url: input.url,
       allowedHosts,
       signal,
+      ...(input.retryTransientResponses ? { retryTransientResponses: true } : {}),
     });
     if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => undefined);
       throw new ManagedRuntimeFileError(
         `Managed runtime download failed with HTTP ${response.status}.`,
       );

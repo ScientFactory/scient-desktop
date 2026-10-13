@@ -54,6 +54,7 @@ describe("ClaudeAdapterV2 executable path", () => {
               Effect.sync(() => {
                 executablePaths.push(input.options.pathToClaudeCodeExecutable);
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
@@ -126,6 +127,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
               Effect.sync(() => {
                 openedOptions = input.options;
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
@@ -350,6 +352,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
               Effect.sync(() => {
                 openedQueries.push(input);
                 return {
+                  stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.empty,
