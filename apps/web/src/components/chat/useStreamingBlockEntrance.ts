@@ -108,17 +108,20 @@ function trackRevealed(messageId: string, height: number) {
   const oldest = revealedHeights.keys().next().value;
   if (oldest === undefined) return;
   revealedHeights.delete(oldest);
+  shownNow.delete(oldest);
   setAppearing(oldest, false);
 }
 
 /**
  * Answers to show in full at once: the reader pressed Stop, so what arrived is
- * shown, not typed out. Kept until the answer's reveal ends, across remounts.
+ * shown, not typed out. Kept until the answer's reveal ends, across remounts;
+ * only answers with a reveal still kept here, so it stays bounded with them.
  */
 const shownNow = new Set<string>();
 const showNowListeners = new Set<() => void>();
-/** Stop: every answer being revealed shows everything it has, at once. */
+/** Stop: every answer being revealed shows everything it has, at once, mounted or not. */
 export function showStreamedAnswersNow() {
+  for (const messageId of revealedHeights.keys()) shownNow.add(messageId);
   for (const listener of showNowListeners) listener();
 }
 
