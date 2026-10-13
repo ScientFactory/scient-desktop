@@ -29,9 +29,20 @@ const TABLE_DELIMITER = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)+\|
 const INLINE_CODE = /(?<!`)(`+)(?!`)((?:[^\n]|\n(?![ \t]*\n))*?[^`])\1(?!`)/g;
 /** Text within one paragraph. */
 const SPAN = String.raw`(?:[^\n]|\n(?![ \t]*\n))+?`;
-/** Display math as chat renders it: a closed `$$` or `\[` within a paragraph, or an environment. */
+/**
+ * Display math as chat renders it: a block opened by `$$` or `\[` at a line's
+ * start and closed later (blank lines allowed), a closed pair within one
+ * paragraph, or an environment.
+ */
 const DISPLAY_MATH = new RegExp(
-  String.raw`\$\$${SPAN}\$\$|\\\[${SPAN}\\\]|\\begin\{(?:equation|align)\*?\}`,
+  [
+    String.raw`^ {0,3}\$\$[^\n]*\n[\s\S]*?\$\$`,
+    String.raw`^ {0,3}\\\[[^\n]*\n[\s\S]*?\\\]`,
+    String.raw`\$\$${SPAN}\$\$`,
+    String.raw`\\\[${SPAN}\\\]`,
+    String.raw`\\begin\{(?:equation|align)\*?\}`,
+  ].join("|"),
+  "m",
 );
 const INLINE_IMAGE = /!\[[^\]\n]*\]\([^)\s]+|<img\b/i;
 /** `![alt][label]`, `![label][]` and `![label]`: images only when the label is defined. */

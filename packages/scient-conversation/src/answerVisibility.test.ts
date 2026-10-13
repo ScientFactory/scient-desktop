@@ -46,6 +46,9 @@ describe("isSubstantiveAnswer", () => {
     expect(isSubstantiveAnswer("The energy is\n$$E = mc^2$$")).toBe(true);
     expect(isSubstantiveAnswer("\\[\nx^2\n\\]")).toBe(true);
     expect(isSubstantiveAnswer("Consider \\[E = mc^2\\] within a sentence.")).toBe(true);
+    // A standalone block may hold blank lines.
+    expect(isSubstantiveAnswer("$$\nx + y\n\n$$")).toBe(true);
+    expect(isSubstantiveAnswer("\\[\nx + y\n\n\\]")).toBe(true);
     expect(isSubstantiveAnswer("\\begin{align*}\nx &= 1\n\\end{align*}")).toBe(true);
     expect(isSubstantiveAnswer("Here: ![plot](plot.png)")).toBe(true);
     expect(isSubstantiveAnswer("![plot][chart]\n\n[chart]: ./plot.png")).toBe(true);
