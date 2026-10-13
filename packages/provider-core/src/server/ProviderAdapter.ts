@@ -558,7 +558,9 @@ export interface ProviderAdapterV2McpApps {
   }) => Effect.Effect<{ readonly contents: ReadonlyArray<unknown> }, ProviderAdapterV2Error>;
 }
 
+// SCIENT-FORK:START — running-fork text snapshot members come from ScientTextSnapshotRuntime.
 export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRuntime {
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — readiness is process-local; held intent remains canonical on the run.
   readonly configureDroidSteerOwner?: (input: {
     readonly attemptId: RunAttemptId;
