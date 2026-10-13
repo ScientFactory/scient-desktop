@@ -380,6 +380,7 @@ import { ScientRightPanelContent } from "~/scient/rightPanel/ScientRightPanelCon
 // marked blocks below, and `~/scient/threadQueue`.
 import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
 import {
+  deriveQueueAcknowledgedUserMessages,
   pendingQueueAdmissionPreviews,
   optimisticTimelineMessages,
   settleQueueAdmissionPreview,
@@ -1910,19 +1911,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [committedServerMessageIds, serverProjection]);
   // SCIENT-FORK:START — the queue strip hides a preview once the server owns
   // the message; the acknowledged user rows are that source of truth.
-  const serverAcknowledgedUserMessages = useMemo<ReadonlyArray<ChatMessage>>(
-    () =>
-      (serverProjection?.messages ?? [])
-        .filter((message) => message.role === "user")
-        .map((message) => ({
-          id: message.id,
-          role: "user" as const,
-          text: message.text,
-          runId: message.runId ?? null,
-          streaming: false,
-          createdAt: DateTime.formatIso(message.createdAt),
-          updatedAt: DateTime.formatIso(message.updatedAt),
-        })),
+  const serverAcknowledgedUserMessages = useMemo(
+    () => deriveQueueAcknowledgedUserMessages(serverProjection?.messages ?? []),
     [serverProjection],
   );
   // SCIENT-FORK:END
