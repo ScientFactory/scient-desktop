@@ -11,7 +11,14 @@ import {
   subscribeKeyboardPreferences,
   validateKeyboardPreferences,
 } from "./preferences";
-import { eventStroke, keysOverlap, labelKeys, normalizeKeys, validateKeys } from "./keys";
+import {
+  eventStroke,
+  isMacKeyboard,
+  keysOverlap,
+  labelKeys,
+  normalizeKeys,
+  validateKeys,
+} from "./keys";
 import { conditionsOverlap, appKeysEqual } from "./conflicts";
 import { ShortcutSequence } from "./sequence";
 import { attachShortcutHost } from "./host";
@@ -129,6 +136,61 @@ describe("portable keyboard preferences", () => {
       validateKeyboardPreferences({ ...defaults, overrides: { "pdf.find": ["mod+b"] } }, false),
     ).not.toThrow();
   });
+  it("validates table keys against the LaTeX and math in their cells only", () => {
+    for (const overrides of [
+      { "table.addRow": ["mod+b"] },
+      { "latex.bold": ["alt+t r a"] },
+      { "table.addRow": ["alt+m"] },
+    ])
+      expect(() => validateKeyboardPreferences({ ...defaults, overrides }, false)).toThrow(
+        /conflict/,
+      );
+    expect(() =>
+      validateKeyboardPreferences(
+        { ...defaults, overrides: { "markdown.bold": ["alt+t r a"], "pdf.find": ["alt+t r a"] } },
+        false,
+      ),
+    ).not.toThrow();
+  });
+  it("keeps a custom table key saved over a LaTeX default before tables were checked", () => {
+    const imported = importKeyboardPreferences(
+      JSON.stringify({
+        ...defaults,
+        writingPresetVersion: 5,
+        overrides: { "table.addRow": ["mod+b"] },
+      }),
+      false,
+    );
+    expect(imported.overrides["table.addRow"]).toEqual(["mod+b"]);
+    // Bold steps aside from the custom key and keeps its key sequence.
+    expect(imported.overrides["latex.bold"]).toEqual(["alt+c b"]);
+    expect(imported.overrides["markdown.bold"]).toBeUndefined();
+    expect(imported.writingPresetVersion).toBe(defaults.writingPresetVersion);
+    expect(importKeyboardPreferences(JSON.stringify(imported), false)).toEqual(imported);
+  });
+  it.each(["latex.bold", "math.symbol.alpha"])(
+    "keeps every other custom key when a table and %s shared one before tables were checked",
+    (other) => {
+      const stored = JSON.stringify({
+        ...defaults,
+        writingPresetVersion: 5,
+        overrides: {
+          "table.addRow": ["ctrl+alt+q", "alt+t r a"],
+          [other]: ["ctrl+alt+q"],
+          "markdown.italic": ["alt+q"],
+        },
+      });
+      const imported = importKeyboardPreferences(stored, false);
+      expect(imported.overrides[other]).toEqual(["ctrl+alt+q"]);
+      expect(imported.overrides["table.addRow"]).toEqual(["alt+t r a"]);
+      expect(imported.overrides["markdown.italic"]).toEqual(["alt+q"]);
+      expect(importKeyboardPreferences(JSON.stringify(imported), false)).toEqual(imported);
+
+      localStorage.setItem(KEYBOARD_PREFERENCES_KEY, stored);
+      reloadKeyboardPreferences();
+      expect(getKeyboardPreferences().error).toBe("");
+    },
+  );
   it("replaces, disables, and resets instead of accumulating alternatives", () => {
     const preferences = validateKeyboardPreferences(
       { ...defaults, overrides: { "markdown.bold": ["alt+q"], "math.symbol.alpha": [] } },
@@ -403,6 +465,67 @@ describe("sequence matching and ownership", () => {
     input.dispatchEvent(key("f"));
     expect(execute).not.toHaveBeenCalled();
     release();
+  });
+  it("sends a key in a table cell to the table and to the LaTeX and math in the cell", () => {
+    // As in the LaTeX editor: every host listens on capture, the outermost first.
+    const editor = document.createElement("div"),
+      table = document.createElement("div"),
+      cell = document.createElement("div"),
+      math = document.createElement("math-field");
+    cell.dataset.tableCell = "0-0";
+    cell.contentEditable = "true";
+    cell.append(math);
+    table.append(cell);
+    editor.append(table);
+    document.body.append(editor);
+    const latexCommand = vi.fn(() => true),
+      tableCommand = vi.fn(() => true),
+      mathCommand = vi.fn(() => true);
+    const releases = [
+      attachShortcutHost(editor, ["latex", "math"], {
+        capture: true,
+        accepts: (event) =>
+          event.target instanceof Element &&
+          !event.target.closest("math-field") &&
+          event.target.closest("[contenteditable]") === cell,
+        execute: latexCommand,
+      }),
+      attachShortcutHost(table, "table", {
+        capture: true,
+        accepts: (event) =>
+          event.target instanceof Element && Boolean(event.target.closest("[data-table-cell]")),
+        execute: tableCommand,
+      }),
+      attachShortcutHost(math, ["math", "latex"], {
+        capture: true,
+        accepts: () => true,
+        execute: mathCommand,
+      }),
+    ];
+    const press = (target: EventTarget, value: string, init: KeyboardEventInit = {}) =>
+      target.dispatchEvent(key(value, { composed: true, ...init }));
+    const mod = isMacKeyboard() ? { metaKey: true } : { ctrlKey: true };
+
+    // In the cell's text: table keys reach the table, LaTeX keys the LaTeX editor.
+    press(cell, "t", { altKey: true });
+    press(cell, "r");
+    press(cell, "a");
+    press(cell, "b", mod);
+    expect(tableCommand).toHaveBeenCalledExactlyOnceWith("table.addRow", expect.anything());
+    expect(latexCommand).toHaveBeenCalledExactlyOnceWith("latex.bold", expect.anything());
+
+    // In math inside the cell: table keys still reach the table, math keys the math field.
+    // Hosts outside a math field see its keys retargeted to the field element.
+    press(math, "t", { altKey: true });
+    press(math, "c");
+    press(math, "a");
+    press(math, "m", { altKey: true });
+    press(math, "g");
+    press(math, "a");
+    expect(tableCommand).toHaveBeenLastCalledWith("table.addColumn", expect.anything());
+    expect(mathCommand).toHaveBeenCalledExactlyOnceWith("math.symbol.alpha", expect.anything());
+    expect(latexCommand).toHaveBeenCalledTimes(1);
+    releases.forEach((release) => release());
   });
   it("derives terminal and text-input contexts from the actual event path", () => {
     const host = document.createElement("div"),

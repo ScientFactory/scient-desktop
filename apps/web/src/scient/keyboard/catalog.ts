@@ -109,10 +109,15 @@ export function surfaceCommands(mac: boolean): readonly SurfaceCommand[] {
   commandCache.set(mac, commands);
   return commands;
 }
-/** Math may be nested in Markdown; PDF read mode is disjoint from authoring. */
+/**
+ * Math may be nested in Markdown or LaTeX. A LaTeX table's cells hold LaTeX
+ * text and math, so the same key reaches the table and what is in the cell.
+ * PDF read mode is disjoint from authoring.
+ */
 export function scopesOverlap(a: KeyboardScope, b: KeyboardScope) {
   if (a === b) return true;
-  if (a === "pdf" || b === "pdf" || a === "table" || b === "table") return false;
+  if (a === "pdf" || b === "pdf") return false;
   if (a === "math" || b === "math") return true;
+  if (a === "table" || b === "table") return a === "latex" || b === "latex";
   return false;
 }

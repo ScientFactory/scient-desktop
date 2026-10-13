@@ -19,11 +19,14 @@ const LEGACY_KEY = "scient.mathInputBindings.v1";
  *    two lists, beside the key sequences.
  * 4: Select the current LaTeX editing scope, then each parent (mod+a).
  * 5: Open math Symbols with the Insert sequence (alt+i s).
+ * 6: Table keys are checked against the LaTeX and math keys in their cells.
+ *    A custom key saved before then is kept; where two custom keys meet, the
+ *    table's steps aside, since the other one also works outside tables.
  */
-const WRITING_PRESET_VERSION = 5;
+const WRITING_PRESET_VERSION = 6;
 export interface KeyboardPreferences {
   readonly version: 1;
-  readonly writingPresetVersion?: 1 | 2 | 3 | 4 | 5;
+  readonly writingPresetVersion?: 1 | 2 | 3 | 4 | 5 | 6;
   readonly customMath?: readonly CustomMathCommand[];
   readonly overrides: Readonly<Record<string, readonly string[]>>;
   readonly mathPreset: "lyx" | "minimal";
@@ -231,6 +234,26 @@ export function importKeyboardPreferences(
         );
         if (remaining.length !== defaults.length) overrides[command.id] = remaining;
       }
+      // Before 6, a table's custom keys could share a custom key in its cells.
+      if (!(typeof old.writingPresetVersion === "number" && old.writingPresetVersion >= 6))
+        for (const command of commands) {
+          const keys = overrides[command.id];
+          if (command.scope !== "table" || !Array.isArray(keys)) continue;
+          const remaining = keys.filter(
+            (key) =>
+              typeof key !== "string" ||
+              !owners.some(
+                (other) =>
+                  other.scope !== "table" &&
+                  scopesOverlap(command.scope, other.scope) &&
+                  Array.isArray(old.overrides[other.id]) &&
+                  old.overrides[other.id]!.some(
+                    (custom) => typeof custom === "string" && keysOverlap(key, custom, mac),
+                  ),
+              ),
+          );
+          if (remaining.length !== keys.length) overrides[command.id] = remaining;
+        }
       return validateKeyboardPreferences(
         { ...old, overrides, writingPresetVersion: WRITING_PRESET_VERSION },
         mac,
