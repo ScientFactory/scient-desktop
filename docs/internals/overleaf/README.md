@@ -3,8 +3,13 @@
 **Next action: answer the four open decisions below, then build PR B step 1.**
 This folder holds the plan, the coordinator contract and the Cloud test results
 for manual two-way sync between a Scient project folder and an Overleaf project,
-over Overleaf's Git integration. It is documentation only; no product code
-depends on it.
+over Overleaf's Git integration.
+
+**These are temporary working documents on a PR that will be closed, not
+merged.** Edit them freely as decisions are made. Permanent documentation ships
+with the feature PR it describes: PR B updates
+`docs/internals/scient-overleaf-engine.md`, and PR C adds the user guide and
+the final internals notes.
 
 Status as of October 13, 2026. The foundation is merged; the feature is not yet
 usable in the app.
@@ -76,6 +81,9 @@ afterwards.
   before relying on them.
 - **Do not copy #495's helper code into PR B.** Build on main after #495 merges,
   or stack on #495's exact head.
+- **Permanent docs go in the feature PR.** Do not add plans or handoff notes to
+  feature PRs, and do not add permanent docs here. Link this PR from each
+  feature PR.
 - **Never force-push to Overleaf, and never resend a push whose outcome is
   unknown.** Recovery classifies it from Overleaf's history; anything else waits
   for a fresh review.
