@@ -23,7 +23,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { exchange, syncDirectory } from "../workspace/RetainedFileMutation.ts";
 
 /** The hidden folder created beside a checkout on another disk. */
-export const OVERLEAF_VAULT_DIRECTORY = ".scient-overleaf";
+const OVERLEAF_VAULT_DIRECTORY = ".scient-overleaf";
 
 export interface OverleafVolumeFileIdentity {
   readonly volume: string;
