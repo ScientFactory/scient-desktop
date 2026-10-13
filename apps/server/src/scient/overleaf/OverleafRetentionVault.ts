@@ -270,20 +270,21 @@ export async function locateOverleafRetention(input: {
       input.stateRetained,
       NodePath.join(input.stateRetained, input.connectionId),
     ];
-    let stateRoot: string;
-    try {
-      stateRoot = await NodeFSP.realpath(NodePath.dirname(input.stateRetained));
-    } catch (error) {
-      if (["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(errorCode(error) ?? ""))
-        throw new Refused("unsafe-directory");
-      throw error;
-    }
-    const stateUsable =
-      (await statOrRefuse(stateRoot, "unsafe-directory")).dev === checkoutStat.dev &&
-      !(await physicallyInside(stateRoot, checkoutStat));
-
     let found: { directory: string; identity: OverleafVolumeFileIdentity };
     if (input.expected === null) {
+      // Only a new connection chooses a location. Recovery checks each candidate on its
+      // own, so an unreadable state directory cannot hide a recorded folder elsewhere.
+      let stateRoot: string;
+      try {
+        stateRoot = await NodeFSP.realpath(NodePath.dirname(input.stateRetained));
+      } catch (error) {
+        if (["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(errorCode(error) ?? ""))
+          throw new Refused("unsafe-directory");
+        throw error;
+      }
+      const stateUsable =
+        (await statOrRefuse(stateRoot, "unsafe-directory")).dev === checkoutStat.dev &&
+        !(await physicallyInside(stateRoot, checkoutStat));
       const levels = stateUsable
         ? stateLevels
         : await siblingLevels(

@@ -21,7 +21,10 @@ import type {
 } from "./OverleafConnectionState.ts";
 import { overleafConnectionFixture } from "./OverleafConnectionState.testkit.ts";
 import * as OverleafStateStore from "./OverleafStateStore.ts";
-import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
+import {
+  locateOverleafRetention,
+  type OverleafVolumeIdentityResolver,
+} from "./OverleafRetentionVault.ts";
 import { fileExchangeTestHelper } from "../workspace/fileExchange.testkit.ts";
 
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
@@ -32,7 +35,7 @@ const diskImagesAvailable =
   NodeChildProcess.spawnSync("/usr/bin/hdiutil", ["help"]).status !== null;
 
 /** A disposable disk image; attach mounts it at a chosen path, as a reconnected disk would be. */
-const diskImage = (root: string, format: "APFS" | "ExFAT") =>
+const diskImage = (root: string, format: "APFS" | "ExFAT" | "JHFS+") =>
   Effect.gen(function* () {
     const file = NodePath.join(root, `${format}.dmg`);
     yield* Effect.promise(async () => {
@@ -44,7 +47,7 @@ const diskImage = (root: string, format: "APFS" | "ExFAT") =>
         "-fs",
         format,
         "-volname",
-        `SCT${format.toUpperCase()}`,
+        `SCT${format.toUpperCase().replace("+", "")}`,
         file,
       ]);
     });
@@ -798,6 +801,45 @@ describe("OverleafStateStore", () => {
       ),
     );
 
+    // Through the store, a denied folder above the state directory already fails the
+    // lease check; the location search itself must still not depend on that directory.
+    it.live("finds a recorded folder when a folder above Scient's state cannot be read", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* temporaryRoot();
+          const checkout = NodePath.join(root, "paper");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+          const { store } = yield* openStore(
+            NodePath.join(checkout, ".state", "overleaf"),
+            undefined,
+            fakeVolume,
+          );
+          const prepared = yield* prepare(store, checkout);
+          const denied = NodePath.join(root, "app");
+          yield* Effect.acquireRelease(
+            Effect.promise(async () => {
+              await NodeFSP.mkdir(NodePath.join(denied, "state"), { recursive: true });
+              await NodeFSP.chmod(denied, 0o000);
+            }),
+            () => Effect.promise(() => NodeFSP.chmod(denied, 0o700)),
+          );
+          const located = yield* Effect.promise(() =>
+            locateOverleafRetention({
+              stateRetained: NodePath.join(denied, "state", "retained"),
+              environmentId: "environment-1",
+              connectionId: "connection-1",
+              checkoutRoot: checkout,
+              userId: process.getuid?.(),
+              exchangeHelper: helper ?? null,
+              expected: prepared.identity,
+              volumeUuid: fakeVolume,
+            }),
+          );
+          expect(located).toEqual({ _tag: "ready", ...prepared });
+        }),
+      ),
+    );
+
     it.live("refuses a parent folder others can write to, on first use and on recovery", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -919,6 +961,31 @@ describe("OverleafStateStore", () => {
               expect(yield* refusal(prepare(store, second))).toBe("disk-root-checkout");
             }),
           ),
+      );
+
+      it.live("refuses Mac OS Extended in packaged builds, which cannot exchange files", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* temporaryRoot();
+            const image = yield* diskImage(root, "JHFS+");
+            const mounted = yield* image.attach("hfs");
+            const checkout = NodePath.join(mounted, "paper");
+            yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+            const { store } = yield* openStore(NodePath.join(root, "state"));
+            expect(yield* refusal(prepare(store, checkout))).toBe("unsupported-filesystem");
+            // Hard links work there, so only the declared development fallback accepts it.
+            const fallback = yield* store.prepareRetention({
+              environmentId: "environment-1",
+              connectionId: "connection-1",
+              checkoutRoot: checkout,
+              exchangeHelper: null,
+              expected: null,
+            });
+            expect(fallback.directory).toBe(
+              NodePath.join(mounted, ".scient-overleaf", "environment-1", "connection-1"),
+            );
+          }),
+        ),
       );
 
       it.live("refuses exFAT, which can neither exchange nor link files", () =>
