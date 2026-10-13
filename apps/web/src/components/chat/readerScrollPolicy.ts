@@ -3,9 +3,18 @@ import {
   getRowBottom,
   type RememberedTimelinePosition,
   type TimelineListMeasurementState,
-  withRealTimelineEnd,
 } from "./timelineScrollAnchoring";
 import type { RunId } from "@t3tools/contracts";
+
+/** Exclude reserved anchor padding when deciding whether real content is below the reader. */
+export function withRealTimelineEnd<T extends TimelineListMeasurementState>(
+  state: T | undefined,
+  composerInset: number,
+): T | undefined {
+  if (!state) return state;
+  const bottom = getRowBottom(state, state.data.length - 1);
+  return bottom === null ? state : { ...state, contentLength: bottom + composerInset };
+}
 
 /** Where a row's readable content ends; trailing file lists and controls come after it. */
 const READING_END_SELECTOR = '[data-reading-end], [data-user-message-body="true"]';
@@ -149,6 +158,18 @@ export function withReadingEnd<
       ? top + marker.getBoundingClientRect().bottom - element.getBoundingClientRect().top
       : bottom;
   return { ...state, contentLength: Math.min(end, bottom) + composerInset };
+}
+
+/**
+ * Whether the latest turn is unfinished: it runs, or it ended interrupted or
+ * with an error. Its latest content is then the reading end. A fork, a revert
+ * or a send being set up alone does not make it so.
+ */
+export function latestTurnUnfinished(
+  runningRunId: string | null,
+  latestRunStatus: string | undefined,
+): boolean {
+  return runningRunId !== null || latestRunStatus === "interrupted" || latestRunStatus === "failed";
 }
 
 /**
