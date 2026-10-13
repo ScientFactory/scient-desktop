@@ -32,16 +32,19 @@ describe("expanded thought typography", () => {
     const thought = document.createElement("div");
     // As the timeline mounts it, with upstream's text-foreground.
     thought.className = "chat-markdown text-foreground";
-    thought.innerHTML = "<p>Clarifying user requirements</p>";
+    thought.innerHTML = "<h3>Clarifying user requirements</h3><p>I think we need to ask.</p>";
     const label = document.createElement("span");
     label.className = "text-secondary-label";
     const answer = document.createElement("div");
     answer.className = "chat-markdown text-foreground";
     host.append(thought, label);
     document.body.append(host, answer);
-    const colour = getComputedStyle(thought.querySelector("p")!).color;
-    expect(colour).toBe(getComputedStyle(label).color);
-    expect(colour).not.toBe(getComputedStyle(answer).color);
+    // Its headings too, which upstream colours on their own.
+    for (const element of thought.querySelectorAll("h3, p")) {
+      const colour = getComputedStyle(element).color;
+      expect(colour).toBe(getComputedStyle(label).color);
+      expect(colour).not.toBe(getComputedStyle(answer).color);
+    }
     answer.remove();
   });
 
