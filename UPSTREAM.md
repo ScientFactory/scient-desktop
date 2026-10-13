@@ -934,6 +934,16 @@ than infer deletion from an absent sidebar entry. See the
 [fork maintenance contract](docs/internals/scient-fork-divergence.md) for
 workspace fidelity, lineage links, provider selection, and recovery boundaries.
 
+Handoff retention and delivery are separate Scient responsibilities. Keep frozen source
+membership, copy-before-rewrite versions, user context presets, inert import/fork eligibility and
+native delivery proof. Replace eager transcript copies and repeated body-bearing status records
+with `scient-fork/ContextHistorySource.ts` and its bounded readers; preserve the independent
+Scient migration ledger and old source bodies. Generic budget accounting, formatting and item
+priority remain in provider-core. Source identity is private execution metadata. The decisive
+behavior and resource contract is maintained in
+[context handoffs](docs/internals/context-handoffs.md), with actual default-composition,
+legacy/rebuild, receiving-model and reservation-recovery witnesses beside the production owners.
+
 Scient layers two sidebar divergences beside T3's thread list: user-defined
 sections with a Sections view, and a labelled New thread row below search that
 replaces the header's New thread icon. Section membership is an optional
@@ -1278,8 +1288,11 @@ not restore T3 publication authority or a dependency on `t3@<Scient version>`.
 The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
 retained mutation implementation in `apps/server/src/scient/workspace`. Its two
 additive `WorkspaceFileSystem` methods reuse the existing file mutation lock map;
-retain that shared ownership with editor saves. No Overleaf routes or UI are
-mounted yet. See [Overleaf engine](docs/internals/scient-overleaf-engine.md).
+retain that shared ownership with editor saves. macOS packaging, signing and the
+private desktop bootstrap also carry the owned protocol-1 file-exchange helper.
+Keep it outside ASAR, resolve it only from the server host, and preserve journaled
+mechanisms across app updates. No Overleaf routes or UI are mounted yet. See
+[Overleaf engine](docs/internals/scient-overleaf-engine.md).
 
 ## File-tree bidirectional labels
 

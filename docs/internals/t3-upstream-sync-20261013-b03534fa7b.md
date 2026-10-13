@@ -359,19 +359,57 @@ assertions in the feature-owned replacement suite. The new conversation
 package export adds no dependency version change; the lockfile is unchanged
 from the previously qualified candidate.
 
-**This later composition is not yet qualified.** The completed matrix above
-applies to its recorded earlier inputs. Repository formatting, staged diff
-checks and all five seam checks pass for resolved source tree
-`bf9993d5f1b306fbd78fdb4d92cbe9154630001b`; these are source/locator evidence,
-not runtime proof. Independent source review of that tree completed with no composition regression
-found. It identified inherited source-spelling test guards as separate policy
-debt; they do not establish behavior. Affected local qualification, exact
-pushed-head CI and delivery remain separate. Another candidate owns
-the shared heavy local slot; no parallel heavy suite was started. The prior
-qualified cursor metadata is retained until this catch-up is qualified.
+The affected local matrix subsequently passed on receiving commit
+`8301dd95794b85ae5d6e08ce7733882acaed643d`: 979 web unit files/11,999 cases,
+148 client files/2,376 cases, 13 conversation files/109 cases, and 106 shared
+files/1,782 cases (one existing shared file/case skipped). All 50 browser
+files/406 cases passed in 179.008 s with files run serially. Two parallel
+attempts stopped in Vitest/Playwright mock-route callbacks and remain recorded;
+no assertion, timeout, or server concurrency was weakened, and a permanent
+parallel-runner repair is not claimed. Formatting, lint, all typechecks, unused
+code, build, desktop smoke, branding, provenance and five seams passed.
+Unaffected server/mobile results were reused only after an exact source,
+configuration, dependency and consumer audit under the existing subsequent-change
+rule. No new full aggregate or cold-suite speedup at `8301dd9` is claimed.
+
+The native app at that exact commit closed the real loopback stream on Stop,
+held the queued prompt, and completed the continuation and queued request only
+after explicit Resume. The reader/PDF stayed present and the queue/composer
+settled. Startup events were verified in the owned desktop trace; an initial
+helper timeout from checking only the console log is preserved. The owning
+app and model server were stopped with processes, ports and service absence
+verified. No renewed user visual acceptance or real-account/model-quality
+qualification is claimed. Independent source review found no composition
+regression; inherited source-spelling test guards remain separate policy debt.
 
 Evidence: `reviews/pr-merge-readiness-20261013/` contains
 `pr534-main-6aeba-source-composition.json`, `pr534-main-6aeba-index-seams.json`
 and the independent receiving-tree review. Failed attempts and actual timing
 receipts remain preserved. Mobile visual review remains explicitly deferred;
 release is not authorized.
+
+## Later owned-main catch-up to `f8cda428aca3`
+
+Owned main then landed #552's retained-history references and #495's native
+file-exchange packaging at `f8cda428aca3a0d2b36a658d2a306bfd13a77c9d`.
+The existing alignment carries that exact landed commit through an ordinary
+owned-main merge, preserving the original official target and literal merge.
+Both new source families received independent review on staged tree
+`658fed30c3a97824aabc23ec676c914f79b3b7b8`. No production composition regression
+was demonstrated. Two inherited test defects were repaired: the queued
+provider-switch case again proves delivery of all three earlier Codex answers,
+and native-helper staging tests execute only a universal or host-compatible
+binary while still inspecting every slice. The full provider-switch file passed
+65 cases in 78.040 s with both restored assertions.
+
+**Qualification of this newest composition remains pending.** Shared server
+contracts, persistence and desktop/native resources changed, invalidating the
+earlier server reuse audit for this tree. Run the complete applicable local gate
+once the reviewed composition stabilizes, then refresh native/platform evidence
+and the exact-head hosted/merge-group checks. No new official target, release,
+qualification-policy substitution, live-profile access, or OOM incident repair
+is authorized or performed. The earlier cursor metadata remains until this
+composition is qualified. Evidence under `reviews/pr-merge-readiness-20261013`:
+`pr534-f8-owned-main-probe.json`, `pr534-f8-independent-source-reviews.json`,
+`pr534-f8-provider-switch-witness-01.json`, and the `pr534-composed-8301-*` and
+`pr534-native-8301-*` receipts.

@@ -55,6 +55,7 @@ import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProviderAdapterEventStreamError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
+import { selectContextHistory } from "../scient-fork/ContextHistorySource.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { nativeModelWindowKey } from "../scient-fork/NativeModelContextWindow.ts";
@@ -1059,7 +1060,13 @@ it.live(
               );
               const handoff = settled.contextHandoffs.at(-1)!;
               assert.equal(handoff.budgetPolicy, "scient");
-              assert.equal(handoff.history!.messages[0]!.text, text);
+              const retained = yield* selectContextHistory(sql, {
+                handoffs: [handoff],
+                coverage: handoff.history!.coverage,
+                budget: Buffer.byteLength(text) * 4 + 4_000,
+                alreadyDeliveredItemIds: new Set(),
+              }).pipe(sql.withTransaction);
+              assert.equal(retained.messages[0]!.text, text);
               assert.equal(handoff.delivery!.omittedItemIds!.length > 0, test.bounded);
               const p = (yield* Peer).opened.find((candidate) => candidate.appThreadId === id)!;
               assert.equal(p.offered.at(-1), 'Continue "exactly" 🧪');

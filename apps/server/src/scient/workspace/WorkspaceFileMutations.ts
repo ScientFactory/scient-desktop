@@ -109,6 +109,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly workspaceEntries: WorkspaceEntries.WorkspaceEntries["Service"];
   readonly readFile: WorkspaceFileSystem["Service"]["readFile"];
   readonly retainedHooks?: RetainedMutationHooks;
+  readonly exchangeHelper?: string | undefined;
 }) {
   const { fileSystem, path, workspacePaths, workspaceEntries, readFile } = deps;
   const writeSemaphoresRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
@@ -712,7 +713,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               cause: new Error("Retained mutations refuse symlink paths."),
             });
           const result = yield* Effect.tryPromise({
-            try: () => mutateRetainedFile(input, current.realTargetPath, deps.retainedHooks),
+            try: () =>
+              mutateRetainedFile(
+                { ...input, exchangeHelper: input.exchangeHelper ?? deps.exchangeHelper },
+                current.realTargetPath,
+                deps.retainedHooks,
+              ),
             catch: (cause) =>
               new WorkspaceFileSystemOperationError({
                 workspaceRoot: input.cwd,

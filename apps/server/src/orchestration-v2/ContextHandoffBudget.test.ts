@@ -22,14 +22,14 @@ import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { historicalMessage } from "./ScientHistoricalContext.ts";
 import {
   contextUsageForHandoff,
   handoffBudget,
   historyCost,
   historyResponseItems,
   selectHistory,
-  historicalMessage,
-} from "./ScientHistoricalContext.ts";
+} from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import { scientContextHandoffPolicy } from "./ScientContextHandoffPolicy.ts";
@@ -113,6 +113,43 @@ const handoff: OrchestrationV2ContextHandoff = {
 };
 
 describe("handoff budget", () => {
+  it("uses the production Scient policy for unknown windows, compaction thresholds and image reserves", () => {
+    const base = {
+      tokenCap: null,
+      bytesPerToken: 3,
+      byteCap: Infinity,
+      userText: "",
+      attachments: [],
+      providerThread,
+      nativeContextEstimate: 0,
+    };
+    assert.equal(handoffBudget(base), (128_000 - 1 - 32_000) * 3);
+    assert.equal(
+      handoffBudget({
+        ...base,
+        userText: "hi",
+        providerThread: {
+          ...providerThread,
+          contextUsage: {
+            maxTokens: 1_000_000,
+            autoCompactThreshold: 200_000,
+            usedTokens: 140_000,
+          },
+        },
+      }),
+      (200_000 - 140_000 - 2 - 50_000) * 3,
+    );
+    assert.equal(
+      handoffBudget(base) -
+        handoffBudget({
+          ...base,
+          attachments: [
+            { type: "image", id: "image", name: "image.png", mimeType: "image/png", sizeBytes: 1 },
+          ],
+        }),
+      8_192 * 3,
+    );
+  });
   it("keeps old preview handoffs readable and delivery history off the wire", () => {
     const projected = projectContextHandoffForWire({
       ...handoff,
