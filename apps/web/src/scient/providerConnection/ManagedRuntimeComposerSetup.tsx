@@ -11,7 +11,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 
 import type { Icon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
@@ -24,6 +24,7 @@ import {
   AssistedSetupUpdateStatus,
   ProviderSetupIcon,
 } from "./AssistedProviderSetup";
+import { ModelPickerOverlayContext } from "./ModelPickerOverlayContext";
 import { ConnectModelsButton } from "./ConnectModelsButton";
 import {
   cancelRuntimeActionLabel,
@@ -69,6 +70,8 @@ export function ManagedRuntimeComposerSetup(props: {
   readonly renderModelSetupAction?: (appearance: "setup-action" | "setup-secondary") => ReactNode;
   readonly provider: ServerProvider;
 }) {
+  const overlay = useContext(ModelPickerOverlayContext);
+  const ownsOverlay = overlay?.instanceId === props.provider.instanceId;
   const [pending, setPending] = useState<Pending | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const name = props.displayName;
@@ -108,8 +111,8 @@ export function ManagedRuntimeComposerSetup(props: {
 
   /** Models need the tool's own probe, so the entry point waits for it. */
   const connectModels = (appearance: "setup-action" | "setup-secondary") =>
-    props.provider.probePending ? null : (
-      <AssistedSetupActions>
+    props.provider.probePending && !ownsOverlay ? null : (
+      <AssistedSetupActions key="connect-models">
         {props.renderModelSetupAction ? (
           props.renderModelSetupAction(appearance)
         ) : (
@@ -140,6 +143,15 @@ export function ManagedRuntimeComposerSetup(props: {
       </Button>
     </AssistedSetupActions>
   );
+
+  if (ownsOverlay) {
+    return (
+      <AssistedSetupFrame>
+        <AssistedSetupStatus icon={null} title="Connect models" body={props.modelSetupHint} />
+        {connectModels("setup-action")}
+      </AssistedSetupFrame>
+    );
+  }
 
   if (active || pending === "install" || pending === "repair" || pending === "update") {
     const action: ProviderManagedRuntimeAction =

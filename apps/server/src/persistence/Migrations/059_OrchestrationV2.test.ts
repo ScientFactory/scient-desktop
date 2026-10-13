@@ -1,3 +1,6 @@
+import { ProviderInstanceId, type PullRequestReviewGuide } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as ReviewGuides from "../PullRequestReviewGuides.ts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,7 +16,7 @@ layer("059_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 64 }, (_, index) => index + 1).filter((id) => id !== 50),
+        Array.from({ length: 65 }, (_, index) => index + 1).filter((id) => id !== 50),
       );
     }),
   );
@@ -33,6 +36,7 @@ layer("059_OrchestrationV2", (it) => {
         [62, "WebhookRelayDeliveries"],
         [63, "McpAppModelContext"],
         [64, "ThreadSnapshotWindowIndexes"],
+        [65, "PullRequestReviewGuides"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -62,6 +66,7 @@ layer("059_OrchestrationV2", (it) => {
         { migration_id: 62, name: "WebhookRelayDeliveries" },
         { migration_id: 63, name: "McpAppModelContext" },
         { migration_id: 64, name: "ThreadSnapshotWindowIndexes" },
+        { migration_id: 65, name: "PullRequestReviewGuides" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`
@@ -154,7 +159,9 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           yield* runMigrations({ toMigrationInclusive: 63 });
           const before =
             yield* sql`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
-          assert.deepStrictEqual(yield* runMigrations(), [[64, "ThreadSnapshotWindowIndexes"]]);
+          assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 64 }), [
+            [64, "ThreadSnapshotWindowIndexes"],
+          ]);
           assert.deepStrictEqual(
             yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id <= 63 ORDER BY migration_id`,
             before,
@@ -177,8 +184,46 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
             "WHERE status IN ('pending', 'starting', 'running', 'waiting')",
           );
           assert.include(indexes[1]!.sql, "WHERE type = 'user_message'");
-          assert.deepStrictEqual(yield* runMigrations(), []);
+          assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 64 }), []);
         }),
     );
   },
 );
+
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("065_PullRequestReviewGuides", (it) => {
+  it.effect("upgrades the shipped webhook ledger and persists guides independently by host", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 64 });
+      const before =
+        yield* sql`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
+      const webhookColumns = yield* sql`PRAGMA table_info(scheduled_tasks)`;
+      assert.deepStrictEqual(yield* runMigrations(), [[65, "PullRequestReviewGuides"]]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id <= 64 ORDER BY migration_id`,
+        before,
+      );
+      assert.deepStrictEqual(yield* sql`PRAGMA table_info(scheduled_tasks)`, webhookColumns);
+      const guide: PullRequestReviewGuide = {
+        headSha: "fixture-head",
+        generatedAt: "2026-10-12T00:00:00.000Z",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "fixture-model" },
+        stops: [],
+      };
+      yield* Effect.gen(function* () {
+        const repository = yield* ReviewGuides.PullRequestReviewGuideRepository;
+        const key = { host: "github", repository: "fixture/repository", number: 1 };
+        yield* repository.put(key, guide);
+        yield* repository.put({ ...key, host: "gitlab" }, { ...guide, headSha: "other-host" });
+        assert.deepStrictEqual(Option.getOrNull(yield* repository.get(key)), guide);
+        assert.equal(
+          Option.getOrNull(yield* repository.get({ ...key, host: "gitlab" }))?.headSha,
+          "other-host",
+        );
+        yield* repository.put(key, { ...guide, headSha: "updated-head" });
+        assert.equal(Option.getOrNull(yield* repository.get(key))?.headSha, "updated-head");
+      }).pipe(Effect.provide(ReviewGuides.layer));
+      assert.deepStrictEqual(yield* runMigrations(), []);
+    }),
+  );
+});

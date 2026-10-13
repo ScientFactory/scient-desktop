@@ -10,14 +10,14 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { AntigravityInstallation } from "./AntigravityInstallation.ts";
+import { AntigravityInstallation } from "../../provider/AntigravityInstallation.ts";
 import {
   makeAntigravityConnectionActionsFromController,
   makeAntigravityManagedRuntimeActions,
-} from "./AntigravityLifecycleBridge.ts";
-import { ANTIGRAVITY_RELEASE_VERSION } from "./antigravityRelease.ts";
-import type { ProviderAuthController } from "./ProviderAuthService.ts";
-import { bundledAntigravityAcpAsset } from "../scient/providerLifecycle/antigravityAcpCatalog.ts";
+} from "./AntigravityAcpLifecycleActions.ts";
+import { ANTIGRAVITY_RELEASE_VERSION } from "../../provider/antigravityRelease.ts";
+import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";
+import { bundledAntigravityAcpAsset } from "./antigravityAcpCatalog.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-lifecycle-test");
 const driver = ProviderDriverKind.make("antigravity");

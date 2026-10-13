@@ -1,3 +1,4 @@
+import { investigationUnsupported } from "@t3tools/provider-core/server/textGenerationOperations";
 import { TextGenerationError, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import {
@@ -424,5 +425,6 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
         })),
       );
     },
+    generateReviewGuide: () => Effect.fail(investigationUnsupported("generateReviewGuide", "OMP")),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

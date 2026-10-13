@@ -57,6 +57,7 @@ const SkillFrontmatter = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
+// SCIENT-FORK:START — discover documented plugin skill components without their other authority.
 const PluginManifest = Schema.fromJsonString(
   Schema.Struct({
     name: Schema.String,
@@ -69,6 +70,7 @@ function antigravityUserPluginDirectory(path: Path.Path, geminiHome: string): st
   return path.join(geminiHome, "config", "plugins");
 }
 
+// SCIENT-FORK:END
 export class AntigravitySkillsProbeError extends Schema.TaggedError<AntigravitySkillsProbeError>()(
   "AntigravitySkillsProbeError",
   {

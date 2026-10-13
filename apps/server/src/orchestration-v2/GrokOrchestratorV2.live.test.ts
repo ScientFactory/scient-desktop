@@ -1,3 +1,4 @@
+import { scientAntigravityInstallationLayer } from "../scient/providerLifecycle/ScientAntigravityInstallation.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { layer as ProviderRegistryLive } from "../provider/ProviderRegistry.ts";
 import * as OmpExecutableGate from "../provider/omp/OmpExecutableGate.ts";
@@ -103,7 +104,7 @@ const layerProviderInstanceRegistry = ProviderInstanceRegistryHydration.layer.pi
       ),
       ProviderLatestVersions.layer,
       ModelManifest.layerTest,
-      AntigravityInstallation.AntigravityInstallation.layer.pipe(
+      scientAntigravityInstallationLayer.pipe(
         Layer.provide(layerServerConfig.pipe(Layer.provide(layerPlatformTest))),
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(layerPlatformTest),

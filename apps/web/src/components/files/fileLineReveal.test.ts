@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { createSourceCitation } from "~/scient/fileSurfaces/sourceCitation";
+import { resolveCenteredFileLineScrollTop, resolveFileRevealLine } from "./fileLineReveal";
 
 describe("resolveCenteredFileLineScrollTop", () => {
   it("centers an estimated virtualized line position", () => {
@@ -28,5 +30,40 @@ describe("resolveCenteredFileLineScrollTop", () => {
         renderedLine: { top: 620, height: 20 },
       }),
     ).toBe(1_160);
+  });
+});
+
+describe("resolveFileRevealLine", () => {
+  const source = "header\nconst alpha = 1;\nfooter\n";
+  const from = source.indexOf("alpha");
+  const citation = createSourceCitation(
+    {
+      environmentId: EnvironmentId.make("local"),
+      threadId: ThreadId.make("source"),
+      cwd: "/project",
+      path: "sample.ts",
+    },
+    source,
+    source,
+    from,
+    from + 5,
+  )!;
+
+  it("gives the verified current quote precedence over the recorded scroll target", () => {
+    const moved = "inserted\n".repeat(100) + source;
+    expect(resolveFileRevealLine(moved, citation.startLine, citation)).toBe(102);
+    expect(resolveFileRevealLine(moved, null, citation)).toBe(102);
+  });
+
+  it("falls back to the recorded line without choosing an ambiguous or missing quote", () => {
+    expect(resolveFileRevealLine(source + source, 50, citation)).toBe(2);
+    expect(resolveFileRevealLine(source.replace("alpha", "gamma"), 50, citation)).toBe(2);
+    expect(resolveFileRevealLine("gone", citation.startLine, citation)).toBe(1);
+  });
+
+  it("preserves ordinary line links, including mixed line endings and an absent request", () => {
+    expect(resolveFileRevealLine("one\r\ntwo\rthree\n", 3)).toBe(3);
+    expect(resolveFileRevealLine("one\r\ntwo\rthree\n", 99)).toBe(4);
+    expect(resolveFileRevealLine(source, null)).toBeNull();
   });
 });

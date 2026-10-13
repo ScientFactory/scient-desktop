@@ -18,7 +18,10 @@ stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
 > `SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled` and
 > `SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled` are at their compiled defaults
 > (`true` and `false`). No environment variable, Settings entry, or build-time value can enable
-> it. The OTLP environment variables, `OTEL_EXPORTER_OTLP_*` handling, and the "Kill Switch"
+> it. Endpoint diagnostics also remain held: the export editor is unmounted, the
+> environment does not advertise endpoint checks, and the command refuses without
+> sending a request. Activation requires a separate reviewed observability decision.
+> The OTLP environment variables, `OTEL_EXPORTER_OTLP_*` handling, and the "Kill Switch"
 > section below are retained plumbing inherited from the host, and they describe behavior that
 > is not currently reachable. The supported artifacts are the local NDJSON trace file, stdout
 > logs, and the `t3 trace summary` command.
@@ -182,6 +185,10 @@ Default Grafana login:
 - password: `admin`
 
 #### 2. Export OTLP env vars
+
+For endpoint settings and startup precedence, see the
+[user telemetry guide](../user/telemetry.md#export-diagnostics-to-your-own-receiver).
+In a worktree, use `vp run dev` instead of `npx t3` to keep state isolated.
 
 ```bash
 export T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces

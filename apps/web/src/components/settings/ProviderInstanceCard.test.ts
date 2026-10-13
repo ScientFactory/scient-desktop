@@ -58,6 +58,7 @@ describe("Pi status copy", () => {
         modelOrder: [],
         onHiddenModelsChange: () => undefined,
         onFavoriteModelsChange: () => undefined,
+        onToggleFavorite: () => undefined,
         onModelOrderChange: () => undefined,
       }),
     );
@@ -227,6 +228,7 @@ describe("Pi status copy", () => {
         modelOrder: [],
         onHiddenModelsChange: () => undefined,
         onFavoriteModelsChange: () => undefined,
+        onToggleFavorite: () => undefined,
         onModelOrderChange: () => undefined,
       }),
     );
@@ -362,6 +364,7 @@ describe("deriveProviderModelsForDisplay", () => {
           modelOrder: [],
           onHiddenModelsChange: () => undefined,
           onFavoriteModelsChange: () => undefined,
+          onToggleFavorite: () => undefined,
           onModelOrderChange: () => undefined,
         }),
       );
@@ -415,6 +418,7 @@ describe("deriveProviderModelsForDisplay", () => {
       modelOrder: [],
       onHiddenModelsChange: () => undefined,
       onFavoriteModelsChange: () => undefined,
+      onToggleFavorite: () => undefined,
       onModelOrderChange: () => undefined,
     } as const;
 
@@ -459,6 +463,7 @@ describe("deriveProviderModelsForDisplay", () => {
       modelOrder: [],
       onHiddenModelsChange: () => undefined,
       onFavoriteModelsChange: () => undefined,
+      onToggleFavorite: () => undefined,
       onModelOrderChange: () => undefined,
     } as const;
 

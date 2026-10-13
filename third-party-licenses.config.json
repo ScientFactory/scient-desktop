@@ -557,7 +557,12 @@
     },
     {
       "license": "MIT",
-      "name": "khroma"
+      "name": "khroma",
+      "sourceUrl": "https://github.com/fabiospampinato/khroma",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
+      }
     },
     {
       "name": "remark-math",
@@ -723,15 +728,6 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2013 Wilson Page"]
       }
-    },
-    {
-      "license": "MIT",
-      "name": "khroma",
-      "sourceUrl": "https://github.com/fabiospampinato/khroma",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
-      }
     }
   ],
   "customNotices": [
@@ -812,7 +808,6 @@
       "license": "MIT",
       "name": "agent-device",
       "sourceUrl": "https://github.com/callstack/agent-device",
-      "version": "0.21.7",
       "generatedNotices": [
         {
           "licenseId": "MIT",
@@ -826,7 +821,6 @@
       "license": "MIT AND Apache-2.0 AND BSD-3-Clause",
       "name": "expo-device-hub",
       "sourceUrl": "https://github.com/expo/expo-device-hub",
-      "version": "0.10.1",
       "generatedNotices": [
         {
           "licenseId": "MIT",

@@ -218,6 +218,16 @@ export function ModelConnectionEditor({
   onSave: (input: CustomModelSaveInput) => Promise<void>;
   onClose: () => void;
 }) {
+  // This dialog opens programmatically, so retain its invoking control for closure.
+  const [opener] = useState(() => {
+    if (typeof document === "undefined" || typeof HTMLElement === "undefined") return null;
+    const control = document.activeElement;
+    return control instanceof HTMLElement &&
+      control !== document.body &&
+      control !== document.documentElement
+      ? { control, dialog: control.closest<HTMLElement>("[data-slot=dialog-popup]") }
+      : null;
+  });
   // A provider that already has a connection reuses it by default; the key
   // field offers "Enter a new API key" to start a second one.
   const initialConnection =
@@ -487,7 +497,16 @@ export function ModelConnectionEditor({
         if (!open && !busy) onClose();
       }}
     >
-      <DialogPopup className="max-w-lg">
+      <DialogPopup
+        className="max-w-lg"
+        finalFocus={() =>
+          opener?.control.isConnected
+            ? opener.control
+            : opener?.dialog?.isConnected
+              ? opener.dialog
+              : true
+        }
+      >
         <DialogHeader>
           <DialogTitle>{editing ? "Edit model" : "Add custom model"}</DialogTitle>
           <DialogDescription className="sr-only">

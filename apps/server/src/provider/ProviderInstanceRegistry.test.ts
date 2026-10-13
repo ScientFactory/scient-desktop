@@ -1,3 +1,4 @@
+import { scientAntigravityInstallationLayer } from "../scient/providerLifecycle/ScientAntigravityInstallation.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -636,7 +637,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       }),
     ),
   );
-  const layerBaseDeps = AntigravityInstallation.AntigravityInstallation.layer.pipe(
+  const layerBaseDeps = scientAntigravityInstallationLayer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {

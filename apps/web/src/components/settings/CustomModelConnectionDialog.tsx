@@ -31,6 +31,16 @@ export function CustomModelConnectionDialog({
   onDelete: () => void;
   onClose: () => void;
 }) {
+  // This dialog opens programmatically, so retain its invoking control for closure.
+  const [opener] = useState(() => {
+    if (typeof document === "undefined" || typeof HTMLElement === "undefined") return null;
+    const control = document.activeElement;
+    return control instanceof HTMLElement &&
+      control !== document.body &&
+      control !== document.documentElement
+      ? { control, dialog: control.closest<HTMLElement>("[data-slot=dialog-popup]") }
+      : null;
+  });
   const [name, setName] = useState(connection.name);
   const [apiKey, setApiKey] = useState("");
   const [removeKey, setRemoveKey] = useState(false);
@@ -78,7 +88,16 @@ export function CustomModelConnectionDialog({
         if (!open && !busy) onClose();
       }}
     >
-      <DialogPopup className="max-w-md">
+      <DialogPopup
+        className="max-w-md"
+        finalFocus={() =>
+          opener?.control.isConnected
+            ? opener.control
+            : opener?.dialog?.isConnected
+              ? opener.dialog
+              : true
+        }
+      >
         <DialogHeader>
           <DialogTitle>Manage {connection.name}</DialogTitle>
           <DialogDescription className="sr-only">

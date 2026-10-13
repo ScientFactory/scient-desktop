@@ -1,3 +1,4 @@
+import { investigationUnsupported } from "@t3tools/provider-core/server/textGenerationOperations";
 /** Structured one-shot generation through Antigravity's native NDJSON mode. */
 
 import {
@@ -278,5 +279,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateReviewGuide: () =>
+      Effect.fail(investigationUnsupported("generateReviewGuide", "Antigravity")),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

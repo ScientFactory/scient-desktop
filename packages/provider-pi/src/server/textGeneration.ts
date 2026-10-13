@@ -31,5 +31,8 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
     options,
     spawner,
   });
-  return TextGenerationOperations.fromRunner("PiTextGeneration", runPiJson);
+  return TextGenerationOperations.fromRunner(
+    "PiTextGeneration",
+    TextGenerationOperations.withoutInvestigation("Pi", runPiJson),
+  );
 });

@@ -13,7 +13,7 @@ import { describe, expect } from "vite-plus/test";
 
 import { checkAntigravityProviderStatus } from "../LegacyAntigravityProvider.ts";
 import { ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS } from "./WorkspaceInstructions.ts";
-import { officialAntigravityAccountEnvironment } from "../../scient/providerLifecycle/AntigravityConnectionActions.ts";
+import { officialAntigravityAccountEnvironment } from "../../scient/providerLifecycle/LegacyAntigravityConnectionActions.ts";
 import { makeAgySession, type AgySessionEvent } from "./AgySession.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);

@@ -280,6 +280,7 @@ jobs:
             apps/server/src/provider/antigravityRelease.ts \
             apps/server/src/provider/antigravityAuthSupport.ts \
             apps/server/src/provider/acp \
+            apps/server/src/scient/skills/antigravityPluginSkillProjection.ts \
             apps/server/scripts/qualify-antigravity-acp-catalog.ts \
             apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
             apps/server/package.json \
