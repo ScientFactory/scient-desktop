@@ -44,8 +44,12 @@ const projected = (item: OrchestrationV2TurnItem): OrchestrationV2ProjectedTurnI
   sourceItemId: item.id,
   item,
 });
-const child = (id: string, second: number): OrchestrationV2TurnItem => ({
-  ...base(id, second),
+const child = (
+  id: string,
+  second: number,
+  turnId: ProviderTurnId | null = providerTurnId,
+): OrchestrationV2TurnItem => ({
+  ...base(id, second, turnId),
   status: "running",
   type: "subagent",
   subagentId: NodeId.make(id),
@@ -134,14 +138,13 @@ describe("subagent row groups", () => {
   });
 
   it("keys a turnless spawn by the subagent itself", () => {
-    const turnless = (id: string, second: number): OrchestrationV2TurnItem => ({
-      ...child(id, second),
-      ...base(id, second, null),
-      runId: null,
-    });
+    const turnless = (id: string, second: number): OrchestrationV2ProjectedTurnItem => {
+      const item = child(id, second, null);
+      return projected({ ...item, runId: null } as OrchestrationV2TurnItem);
+    };
     expect(
-      subagentRowGroupKey(projected(turnless("a", 1)), undefined) ===
-        subagentRowGroupKey(projected(turnless("b", 2)), undefined),
+      subagentRowGroupKey(turnless("a", 1), undefined) ===
+        subagentRowGroupKey(turnless("b", 2), undefined),
     ).toBe(false);
     expect(subagentRowGroupKey(projected(command("cmd", 1)), undefined)).toBeNull();
   });
