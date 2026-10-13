@@ -28,7 +28,8 @@ at one pace per label (`--live-activity-duration`) over text resting at 55%
 (`scient/presentation/scient-live-activity.css` refines the upstream live-activity utilities); the
 upstream stepped `live-tool-shine` is no longer applied, and other live rows stay still
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
-answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal`):
+answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal` in
+`scient/presentation/scient-streamed-reveal.css`):
 after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with
 the full tone one line behind, crossing blank space between blocks 5x faster; the answer is
 clipped to its revealed lines, so the follow scroll simply goes to the real end. The live
