@@ -336,6 +336,33 @@ export const ScientLatexInverseSyncResult = Schema.Union([
 ]);
 export type ScientLatexInverseSyncResult = typeof ScientLatexInverseSyncResult.Type;
 
+/** Where each page of one compiled PDF begins in one source file of that build. */
+export const ScientLatexPageAnchorsRequest = Schema.Struct(ScientLatexSyncRevision);
+export type ScientLatexPageAnchorsRequest = typeof ScientLatexPageAnchorsRequest.Type;
+
+export const ScientLatexPageAnchorsResult = Schema.Union([
+  Schema.TaggedStruct("found", {
+    pageCount: PositiveLine,
+    /** Where each page's first typeset material comes from, in a workspace source of this build. */
+    anchors: Schema.Array(
+      Schema.Struct({
+        page: PositiveLine,
+        relativePath: PathString,
+        line: PositiveLine,
+        column: Schema.NullOr(NonNegativeColumn),
+      }),
+    ),
+    /**
+     * Every workspace source the build compiled, with the revision it
+     * compiled. An editor applies the anchors only while each of its files
+     * holds exactly that revision.
+     */
+    sourceRevisions: Schema.Record(PathString, Schema.NonEmptyString),
+  }),
+  ScientLatexSyncUnavailable,
+]);
+export type ScientLatexPageAnchorsResult = typeof ScientLatexPageAnchorsResult.Type;
+
 export const ScientLatexToolchainRequest = Schema.Struct({
   refresh: Schema.Boolean,
 });

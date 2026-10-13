@@ -68,6 +68,8 @@ import {
   ScientLatexForwardSyncResult,
   ScientLatexInverseSyncRequest,
   ScientLatexInverseSyncResult,
+  ScientLatexPageAnchorsRequest,
+  ScientLatexPageAnchorsResult,
   ScientLatexManagedInstallState,
   ScientLatexResolveRequest,
   ScientLatexResolveResult,
@@ -446,6 +448,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientLatexInverseSyncRequest,
         success: ScientLatexInverseSyncResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("pageAnchors", "/api/scient/latex/synctex/pages", {
+        headers: OptionalBearerHeaders,
+        payload: ScientLatexPageAnchorsRequest,
+        success: ScientLatexPageAnchorsResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

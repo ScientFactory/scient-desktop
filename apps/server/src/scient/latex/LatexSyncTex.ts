@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- SyncTeX indexes are gzip files read once per build.
+import * as NodeZlib from "node:zlib";
+
 import {
   ArtifactAuthority,
   type ArtifactId,
@@ -8,12 +11,15 @@ import type {
   ScientLatexForwardSyncResult,
   ScientLatexInverseSyncRequest,
   ScientLatexInverseSyncResult,
+  ScientLatexPageAnchorsRequest,
+  ScientLatexPageAnchorsResult,
   ScientLatexSyncUnavailable,
   ScientLatexSyncUnavailableReason,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -61,6 +67,40 @@ interface PublishedSyncTexInput {
 
 const NAVIGATION_TIMEOUT = "10 seconds";
 const NAVIGATION_MAX_OUTPUT_BYTES = 256 * 1024;
+/** Where a page's first body line is asked for, in PDF points from the top left. */
+const PAGE_ANCHOR_POINT = { x: 300, y: 110 } as const;
+const PAGE_ANCHOR_CONCURRENCY = 4;
+const PAGE_ANCHOR_MAX_PAGES = 2000;
+/** A decompressed SyncTeX index larger than this is not read for page anchors. */
+const PAGE_ANCHOR_MAX_INDEX_BYTES = 256 * 1024 * 1024;
+const PAGE_ANCHOR_CACHE_SIZE = 16;
+const PAGE_ANCHOR_MAX_SHEET_DIGITS = 12;
+/** A whole batch ends within this, below the client's ten-minute deadline. */
+const PAGE_ANCHOR_BUDGET = "8 minutes";
+
+/** Bytes scanned between yields, so a long index never holds the server. */
+const PAGE_ANCHOR_SCAN_CHUNK = 4 * 1024 * 1024;
+
+/** Counts lines of the form `{<digits>` starting in `[from, to)`, without decoding. */
+function countSheets(index: Uint8Array, from: number, to: number): number {
+  let count = 0;
+  for (let at = from; at < to; at++) {
+    if (index[at] !== 0x7b || (at > 0 && index[at - 1] !== 0x0a)) continue;
+    let end = at + 1;
+    // A sheet number has at most a few digits; a malformed record never
+    // carries the scan past its chunk.
+    while (
+      end < index.length &&
+      end - at <= PAGE_ANCHOR_MAX_SHEET_DIGITS &&
+      index[end]! >= 0x30 &&
+      index[end]! <= 0x39
+    )
+      end++;
+    if (end > at + 1 && (end === index.length || index[end] === 0x0a || index[end] === 0x0d))
+      count++;
+  }
+  return count;
+}
 
 const unavailable = (
   reason: ScientLatexSyncUnavailableReason,
@@ -87,6 +127,9 @@ export class LatexSyncTex extends Context.Service<
     readonly inverse: (
       input: ScientLatexInverseSyncRequest,
     ) => Effect.Effect<ScientLatexInverseSyncResult>;
+    readonly pageAnchors: (
+      input: ScientLatexPageAnchorsRequest,
+    ) => Effect.Effect<ScientLatexPageAnchorsResult>;
   }
 >()("t3/scient/latex/LatexSyncTex") {}
 
@@ -565,7 +608,174 @@ export const make = Effect.gen(function* () {
       return unavailable("position-unmapped", "No source line is mapped to this PDF position.");
     });
 
-  return LatexSyncTex.of({ publishIndex, forward, inverse });
+  /** One sheet record (`{n` at the start of a line) per page of the compiled output. */
+  const indexPageCount = (navigation: AvailableNavigation) =>
+    Effect.gen(function* () {
+      const stem = navigation.metadata.outputFileName.replace(/\.pdf$/iu, "");
+      for (const name of [`${stem}.synctex.gz`, `${stem}.synctex`]) {
+        const file = path.join(navigation.directory, name);
+        const info = yield* fileSystem.stat(file).pipe(Effect.option);
+        if (Option.isNone(info)) continue;
+        // Either form is bounded before it is read.
+        if (Number(info.value.size) > PAGE_ANCHOR_MAX_INDEX_BYTES) return 0;
+        const bytes = yield* fileSystem.readFile(file).pipe(Effect.option);
+        if (Option.isNone(bytes)) continue;
+        // Decompressed off the event loop, with a bound on its size.
+        const index = name.endsWith(".gz")
+          ? yield* Effect.tryPromise(
+              () =>
+                new Promise<Uint8Array>((resolve, reject) =>
+                  NodeZlib.gunzip(
+                    bytes.value,
+                    { maxOutputLength: PAGE_ANCHOR_MAX_INDEX_BYTES },
+                    (error, result) => (error ? reject(error) : resolve(result)),
+                  ),
+                ),
+            ).pipe(Effect.option)
+          : Option.some(bytes.value);
+        if (Option.isNone(index)) return 0;
+        let count = 0;
+        for (let from = 0; from < index.value.length; from += PAGE_ANCHOR_SCAN_CHUNK) {
+          count += countSheets(
+            index.value,
+            from,
+            Math.min(index.value.length, from + PAGE_ANCHOR_SCAN_CHUNK),
+          );
+          yield* Effect.yieldNow;
+        }
+        return count;
+      }
+      return 0;
+    });
+
+  // Anchors of a build never change; requests repeat when the editor reopens.
+  const anchorCache = new Map<string, ScientLatexPageAnchorsResult>();
+  // One batch per build at a time; every request for it awaits the same answer.
+  const anchorBatches = new Map<string, Deferred.Deferred<ScientLatexPageAnchorsResult>>();
+
+  /** Queries every page of a build whose sources were just validated. */
+  const queryPageAnchors = (
+    input: ScientLatexPageAnchorsRequest,
+    navigation: AvailableNavigation,
+  ): Effect.Effect<ScientLatexPageAnchorsResult> =>
+    Effect.gen(function* () {
+      const resolvedRuntime = yield* resolveNavigator;
+      if (resolvedRuntime._tag === "unavailable") return resolvedRuntime;
+      const pageCount = yield* indexPageCount(navigation);
+      if (pageCount === 0)
+        return unavailable("index-invalid", "This PDF's navigation index has no pages.");
+      const canonicalWorkspace = yield* fileSystem
+        .realPath(input.workspaceRoot)
+        .pipe(Effect.orElseSucceed(() => path.resolve(input.workspaceRoot)));
+      const revisions = navigation.receipt.sourceRevisions ?? {};
+      // Every page counts; only the first pages are located.
+      const pages = Array.from(
+        { length: Math.min(pageCount, PAGE_ANCHOR_MAX_PAGES) },
+        (_, index) => index + 1,
+      );
+      const results = yield* Effect.forEach(
+        pages,
+        (page) =>
+          Effect.gen(function* () {
+            const result = yield* runNavigation({
+              ...navigation,
+              command: resolvedRuntime.command,
+              args: [
+                "edit",
+                "-o",
+                `${page}:${PAGE_ANCHOR_POINT.x}:${PAGE_ANCHOR_POINT.y}:${navigation.outputPath}`,
+                "-d",
+                navigation.directory,
+              ],
+            });
+            if (Option.isNone(result) || result.value.timedOut || result.value.code !== 0)
+              return "failed" as const;
+            for (const location of parseSyncTexInverseLocations(
+              `${result.value.stdout}\n${result.value.stderr}`,
+            )) {
+              const absoluteInput = path.isAbsolute(location.input)
+                ? path.resolve(location.input)
+                : path.resolve(navigation.metadata.compileDirectory, location.input);
+              const canonicalInput = yield* fileSystem
+                .realPath(absoluteInput)
+                .pipe(Effect.orElseSucceed(() => absoluteInput));
+              const relativePath = normalizeRelativePath(
+                path.relative(canonicalWorkspace, canonicalInput),
+              );
+              if (revisions[relativePath] === undefined) return null;
+              return { page, relativePath, line: location.line, column: location.column };
+            }
+            return null;
+          }),
+        { concurrency: PAGE_ANCHOR_CONCURRENCY },
+      );
+      if (results.includes("failed"))
+        return unavailable("navigator-failed", "Page positions could not be read from this PDF.");
+      return {
+        _tag: "found",
+        pageCount,
+        anchors: results.filter((anchor) => anchor !== null && anchor !== "failed"),
+        sourceRevisions: revisions,
+      } satisfies ScientLatexPageAnchorsResult;
+    });
+
+  /**
+   * Where each page of this build begins: the source file and line SyncTeX
+   * maps near the top of each page's text, for every workspace source the
+   * build compiled. Pages beginning with material from outside the workspace
+   * are omitted. Navigation hints for Visual, not a reproduction of TeX's page
+   * breaking.
+   *
+   * The batch runs once per build, detached from the requests that wait for
+   * it: a request that goes away does not cancel the others, and the answer is
+   * kept for the next one. It is bounded by an overall budget.
+   */
+  const pageAnchors = (
+    input: ScientLatexPageAnchorsRequest,
+  ): Effect.Effect<ScientLatexPageAnchorsResult> =>
+    Effect.gen(function* () {
+      const navigation = yield* loadNavigation(input);
+      if (navigation._tag === "unavailable") return navigation;
+      const beforeQuery = yield* validateSources(input.workspaceRoot, navigation.receipt);
+      if (beforeQuery !== null) return beforeQuery;
+      const key = [input.workspaceRoot, input.artifactId, input.revisionId].join("\u0000");
+      const cached = anchorCache.get(key);
+      if (cached) return cached;
+      let batch = anchorBatches.get(key);
+      if (!batch) {
+        const started = yield* Deferred.make<ScientLatexPageAnchorsResult>();
+        batch = started;
+        anchorBatches.set(key, started);
+        yield* queryPageAnchors(input, navigation).pipe(
+          Effect.timeoutOption(PAGE_ANCHOR_BUDGET),
+          Effect.map(
+            Option.getOrElse(() =>
+              unavailable("query-timed-out", "Reading this PDF's pages took too long."),
+            ),
+          ),
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              if (result._tag !== "found") return;
+              anchorCache.delete(key);
+              anchorCache.set(key, result);
+              if (anchorCache.size > PAGE_ANCHOR_CACHE_SIZE)
+                anchorCache.delete(anchorCache.keys().next().value!);
+            }),
+          ),
+          Effect.exit,
+          Effect.flatMap((exit) => Deferred.done(started, exit)),
+          Effect.ensuring(Effect.sync(() => anchorBatches.delete(key))),
+          Effect.forkDetach,
+        );
+      }
+      const result = yield* Deferred.await(batch);
+      if (result._tag !== "found") return result;
+      // The build may have been replaced while its pages were read.
+      const current = yield* loadNavigation(input);
+      return current._tag === "unavailable" ? current : result;
+    });
+
+  return LatexSyncTex.of({ publishIndex, forward, inverse, pageAnchors });
 });
 
 export const layer = Layer.effect(LatexSyncTex, make).pipe(

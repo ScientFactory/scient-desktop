@@ -93,6 +93,7 @@ const syncTexLayer = Layer.succeed(
     publishIndex: () => Effect.void,
     forward: () => Effect.die("unused forward SyncTeX lookup"),
     inverse: () => Effect.die("unused inverse SyncTeX lookup"),
+    pageAnchors: () => Effect.die("unused SyncTeX page anchors"),
   }),
 );
 

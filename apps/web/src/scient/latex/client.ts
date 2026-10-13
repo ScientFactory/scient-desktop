@@ -4,6 +4,7 @@ import {
   getEnvironmentLatexForwardSync,
   getEnvironmentLatexInstallToolchain,
   getEnvironmentLatexInverseSync,
+  getEnvironmentLatexPageAnchors,
   getEnvironmentLatexResolution,
   getEnvironmentLatexStatus,
   getEnvironmentLatexToolchain,
@@ -12,6 +13,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type {
   ScientLatexForwardSyncRequest,
   ScientLatexInverseSyncRequest,
+  ScientLatexPageAnchorsRequest,
   ScientLatexResolveRequest,
 } from "@t3tools/contracts";
 
@@ -72,6 +74,19 @@ export function requestLatexInverseSync(
 ) {
   return runtime.runPromise(
     getEnvironmentLatexInverseSync({ prepared: prepared(environmentId), request }),
+  );
+}
+
+/** Where the pages of one compiled PDF begin in one of its sources. */
+/** One SyncTeX query per page; `signal` stops it when the answer is no longer wanted. */
+export function requestLatexPageAnchors(
+  environmentId: EnvironmentId,
+  request: ScientLatexPageAnchorsRequest,
+  signal?: AbortSignal,
+) {
+  return runtime.runPromise(
+    getEnvironmentLatexPageAnchors({ prepared: prepared(environmentId), request }),
+    signal ? { signal } : undefined,
   );
 }
 

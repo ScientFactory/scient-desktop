@@ -6,6 +6,7 @@ import type {
   ScientLatexCancelRequest,
   ScientLatexForwardSyncRequest,
   ScientLatexInverseSyncRequest,
+  ScientLatexPageAnchorsRequest,
   ScientLatexResolveRequest,
   ScientLatexStatusRequest,
   ScientLatexToolchainRequest,
@@ -25,6 +26,7 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 const REQUEST_TIMEOUT_MS = 15_000;
 /** A cold toolchain probe shells out to the engine, which can be slow on first run. */
 const TOOLCHAIN_TIMEOUT_MS = 30_000;
+const PAGE_ANCHORS_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_UPLOAD_TIMEOUT_MS = 120_000;
 
 /** Artwork waits for its isolated compile; ordinary document builds still poll. */
@@ -225,6 +227,33 @@ export const getEnvironmentLatexInverseSync = Effect.fn(
     group: "scientLatex",
     request: ({ client, headers }) =>
       client.inverseSync({
+        headers,
+        payload: input.request,
+      }),
+  });
+});
+
+export const getEnvironmentLatexPageAnchors = Effect.fn(
+  "clientRuntime.state.getEnvironmentLatexPageAnchors",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientLatexPageAnchorsRequest;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.pageAnchors(),
+    // One SyncTeX query per page (four at a time, each bounded by the server);
+    // a long document needs minutes, not a lookup's deadline. The server keeps
+    // the answer per build, so it is computed once.
+    timeoutMs: PAGE_ANCHORS_TIMEOUT_MS,
+    group: "scientLatex",
+    request: ({ client, headers }) =>
+      client.pageAnchors({
         headers,
         payload: input.request,
       }),

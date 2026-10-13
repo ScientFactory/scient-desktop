@@ -137,6 +137,14 @@ export const scientLatexHttpApiLayer = HttpApiBuilder.group(
           syncTex.inverse(args.payload),
         ),
       )
+      .handle("pageAnchors", (args) =>
+        handle(
+          args.endpoint.name,
+          AuthOrchestrationReadScope,
+          "scient_latex_navigation_failed",
+          syncTex.pageAnchors(args.payload),
+        ),
+      )
       .handle("toolchain", (args) =>
         handle(
           args.endpoint.name,

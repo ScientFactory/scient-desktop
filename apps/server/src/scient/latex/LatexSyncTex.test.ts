@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The navigation boundary is filesystem-backed.
 import * as NodeCrypto from "node:crypto";
+import * as NodeZlib from "node:zlib";
 import { ArtifactId, ArtifactRevisionId } from "@scientfactory/document-artifacts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -339,6 +340,79 @@ describe("LatexSyncTex", () => {
         "-d",
         expect.stringMatching(/revision-latex-synctex-first$/u),
       ]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("maps each page of the build to the source file and line it begins in", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* harness.publish(firstRevisionId);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // A three-page index: one sheet record per page.
+      yield* fileSystem.writeFile(
+        path.join(
+          harness.navigationDirectory(firstRevisionId),
+          "main-revision-latex-synctex-first.synctex.gz",
+        ),
+        NodeZlib.gzipSync("SyncTeX Version:1\n{1\n}1\n{2\n}2\n{3\n}3\n"),
+      );
+      const request = {
+        workspaceRoot: harness.workspaceRoot,
+        rootRelativePath: "main.tex",
+        artifactId,
+        revisionId: firstRevisionId,
+      };
+      const service = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+      expect(yield* service.pageAnchors(request)).toEqual({
+        _tag: "found",
+        pageCount: 3,
+        anchors: [1, 2, 3].map((page) => ({
+          page,
+          relativePath: "chapters/body.tex",
+          line: 17,
+          column: 4,
+        })),
+        sourceRevisions: { "main.tex": rootRevision, "chapters/body.tex": sourceRevision },
+      });
+      const invocations = yield* Ref.get(harness.invocations);
+      expect(invocations.map((invocation) => invocation.args[2])).toEqual(
+        [1, 2, 3].map((page) =>
+          expect.stringMatching(new RegExp(`^${page}:300:110:.*first\\.pdf$`, "u")),
+        ),
+      );
+
+      // Requests that arrive together share one batch.
+      yield* Ref.set(harness.invocations, []);
+      const together = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+      const [first, second] = yield* Effect.all(
+        [together.pageAnchors(request), together.pageAnchors(request)],
+        { concurrency: 2 },
+      );
+      expect(first).toEqual(second);
+      expect(yield* Ref.get(harness.invocations)).toHaveLength(3);
+
+      // A build's anchors never change: asking again runs no queries.
+      yield* Ref.set(harness.invocations, []);
+      expect(yield* service.pageAnchors(request)).toMatchObject({ _tag: "found" });
+      expect(yield* Ref.get(harness.invocations)).toEqual([]);
+
+      // Pages beginning in another workspace file carry that file and the
+      // revision the build compiled.
+      yield* Ref.set(harness.inverseInputPath, path.join(harness.workspaceRoot, "main.tex"));
+      const fresh = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+      expect(yield* fresh.pageAnchors(request)).toMatchObject({
+        _tag: "found",
+        anchors: [1, 2, 3].map((page) => ({ page, relativePath: "main.tex" })),
+      });
+
+      // A failed query never reads as a document without anchors.
+      yield* Ref.set(harness.navigationOutput, "spawn-error");
+      const failing = yield* LatexSyncTex.pipe(Effect.provide(harness.serviceLayer));
+      expect(yield* failing.pageAnchors(request)).toMatchObject({
+        _tag: "unavailable",
+        reason: "navigator-failed",
+      });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
