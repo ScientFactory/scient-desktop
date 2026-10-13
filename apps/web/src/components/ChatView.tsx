@@ -236,7 +236,7 @@ import {
 // SCIENT-FORK:START — the send follow, its working row and the draft composer's motion.
 import { useQueuedDeliveryFollow, useResponseFollow } from "./chat/responseFollow";
 import { useDraftHeroMotion } from "./chat/timelineEntranceMotion";
-import { useTimelineWorking } from "./chat/timelineWorkingState";
+import { isOnlySendBusy, useTimelineWorking } from "./chat/timelineWorkingState";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — fork command, baseline, dialog wiring and landing.
 import {
@@ -4001,19 +4001,21 @@ function ChatViewContent(props: ChatViewProps) {
   // while its run starts (chat/timelineWorkingState.ts).
   const timelineWorking = useTimelineWorking({
     threadWorking: isWorking,
-    onlySendBusy:
-      isSendBusy &&
-      phase !== "running" &&
-      !isConnecting &&
-      !isCompacting &&
-      !awaitingBootstrapTurn &&
-      !isForkingThread &&
-      !isRevertingCheckpoint &&
-      !isPreparingWorktree,
+    onlySendBusy: isOnlySendBusy({
+      isSendBusy,
+      phase,
+      isConnecting,
+      isCompacting,
+      awaitingBootstrapTurn,
+      isForkingThread,
+      isRevertingCheckpoint,
+      isPreparingWorktree,
+    }),
     dispatchBaselineUserMessageId: localDispatchLatestUserMessageId,
     projection: serverProjection,
     optimisticMessages: optimisticUserMessages,
-  }); // SCIENT-FORK:END
+  });
+  // SCIENT-FORK:END
   // Server-side workspace preparation: unlike the local-dispatch flag this
   // survives reloads and shows on remote viewers of the same thread.
   useEffect(() => {
