@@ -298,7 +298,6 @@ function remarkKeepWindowsPathDestinations(this: Processor) {
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }
-
 // SCIENT-FORK:START — document/chat profiles share the canonical Windows destination owner;
 // Scient's chat pipeline (apps/web/src/scient/markdown/scientMarkdownPipeline.ts) extends the
 // image metadata pass and the sanitizer schema.
