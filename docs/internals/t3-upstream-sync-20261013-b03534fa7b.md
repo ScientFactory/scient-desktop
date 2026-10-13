@@ -2,11 +2,13 @@
 
 ## Exact boundaries and qualification status
 
-This is an interim review receipt. The history-preserving integration and
-complete local aggregate exist; native mobile acceptance and final app review
-remain incomplete. `upstream-state.json` and the current `UPSTREAM.md` pointer
-remain at the previous qualified official boundary. No merge or release is
-authorized by this receipt.
+This is an interim review receipt. The history-preserving integration, prior
+complete local aggregate and automated mobile native qualification exist.
+Yaacov accepted the desktop candidate and explicitly deferred mobile visual
+review. Final owned-main catch-up and qualification of that composition remain
+pending. `upstream-state.json` and the current `UPSTREAM.md` pointer remain at
+the previous qualified official boundary. User-authorized MERGE delivery still
+requires the final gates; release remains separate.
 
 - Original owned base: `43779ee83b358cb929e32cafa1a3e53f7eb147cd`.
 - Previous official integration: `f23d0084b6e023ffb1af9e332d8666affc99d542`.
@@ -151,7 +153,7 @@ complete run passed; this is not a claim of a permanent framework fix.
 
 ## App review and remaining gates
 
-The exact candidate runs in an isolated macOS Electron app with a distinct
+The reviewed candidate ran in an isolated macOS Electron app with a distinct
 bundle ID, ports and fresh synthetic profile. The authenticated native
 `scient-next-dev://app/` window, actual bundled backend and listener ancestry
 were verified. Scient is first in onboarding; a fresh managed Scient Agent 0.1.0
@@ -161,28 +163,50 @@ and Vega-Lite were inspected. Actual source edits survive save, Reload without
 Cmd-S, and a return to rendered mode; byte comparisons preserve all original
 source bytes. The ordinary Tectonic path compiled a two-page LaTeX fixture; native
 page navigation and page two at 60% zoom survived renderer reload in the PDF
-layout. This is automated interaction review, not Yaacov's visual acceptance.
+layout. Yaacov subsequently accepted the desktop alignment and requested its
+shutdown. The owning service, captured processes and ports were verified stopped;
+stable and unrelated apps, candidate state and worktrees were preserved.
 
-A controlled loopback model exercises the actual Scient Agent process and native
-app. Stop closes a streaming client connection and retains queued work; explicit
-Resume starts a new request. Completed fixed responses still leave the visible
-thread working, so queue consumption/return-to-idle remain under investigation.
-The actual native `agent_end` explicitly reports both `isTerminal=false` and
-`yielded=false`, without a terminal prompt result. The bridge retained that
-authority correctly. The involved adapter/runtime source is unchanged from
-owned main; the reason the native runtime chose continuation still needs
-investigation. This does not authorize treating nonterminal native signals as
-completion. A local
-model fixture initially returned Markdown where the title service requires JSON;
-that diagnostic fixture was corrected outside product code, after which the
-actual Scient connection-test RPC succeeded.
+A controlled loopback model exercised the actual Scient Agent process and native
+app. Stop closed a streaming connection and retained queued work; explicit Resume
+started a new request. The initial small-context fixture triggered native
+post-turn compaction and explicitly nonterminal signals. After changing only the
+synthetic model context window, two actual prompt results reported completed and
+session-settled, with terminal/yield flags true; the queue drained and the UI
+returned idle. The bounded bridge/adapter owners are byte-identical to owned
+main. No terminal authority was overridden. The low-context native edge remains
+recorded; this is neither authenticated model-quality nor universal provider
+qualification. The title fixture's required JSON response was repaired outside
+product code.
 
-Native mobile verification is blocked: the managed device host lacks its
-required AgentDevice version and does not recognize the owned simulator; Android
-is unavailable. The mobile skill requires stopping verification when its tools
-or selected device are unavailable. No foreign device, alternate automation
-system or native-build success is substituted. The six new native selection
-tests and physical iOS/Android copy/selection behavior remain unexecuted.
+Automated mobile qualification used the normal managed device tooling, an owned
+iOS 26.5 simulator, Xcode/SDK 27.0 with Swift 6.4, Java 21 and the Android SDK.
+The iOS app build initially failed because compiler version alone enabled
+SDK 27.1 UIKit hinge APIs. A pod-target SDK condition now composes with both
+existing compiler guards; runtime availability, hinge capability and metrics
+bodies remain unchanged. Podspec metadata probes cover SDK 26.5/27.0 excluded
+and 27.1/28.0 enabled. The actual SDK 27.0 app build/install passed in 275.424 s;
+a newer-SDK build is not claimed. Regenerate Pods after changing selected Xcode.
+
+The existing native clipboard test specification now declares its required C++
+runtime. Its HTML fixture reads through UIKit's typed data API and asserts both
+payload and decoded HTML are present before retaining the context-exclusion
+assertion. Production pasteboard code and the original pinned archive are
+unchanged. Exact patch identities remain pinned in the lockfile and build-script
+allowlist; no allowlist widening. Four actual Objective-C XCTest cases passed,
+zero skips, in a 70.887-second build/test command, corroborated by the result
+bundle. Six production Kotlin clipboard cases passed, zero skips, on the pinned
+Robolectric Android 35 runtime in a 79.455-second command. The arm64 development
+APK built in 398.722 s. These are separate measured commands, not cold-suite
+speedup or physical Android gesture proof. The owned iOS simulator was shut down;
+Android was not booted. Mobile visual/gesture review is explicitly deferred by
+Yaacov; device profiles and existing apps remain preserved.
+
+Earlier unavailable-tool, failed build/link/reader and disk-full Android attempts
+remain retained. The failed native reader run completed all four cases before
+its idle finalizer was interrupted through the exact owned executor. Only task-
+owned completed generated outputs/download caches were removed for disk space;
+source, receipts/results, shared caches, SDKs and profiles were preserved.
 
 Local KDE tests compile but five pass and six fail because `dbus-daemon` is absent
 on this macOS host; Hyprland tests were not run. These native crate inputs are
@@ -190,11 +214,13 @@ byte-identical to owned main. Completed Linux CI at that exact main qualifies
 those unchanged Linux inputs only; it does not establish candidate CI or macOS
 D-Bus support.
 
-Final review must resolve the provider completion finding and applicable mobile
-qualification gap, refresh current main, record exact hosted PR-head checks and
-obtain user visual acceptance. Queue admission, auto-merge, actual MERGE delivery,
-public-main ancestry and release are separate milestones. No cursor advance,
-merge, release, app cleanup or qualification-policy exception has occurred.
+Final review must compose actually landed owned main, qualify and review that
+exact composition, and record final hosted PR-head and merge-group checks.
+Desktop acceptance applies to the reviewed runtime; assess later deltas before
+reusing it. Mobile visual review remains explicitly deferred. Queue admission,
+actual MERGE delivery, public-main ancestry and release are separate milestones.
+No cursor advance or alignment merge has occurred; the requested development
+app shutdown is complete. No broader qualification-policy change was adopted.
 
 ## Alignment improvement evidence
 
@@ -221,3 +247,11 @@ Detailed local evidence is retained under the workspace review directory
 `native-document-save-reload.json` and `native-stop-queue-before-resume.json`.
 These references preserve limits without copying transcripts or provider history
 into the product repository.
+
+Mobile completion and current delivery evidence is retained in
+`reviews/pr-merge-readiness-20261013`: `mobile-sdk-correction-review.json`,
+`mobile-ios-native-ensure-02.json`, `mobile-ios-clipboard-04.json`,
+`mobile-ios-clipboard-04-xcresult-summary.json`,
+`mobile-android-clipboard-02-xml-summary.json`,
+`mobile-android-app-build-artifact.json` and `alignment-app-stop.json`.
+The existing native settlement review owns the fixture diagnosis and its limits.

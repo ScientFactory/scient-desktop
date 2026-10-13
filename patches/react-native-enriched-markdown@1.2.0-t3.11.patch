@@ -1,14 +1,15 @@
 diff --git a/ReactNativeEnrichedMarkdown.podspec b/ReactNativeEnrichedMarkdown.podspec
-index b164049..1da4eca 100644
+index b164049..39d7892 100644
 --- a/ReactNativeEnrichedMarkdown.podspec
 +++ b/ReactNativeEnrichedMarkdown.podspec
-@@ -146,5 +146,11 @@ Pod::Spec.new do |s|
+@@ -146,5 +146,12 @@ Pod::Spec.new do |s|
    # spm_dependency-generated duplicate RaTeXFFI modulemap to strip, and only one
    # signature is collected during archive assembly, so nothing collides.
  
 +  # SCIENT-FORK:START — native default-Copy parity uses the production pasteboard path.
 +  s.test_spec 'ScientClipboard' do |test|
 +    test.ios.source_files = 'tests/ios/CanonicalClipboardTests.m'
++    test.libraries = 'c++'
 +    test.requires_app_host = true
 +  end
 +  # SCIENT-FORK:END
@@ -607,10 +608,10 @@ index 0000000..f27f039
 +}
 diff --git a/repair/package/tests/ios/CanonicalClipboardTests.m b/tests/ios/CanonicalClipboardTests.m
 new file mode 100644
-index 0000000..24b6510
+index 0000000..a8415a2
 --- /dev/null
 +++ b/tests/ios/CanonicalClipboardTests.m
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,77 @@
 +#import <XCTest/XCTest.h>
 +#import <UIKit/UIPasteboard.h>
 +#import "PasteboardUtils.h"
@@ -666,8 +667,11 @@ index 0000000..24b6510
 +    [other addAttribute:ENRMCanonicalClipboardAttributeName value:@{@"text": value, @"index": @0} range:NSMakeRange(0, value.length)];
 +    copyAttributedStringToPasteboard(other, nil, config);
 +    XCTAssertNil(UIPasteboard.generalPasteboard.items[0][@"app.t3.context-fragment"]);
-+    NSData *html = UIPasteboard.generalPasteboard.items[0][kUTIHTML];
-+    XCTAssertFalse([[[NSString alloc] initWithData:html encoding:NSUTF8StringEncoding] containsString:@"data-t3-context-fragment"]);
++    NSData *html = [UIPasteboard.generalPasteboard dataForPasteboardType:kUTIHTML];
++    XCTAssertNotNil(html);
++    NSString *htmlText = [[NSString alloc] initWithData:html encoding:NSUTF8StringEncoding];
++    XCTAssertNotNil(htmlText);
++    XCTAssertFalse([htmlText containsString:@"data-t3-context-fragment"]);
 +  }
 +}
 +- (void)testRecognizedFilePartialCopyAndUnknownVersionRefusal
