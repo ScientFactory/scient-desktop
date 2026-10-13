@@ -66,6 +66,7 @@ import {
   makeOwnedRunFinalizer,
   makeRunEventSubscriptionLifetime,
   ownedFailedStartReceipt,
+  retryLostRunFinalWrite,
 } from "./scient-fork/RunExecutionFinalization.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the live root's side of a running fork's text snapshot.
@@ -1647,6 +1648,9 @@ export const layer: Layer.Layer<
                                 ),
                               ),
                             ),
+                            // SCIENT-FORK:START — keep trying: nothing else ends this run.
+                            retryLostRunFinalWrite(input.run.id),
+                            // SCIENT-FORK:END
                           ),
                     ),
                     Effect.mapError(

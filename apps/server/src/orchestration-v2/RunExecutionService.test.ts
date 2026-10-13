@@ -4024,6 +4024,29 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
   }),
 );
 
+it.live("keeps writing a broken run's failed end until it saves, as when the disk is full", () =>
+  Effect.gen(function* () {
+    const { observed, written } = yield* captureRootRunTermination({
+      key: "lost-stream:final-write-retry",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      failFinalWrites: 2,
+      events: () =>
+        Stream.fail(
+          new ProviderAdapter.ProviderAdapterEventStreamError({
+            driver,
+            providerSessionId: ProviderSessionId.make("session:disk-full"),
+            cause: "database or disk is full",
+          }),
+        ),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.deepEqual(
+      written.map((item) => item.type),
+      ["error"],
+    );
+  }),
+);
+
 it.effect("refreshes pull requests only once when startup failure closes its event stream", () =>
   Effect.gen(function* () {
     const ingestionStarted = yield* Deferred.make<void>();
@@ -4617,6 +4640,8 @@ function captureRootRunTermination(input: {
     ids: BackgroundScenarioIds,
   ) => ProviderEventIngestor.ProviderEventIngestorV2Shape["ingestNormalized"];
   readonly declineFinalWrite?: boolean;
+  /** The first final writes fail, as on a full disk. */
+  readonly failFinalWrites?: number;
   readonly attemptProviderTurnAbsent?: boolean;
   readonly awaitSubscriptionClose?: boolean;
   readonly observeLifecycle?: (phase: string) => void;
@@ -4641,6 +4666,7 @@ function captureRootRunTermination(input: {
       ReadonlyArray<{ activeAttemptId: RunAttemptId; expectedStatus: OrchestrationV2Run["status"] }>
     >([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
+    const failedFinalWrites = yield* Ref.make(0);
     const ingestionDone = yield* Deferred.make<void>();
     const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
       Ref.update(writtenItems, (current) => [...current, payload]);
@@ -4667,31 +4693,45 @@ function captureRootRunTermination(input: {
             write: (payload) => captureEvents(payload.events),
             writeWithEffects: (payload) => captureEvents(payload.events),
             writeIfRunCurrent: (payload) =>
-              Ref.update(finalWriteGuards, (current) => [
-                ...current,
-                {
-                  activeAttemptId: payload.activeAttemptId,
-                  expectedStatus: payload.expectedStatus,
-                },
-              ]).pipe(
-                Effect.andThen(
-                  Ref.update(submittedEffects, (current) => [
-                    ...current,
-                    ...(payload.effects ?? []),
-                  ]),
+              Ref.getAndUpdate(failedFinalWrites, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  count < (input.failFinalWrites ?? 0)
+                    ? Effect.fail(
+                        new EventSink.EventSinkWriteError({
+                          eventCount: payload.events.length,
+                          cause: new Error("database or disk is full"),
+                        }),
+                      )
+                    : Effect.void,
                 ),
                 Effect.andThen(
-                  input.declineFinalWrite
-                    ? Effect.succeed({ committed: false, storedEvents: [] })
-                    : captureEvents(payload.events).pipe(
-                        Effect.tap(() =>
-                          Ref.update(committedEffects, (current) => [
-                            ...current,
-                            ...(payload.effects ?? []),
-                          ]),
-                        ),
-                        Effect.map((storedEvents) => ({ committed: true, storedEvents })),
-                      ),
+                  Ref.update(finalWriteGuards, (current) => [
+                    ...current,
+                    {
+                      activeAttemptId: payload.activeAttemptId,
+                      expectedStatus: payload.expectedStatus,
+                    },
+                  ]).pipe(
+                    Effect.andThen(
+                      Ref.update(submittedEffects, (current) => [
+                        ...current,
+                        ...(payload.effects ?? []),
+                      ]),
+                    ),
+                    Effect.andThen(
+                      input.declineFinalWrite
+                        ? Effect.succeed({ committed: false, storedEvents: [] })
+                        : captureEvents(payload.events).pipe(
+                            Effect.tap(() =>
+                              Ref.update(committedEffects, (current) => [
+                                ...current,
+                                ...(payload.effects ?? []),
+                              ]),
+                            ),
+                            Effect.map((storedEvents) => ({ committed: true, storedEvents })),
+                          ),
+                    ),
+                  ),
                 ),
               ),
           }),
