@@ -11,7 +11,7 @@ const ProjectPath = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isNonEmpty(),
   Schema.isMaxLength(1_024),
-  Schema.isPattern(/^[^\0]+$/u),
+  Schema.isPattern(/^[^\x00]+$/u),
 );
 const BoundedText = Schema.String.check(Schema.isMaxLength(2_048));
 export const ScientLatexPdfBuildDiagnostic = Schema.Struct({

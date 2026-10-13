@@ -16,7 +16,7 @@ export const saveAssetCopy = DesktopIpc.makeIpcMethod({
 const SavedAssetPath = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(4_096),
-  Schema.isPattern(/^[^\0]+$/u),
+  Schema.isPattern(/^[^\x00]+$/u),
 );
 
 export const revealSavedAsset = DesktopIpc.makeIpcMethod({
