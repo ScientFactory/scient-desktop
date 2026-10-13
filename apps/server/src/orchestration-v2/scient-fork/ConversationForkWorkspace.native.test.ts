@@ -584,6 +584,56 @@ it.live("a local fork continues without a restore point when its checkpoint cann
   ),
 );
 
+it.live(
+  "a local fork whose worktree disappears while it is saved works in the project folder",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd } = yield* seed();
+        const fs = yield* FileSystem.FileSystem;
+        const store = yield* ProjectionStoreV2;
+        const sink = yield* EventSinkV2;
+        const worktree = NodePath.join(cwd, "vanishing-worktree");
+        yield* fs.makeDirectory(worktree);
+        const source = yield* store.getThread(sourceId);
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("vanishing-source-worktree"),
+              type: "thread.metadata-updated",
+              threadId: sourceId,
+              occurredAt: now,
+              payload: { ...source, worktreePath: worktree, updatedAt: now },
+            },
+          ],
+        });
+        // Writing the fork's checkpoint ref removes the worktree and fails, once.
+        const hook = NodePath.join(cwd, ".git", "hooks", "reference-transaction");
+        yield* fs.writeFileString(
+          hook,
+          `#!/bin/sh\nif [ "$1" = prepared ]; then rm -rf '${worktree}'; rm -f "$0"; exit 1; fi\nexit 0\n`,
+        );
+        yield* fs.chmod(hook, 0o755);
+        yield* (yield* ConversationForkService).dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("vanishing-local"),
+          originThreadId: sourceId,
+          newThreadId: ThreadId.make("vanishing-local"),
+          sourceAssistantMessageId: MessageId.make("workspace-a1"),
+          workspaceMode: "local",
+        });
+        assert.isFalse(yield* fs.exists(worktree));
+        const target = yield* store.getThread(ThreadId.make("vanishing-local"));
+        assert.equal(target.conversationFork?.status, "ready");
+        assert.equal(target.conversationFork?.cwd, cwd);
+        assert.isNull(target.conversationFork?.checkpointRef);
+        assert.isNull(target.worktreePath);
+        assert.isNull(target.branch);
+      }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
+    ),
+);
+
 it.live("Git failures reach fork clients without workspace paths or Git output", () =>
   Effect.scoped(
     Effect.gen(function* () {

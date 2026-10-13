@@ -244,6 +244,7 @@ const make = Effect.gen(function* () {
       fromCheckpointRef,
       checkpointAvailable,
       inProjectFolder: !originAvailable,
+      projectRoot: project.value.workspaceRoot,
     };
   });
 
@@ -533,6 +534,16 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
+      // The original worktree can also disappear while the fork is set up: a local
+      // fork then works in the project folder too, never in the missing folder.
+      const movedToProjectFolder =
+        command.workspaceMode === "local" &&
+        !inspected.inProjectFolder &&
+        !(yield* baseline.workspaceExists(cwd));
+      if (movedToProjectFolder && !(yield* baseline.workspaceExists(inspected.projectRoot)))
+        return yield* failure("The project folder is unavailable.");
+      const inProjectFolder = inspected.inProjectFolder || movedToProjectFolder;
+      const forkCwd = movedToProjectFolder ? inspected.projectRoot : cwd;
       const now = yield* DateTime.now;
       const nativeSource = freezeConversationForkNativeSource({
         projection,
@@ -585,7 +596,7 @@ const make = Effect.gen(function* () {
               }),
             createdBy: "user",
             creationSource: "web",
-            ...(inspected.inProjectFolder ? { worktreePath: null, branch: null } : {}),
+            ...(inProjectFolder ? { worktreePath: null, branch: null } : {}),
             activeProviderThreadId: null,
             lineage: {
               parentThreadId: projection.thread.id,
@@ -610,7 +621,7 @@ const make = Effect.gen(function* () {
               workspaceMode: command.workspaceMode,
               // History is shared, so only a new worktree still needs setting up.
               status: command.workspaceMode === "new-worktree" ? "pending" : "ready",
-              cwd,
+              cwd: forkCwd,
               checkpointRef,
               checkpointOid,
               // Shared files, recorded so the client keeps their open previews.

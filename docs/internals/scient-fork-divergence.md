@@ -243,10 +243,11 @@ remains: deleting the source leaves files a live fork still shows, and deleting 
 releases them. A file missing from disk does not block a fork; the fork shows what the source
 shows.
 
-A local fork requires its actual workspace directory. If an original worktree
-was removed, an explicitly selected new-worktree fork may resolve the historical
-checkpoint from the owning project repository. It never falls back to another
-workspace for a local request. Provider initialization remains independent of
+A local fork uses the original's workspace directory while it exists. When the original worktree
+was removed, before or during the fork, a local fork works in the project folder instead: the new
+conversation has no worktree path or branch, and the form says so. It never records the missing
+folder. A new-worktree fork may still restore the historical checkpoint from the owning project
+repository. Only a missing project folder refuses. Provider initialization remains independent of
 Git availability for valid non-Git local workspaces.
 
 ## Implementation and protected seams
