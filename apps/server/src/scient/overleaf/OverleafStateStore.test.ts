@@ -370,6 +370,27 @@ describe("OverleafStateStore", () => {
       ),
   );
 
+  it.live("does not return a receipt filed under another request's name", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* temporaryRoot();
+        const { store } = yield* openStore(root);
+        yield* store.beginReceipt(receipt());
+        const directory = NodePath.join(root, "receipts", "connection-1");
+        yield* Effect.promise(() =>
+          NodeFSP.copyFile(
+            NodePath.join(directory, "request-1.json"),
+            NodePath.join(directory, "request-2.json"),
+          ),
+        );
+        const misplaced = yield* Effect.flip(
+          store.beginReceipt(receipt({ requestId: "request-2" })),
+        );
+        expect(misplaced).toMatchObject({ _tag: "OverleafStateIoError", operation: "read" });
+      }),
+    ),
+  );
+
   it.live("keeps the lease for the store's lifetime and releases it when the store closes", () =>
     Effect.scoped(
       Effect.gen(function* () {

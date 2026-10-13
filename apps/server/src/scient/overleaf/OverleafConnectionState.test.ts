@@ -146,6 +146,9 @@ describe("overleafTransitionViolation", () => {
       }),
     ).toBe(false);
     expect(isValid({ ...pending, attempts: [attempt(1, { evidence: "superseded" })] })).toBe(false);
+    expect(isValid({ ...pending, updatedAt: "2026-02-30T12:00:00.000Z" })).toBe(false);
+    expect(isValid({ ...pending, updatedAt: "2028-02-29T23:59:59.000Z" })).toBe(true);
+    expect(isValid({ ...pending, updatedAt: "2026-10-13T24:00:00.000Z" })).toBe(false);
   });
 
   it("adopts exactly the accepted candidate as the next base", () => {
@@ -203,6 +206,58 @@ describe("overleafTransitionViolation", () => {
       }),
     ).toBeNull();
     expect(violation(superseded, { attempts: [attempt(1)] })).toBe("attempt-outcome-not-allowed");
+  });
+
+  it("allows the coordinator's ordinary transitions", () => {
+    const empty = overleafConnectionFixture();
+    // First sync from an empty base, and a later incoming-only sync, with no attempts.
+    const first = next(empty, {
+      base: { commit: oid("1"), tree: oid("2"), generation: 1 },
+      completedSyncCount: 1,
+    });
+    expect(overleafTransitionViolation(empty, first, NOW)).toBeNull();
+    const link = {
+      applyId: "apply-1",
+      kind: "sync-apply" as const,
+      operationId: "operation-1",
+      planDigest: "a".repeat(64),
+      baseGeneration: 1,
+      intentTree: oid("5"),
+    };
+    const applying = next(first, { activeApply: link });
+    // The apply's result advances the base and clears its link in one replacement.
+    const applied = next(applying, {
+      activeApply: null,
+      base: { commit: null, tree: oid("6"), generation: 2 },
+      completedSyncCount: 2,
+    });
+    expect(overleafTransitionViolation(applying, applied, NOW)).toBeNull();
+    // A refused send, then a fresh attempt on the same base.
+    const recorded = next(applied, {
+      lastAttemptNumber: 1,
+      attempts: [attempt(1, { baseGeneration: 2 })],
+    });
+    const refused = next(recorded, {
+      attempts: [attempt(1, { baseGeneration: 2, outcome: "not-sent", evidence: "send-refused" })],
+    });
+    expect(overleafTransitionViolation(recorded, refused, NOW)).toBeNull();
+    const retry = next(refused, {
+      lastAttemptNumber: 2,
+      attempts: [...refused.attempts, attempt(2, { baseGeneration: 2 })],
+    });
+    expect(overleafTransitionViolation(refused, retry, NOW)).toBeNull();
+    // A superseded attempt stays kept through further base changes.
+    const superseded = next(retry, {
+      base: { commit: oid("7"), tree: oid("8"), generation: 3 },
+      attempts: [
+        refused.attempts[0]!,
+        attempt(2, { baseGeneration: 2, outcome: "superseded-unresolved", evidence: "superseded" }),
+      ],
+    });
+    expect(overleafTransitionViolation(retry, superseded, NOW)).toBeNull();
+    expect(
+      violation(superseded, { base: { commit: oid("9"), tree: oid("a"), generation: 4 } }),
+    ).toBeNull();
   });
 
   it("bounds unresolved attempts in the document itself", () => {

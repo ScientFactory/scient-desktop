@@ -30,7 +30,21 @@ const Positive = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const Digest = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 const IsoTime = Schema.String.check(
   Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u),
-  Schema.makeFilter((value: string) => Number.isFinite(Date.parse(value))),
+  // Date.parse normalizes impossible dates (February 30), so check the calendar directly.
+  Schema.makeFilter((value: string) => {
+    const [year, month, day, hour, minute, second] = value.split(/[-T:.Z]/u).map(Number);
+    if (year === undefined || month === undefined || day === undefined) return false;
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+    return (
+      days !== undefined &&
+      day >= 1 &&
+      day <= days &&
+      (hour ?? 99) < 24 &&
+      (minute ?? 99) < 60 &&
+      (second ?? 99) < 60
+    );
+  }),
 );
 const PhysicalIdentity = Schema.Struct({
   dev: Schema.String.check(Schema.isPattern(/^\d{1,40}$/u)),

@@ -252,7 +252,17 @@ const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | undefine
 
 /** Owner-only, non-symlink directory created by this process's user. */
 async function privateDirectory(directory: string, userId: number | undefined): Promise<boolean> {
-  await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
+  // mkdir returns the first directory it created; sync each new entry's parent
+  // so a durable record inside it cannot vanish with its directory after a crash.
+  const created = await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
+  if (created !== undefined)
+    for (
+      let parent = NodePath.dirname(directory), child = directory;
+      child !== created && child !== parent;
+      child = parent, parent = NodePath.dirname(parent)
+    )
+      await syncDirectory(parent);
+  if (created !== undefined) await syncDirectory(NodePath.dirname(created));
   const stat = await NodeFSP.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
   if (userId !== undefined && stat.uid !== userId) return false;
@@ -569,10 +579,16 @@ export const make = (options: {
         }),
       );
 
-    const readReceipt = (file: string) =>
+    /** A receipt filed under another request's name is not that request's receipt. */
+    const readReceipt = (file: string, connectionId: string, requestId: string) =>
       io("read", async () => {
         const decoded = decodeReceipt(await NodeFSP.readFile(file, "utf8"));
-        if (Exit.isFailure(decoded)) throw new Error("Unreadable Overleaf request receipt.");
+        if (
+          Exit.isFailure(decoded) ||
+          decoded.value.connectionId !== connectionId ||
+          decoded.value.requestId !== requestId
+        )
+          throw new Error("Unreadable Overleaf request receipt.");
         return decoded.value;
       });
 
@@ -588,7 +604,7 @@ export const make = (options: {
           });
           const created = yield* io("write", () => createDurably(file, encodeReceipt(receipt)));
           if (created) return { _tag: "created" as const };
-          const existing = yield* readReceipt(file);
+          const existing = yield* readReceipt(file, receipt.connectionId, receipt.requestId);
           if (existing.kind !== receipt.kind || existing.payloadDigest !== receipt.payloadDigest)
             return yield* new OverleafRequestReusedError({
               connectionId: receipt.connectionId,
@@ -604,7 +620,7 @@ export const make = (options: {
           const file = yield* io("write", async () =>
             receiptFile(input.connectionId, input.requestId),
           );
-          const existing = yield* readReceipt(file);
+          const existing = yield* readReceipt(file, input.connectionId, input.requestId);
           // A terminal receipt is final; a second terminal status cannot replace it.
           if (existing.status !== "running") {
             if (
