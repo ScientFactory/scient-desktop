@@ -557,21 +557,98 @@ it.effect("rejects missing, streaming, and nested response boundaries", () =>
   }),
 );
 
-it.effect("refuses a running-turn fork after its durable run has settled", () =>
+it.effect("keeps a running-turn fork's saved history when its run settled meanwhile", () =>
   Effect.gen(function* () {
     for (const status of ["completed", "failed", "interrupted", "cancelled"] as const) {
       const projection = makeProjection();
       projection.runs[1] = { ...projection.runs[1]!, status, completedAt: now };
-      const result = yield* Effect.result(
-        planConversationFork({
-          projection,
-          targetThreadId,
-          source: { kind: "running-turn", runId: running },
-        }),
+      const plan = yield* planConversationFork({
+        projection,
+        targetThreadId,
+        source: { kind: "running-turn", runId: running },
+      });
+      assert.equal(plan.boundaryRunId, running, status);
+      assert.include(
+        plan.retained.map((item) => item.id),
+        TurnItemId.make("partial-answer"),
+        status,
       );
-      assert.equal(result._tag, "Failure", status);
-      if (result._tag === "Failure") assert.include(result.failure.message, "no longer active");
     }
+  }),
+);
+
+it.effect("keeps the history before a running-turn fork's run that saved nothing yet", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    projection.runs[1] = { ...projection.runs[1]!, status: "preparing" };
+    projection.turnItems = projection.turnItems.filter((item) => item.runId !== running);
+    projection.visibleTurnItems = projection.visibleTurnItems.filter(
+      ({ item }) => item.runId !== running,
+    );
+    const plan = yield* planConversationFork({
+      projection,
+      targetThreadId,
+      source: { kind: "running-turn", runId: running },
+    });
+    assert.deepEqual(
+      plan.retained.map((item) => item.id),
+      ["question-one", "tool-one", "answer-one"].map((id) => TurnItemId.make(id)),
+    );
+  }),
+);
+
+it.effect("refuses a running-turn fork with nothing saved yet", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    projection.runs[1] = { ...projection.runs[1]!, status: "preparing" };
+    projection.turnItems = [];
+    projection.visibleTurnItems = [];
+    const result = yield* Effect.result(
+      planConversationFork({
+        projection,
+        targetThreadId,
+        source: { kind: "running-turn", runId: running },
+      }),
+    );
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") assert.include(result.failure.message, "nothing to fork yet");
+  }),
+);
+
+it.effect("forks a finished reply inside a still-working run through that reply only", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    // The running run's reply is finished; the run goes on (a steer follows it).
+    const index = projection.turnItems.findIndex((item) => item.id === "partial-answer");
+    const finished = {
+      ...projection.turnItems[index]!,
+      status: "completed",
+      streaming: false,
+    } as OrchestrationV2TurnItem;
+    projection.turnItems[index] = finished;
+    projection.visibleTurnItems[index] = { ...projection.visibleTurnItems[index]!, item: finished };
+    const plan = yield* planConversationFork({
+      projection,
+      targetThreadId,
+      source: { kind: "assistant-response", messageId: MessageId.make("partial-answer") },
+    });
+    assert.equal(plan.boundaryRunId, running);
+    assert.isTrue(plan.cutsOpenRun);
+    assert.deepEqual(
+      plan.retained.map((item) => item.id),
+      [
+        "question-one",
+        "tool-one",
+        "answer-one",
+        "question-two",
+        "pending-approval",
+        "partial-answer",
+      ].map((id) => TurnItemId.make(id)),
+    );
+    // The run's work in progress is history only.
+    const approval = plan.items.find((item) => item.type === "approval_request");
+    assert.ok(approval?.type === "approval_request");
+    assert.equal(approval.status, "cancelled");
   }),
 );
 
@@ -804,22 +881,19 @@ it.effect("a cancelled run with no rendered facts keeps only the earlier frozen 
   }),
 );
 
-it.effect("a completed-looking response in an active native run is not a settled boundary", () =>
+it.effect("a finished response in a run that is still active forks up to it, as an open cut", () =>
   Effect.gen(function* () {
     for (const status of ["queued", "preparing", "starting", "running"] as const) {
       const projection = makeProjection();
       projection.runs[0] = { ...projection.runs[0]!, status, completedAt: null };
-      assert.equal(
-        (yield* Effect.result(
-          planConversationFork({
-            projection,
-            targetThreadId,
-            source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
-          }),
-        ))._tag,
-        "Failure",
-        status,
-      );
+      const plan = yield* planConversationFork({
+        projection,
+        targetThreadId,
+        source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+      });
+      assert.equal(plan.boundaryRunId, completed, status);
+      assert.isTrue(plan.cutsOpenRun, status);
+      assert.equal(plan.retained.at(-1)?.id, TurnItemId.make("answer-one"), status);
     }
     const accepted = yield* planConversationFork({
       projection: makeProjection(),
@@ -827,6 +901,7 @@ it.effect("a completed-looking response in an active native run is not a settled
       source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
     });
     assert.equal(accepted.boundaryRunId, completed);
+    assert.isFalse(accepted.cutsOpenRun);
   }),
 );
 

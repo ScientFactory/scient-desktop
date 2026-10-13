@@ -12,7 +12,10 @@ conversation continues independently. `/fork` captures the running turn when
 one is active, otherwise it selects the latest completed assistant response.
 
 - Forking an assistant response retains the transcript through that response.
-  The destination waits for the user's next message.
+  The destination waits for the user's next message. A finished response inside a
+  run that is still working (for example with a message queued after it) forks
+  through that response; the run's later work stays out, its in-progress state is
+  copied as history, and the fork marker sits after that message.
 - Forking a user message retains only the completed transcript before that
   message. The selected text and images are restored as an unsent, persisted
   destination composer draft so the user can edit or send it deliberately.
@@ -30,6 +33,12 @@ current-file snapshot for a running-turn fork. It is available only when that
 baseline can be captured safely. Leaving it off
 keeps the conversation branch independent while using the origin project's
 current workspace; it does not rewind local files.
+
+A fork in the current workspace never refuses for a workspace reason it can work around. When the
+original worktree was removed, the fork works in the project folder and the form says so in one
+line. A fork whose own new-worktree setup is still pending or failed can itself be forked in the
+folder it shows. When the fork's checkpoint cannot be saved, it continues without a restore point
+(it cannot rewind files to its start). A new worktree still requires its checkpoint.
 
 The new conversation shows the retained transcript prefix. Its first provider
 turn uses a native fork only when the destination's frozen proof establishes complete
@@ -153,10 +162,10 @@ Source/destination command locks retain their stable order. Global title seriali
 authoritative sibling reads and atomic admission, so another source's local fork can proceed
 during a slow file capture.
 
-Running native-text capture has a 90-second pre-admission deadline, matching the file-capture
-bound. Expiration releases the fork token without retiring the original run. SQL facts already
-committed by its consumer remain valid. Accepted provisioning continues under durable receipts;
-this deadline does not reject or cancel an accepted destination.
+Running native-text capture has a 12-second pre-admission deadline. Expiration releases the fork
+token without retiring the original run. SQL facts already committed by its consumer remain valid.
+Accepted provisioning continues under durable receipts; this deadline does not reject or cancel an
+accepted destination.
 
 Ordinary execution baselines, completed-turn checkpoints, and running-worktree forks share the
 same bounded capture substrate. Changed paths are consumed incrementally with backpressure:
@@ -237,10 +246,11 @@ remains: deleting the source leaves files a live fork still shows, and deleting 
 releases them. A file missing from disk does not block a fork; the fork shows what the source
 shows.
 
-A local fork requires its actual workspace directory. If an original worktree
-was removed, an explicitly selected new-worktree fork may resolve the historical
-checkpoint from the owning project repository. It never falls back to another
-workspace for a local request. Provider initialization remains independent of
+A local fork uses the original's workspace directory while it exists. When the original worktree
+was removed, before or during the fork, a local fork works in the project folder instead: the new
+conversation has no worktree path or branch, and the form says so. It never records the missing
+folder. A new-worktree fork may still restore the historical checkpoint from the owning project
+repository. Only a missing project folder refuses. Provider initialization remains independent of
 Git availability for valid non-Git local workspaces.
 
 ## Implementation and protected seams
@@ -468,6 +478,13 @@ A new-worktree request captures
 current files into a frozen ref before provisioning; retries use that captured ref. Pending tool,
 approval, or question state is copied only as history. A native clone needs a completed exact root
 boundary, so a running cut takes the portable path. Source execution continues independently.
+
+A running fork never refuses for a reason inside the source run. Live text capture (Codex only)
+adds the reply text not yet saved. When the capture is unavailable, fails, times out, or the run
+moves on before the fork is saved (it finishes, stops, or its session is replaced), the fork keeps
+the history saved at that moment, logged as `Running fork forks saved history without live text`.
+A run that settled before planning forks through its saved end; a run that saved nothing yet forks
+the history before it. Only a fork with nothing to show, or a real workspace loss, still refuses.
 
 ## History by reference and request recovery
 

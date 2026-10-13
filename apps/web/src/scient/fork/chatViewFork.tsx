@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ForkOptions,
   MessageId,
   OrchestrationV2ProjectedTurnItem,
   RunId,
@@ -301,6 +302,24 @@ export function useForkTimelineBaseline(input: {
   };
 }
 
+/** Whether the server lets this fork point use a new worktree, and why not. */
+export function forkWorktreeAvailabilityFromOptions(
+  options: Pick<ForkOptions, "newWorktree" | "workspaceNotice">,
+  running: boolean,
+): ForkWorktreeAvailability {
+  if (options.newWorktree) return { available: true };
+  // A running-turn fork snapshots files, so only a missing Git repository or
+  // original folder can rule a new worktree out.
+  return {
+    available: false,
+    reason: !running
+      ? "no-checkpoint"
+      : options.workspaceNotice
+        ? "worktree-removed"
+        : "no-git-repository",
+  };
+}
+
 /** Timeline row actions that open the fork dialog for one response or prompt. */
 export function useForkMessageCommands(input: {
   readonly activeThreadId: ThreadId | null;
@@ -377,19 +396,13 @@ export function ScientChatForkDialog(input: {
       titleOverrideSupported={forkTitleOverrideSupported}
       worktreeAvailability={
         forkPreview?.options && (forkRecoverySupported || forkPreview.locked)
-          ? forkPreview.options.newWorktree
-            ? { available: true }
-            : {
-                available: false,
-                // A running-turn fork snapshots files, so only a missing
-                // Git repository can rule a new worktree out.
-                reason:
-                  forkCommandTarget?.kind === "running-turn"
-                    ? "no-git-repository"
-                    : "no-checkpoint",
-              }
+          ? forkWorktreeAvailabilityFromOptions(
+              forkPreview.options,
+              forkCommandTarget?.kind === "running-turn",
+            )
           : forkWorktreeAvailability
       }
+      workspaceNotice={forkPreview?.options?.workspaceNotice}
       checking={forkPreview?.checking ?? true}
       locked={forkPreview?.locked ?? false}
       retryTitle={forkPreview?.retryTitle}
