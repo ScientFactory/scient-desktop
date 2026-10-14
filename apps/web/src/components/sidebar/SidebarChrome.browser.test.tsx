@@ -215,6 +215,7 @@ it.each(["Update", "Updating"] as const)(
       summary: "Update 1 server and 2 providers",
       lines: ["alvin: server to 0.6.21, Codex, Claude"],
       restarts: [],
+      scient: { details: [], remoteSummary: null },
       // The run stays in progress so the button keeps its running label.
       run: () => new Promise<void>(() => {}),
     };
