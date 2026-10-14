@@ -124,12 +124,15 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
         // SCIENT-FORK:END
         updateProviders: providers.updateAll,
         updateServers: async () => {
-          const current = currentConfirmedServerTargets(servers, committedServersRef.current);
-          // SCIENT-FORK: see installLocal above.
+          // SCIENT-FORK:START — see installLocal above. The wait can be long, so
+          // eligibility is confirmed again after it, and can only narrow.
+          const gated = currentConfirmedServerTargets(servers, committedServersRef.current);
           await waitForManagedRuntimesIdle(
             appProviderSnapshots,
-            current.map((server) => server.environmentId),
+            gated.map((server) => server.environmentId),
           );
+          const current = currentConfirmedServerTargets(gated, committedServersRef.current);
+          // SCIENT-FORK:END
           await Promise.all(current.map((server) => updateServer(server)));
         },
       }),

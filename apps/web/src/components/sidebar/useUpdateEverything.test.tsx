@@ -27,6 +27,7 @@ const testState = vi.hoisted(() => ({
   updateStateAtom: undefined as Atom.Atom<{ status: "idle" }> | undefined,
   availability: undefined as AsyncResult.AsyncResult<boolean, string> | undefined,
   updateProviders: vi.fn<() => Promise<void>>(),
+  managedRuntimesIdle: vi.fn<() => Promise<void>>(async () => {}),
   updateServer:
     vi.fn<
       (request: {
@@ -64,7 +65,7 @@ vi.mock("~/hooks/useSettings", () => ({ useEnvironmentSettings: () => false }));
 vi.mock("~/hooks/useCopyToClipboard", () => ({ useCopyToClipboard: () => ({}) }));
 vi.mock("~/scient/providerUpdates/managedRuntimeUpdateWatch", () => ({
   appProviderSnapshots: {},
-  waitForManagedRuntimesIdle: async () => {},
+  waitForManagedRuntimesIdle: () => testState.managedRuntimesIdle(),
 }));
 vi.mock("~/scient/providerUpdates/useProviderUpdateInventory", () => ({
   useProviderUpdateInventory: () => ({ machines: [], updateAll: testState.updateProviders }),
@@ -281,6 +282,36 @@ it("does not change the confirmed version during a held provider step", async ()
   await act(() => renderer!.update(<Probe version="0.6.3" />));
   await pass.finish();
   expect(testState.updateServer).not.toHaveBeenCalled();
+});
+
+it("withdraws a server target that stops being eligible while managed runtimes finish", async () => {
+  let idle = () => {};
+  testState.managedRuntimesIdle.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        idle = resolve;
+      }),
+  );
+  await act(() => {
+    renderer = create(<Probe />);
+  });
+  let run: Promise<void> | undefined;
+  await act(async () => {
+    run = current!.run({});
+    await Promise.resolve();
+  });
+  expect(testState.managedRuntimesIdle).toHaveBeenCalled();
+  testState.availability = AsyncResult.failureWithPrevious(Cause.fail("403"), {
+    previous: Option.some(AsyncResult.success(true)),
+  });
+  await act(() => renderer!.update(<Probe />));
+  await act(async () => {
+    idle();
+    await run;
+  });
+  expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
+    "desktop",
+  ]);
 });
 
 it("retires an unmounted held pass without disabling a newly confirmed pass", async () => {
