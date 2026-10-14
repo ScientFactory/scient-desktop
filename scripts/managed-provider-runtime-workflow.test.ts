@@ -154,7 +154,10 @@ function liveSuites(provider: "droid" | "pi"): ReadonlyArray<string> {
   );
   return [
     ...script.matchAll(
-      new RegExp(`"(apps/server/src/provider/${provider}/[^"]+\\.live\\.test\\.ts)"`, "gu"),
+      new RegExp(
+        `["'\`](apps/server/src/provider/${provider}/[^"'\`]+\\.live\\.test\\.ts)["'\`]`,
+        "gu",
+      ),
     ),
   ].map((match) => match[1]!);
 }
@@ -379,6 +382,11 @@ describe("managed provider runtime update workflow", () => {
     });
     // Server code reaches every provider only through the families that run it.
     expect(everyProvider?.pathspecs).not.toContain("apps/server/src/provider/acp");
+  });
+
+  it("reads every live suite the qualification runs", () => {
+    expect(liveSuites("droid")).toHaveLength(6);
+    expect(liveSuites("pi")).toHaveLength(5);
   });
 
   it.each([

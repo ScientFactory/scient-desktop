@@ -190,9 +190,13 @@ describe("publication guards", () => {
   it.each([
     ["claudeAgent", "scripts/qualify-managed-runtime-catalog.ts", true],
     ["pi", "apps/server/src/provider/pi/PiRpcClient.ts", true],
+    ["pi", "vite.config.ts", true],
+    ["droid", "vite.config.ts", true],
     ["pi", "apps/server/src/provider/omp/OmpTarget.ts", false],
     ["omp", "apps/server/src/provider/omp/OmpTarget.ts", true],
     ["omp", "apps/server/src/provider/pi/PiRpcClient.ts", false],
+    ["omp", "apps/server/src/scient/providerLifecycle/MuseManagedRuntimeQualification.ts", false],
+    ["omp", "apps/server/src/codexModelOptions.ts", false],
     ["muse", "packages/provider-muse/src/index.ts", true],
     ["muse", "apps/server/src/provider/omp/OmpTarget.ts", false],
   ] as const)("%s, after %s changed on main: voided %s", (provider, changed, voided) => {

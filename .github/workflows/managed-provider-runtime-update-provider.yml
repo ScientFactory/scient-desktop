@@ -326,6 +326,7 @@ jobs:
           # whole tree; the quoted pattern is matched by git in both commits, so a
           # server module added on main counts too.
           if [[ "$PROVIDER" == droid ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            vite.config.ts \
             apps/server/package.json \
             packages/effect-acp \
             ':(glob)apps/server/src/*.ts' \
@@ -415,8 +416,10 @@ jobs:
             exit 1
           fi
 
-          # Pi's qualification runs its live suites against the server's Pi code.
+          # Pi's qualification runs its live suites, under the root test configuration,
+          # against the server's Pi code.
           if [[ "$PROVIDER" == pi ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            vite.config.ts \
             apps/server/src/provider/pi \
             apps/server/src/customModels.ts \
             apps/server/src/customModelCapabilities.ts \
@@ -439,11 +442,26 @@ jobs:
           # Oh My Pi qualification runs the app's own managed activation and RPC check.
           if [[ "$PROVIDER" == omp ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
             apps/server/scripts/qualify-omp-rpc.ts \
-            ':(glob)apps/server/src/*.ts' \
-            apps/server/src/auth \
+            apps/server/src/attachmentPaths.ts \
+            apps/server/src/attachmentStore.ts \
+            apps/server/src/config.ts \
+            apps/server/src/customModelReasoning.ts \
+            apps/server/src/customModels.ts \
+            apps/server/src/imageMime.ts \
+            apps/server/src/modelReasoning.ts \
+            apps/server/src/scientServerSettings.ts \
+            apps/server/src/serverSettings.ts \
+            apps/server/src/settingsDirectoryWatch.ts \
+            apps/server/src/settingsSecrets.ts \
+            apps/server/src/auth/ServerSecretStore.ts \
             apps/server/src/provider/omp \
-            apps/server/src/scient/providerLifecycle \
-            apps/server/src/scient/threadSections \
+            apps/server/src/scient/providerLifecycle/ManagedProviderRuntimeActions.ts \
+            apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts \
+            apps/server/src/scient/providerLifecycle/ProviderConnectionActions.ts \
+            apps/server/src/scient/providerLifecycle/QualifiedRpcManagedRuntime.ts \
+            apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts \
+            apps/server/src/scient/providerLifecycle/managedRuntimeVersion.ts \
+            apps/server/src/scient/threadSections/settingsPrecondition.ts \
             apps/server/src/sourceControl/sourceControlHostSecrets.ts \
             apps/server/src/usage/usageAccountingSettingsSecrets.ts \
             packages/effect-omp-rpc \
