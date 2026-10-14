@@ -130,6 +130,16 @@ describe("watchManagedRuntimeUpdate", () => {
     expect(await result).toEqual({ status: "succeeded", version: "0.50.1" });
   });
 
+  it("reports lost contact when a reconnect outlasts its grace period", async () => {
+    const live = snapshots(
+      environment(codex({ version: "0.48.0", operation: operation("activating") }), "reconnecting"),
+    );
+    expect(await watchManagedRuntimeUpdate(live.source, item, "op-1", 20)).toMatchObject({
+      status: "failed",
+    });
+    expect(live.listeners.size).toBe(0);
+  });
+
   it("fails when the environment is lost", async () => {
     const live = snapshots(
       environment(codex({ version: "0.48.0", operation: operation("activating") })),
@@ -151,6 +161,23 @@ describe("watchManagedRuntimeUpdate", () => {
 });
 
 describe("waitForManagedRuntimesIdle", () => {
+  it("treats a reconnecting machine's last known update as still running", async () => {
+    const live = snapshots(
+      environment(codex({ version: "0.48.0", operation: operation("activating") }), "reconnecting"),
+    );
+    const idle = waitForManagedRuntimesIdle(live.source, [alvin]);
+    expect(await settledSoon(idle)).toBe("pending");
+    live.publish(environment(codex({ version: "0.50.1", operation: operation("succeeded") })));
+    await idle;
+  });
+
+  it("ignores machines it was not asked about", async () => {
+    const live = snapshots(
+      environment(codex({ version: "0.48.0", operation: operation("activating") })),
+    );
+    await waitForManagedRuntimesIdle(live.source, [EnvironmentId.make("elsewhere")]);
+  });
+
   it("installs this app only after every managed operation ends, even one this pass did not start", async () => {
     // Another managed update holds the runtime, so this pass's start fails.
     const live = snapshots(
@@ -169,7 +196,7 @@ describe("waitForManagedRuntimesIdle", () => {
           },
         );
         events.push(`providers ${results[0]!.outcome.status}`);
-        await waitForManagedRuntimesIdle(live.source);
+        await waitForManagedRuntimesIdle(live.source, [alvin]);
       },
       updateServers: async () => {
         events.push("servers");

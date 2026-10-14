@@ -106,14 +106,30 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     run: (local: { downloadLocal?: () => Promise<boolean>; installLocal?: () => Promise<void> }) =>
       runUpdateEverything({
         ...local,
-        // SCIENT-FORK: servers restart and this app installs only once no managed
-        // runtime is mid-update, including ones this pass did not start.
-        updateProviders: async () => {
-          await providers.updateAll();
-          await waitForManagedRuntimesIdle(appProviderSnapshots);
-        },
+        // SCIENT-FORK:START — a server restarts, and this app installs, only once no
+        // managed runtime on that machine is mid-update, whoever started it.
+        ...(local.installLocal
+          ? {
+              installLocal: async () => {
+                await waitForManagedRuntimesIdle(
+                  appProviderSnapshots,
+                  machines
+                    .filter((machine) => machine.hostedByThisApp)
+                    .map((machine) => machine.environmentId),
+                );
+                await local.installLocal!();
+              },
+            }
+          : {}),
+        // SCIENT-FORK:END
+        updateProviders: providers.updateAll,
         updateServers: async () => {
           const current = currentConfirmedServerTargets(servers, committedServersRef.current);
+          // SCIENT-FORK: see installLocal above.
+          await waitForManagedRuntimesIdle(
+            appProviderSnapshots,
+            current.map((server) => server.environmentId),
+          );
           await Promise.all(current.map((server) => updateServer(server)));
         },
       }),

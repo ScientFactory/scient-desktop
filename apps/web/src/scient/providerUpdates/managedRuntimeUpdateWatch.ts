@@ -46,37 +46,51 @@ export const appProviderSnapshots: ProviderSnapshotSource = {
     appAtomRegistry.subscribe(environmentPresentations.presentationsAtom, onChange),
 };
 
-/** Resolves once `check` returns a value, rechecking on every snapshot change. */
+/**
+ * Resolves once `check` returns a value, rechecking on every snapshot change
+ * and, when given, every `pollMs` for checks that depend on elapsed time.
+ */
 function whenSettled<A>(
   source: ProviderSnapshotSource,
   check: (environments: ReadonlyArray<LiveProviderEnvironment>) => A | undefined,
+  pollMs?: number,
 ): Promise<A> {
   return new Promise((resolve) => {
     let settled = false;
-    let unsubscribe: (() => void) | undefined;
+    let stop = () => {};
     const recheck = () => {
       if (settled) return;
       const result = check(source.read());
       if (result === undefined) return;
       settled = true;
-      unsubscribe?.();
+      stop();
       resolve(result);
     };
-    unsubscribe = source.subscribe(recheck);
+    const unsubscribe = source.subscribe(recheck);
+    const timer = pollMs === undefined ? undefined : setInterval(recheck, pollMs);
+    stop = () => {
+      unsubscribe();
+      if (timer !== undefined) clearInterval(timer);
+    };
     recheck();
-    if (settled) unsubscribe();
   });
 }
 
+/** How long a single update waits through a reconnect before reporting lost contact. */
+const RECONNECT_GRACE_MS = 2 * 60_000;
+
 /**
  * The final result of a started managed update: its new runtime active, or
- * why not. Waits through a reconnect; losing the environment fails it.
+ * why not. Waits through a short reconnect; losing the environment, or a
+ * reconnect longer than the grace period, fails it.
  */
 export function watchManagedRuntimeUpdate(
   source: ProviderSnapshotSource,
   item: ProviderUpdateItem,
   operationId: string,
+  reconnectGraceMs = RECONNECT_GRACE_MS,
 ): Promise<ProviderUpdateOutcome> {
+  let reconnectingSince: number | null = null;
   let run: ManagedRuntimeUpdateRun = {
     target: {
       environmentId: item.environmentId,
@@ -90,28 +104,45 @@ export function watchManagedRuntimeUpdate(
     outcome: { status: "pending" },
     waitingMessage: null,
   };
-  return whenSettled(source, (environments): ProviderUpdateOutcome | undefined => {
-    const environment = environments.find(
-      (candidate) => candidate.environmentId === item.environmentId,
-    );
-    if (!environment || environment.connection === "lost") {
-      return { status: "failed", message: DISCONNECTED_MANAGED_UPDATE_MESSAGE };
-    }
-    if (environment.connection === "reconnecting") return undefined;
-    run = settleManagedRuntimeUpdateRuns([run], [environment])[0] ?? run;
-    return run.outcome.status === "pending" ? undefined : run.outcome;
-  });
+  const lostContact: ProviderUpdateOutcome = {
+    status: "failed",
+    message: DISCONNECTED_MANAGED_UPDATE_MESSAGE,
+  };
+  return whenSettled(
+    source,
+    (environments): ProviderUpdateOutcome | undefined => {
+      const environment = environments.find(
+        (candidate) => candidate.environmentId === item.environmentId,
+      );
+      if (!environment || environment.connection === "lost") return lostContact;
+      if (environment.connection === "reconnecting") {
+        reconnectingSince ??= Date.now();
+        return Date.now() - reconnectingSince >= reconnectGraceMs ? lostContact : undefined;
+      }
+      reconnectingSince = null;
+      run = settleManagedRuntimeUpdateRuns([run], [environment])[0] ?? run;
+      return run.outcome.status === "pending" ? undefined : run.outcome;
+    },
+    Math.min(10_000, reconnectGraceMs),
+  );
 }
 
 /**
- * Resolves when no connected environment has a managed runtime operation in
- * progress, whoever started it, so a restart cannot cut one off.
+ * Resolves when none of the given environments has a managed runtime
+ * operation in progress, whoever started it, so restarting them cannot cut
+ * one off. A reconnecting environment still counts its last known operation;
+ * a lost one has nothing left to protect.
  */
-export function waitForManagedRuntimesIdle(source: ProviderSnapshotSource): Promise<void> {
+export function waitForManagedRuntimesIdle(
+  source: ProviderSnapshotSource,
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): Promise<void> {
+  const watched = new Set(environmentIds);
   return whenSettled(source, (environments) =>
     environments.some(
       (environment) =>
-        environment.connection === "connected" &&
+        watched.has(environment.environmentId) &&
+        environment.connection !== "lost" &&
         environment.providers.some((provider) =>
           isManagedRuntimeOperationActive(provider.connection?.runtime?.operation),
         ),
