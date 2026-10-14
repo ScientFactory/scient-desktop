@@ -12,7 +12,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FileSystem from "effect/FileSystem";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import type { ProviderAdapterRegistryV2 } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 
@@ -112,9 +112,7 @@ export function nativeImportTestLayer(controls: NativeImportTestControls = {}) {
 export const createNativeProjects = Effect.gen(function* () {
   const sink = yield* EventSink.EventSinkV2;
   const now = yield* DateTime.now;
-  const workspaceRoot = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-    prefix: "scient-native-import-workspace-",
-  });
+  const workspaceRoot = yield* checkpointWorkspace("scient-native-import-workspace");
   for (const projectId of [PROJECT_ID, OTHER_PROJECT_ID]) {
     yield* sink.commitProjectCommand({
       commandId: CommandId.make(`native-create-${projectId}`),

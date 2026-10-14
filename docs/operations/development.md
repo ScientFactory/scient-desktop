@@ -157,6 +157,15 @@ Shared replay-test support uses `*.testkit.ts` modules, keeping it outside produ
 brand checks. Preserve recorded inbound protocol frames; synthetic initialization
 expectations use Scient's shared client identity.
 
+Replay runtime policy uses the thread's worktree, then its stored project's workspace,
+then the disposable replay profile's cwd. Explicit scenario overrides and custom policy
+layers remain authoritative. Tests needing real checkpoints must bind a small, independent
+Git repository from `checkpointWorkspace`, not the source checkout or a linked worktree
+sharing its Git common directory. Server test setup rejects capture into that common
+directory before staging and fails teardown even if the runtime recovers the capture error.
+The harness cleans up profiles it creates; callers retain ownership of supplied profile
+layers, including profiles shared across restart tests.
+
 Complete Electron's dependency installation before running concurrent desktop suites:
 `pnpm --filter @t3tools/desktop exec install-electron`.
 Electron's lazy installer otherwise allows multiple test workers to extract the same

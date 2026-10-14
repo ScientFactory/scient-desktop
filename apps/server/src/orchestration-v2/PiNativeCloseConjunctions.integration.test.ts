@@ -212,7 +212,7 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
       const registry = makeSingleLayer(adapter);
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
-        { name: "pi-close-native-conjunction" },
+        { name: "pi-close-native-conjunction", runtimePolicyOverride: { cwd } },
         registry,
         {
           configureMcp: false,

@@ -64,6 +64,7 @@ import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as ScientReplayRuntimePolicy from "./ScientReplayRuntimePolicy.testkit.ts";
 import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
@@ -139,7 +140,7 @@ export function makeReplayServerConfig(
       mode: "web",
       port: 0,
       host: undefined,
-      cwd: process.cwd(),
+      cwd: baseDir,
       baseDir,
       staticDir: undefined,
       devUrl: undefined,
@@ -421,15 +422,12 @@ export function layerWithRegistry<Error>(
     options.layerServerConfig ??
     Layer.effect(
       ServerConfig.ServerConfig,
-      makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
+      Effect.acquireRelease(makeReplayServerConfig(scenario.name), (config) =>
+        FileSystem.FileSystem.use((fs) =>
+          fs.remove(config.baseDir, { recursive: true }).pipe(Effect.orDie),
+        ),
+      ).pipe(Effect.orDie),
     ).pipe(Layer.provide(NodeServices.layer));
-  const layerRuntime =
-    options.runtimePolicyLayer ??
-    (scenario.runtimePolicyOverride === undefined
-      ? RuntimePolicy.layer
-      : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
-          Layer.provide(RuntimePolicy.layer),
-        ));
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   const layerThreadCommandExecutor = ThreadCommandExecutor.layer;
   // One queue shared by the adapters, the orchestrator, and the worker, like
@@ -466,6 +464,16 @@ export function layerWithRegistry<Error>(
     EffectOutbox.layer,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
+  const layerReplayPolicy = ScientReplayRuntimePolicy.layer.pipe(
+    Layer.provide(Layer.merge(layerStores, layerServerConfig)),
+  );
+  const layerRuntime =
+    options.runtimePolicyLayer ??
+    (scenario.runtimePolicyOverride === undefined
+      ? layerReplayPolicy
+      : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
+          Layer.provide(layerReplayPolicy),
+        ));
   const actualEventSink = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
   );

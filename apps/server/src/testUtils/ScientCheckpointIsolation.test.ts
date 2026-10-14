@@ -1,0 +1,88 @@
+// @effect-diagnostics nodeBuiltinImport:off - these tests exercise native path aliases and Git metadata.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { afterEach, beforeEach } from "vite-plus/test";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+
+import { makeCheckpointIsolationGuard } from "./ScientCheckpointIsolation.test-support.ts";
+
+let directory: string;
+let commonDirectory: string;
+beforeEach(() => {
+  directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-checkpoint-isolation-"));
+  commonDirectory = NodePath.join(directory, ".git");
+  NodeFS.mkdirSync(commonDirectory);
+});
+afterEach(() => NodeFS.rmSync(directory, { recursive: true, force: true }));
+
+it("rejects the checkout common directory even when cwd is a subdirectory", () => {
+  const guard = makeCheckpointIsolationGuard(commonDirectory);
+  assert.throws(
+    () =>
+      guard.check({
+        cwd: NodePath.join(directory, "apps", "server"),
+        gitCommonDir: commonDirectory,
+      }),
+    /independent checkpointWorkspace/,
+  );
+  assert.throws(() => guard.assertNoViolations(), /test checkout's Git directory/);
+  guard.assertNoViolations();
+});
+
+it("allows an independent fixture common directory", () => {
+  const fixture = NodePath.join(directory, "independent");
+  NodeFS.mkdirSync(fixture);
+  const guard = makeCheckpointIsolationGuard(commonDirectory);
+  guard.check({ cwd: fixture, gitCommonDir: fixture });
+  guard.assertNoViolations();
+});
+
+it("canonicalizes symlink aliases of the checkout common directory", () => {
+  const alias = NodePath.join(directory, "alias");
+  NodeFS.symlinkSync(commonDirectory, alias, "junction");
+  const guard = makeCheckpointIsolationGuard(commonDirectory);
+  assert.throws(() => guard.check({ cwd: directory, gitCommonDir: alias }), /test checkout/);
+  assert.throws(() => guard.assertNoViolations(), /test checkout/);
+});
+
+it("allows nonexistent directories supplied by mock Git drivers", () => {
+  const guard = makeCheckpointIsolationGuard(commonDirectory);
+  guard.check({ cwd: directory, gitCommonDir: NodePath.join(directory, "mock", ".git") });
+  guard.assertNoViolations();
+});
+
+it.effect("a recovered checkpoint failure still fails the safety assertion", () =>
+  Effect.gen(function* () {
+    const guard = makeCheckpointIsolationGuard(commonDirectory);
+    const status = yield* Effect.sync(() =>
+      guard.check({ cwd: directory, gitCommonDir: commonDirectory }),
+    ).pipe(Effect.catchCause(() => Effect.succeed("completed")));
+    assert.equal(status, "completed");
+    assert.throws(() => guard.assertNoViolations(), /test checkout's Git directory/);
+  }),
+);
+
+it.live("rejects a real linked worktree that shares the forbidden common directory", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("checkpoint-isolation-worktree");
+      const linked = NodePath.join(cwd, "linked");
+      NodeChildProcess.execFileSync("git", ["worktree", "add", "--detach", linked, "HEAD"], {
+        cwd,
+        stdio: "pipe",
+      });
+      const common = NodeChildProcess.execFileSync(
+        "git",
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        { cwd: linked, encoding: "utf8" },
+      ).trim();
+      const guard = makeCheckpointIsolationGuard(NodePath.join(cwd, ".git"));
+      assert.throws(() => guard.check({ cwd: linked, gitCommonDir: common }), /test checkout/);
+      assert.throws(() => guard.assertNoViolations(), /test checkout/);
+    }),
+  ),
+);
