@@ -83,79 +83,79 @@
     "claudeAgent": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "2.1.299",
+      "version": "2.1.300",
       "artifacts": {
         "darwin-arm64": {
-          "artifactName": "claude-2.1.299-darwin-arm64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.299/darwin-arm64/claude",
+          "artifactName": "claude-2.1.300-darwin-arm64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.300/darwin-arm64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "ba5ab7b8c195fa03ab8d5bf3915c76153b576a2c40e79a5c46e265e7ed9744b3"
+            "digest": "475517caa611e3318a2f298fa071287ec98955538df78c58f709ecc01e5ae2d3"
           },
-          "size": 247931696
+          "size": 249556880
         },
         "darwin-x64": {
-          "artifactName": "claude-2.1.299-darwin-x64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.299/darwin-x64/claude",
+          "artifactName": "claude-2.1.300-darwin-x64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.300/darwin-x64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "099dcc53dabbbefabed8926dab25b0318775c175a7c87bb6ba6c54fde9f8ece2"
+            "digest": "5824fc36863e70bbd070491bb9359e217d3f17b38c45697c085b31a3a67356b3"
           },
-          "size": 257765072
+          "size": 259416272
         },
         "linux-arm64-glibc": {
-          "artifactName": "claude-2.1.299-linux-arm64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.299/linux-arm64/claude",
+          "artifactName": "claude-2.1.300-linux-arm64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.300/linux-arm64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "4cd5ab006b49dc12a247fed4dbc42a925ad1aea1e711d9aa24587d285ee87c2f"
+            "digest": "ae2295ae2da156936bf5831ab01971ce924d0c9a0af174e28d96fffa8d5fa0a6"
           },
-          "size": 264626168
+          "size": 266264568
         },
         "linux-arm64-musl": {
-          "artifactName": "claude-2.1.299-linux-arm64-musl",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.299/linux-arm64-musl/claude",
+          "artifactName": "claude-2.1.300-linux-arm64-musl",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.300/linux-arm64-musl/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "3e90af8f81cf7db932bbda3ab2ba57facb1e2a19a43f911b70536bf627472757"
+            "digest": "267fecafb9df3dc1ef93f01ea936742455151d38b9bceebc4c12b531df827a2c"
           },
-          "size": 256784472
+          "size": 258422872
         },
         "linux-x64-glibc": {
-          "artifactName": "claude-2.1.299-linux-x64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.299/linux-x64/claude",
+          "artifactName": "claude-2.1.300-linux-x64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.300/linux-x64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "2d894a4b1bfaaa9aab72aeff7803e3c73bc2510f279a171f6b8f59f72d17d077"
+            "digest": "674deba0bba9aee479f4503c438b49303b6fdd304b9a471b14977aaec5215453"
           },
-          "size": 265342136
+          "size": 266972344
         },
         "linux-x64-musl": {
-          "artifactName": "claude-2.1.299-linux-x64-musl",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.299/linux-x64-musl/claude",
+          "artifactName": "claude-2.1.300-linux-x64-musl",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.300/linux-x64-musl/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "af9b922a7a018c69eb6de3a9d401b32b6cdfba3c01bf75a5edb6b477ef17f117"
+            "digest": "426e7b0a3726d656babc943a92392eb3653377587658a240ab442d19e4eef3c9"
           },
-          "size": 258953576
+          "size": 260587880
         },
         "win32-arm64": {
-          "artifactName": "claude-2.1.299-win32-arm64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.299/win32-arm64/claude.exe",
+          "artifactName": "claude-2.1.300-win32-arm64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.300/win32-arm64/claude.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "a34fe98210ae38e55543e094036fea698db93bb4bba458c63d560b19ed2a56a2"
+            "digest": "fef0df9c7f72b2d7d0c26b1702f4646113be2c45a5b40eb5bbb7c93f5cbd5f8b"
           },
-          "size": 255381152
+          "size": 257010848
         },
         "win32-x64": {
-          "artifactName": "claude-2.1.299-win32-x64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.299/win32-x64/claude.exe",
+          "artifactName": "claude-2.1.300-win32-x64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.300/win32-x64/claude.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "295b49ec092f31a7de9c6ff286d9d8f120a4f029b9ad9a5ac0b12c35cbf4df2b"
+            "digest": "56810a111c01dcd218b42727c23fd8763be42320038b1adcac93cf599fac2de2"
           },
-          "size": 269231264
+          "size": 270863520
         }
       }
     },
