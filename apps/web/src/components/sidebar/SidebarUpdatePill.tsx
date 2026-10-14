@@ -26,6 +26,12 @@ import {
   type ScientUpdateReadyNoticeHandle,
   showScientUpdateReadyNotice,
 } from "../../scient/desktopUpdate/updateReadyNotice";
+import {
+  SHARED_UPDATE_BUTTON_CLASS,
+  SHARED_UPDATE_BUTTON_HOVER_CLASS,
+  UpdateEverythingTooltip,
+  withUpdatesAfterRestart,
+} from "../../scient/desktopUpdate/sidebarUpdateButton";
 // SCIENT-FORK:END
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -82,7 +88,8 @@ export function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
   flushSync(() => handle.open(triggerId));
 }
 
-function resolveSidebarUpdatePresentation({
+// SCIENT-FORK: exported for the button-identity tests.
+export function resolveSidebarUpdatePresentation({
   action,
   showsEverything,
   isDownloading,
@@ -99,7 +106,8 @@ function resolveSidebarUpdatePresentation({
     ? "checking"
     : isDownloading
       ? "downloading"
-      : showsEverything
+      : // SCIENT-FORK: this app's own update keeps its look whenever it has one.
+        showsEverything && action === "none"
         ? "everything"
         : action === "install"
           ? "downloaded"
@@ -240,7 +248,11 @@ function SidebarUpdateControl() {
       ? everything.summary
       : showUpdateDetails
         ? state
-          ? getDesktopUpdateButtonTooltip(state)
+          ? // SCIENT-FORK: Restart also says what can update afterwards.
+            withUpdatesAfterRestart(
+              getDesktopUpdateButtonTooltip(state),
+              action === "install" ? everything.scient.remoteSummary : null,
+            )
           : "Update available"
         : showCheckIcon
           ? "Checking for updates…"
@@ -425,11 +437,18 @@ function SidebarUpdateControl() {
         showUpdateIconState
           ? cn(
               // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing.
-              "h-5 rounded-(--control-radius) bg-primary text-2xs font-medium whitespace-nowrap text-primary-foreground",
+              "h-5 rounded-(--control-radius) text-2xs font-medium whitespace-nowrap",
               // This app's states fit the fixed width; "Update"/"Updating" for other
               // machines and providers grow to their label with even insets.
               iconStatus === "everything" ? "min-w-16 gap-1 px-1.5" : "w-16 gap-0.5 px-0.5",
-              !isInteractionDisabled && "hover:bg-primary/90",
+              // SCIENT-FORK: providers and servers alone take a quieter, theme-derived look.
+              iconStatus === "everything"
+                ? SHARED_UPDATE_BUTTON_CLASS
+                : "bg-primary text-primary-foreground",
+              !isInteractionDisabled &&
+                (iconStatus === "everything"
+                  ? SHARED_UPDATE_BUTTON_HOVER_CLASS
+                  : "hover:bg-primary/90"),
             )
           : cn(
               // SCIENT-FORK: idle circle 32px -> 20px to match the pill.
@@ -539,11 +558,25 @@ function SidebarUpdateControl() {
           {!showReleaseNotesPopover ? (
             <TooltipPopup
               align="center"
-              className={showUpdateDetails ? "max-w-48 text-left" : undefined}
+              className={
+                runsEverything && !isRunningEverything
+                  ? "max-w-80 text-left"
+                  : showUpdateDetails
+                    ? "max-w-48 text-left"
+                    : undefined
+              }
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >
-              <span className={showUpdateDetails ? "text-wrap" : undefined}>{tooltip}</span>
+              {/* SCIENT-FORK: update everything lists what each machine updates. */}
+              {runsEverything && !isRunningEverything ? (
+                <UpdateEverythingTooltip
+                  summary={everything.summary}
+                  details={everything.scient.details}
+                />
+              ) : (
+                <span className={showUpdateDetails ? "text-wrap" : undefined}>{tooltip}</span>
+              )}
             </TooltipPopup>
           ) : null}
         </Tooltip>

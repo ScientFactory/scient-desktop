@@ -20,6 +20,7 @@ import { useScientServerReleasePublished } from "~/scient/desktopUpdate/serverRe
 // Provider updates include Scient-managed runtimes, each line with its versions.
 import { describeProviderUpdateItem } from "~/scient/providerUpdates/providerUpdateInventory";
 import { useProviderUpdateInventory } from "~/scient/providerUpdates/useProviderUpdateInventory";
+import { describeUpdateEverythingDetails } from "~/scient/desktopUpdate/sidebarUpdateButton";
 import {
   appProviderSnapshots,
   waitForManagedRuntimesIdle,
@@ -95,7 +96,30 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     })),
   });
 
+  // SCIENT-FORK:START — what the sidebar tooltip lists, and what Restart leaves for afterwards.
+  const scient = {
+    details: describeUpdateEverythingDetails({
+      localVersion: localUpdateVersion,
+      servers,
+      providerMachines: providers.machines,
+    }),
+    remoteSummary:
+      servers.length > 0 || providers.machines.length > 0
+        ? describeUpdateEverything({
+            localVersion: null,
+            servers,
+            providerMachines: providers.machines.map((machine) => ({
+              environmentId: machine.environmentId,
+              label: machine.label,
+              providers: machine.items.map(describeProviderUpdateItem),
+            })),
+          }).summary
+        : null,
+  };
+  // SCIENT-FORK:END
+
   return {
+    scient,
     hasUpdates: servers.length > 0 || providers.machines.length > 0,
     /** Short label for the tooltip and the confirmation title. */
     summary,
