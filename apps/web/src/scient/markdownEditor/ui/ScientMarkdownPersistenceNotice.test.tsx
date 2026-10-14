@@ -701,6 +701,27 @@ describe("Markdown persistence feedback", () => {
     expect(details.textContent).toContain("Failed to write workspace file 'notes.md'");
     expect(details.textContent).toContain("Code: ENOSPC");
     expect(coordinator.getSnapshot().draftSource).toBe("B");
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await act(async () => click(host, "Copy details"));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Code: ENOSPC"));
+    expect(host.textContent).toContain("Copied");
+    // Different details are never shown as already copied.
+    await act(async () =>
+      coordinator.noteMutationFailure(
+        new ProjectWriteFileError({
+          cwd: "/synthetic",
+          relativePath: "notes.md",
+          failure: "operation_failed",
+          osErrorCode: "EROFS",
+          publicationOutcome: "unchanged",
+        }),
+      ),
+    );
+    if (!host.querySelector("[data-persistence-reason]")) await act(() => click(host, "Details"));
+    expect(host.querySelector("[data-persistence-reason]")!.textContent).toContain("Code: EROFS");
+    expect(host.textContent).toContain("Copy details");
+    expect(host.textContent).not.toContain("Copied");
   });
 
   it("keeps one actionable failure after the retry budget is exhausted", async () => {

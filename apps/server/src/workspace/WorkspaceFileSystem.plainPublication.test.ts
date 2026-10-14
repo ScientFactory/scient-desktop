@@ -2,7 +2,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { describe, expect, it } from "@effect/vitest";
 import {
   fileMutationFixture,
@@ -118,6 +120,60 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
         expect(await NodeFSP.readFile(NodePath.join(folder, "main.tex"), "utf8")).toBe("A");
         expect(await leftovers(folder)).toEqual([]);
       }),
+  );
+
+  it.live("keeps the epoch across a restart and advances it on the next save", () =>
+    plain(async (h) => {
+      await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
+      await h.run(
+        h.methods.writeFile({
+          cwd: h.cwd,
+          relativePath: "main.tex",
+          contents: "B",
+          expectedRevision: revision("A"),
+        }),
+      );
+      const saved = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+      const methods = await h.restart();
+      // LaTeX build evidence bound to this epoch stays valid after a restart.
+      expect(await h.run(methods.getMutationEpoch({ cwd: h.cwd }))).toBe(saved);
+      await h.run(
+        methods.writeFile({
+          cwd: h.cwd,
+          relativePath: "main.tex",
+          contents: "C",
+          expectedRevision: revision("B"),
+        }),
+      );
+      expect(await h.run(methods.getMutationEpoch({ cwd: h.cwd }))).not.toBe(saved);
+    }),
+  );
+
+  it.live.skipIf(!posix)("reports a refused read of the current file as unchanged", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "A");
+      await NodeFSP.chmod(target, 0o000);
+      try {
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              contents: "C",
+              expectedRevision: revision("A"),
+            }),
+          ),
+        ).rejects.toMatchObject({
+          _tag: "WorkspaceFileSystemOperationError",
+          publicationOutcome: "unchanged",
+          cause: { code: "EACCES" },
+        });
+      } finally {
+        await NodeFSP.chmod(target, 0o644);
+      }
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
+    }),
   );
 
   it.live("replays a retried save, converges after a restart and refuses a reused identity", () =>
@@ -297,6 +353,63 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
       }),
     );
 
+    it.live("lets fence commits and read callbacks use the file service", () =>
+      plain(async (h) => {
+        const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+        await h.run(
+          h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
+            h.methods.writeFile({ cwd: h.cwd, relativePath: "inside.tex", contents: "Fence" }),
+          ),
+        );
+        const other = NodePath.join(h.root, "other");
+        await NodeFSP.mkdir(other);
+        await h.run(
+          h.methods.withSettledWorkspaceRead({ cwd: h.cwd }, () =>
+            Effect.gen(function* () {
+              yield* h.methods.getMutationEpoch({ cwd: other });
+              yield* h.methods.writeFile({ cwd: other, relativePath: "x.tex", contents: "X" });
+            }),
+          ),
+        );
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "inside.tex"), "utf8")).toBe("Fence");
+        expect(await NodeFSP.readFile(NodePath.join(other, "x.tex"), "utf8")).toBe("X");
+      }),
+    );
+
+    it.live("never runs a save cancelled while it waited for the lock", () =>
+      plain(async (h) => {
+        const target = NodePath.join(h.cwd, "main.tex");
+        await NodeFSP.writeFile(target, "A");
+        const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+        const gate = Promise.withResolvers<void>();
+        const fence = h.run(
+          h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
+            Effect.promise(() => gate.promise),
+          ),
+        );
+        // Queue a save behind the held fence, then cancel it before it gets the lock.
+        const cancelled = h.run(
+          Effect.gen(function* () {
+            const save = yield* Effect.forkChild(
+              h.methods.writeFile({
+                cwd: h.cwd,
+                relativePath: "main.tex",
+                contents: "C",
+                expectedRevision: revision("A"),
+              }),
+            );
+            yield* Effect.sleep("50 millis");
+            yield* Fiber.interrupt(save);
+          }),
+        );
+        await NodeTimersPromises.setTimeout(150);
+        gate.resolve();
+        await fence;
+        await cancelled;
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
+      }),
+    );
+
     it.live("deletes only the current revision and removes folders it empties", () =>
       plain(async (h) => {
         await NodeFSP.mkdir(NodePath.join(h.cwd, "old/deep"), { recursive: true });
@@ -330,3 +443,45 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
     );
   },
 );
+
+describe("plain creation on a native host", () => {
+  it.live("refuses a later move or delete that reuses the creation's identity", () =>
+    fileMutationFixture(
+      async (h) => {
+        await h.run(
+          h.methods.createBinaryFile({
+            cwd: h.cwd,
+            relativePath: "new.tex",
+            bytes: Buffer.from("N"),
+            mutationId: "shared-identity",
+          }),
+        );
+        await expect(
+          h.run(
+            h.methods.deleteFile({
+              cwd: h.cwd,
+              relativePath: "new.tex",
+              expectedRevision: revision("N"),
+              mutationId: "shared-identity",
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileMutationIntentConflictError" });
+        await expect(
+          h.run(
+            h.methods.renameFile({
+              cwd: h.cwd,
+              relativePath: "new.tex",
+              destinationRelativePath: "moved.tex",
+              expectedRevision: revision("N"),
+              mutationId: "shared-identity",
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileMutationIntentConflictError" });
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "new.tex"), "utf8")).toBe("N");
+      },
+      {},
+      null,
+      modes[1][1],
+    ),
+  );
+});

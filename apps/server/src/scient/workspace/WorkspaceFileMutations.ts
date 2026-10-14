@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
+import * as NodeAsyncHooks from "node:async_hooks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   ProjectDeleteFileInput,
@@ -212,6 +213,18 @@ const within = (root: string, target: string) => {
     relative !== ".." && !relative.startsWith(`..${NodePath.sep}`) && !NodePath.isAbsolute(relative)
   );
 };
+const PlainEpoch = Schema.Struct({ nonce: Schema.String, generation: Schema.Number });
+const decodePlainEpoch = Schema.decodeUnknownSync(Schema.fromJsonString(PlainEpoch));
+/** The persisted plain publication count, or a fresh one. */
+async function loadPlainEpoch(file: string): Promise<{ nonce: string; generation: number }> {
+  try {
+    const stored = decodePlainEpoch(await NodeFSP.readFile(file, "utf8"));
+    return { nonce: stored.nonce, generation: stored.generation };
+  } catch {
+    return { nonce: NodeCrypto.randomUUID(), generation: 0 };
+  }
+}
+
 /** A plain publication failed before it could change the target. */
 class PlainPublicationUnchangedError extends Error {
   constructor(cause: unknown) {
@@ -955,14 +968,29 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   // is retained. Hosts without native publication authority (Windows, Linux, no helper) use it
   // for every mutation; native hosts use it to create a file where the volume cannot create it
   // completely in one step. Overleaf retention always requires native publication.
-  const plainEpochNonce = NodeCrypto.randomUUID();
   // A plain publication can change any overlapping root, so one count advances every epoch.
-  // Until this run publishes plainly the epoch stays what it was before a restart; afterwards
-  // the run's nonce keeps its counts from matching another run's. Builds and exports also
-  // re-check source contents, so an epoch never vouches for bytes on its own.
-  let plainGeneration = 0;
+  // The count persists beside retained storage, so epochs (and LaTeX build evidence bound to
+  // them) stay valid across a restart and keep advancing afterwards.
+  const plainEpochFile = NodePath.join(
+    NodePath.dirname(deps.retentionStorageDirectory),
+    "plain-publication-epoch.json",
+  );
+  const plainEpoch = yield* Effect.promise(() => loadPlainEpoch(plainEpochFile));
+  let plainEpochWrites: Promise<void> = Promise.resolve();
+  /** Called before a plain publishing call: from here every earlier epoch is stale. */
+  const advancePlainEpoch = async () => {
+    plainEpoch.generation += 1;
+    const stored = { nonce: plainEpoch.nonce, generation: plainEpoch.generation };
+    const write = plainEpochWrites.then(async () => {
+      await NodeFSP.mkdir(NodePath.dirname(plainEpochFile), { recursive: true });
+      await durableJson(plainEpochFile, stored);
+    });
+    // Persistence is best effort: the in-memory count already protects this run.
+    plainEpochWrites = write.catch(() => undefined);
+    await plainEpochWrites;
+  };
   const plainEpochComponent = () =>
-    plainGeneration === 0 ? "" : `plain:${plainEpochNonce}:${plainGeneration}\n`;
+    plainEpoch.generation === 0 ? "" : `plain:${plainEpoch.nonce}:${plainEpoch.generation}\n`;
   const plainReceipts = new Map<
     string,
     { readonly fingerprint: string; readonly result: RetainedMutationResult }
@@ -998,6 +1026,25 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     plainReceipts.set(id, { fingerprint, result });
     if (plainReceipts.size > 512) plainReceipts.delete(plainReceipts.keys().next().value!);
   };
+  /** A native move or delete cannot reuse an identity a plain publication already answered. */
+  const refuseIdentityClaimedPlainly = (
+    input: { cwd: string; relativePath: string },
+    target: string,
+    id: string,
+  ) =>
+    plainReceipts.has(id)
+      ? Effect.fail(
+          errorFor(
+            input,
+            target,
+            new RetainedMutationError(
+              "intent",
+              "Mutation identity was reused for a changed target, condition or bytes.",
+              id,
+            ),
+          ),
+        )
+      : Effect.void;
   const replaceByRename = async (from: string, to: string) => {
     for (let attempt = 0; ; attempt++) {
       try {
@@ -1053,19 +1100,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const bytes = intent.bytes,
       desired = bytesRevision(bytes);
     // Until the publishing call the target is untouched, so a failure is a known refusal.
-    const beforeChange = async <A>(step: () => Promise<A>) => {
-      try {
-        return await step();
-      } catch (cause) {
-        if (
-          cause instanceof RetainedMutationError ||
-          isExistsError(cause) ||
-          isRevisionConflict(cause)
-        )
-          throw cause;
-        throw new PlainPublicationUnchangedError(cause);
-      }
-    };
+    const beforeChange = beforePublication;
     const directory = NodePath.dirname(resolved.target);
     const folderUnchanged = async () => {
       if ((await beforeChange(() => NodeFSP.realpath(directory))) !== directory)
@@ -1118,7 +1153,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           });
       }
       // From here the target may change, so every epoch captured earlier is stale.
-      plainGeneration += 1;
+      await advancePlainEpoch();
       if (!exclusive) {
         try {
           await replaceByRename(temporary, resolved.target);
@@ -1130,13 +1165,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           await NodeFSP.link(temporary, resolved.target);
         } catch (cause) {
           if (isNodeError(cause, "EEXIST")) throw new WorkspaceFileExistsError(fields);
-          if (
-            !["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"].some((code) => isNodeError(cause, code))
-          )
+          if (!linkUnsupported(cause))
             await settlePublicationFailure(resolved.target, desired, null, cause);
-          // Volumes without hard links: reserve the name exclusively, then rename the
-          // complete file over that empty reservation.
-          else await publishOverReservation(resolved.target, temporary, mode, desired, fields);
+          else await writeExclusivelyInPlace(resolved.target, bytes, mode, fields);
         }
       }
     } finally {
@@ -1145,39 +1176,58 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     await published();
     await syncDirectory(directory);
   };
-  const publishOverReservation = async (
+  /** Link support is missing: Windows reports EISDIR for hard links on exFAT. */
+  const linkUnsupported = (cause: unknown) =>
+    ["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"].some((code) => isNodeError(cause, code)) ||
+    (HostProcess.Platform.defaultValue() === "win32" && isNodeError(cause, "EISDIR"));
+  /**
+   * For volumes without hard links: create the name exclusively and write into it. A reader
+   * may briefly see it incomplete, but it can never replace another file.
+   */
+  const writeExclusivelyInPlace = async (
     target: string,
-    temporary: string,
+    bytes: Uint8Array,
     mode: number,
-    desired: string,
     fields: PlainFields,
   ) => {
-    let reservation;
+    let handle;
     try {
-      const handle = await NodeFSP.open(target, "wx", mode);
-      try {
-        reservation = await handle.stat({ bigint: true });
-      } finally {
-        await handle.close();
-      }
+      handle = await NodeFSP.open(target, "wx", mode);
     } catch (cause) {
       if (isNodeError(cause, "EEXIST")) throw new WorkspaceFileExistsError(fields);
       throw new PlainPublicationUnchangedError(cause);
     }
+    let created: { dev: string; ino: string } | null = null;
     try {
-      await replaceByRename(temporary, target);
+      const stat = await handle.stat({ bigint: true });
+      created = { dev: String(stat.dev), ino: String(stat.ino) };
+      await handle.writeFile(bytes);
+      await handle.sync();
+      await handle.close();
     } catch (cause) {
-      const current = await NodeFSP.lstat(target, { bigint: true }).catch(() => null);
-      if (
-        current !== null &&
-        current.dev === reservation.dev &&
-        current.ino === reservation.ino &&
-        current.size === 0n
-      ) {
+      await handle.close().catch(() => undefined);
+      // Only the file this call created is removed; then the target is as before.
+      const current = await fileIdentity(target).catch(() => null);
+      if (created !== null && current !== null && sameIdentity(current, created)) {
         await NodeFSP.rm(target, { force: true });
         throw new PlainPublicationUnchangedError(cause);
       }
-      await settlePublicationFailure(target, desired, null, cause);
+      throw cause;
+    }
+  };
+  /** OS failures before the publication boundary leave the target untouched. */
+  const beforePublication = async <A>(step: () => Promise<A>) => {
+    try {
+      return await step();
+    } catch (cause) {
+      if (
+        cause instanceof RetainedMutationError ||
+        cause instanceof PlainPublicationUnchangedError ||
+        isExistsError(cause) ||
+        isRevisionConflict(cause)
+      )
+        throw cause;
+      throw new PlainPublicationUnchangedError(cause);
     }
   };
   /**
@@ -1196,14 +1246,16 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     if (replayed) return replayed;
     if (
       intent.expectedMutationEpoch !== undefined &&
-      (await epoch()) !== intent.expectedMutationEpoch
+      (await beforePublication(epoch)) !== intent.expectedMutationEpoch
     )
       throw new RetainedMutationError(
         "target",
         "Workspace mutation epoch changed before byte publication.",
         intent.id,
       );
-    const snapshot = await inspectGuardedFile(resolved.target, intent.guardMaxBytes);
+    const snapshot = await beforePublication(() =>
+      inspectGuardedFile(resolved.target, intent.guardMaxBytes),
+    );
     const fields: PlainFields = {
       workspaceRoot: input.cwd,
       relativePath: input.relativePath,
@@ -1232,7 +1284,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       snapshot &&
       (intent.guardMaxBytes === undefined || snapshot.byteLength <= intent.guardMaxBytes) &&
       snapshot.revision === bytesRevision(intent.bytes) &&
-      sameIdentity(snapshot.identity, await fileIdentity(resolved.target))
+      sameIdentity(snapshot.identity, await beforePublication(() => fileIdentity(resolved.target)))
     )
       return receipt(false);
     if (
@@ -1254,9 +1306,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         intent.id,
       );
     }
-    if (intent.condition === "absent" && (await fileIdentity(resolved.target)))
+    if (
+      intent.condition === "absent" &&
+      (await beforePublication(() => fileIdentity(resolved.target)))
+    )
       throw new WorkspaceFileExistsError(fields);
-    await verify?.(snapshot);
+    if (verify) await beforePublication(() => verify(snapshot));
     let result: RetainedMutationResult | undefined;
     await publishPlainly(resolved, intent, snapshot, fields, async () => {
       result = await receipt(true);
@@ -2403,6 +2458,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         resolvedPath: destination.target,
       });
     const id = input.mutationId ?? NodeCrypto.randomUUID();
+    yield* refuseIdentityClaimedPlainly(input, source.target, id);
     const result = yield* publish(
       input,
       source,
@@ -2444,6 +2500,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     }
     const resolved = yield* resolveTarget(input),
       id = input.mutationId ?? NodeCrypto.randomUUID();
+    yield* refuseIdentityClaimedPlainly(input, resolved.target, id);
     const finalLink = yield* Effect.tryPromise({
       try: async () =>
         NodeFSP.lstat(resolved.requestedPath).then(
@@ -3081,15 +3138,29 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   /** Every mutation on a host without native publication authority, behind one lock. */
   function makePlainHostMethods(): WorkspaceFileMutationMethods {
     let queue: Promise<void> = Promise.resolve();
-    const exclusive = <A>(run: () => Promise<A>): Promise<A> => {
-      const result = queue.then(run);
+    const holder = new NodeAsyncHooks.AsyncLocalStorage<true>();
+    /**
+     * Serializes mutations and publication fences. Work started inside a held callback (a
+     * fence commit) runs directly instead of waiting for itself; a cancelled wait never runs.
+     */
+    const exclusive = <A>(run: () => Promise<A>, signal: AbortSignal): Promise<A> => {
+      if (holder.getStore()) return run();
+      const result = queue.then(() => {
+        if (signal.aborted)
+          throw new RetainedMutationError(
+            "unavailable",
+            "Publication acquisition cancelled before namespace work.",
+            "cancelled",
+          );
+        return holder.run(true, run);
+      });
       queue = result.then(
         () => undefined,
         () => undefined,
       );
       return result;
     };
-    const plainEpoch = async (root: string) => {
+    const plainEpochOf = async (root: string) => {
       const identity = await directoryIdentity(root);
       return NodeCrypto.createHash("sha256")
         .update(`${identity.dev}:${identity.ino}\n${plainEpochComponent()}`)
@@ -3107,13 +3178,34 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           ),
         ),
       );
+    /** The requested path still resolves as it did before the wait for the lock. */
+    const stillResolves = async (
+      input: { cwd: string; relativePath: string },
+      resolved: Resolved,
+      id: string,
+    ) => {
+      const current = await beforePublication(() => Effect.runPromise(resolveTarget(input)));
+      if (
+        current.root !== resolved.root ||
+        current.target !== resolved.target ||
+        current.requestedPath !== resolved.requestedPath
+      )
+        throw new RetainedMutationError(
+          "target",
+          "The requested path resolved differently after waiting for ownership.",
+          id,
+        );
+    };
     const publishBytes = Effect.fnUntraced(function* (
       input: { cwd: string; relativePath: string },
       intent: PlainIntent,
     ) {
       const resolved = yield* resolveTarget(input);
-      const result = yield* owned(input, resolved.target, () =>
-        exclusive(() => admitPlain(input, resolved, intent, () => plainEpoch(resolved.root))),
+      const result = yield* owned(input, resolved.target, (signal) =>
+        exclusive(async () => {
+          await stillResolves(input, resolved, intent.id);
+          return admitPlain(input, resolved, intent, () => plainEpochOf(resolved.root));
+        }, signal),
       );
       yield* workspaceEntries.refresh(input.cwd);
       return { relativePath: resolved.named.relativePath, result };
@@ -3137,6 +3229,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         folder = NodePath.dirname(folder);
       }
     };
+    // Plain publications replace whole files by rename, so a read never sees one half done
+    // and needs no lock; callbacks may freely use the file service.
     const settledRead = <A, E, R>(
       input: { cwd: string; relativePath?: string },
       read: (
@@ -3145,39 +3239,39 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       ) => Effect.Effect<A, E, R>,
     ) =>
       Effect.gen(function* () {
-        const context = yield* Effect.context<R>();
-        const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
+        // The root must still be a workspace directory, reported as the native path does.
+        yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
         const relativePath = input.relativePath;
-        const exit = yield* owned(
-          { cwd: input.cwd, relativePath: relativePath ?? "." },
-          normalized,
-          (signal) =>
-            exclusive(async () => {
-              const currentMissing =
-                relativePath === undefined
-                  ? false
-                  : await missing(
-                      (
-                        await Effect.runPromise(
-                          resolveTarget({ cwd: input.cwd, relativePath }, true),
-                        )
-                      ).target,
-                    );
-              return Effect.runPromiseExitWith(context)(read(null, { currentMissing }), {
-                signal,
-              });
-            }),
-        );
-        return Exit.isFailure(exit) ? yield* Effect.failCause(exit.cause) : exit.value;
+        const currentMissing =
+          relativePath === undefined
+            ? false
+            : yield* resolveTarget({ cwd: input.cwd, relativePath }, true).pipe(
+                Effect.flatMap((resolved) =>
+                  Effect.tryPromise({
+                    try: () => missing(resolved.target),
+                    catch: (cause) =>
+                      errorFor({ cwd: input.cwd, relativePath }, resolved.target, cause),
+                  }),
+                ),
+              );
+        return yield* read(null, { currentMissing });
       });
+    const doneReceipt = (id: string, revision: string | null): RetainedMutationResult => ({
+      outcome: "done",
+      recordDirectory: "",
+      retainedPath: null,
+      retainedRevision: null,
+      retainedIdentity: null,
+      mutationId: id,
+      revision,
+      sourceMutation: true,
+    });
     const renamePlain: WorkspaceFileMutationMethods["renameFile"] = Effect.fn(
       "WorkspaceFileSystem.renameFile",
     )(function* (input) {
       const source = yield* resolveTarget(input),
-        destination = yield* resolveTarget({
-          cwd: input.cwd,
-          relativePath: input.destinationRelativePath,
-        });
+        destinationInput = { cwd: input.cwd, relativePath: input.destinationRelativePath },
+        destination = yield* resolveTarget(destinationInput);
       if (source.target === destination.target)
         return yield* new WorkspaceFileExistsError({
           workspaceRoot: input.cwd,
@@ -3197,13 +3291,23 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         resolvedPath: source.target,
         publicationOutcome: "unchanged" as const,
       };
-      const result = yield* owned(input, source.target, () =>
+      const destinationFields = {
+        ...fields,
+        relativePath: input.destinationRelativePath,
+        resolvedPath: destination.target,
+      };
+      const result = yield* owned(input, source.target, (signal) =>
         exclusive(async () => {
           const replayed = replayPlain(id, fingerprint);
           if (replayed) return replayed;
+          await stillResolves(input, source, id);
+          await stillResolves(destinationInput, destination, id);
           const guard = input.expectedRevision === undefined ? undefined : 1024 * 1024;
-          const snapshot = await inspectGuardedFile(source.target, guard);
-          if (snapshot === null || (await NodeFSP.lstat(source.requestedPath)).isSymbolicLink())
+          const snapshot = await beforePublication(() => inspectGuardedFile(source.target, guard));
+          if (
+            snapshot === null ||
+            (await beforePublication(() => NodeFSP.lstat(source.requestedPath))).isSymbolicLink()
+          )
             throw new RetainedMutationError(
               "target",
               "The source is not a current ordinary file.",
@@ -3219,47 +3323,76 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               ...fields,
               currentRevision: snapshot.leadingRevision,
             });
-          if (!(await missing(destination.target)))
-            throw new WorkspaceFileExistsError({
-              ...fields,
-              relativePath: input.destinationRelativePath,
-              resolvedPath: destination.target,
-            });
+          if (!(await beforePublication(() => missing(destination.target))))
+            throw new WorkspaceFileExistsError(destinationFields);
           const folder = NodePath.dirname(destination.target);
-          try {
-            await NodeFSP.mkdir(folder, { recursive: true });
-            if ((await NodeFSP.realpath(folder)) !== folder)
-              throw new RetainedMutationError(
-                "target",
-                "The destination folder changed before a plain move.",
-                id,
-              );
-          } catch (cause) {
-            if (cause instanceof RetainedMutationError) throw cause;
-            throw new PlainPublicationUnchangedError(cause);
-          }
-          plainGeneration += 1;
-          // A link never replaces a destination; the source is removed only after it.
-          try {
-            await NodeFSP.link(source.target, destination.target);
-          } catch (cause) {
-            if (isNodeError(cause, "EEXIST"))
-              throw new WorkspaceFileExistsError({
+          await beforePublication(() => NodeFSP.mkdir(folder, { recursive: true }));
+          if ((await beforePublication(() => NodeFSP.realpath(folder))) !== folder)
+            throw new RetainedMutationError(
+              "target",
+              "The destination folder changed before a plain move.",
+              id,
+            );
+          /** The new name holds exactly the inspected file; otherwise it is removed again. */
+          const confirmDestination = async (sameFile: boolean) => {
+            const moved = await inspectGuardedFile(destination.target, guard);
+            const exact =
+              moved !== null &&
+              moved.revision === snapshot.revision &&
+              (!sameFile || sameIdentity(moved.identity, snapshot.identity));
+            if (exact) return;
+            await NodeFSP.unlink(destination.target);
+            if (moved !== null && moved.revision !== snapshot.revision)
+              throw new WorkspaceFileRevisionConflictError({
                 ...fields,
-                relativePath: input.destinationRelativePath,
-                resolvedPath: destination.target,
+                currentRevision: moved.leadingRevision,
               });
-            if (!(await missing(destination.target))) throw cause;
-            throw new PlainPublicationUnchangedError(cause);
-          }
-          const linked = await fileIdentity(destination.target);
-          if (linked === null || !sameIdentity(linked, snapshot.identity)) {
-            await NodeFSP.unlink(destination.target).catch(() => undefined);
             throw new RetainedMutationError(
               "target",
               "The source changed while it was being moved.",
               id,
             );
+          };
+          await advancePlainEpoch();
+          // A link never replaces a destination; the source is removed only after it.
+          try {
+            await NodeFSP.link(source.target, destination.target);
+            await confirmDestination(true);
+          } catch (cause) {
+            if (isNodeError(cause, "EEXIST")) throw new WorkspaceFileExistsError(destinationFields);
+            if (
+              cause instanceof RetainedMutationError ||
+              isRevisionConflict(cause) ||
+              !linkUnsupported(cause)
+            ) {
+              if (cause instanceof RetainedMutationError || isRevisionConflict(cause)) throw cause;
+              if (!(await missing(destination.target))) throw cause;
+              throw new PlainPublicationUnchangedError(cause);
+            }
+            // No hard links on this volume: copy exclusively, confirm, then remove the source.
+            const bytes = await beforePublication(() => NodeFSP.readFile(source.target));
+            if (bytesRevision(bytes) !== snapshot.revision)
+              throw new WorkspaceFileRevisionConflictError({
+                ...fields,
+                currentRevision: bytesRevision(bytes.subarray(0, 1024 * 1024)),
+              });
+            const mode =
+              Number((await beforePublication(() => NodeFSP.stat(source.target))).mode) & 0o7777;
+            await writeExclusivelyInPlace(destination.target, bytes, mode, destinationFields);
+            await confirmDestination(false);
+            const after = await inspectGuardedFile(source.target, guard);
+            if (
+              after === null ||
+              !sameIdentity(after.identity, snapshot.identity) ||
+              after.revision !== snapshot.revision
+            ) {
+              await NodeFSP.unlink(destination.target);
+              throw new RetainedMutationError(
+                "target",
+                "The source changed while it was being moved.",
+                id,
+              );
+            }
           }
           try {
             await NodeFSP.unlink(source.target);
@@ -3271,19 +3404,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           await syncDirectory(folder);
           await syncDirectory(NodePath.dirname(source.target));
           if (input.removeEmptyFolders) await pruneEmptyParents(source.root, source.target);
-          const done: RetainedMutationResult = {
-            outcome: "done",
-            recordDirectory: "",
-            retainedPath: null,
-            retainedRevision: null,
-            retainedIdentity: null,
-            mutationId: id,
-            revision: snapshot.revision,
-            sourceMutation: true,
-          };
+          const done = doneReceipt(id, snapshot.revision);
           rememberPlain(id, fingerprint, done);
           return done;
-        }),
+        }, signal),
       );
       yield* workspaceEntries.refresh(input.cwd);
       return {
@@ -3303,12 +3427,21 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         target: resolved.target,
         expected: input.expectedRevision,
       });
-      yield* owned(input, resolved.target, () =>
+      yield* owned(input, resolved.target, (signal) =>
         exclusive(async () => {
           if (replayPlain(id, fingerprint)) return;
-          if ((await NodeFSP.lstat(resolved.requestedPath).catch(() => null))?.isSymbolicLink())
+          await stillResolves(input, resolved, id);
+          const link = await beforePublication(() =>
+            NodeFSP.lstat(resolved.requestedPath).catch((e: unknown) => {
+              if (isNodeError(e, "ENOENT")) return null;
+              throw e;
+            }),
+          );
+          if (link?.isSymbolicLink())
             throw new RetainedMutationError("target", "The file is a link.", id);
-          const snapshot = await inspectGuardedFile(resolved.target, 1024 * 1024);
+          const snapshot = await beforePublication(() =>
+            inspectGuardedFile(resolved.target, 1024 * 1024),
+          );
           if (snapshot === null)
             throw new RetainedMutationError(
               "target",
@@ -3323,21 +3456,19 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               publicationOutcome: "unchanged",
               currentRevision: snapshot.leadingRevision,
             });
-          plainGeneration += 1;
-          await NodeFSP.unlink(resolved.target);
+          await advancePlainEpoch();
+          try {
+            await NodeFSP.unlink(resolved.target);
+          } catch (cause) {
+            const still = await fileIdentity(resolved.target).catch(() => null);
+            if (still !== null && sameIdentity(still, snapshot.identity))
+              throw new PlainPublicationUnchangedError(cause);
+            throw cause;
+          }
           await syncDirectory(NodePath.dirname(resolved.target));
           if (input.removeEmptyFolders) await pruneEmptyParents(resolved.root, resolved.target);
-          rememberPlain(id, fingerprint, {
-            outcome: "done",
-            recordDirectory: "",
-            retainedPath: null,
-            retainedRevision: null,
-            retainedIdentity: null,
-            mutationId: id,
-            revision: null,
-            sourceMutation: true,
-          });
-        }),
+          rememberPlain(id, fingerprint, doneReceipt(id, null));
+        }, signal),
       );
       yield* workspaceEntries.refresh(input.cwd);
       return {
@@ -3413,8 +3544,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       withSettledWorkspaceRead: settledRead,
       getMutationEpoch: Effect.fn("WorkspaceFileSystem.getMutationEpoch")(function* (input) {
         const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
-        return yield* owned({ cwd: input.cwd, relativePath: "." }, normalized, () =>
-          exclusive(async () => plainEpoch(await NodeFSP.realpath(normalized))),
+        return yield* owned({ cwd: input.cwd, relativePath: "." }, normalized, async () =>
+          plainEpochOf(await NodeFSP.realpath(normalized)),
         );
       }),
       withWorkspacePublicationFence: <A, E, R>(
@@ -3426,14 +3557,14 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
           const exit = yield* owned({ cwd: input.cwd, relativePath: "." }, normalized, (signal) =>
             exclusive(async () => {
-              if ((await plainEpoch(await NodeFSP.realpath(normalized))) !== input.expectedEpoch)
+              if ((await plainEpochOf(await NodeFSP.realpath(normalized))) !== input.expectedEpoch)
                 throw new RetainedMutationError(
                   "target",
                   "Workspace mutated after build admission.",
                   "build-fence",
                 );
               return Effect.runPromiseExitWith(context)(commit(), { signal });
-            }),
+            }, signal),
           );
           return Exit.isFailure(exit) ? yield* Effect.failCause(exit.cause) : exit.value;
         }),
