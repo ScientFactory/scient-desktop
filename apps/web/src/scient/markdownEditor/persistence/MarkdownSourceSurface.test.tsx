@@ -197,7 +197,7 @@ describe("Markdown source persistence integration", () => {
     );
     const shadow = container.querySelector("diffs-container")!.shadowRoot!;
     expect(shadow.querySelector('[data-content][contenteditable="true"]')).toBeNull();
-    expect(container.textContent).toContain("Finish the pending edit in Rich");
+    expect(container.textContent).toContain("Finish your edit in Rich");
     const button = [...container.querySelectorAll("button")].find(
       (candidate) => candidate.textContent === "Return to Rich",
     )!;
@@ -208,7 +208,7 @@ describe("Markdown source persistence integration", () => {
     expect(write).not.toHaveBeenCalled();
     await act(async () => rich.executeKeyboardCommand("markdown.undo"));
     expect(sourceLease.getPendingInput()).toBeNull();
-    expect(container.textContent).not.toContain("Finish the pending edit in Rich");
+    expect(container.textContent).not.toContain("Finish your edit in Rich");
     richLease.release();
     sourceLease.release();
   });

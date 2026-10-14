@@ -1,5 +1,6 @@
 import type { ProjectFileErrorReason } from "@t3tools/contracts";
-import { AlertTriangle, Check, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, Info, RefreshCw } from "lucide-react";
+import { documentFailurePlainReason } from "~/scient/markdownEditor/persistence/documentFailureReason";
 import { useState } from "react";
 import * as Cause from "effect/Cause";
 import { Button } from "~/components/ui/button";
@@ -22,33 +23,31 @@ export function retainedAttentionCopy(attention: RetainedFileAttention) {
   switch (attention) {
     case "recovery_required":
       return {
-        title: "Review retained file versions",
+        title: "Couldn’t confirm the save",
         description:
-          "The file operation’s outcome needs review. Your draft is still open. Review the current file and retained versions, and save a separate copy if needed. Accepting the reviewed current disk version requires backend confirmation and keeps your local draft; it does not confirm the old operation succeeded. Reviewing or discarding versions alone does not unblock the retained mutation.",
+          "Your text is still here, and Scient kept the earlier versions. Check the file on disk before continuing.",
       };
     case "target_changed":
       return {
-        title: "The file target changed",
-        description:
-          "Scient stopped this operation because the file or its containing path changed. Your draft is still open. Review the actual file and retained versions before starting a new operation.",
+        title: "The file moved or changed while saving",
+        description: "Nothing was saved. Your text is still here.",
       };
     case "mutation_unavailable":
       return {
-        title: "Safe file mutation is unavailable",
-        description:
-          "This environment cannot perform the requested safe file operation. Your draft is still open. Review or save a separate copy; retrying this operation will not make it safe.",
+        title: "Couldn’t save",
+        description: "Nothing was written. Your text is still here.",
       };
     case "mutation_intent_conflict":
       return {
-        title: "This file operation conflicts with an earlier intent",
+        title: "Couldn’t save",
         description:
-          "Scient refused to reuse this operation’s identity for different input. Your draft is still open. Review the current file and retained versions before starting a new operation.",
+          "A repeated save didn’t match the original, so nothing was written. Your text is still here.",
       };
     case "outcome_unknown":
       return {
-        title: "The file operation’s outcome is unknown",
+        title: "Not sure the save finished",
         description:
-          "Scient could not confirm whether the file operation completed. Your source draft and open path were kept. Inspect the source, destination, and retained versions before reopening the actual file. Do not repeat the old operation blindly.",
+          "Your text is still here. Check the file on disk before continuing; don’t repeat the same change blindly.",
       };
   }
 }
@@ -163,16 +162,20 @@ export function ScientFileFreshnessNotices(props: {
     <>
       {visibleNotice && !retainedCopy ? (
         <div
-          className="flex shrink-0 items-center gap-2 border-b border-warning/24 bg-warning-surface px-3 py-2 scient-reading-micro text-warning-foreground"
+          className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-1.5 scient-reading-micro text-foreground"
           role="status"
         >
-          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
-          <div className="min-w-0 flex-1 leading-relaxed">
+          {visibleNotice.kind === "external-change" ? (
+            <Info className="size-3.5 shrink-0 text-info" aria-hidden="true" />
+          ) : (
+            <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
+          )}
+          <div className="min-w-0 flex-1 leading-snug">
             {visibleNotice.kind === "manual-reload"
-              ? "This file has unsaved edits. Reloading will discard your local buffer."
+              ? "This file has unsaved edits. Reloading discards them."
               : visibleNotice.kind === "confirm-overwrite"
-                ? "This will replace the newer file on disk with your local buffer. A further concurrent change will still be rejected."
-                : "This file changed on disk while you had unsaved edits. Your local buffer was kept and was not allowed to overwrite the newer file."}
+                ? "Replace the newer file on disk with your version? A further change on disk is still caught."
+                : "This file changed on disk while you were editing. Nothing was overwritten."}
           </div>
           {visibleNotice.kind === "external-change" ? (
             <Button
@@ -202,19 +205,16 @@ export function ScientFileFreshnessNotices(props: {
       ) : null}
       {visibleSaveError && (!visibleNotice || retainedCopy) ? (
         <div
-          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 scient-reading-micro text-destructive"
+          className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-1.5 scient-reading-micro text-foreground"
           role="alert"
         >
-          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
           {retainedCopy ? (
             <>
-              <div className="min-w-0 flex-1 leading-relaxed">
-                <p className="font-medium">{retainedCopy.title}</p>
-                <p>{retainedCopy.description}</p>
-                {evidence.recoveryId ? (
-                  <p className="break-all">Recovery reference: {evidence.recoveryId}</p>
-                ) : null}
-              </div>
+              <p className="min-w-0 flex-1 leading-snug">
+                <span className="font-medium">{retainedCopy.title}.</span>{" "}
+                <span className="text-muted-foreground">{retainedCopy.description}</span>
+              </p>
               {evidence.retainedPaths.map((path) => (
                 <Button
                   key={path}
@@ -224,15 +224,22 @@ export function ScientFileFreshnessNotices(props: {
                   title={path}
                   onClick={() => openFile?.(path)}
                 >
-                  Open retained version read-only
+                  Open earlier version
                 </Button>
               ))}
             </>
           ) : (
             <>
-              <span className="min-w-0 flex-1 truncate">
-                Changes are still local and have not been saved. {visibleSaveError.message}
-              </span>
+              <p className="min-w-0 flex-1 truncate">
+                <span className="font-medium">
+                  Couldn’t save
+                  {documentFailurePlainReason(visibleSaveError.error)
+                    ? `: ${documentFailurePlainReason(visibleSaveError.error)}`
+                    : ""}
+                  .
+                </span>{" "}
+                <span className="text-muted-foreground">Your changes are still here.</span>
+              </p>
               <Button size="xs" variant="ghost" onClick={props.onReload}>
                 Reload…
               </Button>
@@ -242,7 +249,7 @@ export function ScientFileFreshnessNotices(props: {
                 disabled={!props.saveRetryReady}
                 onClick={props.onRetrySave}
               >
-                Retry save
+                Try again
               </Button>
             </>
           )}
@@ -251,10 +258,10 @@ export function ScientFileFreshnessNotices(props: {
       {!retainedCopy && props.relativePath && props.readError && props.hasFallbackData ? (
         // The last good copy is still on screen, so this is a caution, not a failure.
         <div
-          className="flex shrink-0 items-center gap-2 border-b border-warning/20 bg-warning-surface px-3 py-2 scient-reading-micro text-warning-foreground"
+          className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-1.5 scient-reading-micro text-foreground"
           role="status"
         >
-          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
+          <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
             {staleCopyNotice(props.readFailureReason ?? null)}
           </span>
@@ -291,6 +298,8 @@ export function ScientFileFreshnessNotices(props: {
 export function ScientFileFreshnessStatus(
   props: Parameters<typeof ScientFileFreshnessNotices>[0] & {
     readonly pending: boolean;
+    /** A failed save is waiting for an automatic retry. */
+    readonly retrying?: boolean;
     /**
      * What a file's document session is asking about. Its own notice, above
      * the document, carries the choices; this only keeps the status truthful.
@@ -320,17 +329,21 @@ export function ScientFileFreshnessStatus(
       ? retainedAttentionCopy(attention)
       : null;
   const needsAttention = retainedAttention !== null || conflict || failed || readFailed;
-  const status =
-    retainedAttention?.title ??
-    (conflict
-      ? "File changed: review your save options"
+  const retrying = !needsAttention && props.pending && props.retrying === true;
+  // The short label is the button's text; the status is its full name.
+  const [label, status] = retainedAttention
+    ? ["Not saved", retainedAttention.title]
+    : conflict
+      ? ["File changed", "File changed on disk"]
       : failed
-        ? "Changes have not been saved"
-        : readFailed
-          ? "The latest file could not be loaded"
-          : props.pending
-            ? "Saving changes"
-            : "No file warnings");
+        ? ["Not saved", "Not saved"]
+        : retrying
+          ? ["Retrying…", "Not saved yet, retrying"]
+          : readFailed
+            ? ["Not loaded", "The latest file couldn’t be loaded"]
+            : props.pending
+              ? ["Saving…", "Saving"]
+              : ["Saved", "Saved"];
   return (
     <Popover>
       <PopoverTrigger
@@ -351,7 +364,7 @@ export function ScientFileFreshnessStatus(
         ) : (
           <Check className="size-3.5" aria-hidden="true" />
         )}
-        File status
+        {label}
       </PopoverTrigger>
       <span className="sr-only" role="status">
         {status}

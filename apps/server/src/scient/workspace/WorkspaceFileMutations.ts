@@ -3,6 +3,8 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   ProjectDeleteFileInput,
   ProjectDeleteFileResult,
@@ -210,6 +212,14 @@ const within = (root: string, target: string) => {
     relative !== ".." && !relative.startsWith(`..${NodePath.sep}`) && !NodePath.isAbsolute(relative)
   );
 };
+/** A plain publication failed before it could change the target. */
+class PlainPublicationUnchangedError extends Error {
+  constructor(cause: unknown) {
+    super("A plain publication failed before changing its target.", { cause });
+  }
+}
+const isExistsError = Schema.is(WorkspaceFileExistsError);
+
 const keyFor = (id: string) =>
   `mutation-${NodeCrypto.createHash("sha256").update(id).digest("hex")}`;
 
@@ -261,6 +271,14 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         publicationOutcome: "retained-attention",
       });
     }
+    if (cause instanceof PlainPublicationUnchangedError)
+      return new WorkspaceFileSystemOperationError({
+        ...fields,
+        operationPath: target,
+        operation: "atomic-write-file",
+        cause: cause.cause,
+        publicationOutcome: "unchanged",
+      });
     return new WorkspaceFileSystemOperationError({
       ...fields,
       operationPath: target,
@@ -913,6 +931,136 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       );
     }
   };
+  // Hosts whose helper cannot replace or create a file in one step (Windows today) save
+  // as main always has: the same ownership, attention, epoch and revision checks as a
+  // native publication, then a durable temporary file renamed over the target, or linked
+  // to it for an exclusive create. No previous version is retained. Overleaf retention
+  // (an explicit retention directory) still requires the native publication.
+  const plainEpochNonce = NodeCrypto.randomUUID();
+  const plainGenerations = new Map<string, number>();
+  const plainReceipts = new Map<
+    string,
+    { readonly fingerprint: string; readonly result: RetainedMutationResult }
+  >();
+  const plainReceipt = async (
+    resolved: Resolved,
+    intent: Pick<RetainedMutationInput, "id" | "bytes" | "expectedMutationEpoch">,
+    fingerprint: string,
+    records: ReadonlyArray<Stored>,
+    sourceMutation: boolean,
+  ): Promise<RetainedMutationResult> => {
+    if (sourceMutation)
+      plainGenerations.set(resolved.root, (plainGenerations.get(resolved.root) ?? 0) + 1);
+    const result: RetainedMutationResult = {
+      outcome: "done",
+      recordDirectory: "",
+      retainedPath: null,
+      retainedRevision: null,
+      retainedIdentity: null,
+      mutationId: intent.id,
+      revision: bytesRevision(intent.bytes!),
+      sourceMutation,
+      ...(intent.expectedMutationEpoch === undefined
+        ? {}
+        : { publicationEpoch: await epochFor(resolved.root, records) }),
+    };
+    plainReceipts.delete(intent.id);
+    plainReceipts.set(intent.id, { fingerprint, result });
+    if (plainReceipts.size > 512) plainReceipts.delete(plainReceipts.keys().next().value!);
+    return result;
+  };
+  const replaceByRename = async (from: string, to: string) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await NodeFSP.rename(from, to);
+      } catch (cause) {
+        // Windows refuses to replace a file another program briefly holds open (indexers, antivirus).
+        if (
+          HostProcess.Platform.defaultValue() !== "win32" ||
+          attempt >= 4 ||
+          !["EPERM", "EACCES", "EBUSY"].some((code) => isNodeError(cause, code))
+        )
+          throw cause;
+        await NodeTimersPromises.setTimeout(50 * 2 ** attempt);
+      }
+    }
+  };
+  const publishPlainly = async (
+    resolved: Resolved,
+    intent: Pick<RetainedMutationInput, "id" | "kind" | "condition" | "bytes" | "executable">,
+    snapshot: Awaited<ReturnType<typeof inspectGuardedFile>>,
+    fields: {
+      readonly workspaceRoot: string;
+      readonly relativePath: string;
+      readonly resolvedPath: string;
+      readonly publicationOutcome: "unchanged";
+    },
+  ) => {
+    if (intent.bytes == null)
+      throw new RetainedMutationError("unavailable", "A plain publication needs bytes.", intent.id);
+    const bytes = intent.bytes;
+    // Until the final rename or link the target is untouched, so a failure there is a known refusal.
+    const beforeChange = async <A>(step: () => Promise<A>) => {
+      try {
+        return await step();
+      } catch (cause) {
+        if (cause instanceof RetainedMutationError || isExistsError(cause)) throw cause;
+        throw new PlainPublicationUnchangedError(cause);
+      }
+    };
+    const directory = NodePath.dirname(resolved.target);
+    await beforeChange(() => NodeFSP.mkdir(directory, { recursive: true }));
+    if ((await beforeChange(() => NodeFSP.realpath(directory))) !== directory)
+      throw new RetainedMutationError(
+        "target",
+        "The target folder changed before a plain publication.",
+        intent.id,
+      );
+    const exclusive = intent.kind === "create" || intent.condition === "absent";
+    const mode = snapshot
+      ? Number((await beforeChange(() => NodeFSP.stat(resolved.target))).mode) & 0o7777
+      : intent.executable
+        ? 0o777
+        : 0o666;
+    const temporary = NodePath.join(
+      directory,
+      `.${NodePath.basename(resolved.target)}.${NodeCrypto.randomUUID()}.scient-tmp`,
+    );
+    try {
+      await beforeChange(async () => {
+        const handle = await NodeFSP.open(temporary, "wx", mode);
+        try {
+          await handle.writeFile(bytes);
+          if (snapshot && HostProcess.Platform.defaultValue() !== "win32") await handle.chmod(mode);
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+      });
+      if (!exclusive) await beforeChange(() => replaceByRename(temporary, resolved.target));
+      else {
+        try {
+          await NodeFSP.link(temporary, resolved.target);
+        } catch (cause) {
+          if (isNodeError(cause, "EEXIST")) throw new WorkspaceFileExistsError(fields);
+          // Volumes without hard links (FAT, some network shares) still create exclusively.
+          if (
+            !["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"].some((code) => isNodeError(cause, code))
+          )
+            throw new PlainPublicationUnchangedError(cause);
+          try {
+            await NodeFSP.copyFile(temporary, resolved.target, NodeFSP.constants.COPYFILE_EXCL);
+          } catch (copyCause) {
+            if (isNodeError(copyCause, "EEXIST")) throw new WorkspaceFileExistsError(fields);
+            throw copyCause;
+          }
+        }
+      }
+    } finally {
+      await NodeFSP.rm(temporary, { force: true });
+    }
+    await syncDirectory(directory);
+  };
   const qualifyBytePublication = async (
     input: { cwd: string; relativePath: string },
     resolved: Resolved,
@@ -925,17 +1073,20 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       | "guardMaxBytes"
       | "expectedMutationEpoch"
       | "id"
+      | "executable"
     >,
     signal: AbortSignal,
-  ) => {
+    allowPlain: boolean,
+  ): Promise<RetainedMutationResult | undefined> => {
     if (intent.kind !== "write" && intent.kind !== "create") return;
     const capabilities = await nativeFilePublicationCapabilities(helperFor(), resolved.root);
-    if (
-      !capabilities.strictCurrentRoot ||
-      !capabilities.publicationLease ||
-      !capabilities.exclusiveMove ||
-      !capabilities.exclusiveLink
-    )
+    const nativeAuthority =
+      capabilities.strictCurrentRoot &&
+      capabilities.publicationLease &&
+      capabilities.exclusiveMove &&
+      capabilities.exclusiveLink;
+    // Plain publication needs only the helper's root and parent ownership leases.
+    if (!nativeAuthority && !(allowPlain && capabilities.publicationLease))
       throw new RetainedMutationError(
         "unavailable",
         "This host has not qualified byte-publication ownership.",
@@ -952,12 +1103,28 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       (intent.kind === "write" &&
         intent.condition === "unguarded" &&
         (await fileIdentity(resolved.target)) === null);
-    const qualified = creation
-      ? capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata
-      : capabilities.atomicExchange;
-    await withRoot(
+    const qualified =
+      nativeAuthority &&
+      (creation
+        ? capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata
+        : capabilities.atomicExchange);
+    const plainFingerprint = JSON.stringify({
+      target: resolved.target,
+      kind: intent.kind,
+      condition: intent.condition,
+      expected: intent.expectedRevision,
+      desired: intent.bytes == null ? null : bytesRevision(intent.bytes),
+      executable: intent.executable ?? false,
+      expectedMutationEpoch: intent.expectedMutationEpoch ?? null,
+    });
+    return withRoot(
       resolved.root,
-      async (_root, records, rootBinding, parentBinding) => {
+      async (
+        _root,
+        records,
+        rootBinding,
+        parentBinding,
+      ): Promise<RetainedMutationResult | undefined> => {
         const attention = await attentionFor(records, resolved);
         if (attention)
           throw new RetainedMutationError(
@@ -966,6 +1133,16 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             attention.recoveryId,
             attention.retainedPaths,
           );
+        const replayed = qualified || !allowPlain ? undefined : plainReceipts.get(intent.id);
+        if (replayed) {
+          if (replayed.fingerprint !== plainFingerprint)
+            throw new RetainedMutationError(
+              "intent",
+              "Mutation identity was reused for a changed target, condition or bytes.",
+              intent.id,
+            );
+          return replayed.result;
+        }
         if (
           intent.expectedMutationEpoch !== undefined &&
           (await epochFor(resolved.root, records)) !== intent.expectedMutationEpoch
@@ -991,6 +1168,17 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           resolvedPath: resolved.target,
           publicationOutcome: "unchanged" as const,
         };
+        // A lost reply can leave the requested bytes already on disk; converge without writing.
+        if (
+          allowPlain &&
+          intent.condition !== "absent" &&
+          intent.bytes != null &&
+          snapshot &&
+          (intent.guardMaxBytes === undefined || snapshot.byteLength <= intent.guardMaxBytes) &&
+          snapshot.revision === bytesRevision(intent.bytes) &&
+          sameIdentity(snapshot.identity, await fileIdentity(resolved.target))
+        )
+          return plainReceipt(resolved, intent, plainFingerprint, records, false);
         if (
           intent.condition === "revision" &&
           (!snapshot ||
@@ -1022,6 +1210,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             "Current byte-publication authority changed during qualification.",
             intent.id,
           );
+        if (allowPlain) {
+          await publishPlainly(resolved, intent, snapshot, fields);
+          return plainReceipt(resolved, intent, plainFingerprint, records, true);
+        }
         if (
           intent.kind === "write" &&
           intent.condition !== "absent" &&
@@ -1060,11 +1252,14 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           { cause },
         );
       }
+      const plainCandidate =
+        (intent.kind === "write" || intent.kind === "create") && retentionOverride === undefined;
       if (
-        !capabilities.strictCurrentRoot ||
-        !capabilities.publicationLease ||
-        !capabilities.exclusiveMove ||
-        !capabilities.exclusiveLink
+        !(plainCandidate && capabilities.publicationLease) &&
+        (!capabilities.strictCurrentRoot ||
+          !capabilities.publicationLease ||
+          !capabilities.exclusiveMove ||
+          !capabilities.exclusiveLink)
       )
         throw new RetainedMutationError(
           "unavailable",
@@ -1078,7 +1273,14 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       const admissionDestination = destination
         ? await nearestParent(destination.root, destination.target)
         : null;
-      await qualifyBytePublication(input, resolved, intent, signal);
+      const plain = await qualifyBytePublication(
+        input,
+        resolved,
+        intent,
+        signal,
+        retentionOverride === undefined,
+      );
+      if (plain) return plain;
       const id = retentionOverride ? intent.id : keyFor(mutationId);
       const indexRoot = await ensureNativePrivateRetentionDirectory(
         helper,
@@ -2148,7 +2350,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     });
     const resolved = yield* resolveTarget(input);
     yield* owned(input, resolved.target, (signal) =>
-      qualifyBytePublication(input, resolved, intent, signal),
+      qualifyBytePublication(input, resolved, intent, signal, false),
     );
     if (input.bytes !== null && input.expectedRevision === null) {
       const directory = yield* Effect.tryPromise({
@@ -2531,6 +2733,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const identity = await directoryIdentity(root),
       hash = NodeCrypto.createHash("sha256");
     hash.update(`${identity.dev}:${identity.ino}\n`);
+    // Plain publications leave no record, so their count advances the epoch instead.
+    const plain = plainGenerations.get(root);
+    if (plain) hash.update(`plain:${plainEpochNonce}:${plain}\n`);
     for (const entry of [...records].sort((a, b) => a.directory.localeCompare(b.directory))) {
       const record = entry.record;
       if (!record || record.version === 1) {

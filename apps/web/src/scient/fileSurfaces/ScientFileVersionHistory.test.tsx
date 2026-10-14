@@ -270,13 +270,13 @@ describe("retained file history actions", () => {
     const { promise: pending, resolve: accepted } = Promise.withResolvers<boolean>();
     const accept = vi.fn(() => pending);
     await mount(true, accept);
-    await click("Accept current disk version after review");
+    await click("Continue from this version");
     expect(accept).not.toHaveBeenCalled();
-    await click("Review current disk version read-only");
+    await click("Show file on disk");
     expect(
       host.querySelector("[aria-label='Reviewed current disk version'] pre")?.textContent,
     ).toBe("Retained text");
-    await click("Accept current disk version after review");
+    await click("Continue from this version");
     expect(accept).toHaveBeenCalledWith(
       attention.recoveryId,
       readSnapshot("Retained text").revision,
@@ -299,7 +299,7 @@ describe("retained file history actions", () => {
     commands.list.mockResolvedValue(AsyncResult.success({ ...history, attention }));
     const accept = vi.fn(async () => true);
     await mount(true, accept, false);
-    await click("Accept current disk version after review");
+    await click("Continue from this version");
     expect(accept).not.toHaveBeenCalled();
     expect(host.querySelector("[role=alert]")).not.toBeNull();
   });
@@ -382,18 +382,18 @@ describe("retained file history actions", () => {
       return AsyncResult.success({ recoveryId: attention.recoveryId, revision: null });
     });
     await mount();
-    await click("Review current disk version read-only");
+    await click("Show file on disk");
     expect(host.querySelector("[aria-label='Reviewed current disk version'] pre")).toBeNull();
     absent = false;
-    await click("Accept current disk version after review");
+    await click("Continue from this version");
     expect(commands.resolve).not.toHaveBeenCalled();
     absent = true;
-    await click("Review current disk version read-only");
-    await click("Accept current disk version after review");
+    await click("Show file on disk");
+    await click("Continue from this version");
     expect(host.querySelector("[role=alert]")).not.toBeNull();
     expect(commands.resolve).toHaveBeenCalledTimes(1);
     absent = true;
-    await click("Accept current disk version after review");
+    await click("Continue from this version");
     expect(commands.resolve).toHaveBeenCalledTimes(2);
     expect(host.querySelector("[role=alert]")).toBeNull();
     expect(commands.write).not.toHaveBeenCalled();

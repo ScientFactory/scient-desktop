@@ -73,12 +73,10 @@ export function ScientFileVersionHistoryPanel(props: {
       {props.error ? <p role="alert">{props.error}</p> : null}
       {attention ? (
         <div role="alert" className="flex flex-col gap-2">
-          <p className="font-medium">This retained file operation still needs review</p>
-          <p>{attention.message}</p>
+          <p className="font-medium">A save needs checking</p>
           <p>
-            Review the current file and retained bytes before accepting the current disk version.
-            This requires backend confirmation, preserves your local draft, and does not confirm the
-            old operation succeeded. Discarding versions does not resolve the operation.
+            Check the file on disk and the earlier versions, then continue. Your text is kept.
+            Discarding versions doesn’t finish the check.
           </p>
           <Button
             size="xs"
@@ -86,7 +84,7 @@ export function ScientFileVersionHistoryPanel(props: {
             disabled={props.busy}
             onClick={() => void props.onReviewCurrent()}
           >
-            Review current disk version read-only
+            Show file on disk
           </Button>
           {attention.retainedPaths.map((path) => (
             <Button
@@ -96,7 +94,7 @@ export function ScientFileVersionHistoryPanel(props: {
               title={path}
               onClick={() => props.onOpen(path)}
             >
-              Review retained file read-only
+              Open earlier version
             </Button>
           ))}
           {props.onAcceptCurrent ? (
@@ -114,25 +112,21 @@ export function ScientFileVersionHistoryPanel(props: {
                 void props.onAcceptCurrent?.(attention.recoveryId, props.currentReview!.revision)
               }
             >
-              Accept current disk version after review
+              Continue from this version
             </Button>
           ) : null}
         </div>
       ) : null}
       {props.reviewRequired && attention === null ? (
         <div role="alert" className="flex flex-col gap-2">
-          <p>
-            Scient confirmed this attempt did not publish a change. Acknowledge the refusal only
-            after reviewing the current disk version. This does not confirm a save or repair an
-            unavailable mutation capability.
-          </p>
+          <p>Nothing was written. Check the file on disk, then continue. Your text is kept.</p>
           <Button
             size="xs"
             variant="outline"
             disabled={props.busy}
             onClick={() => void props.onReviewCurrent()}
           >
-            Review current disk version read-only
+            Show file on disk
           </Button>
           <Button
             size="xs"
@@ -146,7 +140,7 @@ export function ScientFileVersionHistoryPanel(props: {
             }
             onClick={() => void props.onAcknowledgeRefusal?.(props.currentReview!.revision)}
           >
-            Acknowledge unchanged refusal
+            Continue from this version
           </Button>
         </div>
       ) : null}
@@ -157,20 +151,11 @@ export function ScientFileVersionHistoryPanel(props: {
           aria-label="Reviewed current disk version"
         >
           <p className="font-medium">
-            Current disk version ·{" "}
-            {props.currentReview.missing
-              ? "Path is absent (no current revision)"
-              : props.currentReview.revision}
+            {props.currentReview.missing ? "The file is not on disk" : "On disk now"}
           </p>
-          <p>
-            Accept applies only to this reviewed state. A later disk change requires another review.
-            Your local draft is not replaced.
-          </p>
+          <p>Continuing applies only to this version and keeps your text.</p>
           {props.currentReview.missing ? (
-            <p role="status">
-              The current pathname is missing. Accepting its absence does not create a file or save
-              the old draft. A later new save must use exclusive creation.
-            </p>
+            <p role="status">Continuing keeps your text and doesn’t create the file.</p>
           ) : (
             <>
               <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border p-2">

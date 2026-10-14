@@ -7,7 +7,7 @@ import type {
   DocumentPersistenceCurrentReview,
   DocumentSaveIntent,
 } from "@scientfactory/scient-document";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectWriteFileError } from "@t3tools/contracts";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 import { ScientMarkdownPersistenceNotice } from "./ScientMarkdownPersistenceNotice";
 import { MarkdownPersistenceRegistry } from "../persistence/markdownPersistenceRegistry";
@@ -122,9 +122,9 @@ describe("Markdown persistence feedback", () => {
       },
     });
     const host = mount(coordinator);
-    await act(async () => click(host, "Review current disk version read-only"));
+    await act(async () => click(host, "Show file on disk"));
     expect(host.querySelector("[aria-label='Reviewed current disk version'] pre")).toBeNull();
-    await act(async () => click(host, "Accept current disk version after review"));
+    await act(async () => click(host, "Continue from this version"));
     expect(coordinator.getSnapshot()).toMatchObject({
       currentMissing: true,
       pending: true,
@@ -133,11 +133,9 @@ describe("Markdown persistence feedback", () => {
     });
     expect(write).not.toHaveBeenCalled();
     expect(
-      [...host.querySelectorAll("button")].some(
-        (button) => button.textContent === "Recreate current file exclusively",
-      ),
+      [...host.querySelectorAll("button")].some((button) => button.textContent === "Save it again"),
     ).toBe(true);
-    await act(async () => click(host, "Recreate current file exclusively"));
+    await act(async () => click(host, "Save it again"));
     expect(current).toEqual({ source: "A", revision: "created" });
     expect(coordinator.getSnapshot()).toMatchObject({ currentMissing: false, pending: false });
   });
@@ -236,7 +234,7 @@ describe("Markdown persistence feedback", () => {
     expect(
       [...host.querySelectorAll("button")].some((button) => button.textContent === "Retry"),
     ).toBe(false);
-    await act(async () => click(host, "Open retained version read-only"));
+    await act(async () => click(host, "Open earlier version"));
     expect(open).toHaveBeenCalledWith("/synthetic-retained/old.md");
     expect(read).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
@@ -270,9 +268,10 @@ describe("Markdown persistence feedback", () => {
     const open = vi.fn();
     const host = mount(coordinator, { onOpenFile: open });
     expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
-      "Open retained version read-only",
+      "Open earlier version",
+      "Details",
     ]);
-    await act(async () => click(host, "Open retained version read-only"));
+    await act(async () => click(host, "Open earlier version"));
     expect(open).toHaveBeenCalledExactlyOnceWith("/synthetic-retained/unknown.md");
     await act(async () => {
       await coordinator.flushNow();
@@ -332,11 +331,11 @@ describe("Markdown persistence feedback", () => {
     });
     const host = mount(coordinator);
     const acceptance = [...host.querySelectorAll("button")].find(
-      (button) => button.textContent === "Accept current disk version after review",
+      (button) => button.textContent === "Continue from this version",
     )!;
     expect(acceptance.disabled).toBe(true);
     await act(async () => {
-      click(host, "Review current disk version read-only");
+      click(host, "Show file on disk");
       await reviewStarted.promise;
     });
     expect(acceptance.disabled).toBe(true);
@@ -384,10 +383,10 @@ describe("Markdown persistence feedback", () => {
     });
     coordinator.noteMutationFailure({ failure: "target_changed" }, "display-only-mutation");
     const host = mount(coordinator);
-    await act(async () => click(host, "Acknowledge unchanged refusal"));
+    await act(async () => click(host, "Continue from this version"));
     expect(coordinator.getSnapshot().attention).toBe("target_changed");
     expect(read).not.toHaveBeenCalled();
-    await act(async () => click(host, "Review current disk version read-only"));
+    await act(async () => click(host, "Show file on disk"));
     expect(
       host.querySelector("[aria-label='Reviewed current disk version'] pre")?.textContent,
     ).toBe("Disk");
@@ -396,7 +395,7 @@ describe("Markdown persistence feedback", () => {
       baselineRevision: "rInitial",
       draftSource: "Local draft",
     });
-    await act(async () => click(host, "Acknowledge unchanged refusal"));
+    await act(async () => click(host, "Continue from this version"));
     expect(resolve).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
     expect(coordinator.getSnapshot()).toMatchObject({
@@ -494,13 +493,13 @@ describe("Markdown persistence feedback", () => {
     });
     expect(host.querySelectorAll("[role=region]")).toHaveLength(1);
     expect(host.querySelector("[role=status]")?.textContent).toBe(
-      "This file was changed by another writer",
+      "This file changed on disk while you were editing",
     );
     expect(host.querySelector("[role=status] button")).toBeNull();
     expect(document.activeElement).toBe(input);
     await act(() => coordinator.change("C"));
     expect(host.querySelector("[role=status]")?.textContent).toBe(
-      "This file was changed by another writer",
+      "This file changed on disk while you were editing",
     );
   });
 
@@ -525,7 +524,7 @@ describe("Markdown persistence feedback", () => {
     expect(coordinator.getSnapshot().draftSource).toBe("External");
     expect(coordinator.getSnapshot().recoverySource).toBe("B");
     expect(host.querySelector("[role=region]")).toBeNull();
-    await act(() => click(host, "Restore previous edits"));
+    await act(() => click(host, "Restore"));
     expect(coordinator.getSnapshot().draftSource).toBe("B");
   });
 
@@ -543,10 +542,10 @@ describe("Markdown persistence feedback", () => {
     await act(async () => coordinator.noteFreshnessHint());
     expect(coordinator.getSnapshot().pending).toBe(false);
     expect(host.textContent).toContain("This file couldn’t be refreshed");
-    expect(host.textContent).not.toContain("Changes haven’t been saved");
+    expect(host.textContent).not.toContain("Couldn’t save");
     await act(() => coordinator.change("B"));
-    expect(host.textContent).toContain("Changes haven’t been saved");
-    expect(host.querySelector("[role=status]")?.textContent).toBe("Changes haven’t been saved");
+    expect(host.textContent).toContain("Couldn’t save");
+    expect(host.querySelector("[role=status]")?.textContent).toBe("Couldn’t save");
   });
 
   it("explains a moved file and offers the same-name files as other documents", async () => {
@@ -579,14 +578,14 @@ describe("Markdown persistence feedback", () => {
     expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("archive/notes.md");
     expect(coordinator.getSnapshot().draftSource).toBe("A");
     expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "Try again",
       "archive/notes.md",
       "drafts/notes.md",
-      "Retry",
     ]);
 
     // Unsaved edits are a different episode and keep their own explanation.
     await act(() => coordinator.change("B"));
-    expect(host.textContent).toContain("Changes haven’t been saved");
+    expect(host.textContent).toContain("Couldn’t save");
     expect(host.textContent).not.toContain("archive/notes.md");
   });
 
@@ -621,6 +620,45 @@ describe("Markdown persistence feedback", () => {
     await act(async () => action.click());
     await act(async () => vi.advanceTimersByTimeAsync(50));
     expect(shadow.activeElement).toBe(source);
+  });
+
+  it("names the system's reason in plain words and keeps technical details behind Details", async () => {
+    const coordinator = new MarkdownPersistenceCoordinator({
+      source: "A",
+      revision: "rA",
+      write: async () => {
+        throw new ProjectWriteFileError({
+          cwd: "/synthetic",
+          relativePath: "notes.md",
+          failure: "operation_failed",
+          osErrorCode: "ENOSPC",
+          publicationOutcome: "unchanged",
+        });
+      },
+      read: async () => ({ source: "A", revision: "rA" }),
+      classifyFailure: () => "operation",
+      describeOutcome: () => "unchanged",
+    });
+    const host = mount(coordinator);
+    await act(async () => {
+      coordinator.change("B");
+      await coordinator.flushNow();
+    });
+    const region = host.querySelector("[role=region]")!;
+    expect(region.textContent).toContain("Couldn’t save: the disk is full.");
+    expect(region.textContent).toContain("Nothing was written. Your text is still here.");
+    expect(region.textContent).not.toContain("notes.md");
+    expect(host.querySelector("[data-persistence-reason]")).toBeNull();
+    expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "Show file on disk",
+      "Continue from this version",
+      "Details",
+    ]);
+    await act(() => click(host, "Details"));
+    const details = host.querySelector("[data-persistence-reason]")!;
+    expect(details.textContent).toContain("Failed to write workspace file 'notes.md'");
+    expect(details.textContent).toContain("Code: ENOSPC");
+    expect(coordinator.getSnapshot().draftSource).toBe("B");
   });
 
   it("keeps one actionable failure after the retry budget is exhausted", async () => {
@@ -663,14 +701,14 @@ describe("Markdown persistence feedback", () => {
       classifyFailure: () => "terminal",
     });
     const host = mount(coordinator);
-    await act(() => click(host, "Accept current disk version after review"));
+    await act(() => click(host, "Continue from this version"));
     expect(resolve).not.toHaveBeenCalled();
-    await act(async () => click(host, "Review current disk version read-only"));
+    await act(async () => click(host, "Show file on disk"));
     expect(
       host.querySelector("[aria-label='Reviewed current disk version'] pre")?.textContent,
     ).toBe("Current C");
     disk = { source: "New external E", revision: "rE", publicationAttention: attention };
-    await act(async () => click(host, "Accept current disk version after review"));
+    await act(async () => click(host, "Continue from this version"));
     expect(resolve).not.toHaveBeenCalled();
     expect(coordinator.getSnapshot()).toMatchObject({
       attention: "recovery_required",

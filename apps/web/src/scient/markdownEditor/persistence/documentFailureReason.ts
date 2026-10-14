@@ -17,19 +17,60 @@ const isWriteFailure = Schema.is(ProjectWriteFileError);
 const isRenameFailure = Schema.is(ProjectRenameFileError);
 const isDeleteFailure = Schema.is(ProjectDeleteFileError);
 
-/** What the workspace said about a failed file operation, when it said anything. */
-export function documentFailureReason(error: unknown): string | null {
+function fileFailures(error: unknown) {
   const reasons = Cause.isCause(error)
     ? error.reasons.flatMap((reason) => (reason._tag === "Fail" ? [reason.error] : []))
     : [error];
-  for (const reason of reasons)
-    if (
+  return reasons.filter(
+    (reason) =>
       isWriteFailure(reason) ||
       isReadFailure(reason) ||
       isRenameFailure(reason) ||
-      isDeleteFailure(reason)
-    )
-      return reason.message;
+      isDeleteFailure(reason),
+  );
+}
+
+/** What the workspace said about a failed file operation, when it said anything. */
+export function documentFailureReason(error: unknown): string | null {
+  return fileFailures(error)[0]?.message ?? null;
+}
+
+const PLAIN_OS_REASONS: Readonly<Record<string, string>> = {
+  ENOSPC: "the disk is full",
+  EDQUOT: "the disk is full",
+  EACCES: "the file is locked or protected",
+  EPERM: "the file is locked or protected",
+  EBUSY: "another program is using the file",
+  ETXTBSY: "another program is using the file",
+  EROFS: "the disk is read-only",
+  ENOENT: "the file or its folder is missing",
+  ENAMETOOLONG: "the name is too long",
+  EIO: "the disk reported an error",
+};
+const failureCode = (failure: ReturnType<typeof fileFailures>[number]) =>
+  "osErrorCode" in failure && typeof failure.osErrorCode === "string" ? failure.osErrorCode : null;
+const failureKind = (failure: ReturnType<typeof fileFailures>[number]) =>
+  "reason" in failure && typeof failure.reason === "string" ? failure.reason : null;
+
+/** A short cause in plain words for a failed file operation, when the system named one. */
+export function documentFailurePlainReason(error: unknown): string | null {
+  for (const failure of fileFailures(error)) {
+    const code = failureCode(failure);
+    const plain = code === null ? undefined : PLAIN_OS_REASONS[code];
+    if (plain) return plain;
+    const kind = failureKind(failure);
+    if (kind === "permission_denied") return PLAIN_OS_REASONS.EACCES!;
+    if (kind === "not_found") return PLAIN_OS_REASONS.ENOENT!;
+  }
+  return null;
+}
+
+/** The operating system's code for a failed file operation, for bug reports. */
+export function documentFailureCode(error: unknown): string | null {
+  for (const failure of fileFailures(error)) {
+    const code = failureCode(failure);
+    if (code) return code;
+  }
   return null;
 }
 

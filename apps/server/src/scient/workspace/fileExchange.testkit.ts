@@ -53,6 +53,25 @@ export function filePublicationTestHelper() {
   })());
 }
 
+/** Wraps the helper so it reports capabilities as unavailable, as the Windows helper does. */
+export async function filePublicationHelperWithout(
+  helper: string,
+  capabilities: ReadonlyArray<string>,
+) {
+  const directory = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "scient-publication-wrapper-"),
+  );
+  afterAll(() => NodeFSP.rm(directory, { recursive: true, force: true }));
+  const wrapper = NodePath.join(directory, "scient-file-publication");
+  const edits = capabilities.map((name) => `-e 's/"${name}":true/"${name}":false/'`).join(" ");
+  await NodeFSP.writeFile(
+    wrapper,
+    `#!/bin/sh\nif [ "$2" = capabilities ]; then "${helper}" "$@" | sed ${edits}; exit $?; fi\nexec "${helper}" "$@"\n`,
+    { mode: 0o755 },
+  );
+  return wrapper;
+}
+
 export const fileMutationFixture = Effect.fnUntraced(
   function* (
     body: (fixture: {
@@ -69,8 +88,13 @@ export const fileMutationFixture = Effect.fnUntraced(
     }) => Promise<void>,
     hooks: RetainedMutationHooks = {},
     retentionLimitBytes: number | null = null,
+    wrapHelper?: (helper: string) => Promise<string>,
   ) {
-    const helper = yield* Effect.promise(filePublicationTestHelper);
+    const compiledHelper = yield* Effect.promise(filePublicationTestHelper);
+    const helper =
+      compiledHelper === undefined || wrapHelper === undefined
+        ? compiledHelper
+        : yield* Effect.promise(() => wrapHelper(compiledHelper));
     const fileSystem = yield* FileSystem.FileSystem,
       path = yield* Path.Path;
     const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-publication-" });

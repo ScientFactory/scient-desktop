@@ -62,27 +62,27 @@ describe("ScientFileFreshnessStatus", () => {
 
   it("says nothing is wrong only when the file's session agrees", () => {
     const calm = renderToStaticMarkup(<ScientFileFreshnessStatus {...quiet} pending={false} />);
-    expect(calm).toContain('aria-label="File status: No file warnings"');
+    expect(calm).toContain('aria-label="File status: Saved"');
     expect(calm).not.toContain("text-warning");
 
     const conflict = renderToStaticMarkup(
       <ScientFileFreshnessStatus {...quiet} pending sessionAttention="conflict" />,
     );
-    expect(conflict).toContain('aria-label="File status: File changed: review your save options"');
+    expect(conflict).toContain('aria-label="File status: File changed on disk"');
     expect(conflict).toContain("text-warning");
 
     const failure = renderToStaticMarkup(
       <ScientFileFreshnessStatus {...quiet} pending sessionAttention="failure" />,
     );
-    expect(failure).toContain('aria-label="File status: Changes have not been saved"');
+    expect(failure).toContain('aria-label="File status: Not saved"');
     expect(failure).toContain("text-warning");
 
     // Nothing unsaved: only the check of the disk version failed.
     const refresh = renderToStaticMarkup(
       <ScientFileFreshnessStatus {...quiet} pending={false} sessionAttention="refresh" />,
     );
-    expect(refresh).toContain('aria-label="File status: The latest file could not be loaded"');
-    expect(refresh).not.toContain("Changes have not been saved");
+    expect(refresh).toContain('aria-label="File status: The latest file couldn’t be loaded"');
+    expect(refresh).not.toContain("Not saved");
   });
 });
 

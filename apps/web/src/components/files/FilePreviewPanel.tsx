@@ -74,7 +74,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Download, FolderTree, Globe, WrapTextIcon } from "lucide-react";
+import { AlertTriangle, Download, FolderTree, Globe, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import { MarkdownDownloadMenu } from "~/scient/documentExport/MarkdownDownloadMenu";
 import {
@@ -2359,6 +2359,7 @@ export default function FilePreviewPanel({
             <ScientFileFreshnessStatus
               {...freshnessNoticeProps}
               pending={effectiveSourcePending}
+              retrying={markdownSnapshot?.retrying ?? false}
               sessionAttention={
                 markdownSnapshot?.attention ??
                 (markdownSnapshot?.conflict
@@ -2436,18 +2437,21 @@ export default function FilePreviewPanel({
       {!markdownLease && genericSaveCoordinator.currentMissing ? (
         <div
           role="status"
-          className="shrink-0 border-b border-warning/24 bg-warning-surface px-3 py-2 text-xs text-warning-foreground"
+          className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-1.5 scient-reading-micro text-foreground"
         >
-          The reviewed current pathname is missing. Your local draft remains open and has not been
-          saved there. A new save creates exclusively and cannot replace a file that appears.
-          Without an owned local draft, open a retained version and save a separate copy.
+          <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
+          <p className="min-w-0 flex-1 leading-snug">
+            <span className="font-medium">This file is no longer on disk.</span>{" "}
+            <span className="text-muted-foreground">
+              Your text is still here and hasn’t been saved anywhere.
+            </span>
+          </p>
           <Button
             size="xs"
-            variant="outline"
             disabled={!canWriteFiles || file.data === null}
             onClick={() => genericSaveCoordinator.recreateMissingCurrent(file.data!.contents)}
           >
-            Recreate current file exclusively
+            Save it again
           </Button>
         </div>
       ) : null}

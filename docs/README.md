@@ -136,6 +136,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Superseded repository copy of the Scientific Artifact Studio roadmap](./internals/scientific-artifact-studio.md)
 - [Canonical cross-product Scientific Artifact Studio roadmap](https://github.com/ScientFactory/Scient/blob/main/docs/planning/scientific-artifact-studio.md)
 - [Scient universal file opening](./internals/scient-universal-file-opening.md)
+- [Saving workspace files](./internals/scient-file-saving.md)
 - [Scient PDF reader](./internals/scient-pdf-reader.md)
 - [Scient LaTeX](./internals/scient-latex.md)
 - [Scient content direction](./internals/scient-content-direction.md)
