@@ -146,6 +146,22 @@ function qualificationInputs(roots: ReadonlyArray<string>) {
   return { modules, packages };
 }
 
+/** The live suites the qualification runs for `provider`, as the script lists them. */
+function liveSuites(provider: "droid" | "pi"): ReadonlyArray<string> {
+  const script = NodeFS.readFileSync(
+    NodePath.join(import.meta.dirname, "qualify-managed-runtime-catalog.ts"),
+    "utf8",
+  );
+  return [
+    ...script.matchAll(
+      new RegExp(
+        `["'\`](apps/server/src/provider/${provider}/[^"'\`]+\\.live\\.test\\.ts)["'\`]`,
+        "gu",
+      ),
+    ),
+  ].map((match) => match[1]!);
+}
+
 describe("managed provider runtime update workflow", () => {
   it("lets sibling families finish and queues every serialized publication", () => {
     const caller = workflow("managed-provider-runtime-updates.yml");
@@ -159,25 +175,6 @@ describe("managed provider runtime update workflow", () => {
       "cancel-in-progress": false,
       queue: "max",
     });
-  });
-
-  it("guards the ACP qualification import graph without invalidating sibling families", () => {
-    const guards = publicationGuards();
-    const guarded = guards
-      .filter(
-        (guard) =>
-          guard.condition === undefined ||
-          guard.condition === '[[ "$PROVIDER" == antigravityAcp ]]',
-      )
-      .flatMap((guard) => guard.pathspecs);
-    const inputs = qualificationInputs(["apps/server/scripts/qualify-antigravity-acp-catalog.ts"]);
-    const unguarded = [...inputs.modules, ...inputs.packages]
-      .filter(([path]) => !guarded.some((pathspec) => pathspecCovers(pathspec, path)))
-      .map(([path, importer]) => `${path} (imported by ${importer})`);
-    expect(unguarded).toEqual([]);
-    expect(guards.find((guard) => guard.condition === undefined)?.pathspecs).not.toContain(
-      "apps/server/src/provider/acp",
-    );
   });
 
   it("checks exactly the app-approved release families in both dispatch and the schedule", () => {
@@ -314,24 +311,6 @@ describe("managed provider runtime update workflow", () => {
     expect(script).toContain("...qualification");
   });
 
-  it("invalidates Scient publication when any of its qualification inputs changes", () => {
-    const guarded = publicationGuards()
-      .filter(
-        (guard) =>
-          guard.condition === undefined || guard.condition === '[[ "$PROVIDER" == scient ]]',
-      )
-      .flatMap((guard) => guard.pathspecs);
-    const inputs = qualificationInputs([
-      "apps/server/scripts/qualifyScientAgentManagedRuntime.ts",
-      "apps/server/src/scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts",
-    ]);
-    expect(inputs.modules.size).toBeGreaterThan(2);
-    const unguarded = [...inputs.modules, ...inputs.packages]
-      .filter(([path]) => !guarded.some((pathspec) => pathspecCovers(pathspec, path)))
-      .map(([path, importer]) => `${path} (imported by ${importer})`);
-    expect(unguarded).toEqual([]);
-  });
-
   it("proves Droid's protocol once against the candidate binary where its fixtures are verified", () => {
     const reusable = workflow("managed-provider-runtime-update-provider.yml");
     const dependencies = reusable.jobs.qualify.steps.find(
@@ -376,8 +355,13 @@ describe("managed provider runtime update workflow", () => {
   });
 
   it("voids every provider's publication only for what its own qualification runs", () => {
-    const [everyProvider, acp, droid, scient, ...others] = publicationGuards();
-    expect(others).toEqual([]);
+    const [everyProvider, ...families] = publicationGuards();
+    // Each family with its own qualification code invalidates only itself.
+    expect(families.map((guard) => guard.condition)).toEqual(
+      ["antigravityAcp", "droid", "scient", "pi", "omp", "muse"].map(
+        (provider) => `[[ "$PROVIDER" == ${provider} ]]`,
+      ),
+    );
     // Discovery, artifact qualification and publication: the same for every provider.
     expect(everyProvider).toEqual({
       condition: undefined,
@@ -396,45 +380,51 @@ describe("managed provider runtime update workflow", () => {
         "scripts/update-managed-runtime-catalog.ts",
       ],
     });
-    expect(acp?.condition).toBe('[[ "$PROVIDER" == antigravityAcp ]]');
-    expect(acp?.pathspecs).toContain("apps/server/src/provider/AntigravityInstallation.ts");
-    // Each server qualifier invalidates its own family.
-    expect(droid?.condition).toBe('[[ "$PROVIDER" == droid ]]');
-    expect(scient?.condition).toBe('[[ "$PROVIDER" == scient ]]');
+    // Server code reaches every provider only through the families that run it.
+    expect(everyProvider?.pathspecs).not.toContain("apps/server/src/provider/acp");
   });
 
-  it("republishes nothing when what Droid's protocol qualification runs changed on main meanwhile", () => {
-    const guarded = publicationGuards()
-      .filter(
-        (guard) =>
-          guard.condition === undefined || guard.condition === '[[ "$PROVIDER" == droid ]]',
-      )
-      .flatMap((guard) => guard.pathspecs);
-    expect(guarded.length).toBeGreaterThan(0);
-    // A renamed path or a pattern that matches nothing would silently stop guarding anything.
-    for (const pathspec of guarded) {
-      expect(pathspecMatchesSomething(pathspec), pathspec).toBe(true);
-    }
-    // The six suites the qualification runs are the roots of what it executes.
-    const script = NodeFS.readFileSync(
-      NodePath.join(import.meta.dirname, "qualify-managed-runtime-catalog.ts"),
-      "utf8",
-    );
-    const suites = [
-      ...script.matchAll(/"(apps\/server\/src\/provider\/droid\/[^"]+\.live\.test\.ts)"/gu),
-    ].map((match) => match[1]!);
-    expect(suites).toHaveLength(6);
-
-    // Every module the suites load, however indirectly, must void a run when it
-    // changes: the server modules file by file, the workspace packages by folder.
-    const inputs = qualificationInputs(suites);
-    expect(inputs.modules.size).toBeGreaterThan(suites.length);
-    const unguarded = [...inputs.modules, ...inputs.packages]
-      .filter(([path]) => !guarded.some((pathspec) => pathspecCovers(pathspec, path)))
-      .map(([path, importer]) => `${path} (imported by ${importer})`);
-    expect(unguarded).toEqual([]);
-    expect(guarded).toContain("scripts/qualify-managed-runtime-catalog.ts");
+  it("reads every live suite the qualification runs", () => {
+    expect(liveSuites("droid")).toHaveLength(6);
+    expect(liveSuites("pi")).toHaveLength(5);
   });
+
+  it.each([
+    ["antigravityAcp", ["apps/server/scripts/qualify-antigravity-acp-catalog.ts"]],
+    ["droid", liveSuites("droid")],
+    [
+      "scient",
+      [
+        "apps/server/scripts/qualifyScientAgentManagedRuntime.ts",
+        "apps/server/src/scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts",
+      ],
+    ],
+    ["pi", liveSuites("pi")],
+    ["omp", ["apps/server/scripts/qualify-omp-rpc.ts"]],
+    ["muse", ["apps/server/scripts/qualify-muse-runtime.ts"]],
+  ] as const)(
+    "voids %s publication when anything its qualification runs changed on main meanwhile",
+    (provider, roots) => {
+      const guarded = publicationGuards()
+        .filter(
+          (guard) =>
+            guard.condition === undefined || guard.condition === `[[ "$PROVIDER" == ${provider} ]]`,
+        )
+        .flatMap((guard) => guard.pathspecs);
+      // A renamed path or a pattern that matches nothing would silently stop guarding anything.
+      for (const pathspec of guarded) {
+        expect(pathspecMatchesSomething(pathspec), pathspec).toBe(true);
+      }
+      // Every module the roots load, however indirectly, must void a run when it
+      // changes: the server modules file by file, the workspace packages by folder.
+      const inputs = qualificationInputs(roots);
+      expect(inputs.modules.size).toBeGreaterThan(roots.length);
+      const unguarded = [...inputs.modules, ...inputs.packages]
+        .filter(([path]) => !guarded.some((pathspec) => pathspecCovers(pathspec, path)))
+        .map(([path, importer]) => `${path} (imported by ${importer})`);
+      expect(unguarded).toEqual([]);
+    },
+  );
 
   it("qualifies Pi on every official native target and proves its live integration once", () => {
     const reusable = workflow("managed-provider-runtime-update-provider.yml");

@@ -326,6 +326,7 @@ jobs:
           # whole tree; the quoted pattern is matched by git in both commits, so a
           # server module added on main counts too.
           if [[ "$PROVIDER" == droid ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            vite.config.ts \
             apps/server/package.json \
             packages/effect-acp \
             ':(glob)apps/server/src/*.ts' \
@@ -412,6 +413,100 @@ jobs:
             packages/source-control-gitlab \
             packages/shared; then
             echo "Scient Agent qualification changed during this run; retry from current main." >&2
+            exit 1
+          fi
+
+          # Pi's qualification runs its live suites, under the root test configuration,
+          # against the server's Pi code.
+          if [[ "$PROVIDER" == pi ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            vite.config.ts \
+            apps/server/src/provider/pi \
+            apps/server/src/customModels.ts \
+            apps/server/src/customModelCapabilities.ts \
+            apps/server/src/customModelReadiness.ts \
+            packages/provider-core \
+            packages/provider-pi \
+            packages/provider-testing \
+            packages/contracts \
+            packages/scient-analysis \
+            packages/scient-compute \
+            packages/scient-document-artifacts \
+            packages/scient-execution \
+            packages/scient-operations \
+            packages/scient-project-init \
+            packages/scient-sources; then
+            echo "What Pi's live qualification runs changed during this run; retry from current main." >&2
+            exit 1
+          fi
+
+          # Oh My Pi qualification runs the app's own managed activation and RPC check.
+          if [[ "$PROVIDER" == omp ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/scripts/qualify-omp-rpc.ts \
+            apps/server/src/attachmentPaths.ts \
+            apps/server/src/attachmentStore.ts \
+            apps/server/src/config.ts \
+            apps/server/src/customModelReasoning.ts \
+            apps/server/src/customModels.ts \
+            apps/server/src/imageMime.ts \
+            apps/server/src/modelReasoning.ts \
+            apps/server/src/scientServerSettings.ts \
+            apps/server/src/serverSettings.ts \
+            apps/server/src/settingsDirectoryWatch.ts \
+            apps/server/src/settingsSecrets.ts \
+            apps/server/src/auth/ServerSecretStore.ts \
+            apps/server/src/provider/omp \
+            apps/server/src/scient/providerLifecycle/ManagedProviderRuntimeActions.ts \
+            apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts \
+            apps/server/src/scient/providerLifecycle/ProviderConnectionActions.ts \
+            apps/server/src/scient/providerLifecycle/QualifiedRpcManagedRuntime.ts \
+            apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts \
+            apps/server/src/scient/providerLifecycle/managedRuntimeVersion.ts \
+            apps/server/src/scient/threadSections/settingsPrecondition.ts \
+            apps/server/src/sourceControl/sourceControlHostSecrets.ts \
+            apps/server/src/usage/usageAccountingSettingsSecrets.ts \
+            packages/effect-omp-rpc \
+            packages/provider-acp \
+            packages/provider-acp-registry \
+            packages/provider-core \
+            packages/provider-cursor \
+            packages/provider-grok \
+            packages/provider-muse \
+            packages/provider-opencode \
+            packages/provider-pi \
+            packages/source-control-azure-devops \
+            packages/source-control-bitbucket \
+            packages/source-control-core \
+            packages/source-control-forgejo \
+            packages/source-control-gitcafe \
+            packages/source-control-github \
+            packages/source-control-gitlab \
+            packages/contracts \
+            packages/scient-analysis \
+            packages/scient-compute \
+            packages/scient-document-artifacts \
+            packages/scient-execution \
+            packages/scient-operations \
+            packages/scient-project-init \
+            packages/scient-sources; then
+            echo "Oh My Pi qualification changed during this run; retry from current main." >&2
+            exit 1
+          fi
+
+          # Muse qualification runs the app's managed Muse check.
+          if [[ "$PROVIDER" == muse ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/scripts/qualify-muse-runtime.ts \
+            apps/server/src/scient/providerLifecycle/MuseManagedRuntimeQualification.ts \
+            packages/provider-core \
+            packages/provider-muse \
+            packages/contracts \
+            packages/scient-analysis \
+            packages/scient-compute \
+            packages/scient-document-artifacts \
+            packages/scient-execution \
+            packages/scient-operations \
+            packages/scient-project-init \
+            packages/scient-sources; then
+            echo "Muse qualification changed during this run; retry from current main." >&2
             exit 1
           fi
 
