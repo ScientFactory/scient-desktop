@@ -119,11 +119,11 @@ clients editing at once could each overwrite the other's edit.
 - **A missing section is confirmed before it is trusted.** A write resolves
   before the settings stream delivers it, so the local copy can lack a
   section this client just created. An edit that needs a section it cannot
-  find (rename, remove) first sends a write that changes nothing, conditional
-  on its copy; only if the server accepts it is the section really gone.
-  Otherwise the edit reruns on the server's catalog. Filing never reads the
-  local copy: it needs only the section's id and environment, so New section…
-  can file into a section created a moment earlier.
+  find (marking it occupied before filing, rename, remove) first sends a write
+  that changes nothing, conditional on its copy; only if the server accepts it
+  is the section really gone. Otherwise the edit reruns on the server's
+  catalog. Without this, New section… created the section and then failed to
+  file the thread into it.
 - **Creation projects are add-only.** The precondition leaves out
   `createdInProjects`, so clients that predate it (and drop it when reading)
   can still write. The server merges the stored refs back into every written
@@ -236,6 +236,9 @@ section when un-settled or woken.
   Remotely acknowledged order-key changes are deliberate placement too.
 - **Persistence:** positions live under `scient:sidebar:placement-order:sections`, keyed
   by section group ids, so they no longer depend on which environment is primary.
+  The one entry saved under the former `placement-order:<primary environment>` key moves
+  there once, its group ids qualified with that environment (`placementMigration.ts`);
+  anything ambiguous reseeds.
   Storage contains scoped IDs, eligibility and order keys only. Read defensively;
   unavailable storage still permits in-memory operation. Restart discards deadlines,
   then reconciles current synchronized membership. Turning placement off cancels timers
@@ -299,7 +302,8 @@ rows) by transform.
 - **Remembering:** the section and its environment are remembered for the
   draft's thread id, and filed once that thread exists. The draft starts in a
   project on the section's environment (the current project when it is there,
-  else one of the section's threads' or creation projects). The entry is
+  else the project of any unarchived thread in the section, shelved ones
+  included, else one it was created for). The entry is
   dropped only after the write succeeds, so a failed write is retried on a
   later update. Its own optimistic membership does not acknowledge the write.
 - **Moved drafts:** if the thread appears on another environment (the composer
@@ -319,10 +323,13 @@ rows) by transform.
   section's environment points to it. Archived threads aren't visible to the
   sidebar and don't count. Threads of other environments can't be in it.
 - **Seeing occupied is trusted; seeing empty is not.**
-  - **Recording:** whenever membership changes, a client records the
-    environment on each occupied section (`environmentIds`) and clears any
-    `emptySince` stamp. This runs whether or not cleanup is on, so turning it
-    on later is safe.
+  - **Recording:** filing a thread first marks its section occupied on the
+    section's environment (`markOccupied`: records the environment and clears
+    any `emptySince` stamp; a no-op once recorded), so filing from the chat
+    header with no sidebar mounted still restarts the count. A failed or
+    refused mark leaves membership unchanged. Whenever membership changes, a
+    mounted sidebar also records what it sees. This runs whether or not
+    cleanup is on, so turning it on later is safe.
   - **Judging:** a client stamps a section `emptySince`, or removes it once
     stamped for the configured days, only after it has held that
     environment's live, synchronized shell snapshot for a minute. A connected
@@ -455,7 +462,8 @@ Upstream-owned files touched. JavaScript mounts are additive and carry
     drops, pinned rows, collapsed sections, order-key support), drag order,
     cleanup sweeps, and capitalization;
   - `catalog.test.tsx`: catalogs listed without a primary, writes and queues
-    per environment, ids never resolved in another catalog, queued cleanup;
+    per environment, ids never resolved in another catalog, marking sections
+    occupied (including one created a moment earlier), queued cleanup;
   - `catalogWrite.test.ts`: concurrent edits from two clients both survive,
     and a missing section is confirmed before it is trusted;
   - `newSectionFiling.test.tsx`: the real catalogs and actions file into a
@@ -464,10 +472,14 @@ Upstream-owned files touched. JavaScript mounts are additive and carry
     environment, and the machine choice for an empty section;
   - `pendingNewThreadSections.test.ts`: optimistic rollback, filing retries,
     draft reuse, moved drafts and entries saved before environments;
-  - `actions.test.tsx`: membership on the thread's environment only;
+  - `actions.test.tsx`: membership on the thread's environment only, even
+    when another environment's section shares the id, after marking the
+    section occupied;
+  - `placementMigration.test.ts`: saved placement carried over once;
   - `useThreadSectionMenu.test.tsx`, `menu.test.ts`: the submenu per environment;
   - `useSidebarSections.test.tsx`: the toggle without a primary, reordering per
-    environment, machine labels and legacy collapse state;
+    environment, machine labels, legacy collapse state, and the project a new
+    thread in another machine's section starts in;
   - `useEmptySectionCleanup.test.tsx`: per-environment settings, synchronization
     gating and cancellation.
 - **Browser tests** (Chromium, `layout` project): `SidebarSectionsView`,

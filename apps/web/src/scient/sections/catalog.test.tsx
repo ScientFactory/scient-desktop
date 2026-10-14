@@ -176,6 +176,47 @@ it("does not resolve a section id against another environment's catalog", async 
   expect(mocks.update.mock.calls[0]![0].input.patch.threadSections).toEqual([field]);
 });
 
+it("marks a section occupied without a write once it is recorded", async () => {
+  setConfigs([["remote", config([{ ...field, environmentIds: ["remote"] }])]]);
+  expect(await catalogs.markOccupied({ environmentId: REMOTE, sectionId: "field" })).toBe(true);
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("clears an old empty stamp on the section's own environment when a thread is filed", async () => {
+  setConfigs([
+    ["primary", config([research])],
+    ["remote", config([{ ...field, emptySince: "2020-01-01T00:00:00.000Z" }])],
+  ]);
+  serverAcceptsWrites();
+  expect(await catalogs.markOccupied({ environmentId: REMOTE, sectionId: "field" })).toBe(true);
+  const request = mocks.update.mock.calls[0]![0];
+  expect(request.environmentId).toBe(REMOTE);
+  expect(request.input.patch.threadSections).toEqual([{ ...field, environmentIds: ["remote"] }]);
+});
+
+it("marks a section created a moment ago, before this client's copy shows it", async () => {
+  const fresh: ThreadSection = { id: ThreadSectionId.make("fresh"), name: "Fresh", order: 1 };
+  const onServer = { threadSections: [field, fresh], threadSectionsGeneralIndex: 0 };
+  mocks.update.mockImplementation(async ({ input }) => {
+    if (input.patch.threadSectionsExpected.threadSections.length === 2) {
+      onServer.threadSections = input.patch.threadSections;
+    }
+    return AsyncResult.success(onServer);
+  });
+  expect(await catalogs.markOccupied({ environmentId: REMOTE, sectionId: "fresh" })).toBe(true);
+  expect(onServer.threadSections.find((entry) => entry.id === "fresh")?.environmentIds).toEqual([
+    "remote",
+  ]);
+});
+
+it("reports a section the server confirms is gone", async () => {
+  mocks.update.mockResolvedValue(
+    AsyncResult.success({ threadSections: [field], threadSectionsGeneralIndex: 0 }),
+  );
+  expect(await catalogs.markOccupied({ environmentId: REMOTE, sectionId: "deleted" })).toBe(false);
+  expect(mocks.update).toHaveBeenCalledTimes(1);
+});
+
 it("refuses writes to an environment that stores no sections", async () => {
   setConfigs([
     ["primary", config([research])],

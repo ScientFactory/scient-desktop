@@ -17,6 +17,7 @@ import { readThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useThreadSectionCatalogs } from "./catalog";
 import type { SectionRef } from "./logic";
 
 export class ThreadSectionsUnsupportedError extends Schema.TaggedError<ThreadSectionsUnsupportedError>()(
@@ -34,6 +35,15 @@ export class ThreadSectionElsewhereError extends Schema.TaggedError<ThreadSectio
 ) {
   override get message(): string {
     return "That section belongs to another machine. A thread can only join sections on its own machine.";
+  }
+}
+
+class ThreadSectionRegistrationError extends Schema.TaggedError<ThreadSectionRegistrationError>()(
+  "ThreadSectionRegistrationError",
+  {},
+) {
+  override get message(): string {
+    return "Could not update the section on its machine. It may have been deleted; try moving the thread again.";
   }
 }
 
@@ -67,14 +77,12 @@ export function useThreadSectionActions() {
   const setSectionMutation = useAtomCommand(threadEnvironment.setSection, {
     reportFailure: false,
   });
+  const { markOccupied } = useThreadSectionCatalogs();
 
   /** One write, no notice. Skips threads already in the target section; null files in General. */
   const setThreadSection = useCallback(
     async (target: ScopedThreadRef, section: SectionRef | null) => {
-      const sectionId = section === null ? null : ThreadSectionId.make(section.sectionId);
-      if ((readThreadShell(target)?.sectionId ?? null) === sectionId) {
-        return AsyncResult.success(undefined);
-      }
+      // Checked first: another environment's section can share this id.
       if (section !== null && section.environmentId !== target.environmentId) {
         return AsyncResult.failure(
           Cause.fail(
@@ -84,6 +92,10 @@ export function useThreadSectionActions() {
             }),
           ),
         );
+      }
+      const sectionId = section === null ? null : ThreadSectionId.make(section.sectionId);
+      if ((readThreadShell(target)?.sectionId ?? null) === sectionId) {
+        return AsyncResult.success(undefined);
       }
       if (!readEnvironmentSupportsSections(target.environmentId)) {
         return AsyncResult.failure(
@@ -95,12 +107,18 @@ export function useThreadSectionActions() {
           ),
         );
       }
+      // Mark the section occupied first, so filing always restarts the
+      // optional empty-section count, whether or not a sidebar is open to
+      // record it. A no-op once recorded.
+      if (section !== null && !(await markOccupied(section))) {
+        return AsyncResult.failure(Cause.fail(new ThreadSectionRegistrationError({})));
+      }
       return setSectionMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId, sectionId },
       });
     },
-    [setSectionMutation],
+    [markOccupied, setSectionMutation],
   );
 
   /** Files threads into a section (null: General) and offers Undo. */
@@ -108,7 +126,10 @@ export function useThreadSectionActions() {
     async (targets: readonly ScopedThreadRef[], section: SectionRef | null) => {
       const moves = targets.flatMap((target) => {
         const previous = readThreadShell(target)?.sectionId ?? null;
-        return previous === (section?.sectionId ?? null) ? [] : [{ target, previous }];
+        const unchanged =
+          previous === (section?.sectionId ?? null) &&
+          (section === null || section.environmentId === target.environmentId);
+        return unchanged ? [] : [{ target, previous }];
       });
       const results = await Promise.all(
         moves.map(async ({ target, previous }) => {

@@ -76,7 +76,7 @@ vi.mock("../../components/ui/toast", () => ({
 vi.mock("../../localApi", () => ({ readLocalApi: () => null }));
 
 import { GENERAL_SECTION_GROUP_ID, sectionGroupId } from "./logic";
-import { useSidebarSections } from "./useSidebarSections";
+import { projectRefForSection, useSidebarSections } from "./useSidebarSections";
 
 const LOCAL = EnvironmentId.make("local");
 const section = (id: string, order: number): ThreadSection => ({
@@ -186,6 +186,47 @@ it("creates an empty section from the New section row", async () => {
     }),
   );
   expect(mocks.moveThreadsToSection).not.toHaveBeenCalled();
+});
+
+describe("starting a thread in a section", () => {
+  const lab = { environmentId: "lab", section: section("runs", 0) };
+  const shell = (environmentId: string, projectId: string, extra: object = {}) =>
+    ({
+      environmentId,
+      projectId,
+      sectionId: "runs",
+      archivedAt: null,
+      ...extra,
+    }) as never;
+  const laptopContext = { environmentId: LOCAL, projectId: "laptop-project" } as never;
+
+  it("keeps the current project when it is on the section's machine", () => {
+    const context = { environmentId: "lab", projectId: "current" } as never;
+    expect(projectRefForSection(lab, context, [])).toBe(context);
+  });
+
+  it("uses a member thread's project on the section's machine, even a settled one", () => {
+    expect(
+      projectRefForSection(lab, laptopContext, [
+        // Same section id, other machine: not a member.
+        shell("local", "laptop-only"),
+        shell("lab", "archived", { archivedAt: "2026-01-01T00:00:00.000Z" }),
+        shell("lab", "settled", { settledOverride: "settled" }),
+      ]),
+    ).toEqual({ environmentId: "lab", projectId: "settled" });
+  });
+
+  it("falls back to a project the section was created for, else none", () => {
+    const created = {
+      ...lab,
+      section: { ...lab.section, createdInProjects: [{ environmentId: "lab", projectId: "made" }] },
+    };
+    expect(projectRefForSection(created, laptopContext, [])).toEqual({
+      environmentId: "lab",
+      projectId: "made",
+    });
+    expect(projectRefForSection(lab, laptopContext, [])).toBeNull();
+  });
 });
 
 describe("environment-local catalogs", () => {

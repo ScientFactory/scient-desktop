@@ -17,6 +17,7 @@ import {
   type SectionOrigin,
   type SectionRef,
   catalogWithCreatedSection,
+  catalogWithOccupiedSection,
   catalogWithRenamedSection,
   catalogWithRestoredSection,
   catalogWithoutSection,
@@ -103,6 +104,12 @@ export interface ThreadSectionCatalogs {
     origin?: SectionOrigin,
   ) => Promise<ThreadSection | null>;
   readonly rename: (ref: SectionRef, name: string) => Promise<CatalogRenameResult | null>;
+  /**
+   * Records that the section holds threads and clears its empty stamp, before
+   * a thread is filed into it. A no-op once recorded. False when the write
+   * failed or the server confirms the section is gone.
+   */
+  readonly markOccupied: (ref: SectionRef) => Promise<boolean>;
   /** Removes the entry; its threads join General until it is restored. */
   readonly remove: (ref: SectionRef) => Promise<RemovedSection | null>;
   readonly restore: (environmentId: EnvironmentId, removed: RemovedSection) => Promise<boolean>;
@@ -201,6 +208,28 @@ export function useThreadSectionCatalogs(): ThreadSectionCatalogs {
         };
       });
       return ok ? result : null;
+    },
+    [write],
+  );
+
+  const markOccupied = useCallback(
+    async (ref: SectionRef) => {
+      const { ok, result } = await write(EnvironmentId.make(ref.environmentId), (layout) => {
+        if (!layout.sections.some((section) => section.id === ref.sectionId)) {
+          // Possibly created a moment ago, ahead of this client's copy.
+          return { layout: null, result: false, needsCurrentLayout: true };
+        }
+        const catalog = catalogWithOccupiedSection(
+          layout.sections,
+          ref.sectionId,
+          ref.environmentId,
+        );
+        return {
+          layout: catalog === null ? null : { catalog, generalIndex: layout.generalIndex },
+          result: true,
+        };
+      });
+      return ok && result === true;
     },
     [write],
   );
@@ -308,12 +337,24 @@ export function useThreadSectionCatalogs(): ThreadSectionCatalogs {
       catalogFor,
       create,
       rename,
+      markOccupied,
       remove,
       restore,
       restoreAll,
       sweepEmpty,
       reorder,
     }),
-    [catalogFor, catalogs, create, remove, rename, reorder, restore, restoreAll, sweepEmpty],
+    [
+      catalogFor,
+      catalogs,
+      create,
+      markOccupied,
+      remove,
+      rename,
+      reorder,
+      restore,
+      restoreAll,
+      sweepEmpty,
+    ],
   );
 }

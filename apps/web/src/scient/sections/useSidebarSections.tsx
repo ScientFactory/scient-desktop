@@ -30,6 +30,7 @@ import { allEnvironmentProjectSnapshotsReadyAtom } from "../../state/shell";
 import { useUiStateStore } from "../../uiStateStore";
 import { readThreadShell } from "../../state/entities";
 import { placementEligible } from "./placementEligibility";
+import { migrateLegacyPlacement } from "./placementMigration";
 import { useAutomaticPlacement } from "./useAutomaticPlacement";
 import { useThreadSectionActions } from "./actions";
 import { loadedThreadEnvironmentsKeyAtom } from "./loadedEnvironments";
@@ -67,22 +68,29 @@ type Shell = EnvironmentThreadShell;
 /**
  * A project on the section's environment to start its new thread in: the
  * current context's project when it is there, else the project of a thread
- * already in the section, else one the section was created for.
+ * already in the section (on any shelf), else one the section was created for.
  */
-function projectRefForSection(
-  group: SectionGroup<Shell>,
+export function projectRefForSection(
+  group: Pick<SectionGroup<Shell>, "environmentId" | "section">,
   contextProjectRef: ScopedProjectRef | null,
+  threads: readonly Shell[],
 ): ScopedProjectRef | null {
   const environmentId = group.environmentId;
+  const section = group.section;
   if (environmentId === null || contextProjectRef?.environmentId === environmentId) {
     return contextProjectRef;
   }
-  const memberProject = group.threads.find((thread) => thread.projectId !== null)?.projectId;
+  const memberProject = threads.find(
+    (thread) =>
+      thread.archivedAt === null &&
+      thread.projectId !== null &&
+      thread.environmentId === environmentId &&
+      section !== null &&
+      thread.sectionId === section.id,
+  )?.projectId;
   if (memberProject != null)
     return scopeProjectRef(EnvironmentId.make(environmentId), memberProject);
-  const createdIn = group.section?.createdInProjects?.find(
-    (ref) => ref.environmentId === environmentId,
-  );
+  const createdIn = section?.createdInProjects?.find((ref) => ref.environmentId === environmentId);
   return createdIn === undefined
     ? null
     : scopeProjectRef(EnvironmentId.make(environmentId), ProjectId.make(createdIn.projectId));
@@ -274,6 +282,8 @@ export function useSidebarSections(input: {
         .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
     [input.threads],
   );
+  // Once, before placement first reads its storage.
+  useState(() => migrateLegacyPlacement(() => window.localStorage, PLACEMENT_SCOPE));
   const placement = useAutomaticPlacement({
     scope: PLACEMENT_SCOPE,
     groups: placementInputs,
@@ -367,7 +377,9 @@ export function useSidebarSections(input: {
         handleNewThread: newThreadContext.handleNewThread,
       });
       const projectRef =
-        group === null ? contextProjectRef : projectRefForSection(group, contextProjectRef);
+        group === null
+          ? contextProjectRef
+          : projectRefForSection(group, contextProjectRef, input.threads);
       if (projectRef === null) {
         if (group !== null && contextProjectRef !== null) {
           toastManager.add(
@@ -391,7 +403,7 @@ export function useSidebarSections(input: {
         }
       });
     },
-    [newThreadContext, onBeforeNewThread],
+    [input.threads, newThreadContext, onBeforeNewThread],
   );
 
   const renameSection = useCallback(

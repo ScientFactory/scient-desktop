@@ -254,6 +254,27 @@ export function catalogWithRestoredSection(
  */
 export type SectionOccupancy = ReadonlyMap<string, ReadonlySet<string>>;
 
+/**
+ * Records that the section's environment holds its threads and clears its
+ * empty stamp, so filing a thread restarts the optional cleanup count. Null
+ * when nothing changes, or when the section is gone.
+ */
+export function catalogWithOccupiedSection(
+  sections: ThreadSections,
+  sectionId: string,
+  environmentId: string,
+): ThreadSection[] | null {
+  const ordered = readThreadSections(sections);
+  const index = ordered.findIndex((section) => section.id === sectionId);
+  if (index < 0) return null;
+  const section = ordered[index]!;
+  const merged = mergeEnvironmentIds(section.environmentIds, [environmentId]);
+  if (merged === null && section.emptySince === undefined) return null;
+  const { emptySince: _emptySince, ...occupied } = section;
+  ordered[index] = { ...occupied, environmentIds: merged ?? section.environmentIds ?? [] };
+  return ordered;
+}
+
 /** `recorded` plus any new ids, or null when nothing is new. */
 function mergeEnvironmentIds(
   recorded: readonly string[] | undefined,

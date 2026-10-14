@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
   shell: vi.fn(),
+  mark: vi.fn(),
 }));
+vi.mock("./catalog", () => ({ useThreadSectionCatalogs: () => ({ markOccupied: mocks.mark }) }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.mutate }));
 vi.mock("../../state/entities", () => ({ readThreadShell: mocks.shell }));
 vi.mock("../../state/threads", () => ({ threadEnvironment: { setSection: {} } }));
@@ -52,6 +54,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
   mocks.shell.mockReturnValue({ sectionId: null });
+  mocks.mark.mockResolvedValue(true);
   mocks.mutate.mockResolvedValue(AsyncResult.success(undefined));
   act(() => {
     renderer = create(<Probe />);
@@ -70,6 +73,46 @@ describe("section membership", () => {
       environmentId: REMOTE,
       input: { threadId: target.threadId, sectionId },
     });
+  });
+
+  it("marks the section occupied before filing, and files nothing if that fails", async () => {
+    let resolve!: (value: boolean) => void;
+    mocks.mark.mockReturnValue(
+      new Promise<boolean>((done) => {
+        resolve = done;
+      }),
+    );
+    const filing = actions.setThreadSection(target, section);
+    expect(mocks.mark).toHaveBeenCalledWith(section);
+    expect(mocks.mutate).not.toHaveBeenCalled();
+    resolve(true);
+    expect((await filing)._tag).toBe("Success");
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+
+    mocks.mutate.mockClear();
+    mocks.mark.mockResolvedValue(false);
+    expect((await actions.setThreadSection(target, section))._tag).toBe("Failure");
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("moves to General without touching any catalog", async () => {
+    mocks.shell.mockReturnValue({ sectionId });
+    await actions.setThreadSection(target, null);
+    expect(mocks.mark).not.toHaveBeenCalled();
+  });
+
+  it("refuses another environment's section even when it shares the thread's section id", async () => {
+    // The thread is already in its own "research"; the primary has one too.
+    mocks.shell.mockReturnValue({ sectionId });
+    const elsewhere = { environmentId: EnvironmentId.make("primary"), sectionId };
+    expect((await actions.setThreadSection(target, elsewhere))._tag).toBe("Failure");
+    vi.mocked(stackedThreadToast).mockImplementation((toast) => toast as never);
+    expect(await actions.moveThreadsToSection([target], elsewhere)).toBe(false);
+    expect(toastManager.add).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Failed to move thread to section" }),
+    );
+    expect(mocks.mark).not.toHaveBeenCalled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
   });
 
   it("refuses a section of another environment without writing anything", async () => {

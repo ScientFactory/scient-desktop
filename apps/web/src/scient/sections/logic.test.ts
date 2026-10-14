@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   GENERAL_SECTION_GROUP_ID,
   catalogWithCreatedSection,
+  catalogWithOccupiedSection,
   catalogWithRenamedSection,
   catalogWithRestoredSection,
   catalogWithoutSection,
@@ -812,6 +813,25 @@ describe("sweepEmptySections", () => {
     expect(restored.catalog.map((entry) => entry.id)).toEqual(["research", "perma"]);
     expect(restored.catalog[0]?.emptySince).toBeUndefined();
     expect(restored.catalog[0]?.environmentIds).toEqual(["a"]);
+  });
+});
+
+describe("catalogWithOccupiedSection", () => {
+  it("clears an old cleanup deadline when a thread is filed, even once recorded", () => {
+    const occupied = catalogWithOccupiedSection(
+      [{ ...RESEARCH, environmentIds: ["a"], emptySince: "2020-01-01T00:00:00.000Z" }],
+      RESEARCH.id,
+      "a",
+    );
+    expect(occupied?.[0]?.emptySince).toBeUndefined();
+    expect(occupied?.[0]?.environmentIds).toEqual(["a"]);
+  });
+
+  it("records the environment once, and changes nothing after", () => {
+    const occupied = catalogWithOccupiedSection([RESEARCH, PERMA], "perma", "a");
+    expect(occupied?.[1]?.environmentIds).toEqual(["a"]);
+    expect(catalogWithOccupiedSection(occupied!, "perma", "a")).toBeNull();
+    expect(catalogWithOccupiedSection(occupied!, "gone", "a")).toBeNull();
   });
 });
 
