@@ -117,6 +117,14 @@ in [Run Scient in the background](./background-service.md).
 
 ## Update providers
 
+The sidebar's update button has two looks. Whenever this desktop app has an
+update, the button keeps the app's look: the download icon in your theme's main
+colour, even when providers or servers also have updates. Choosing it then
+updates everything, this app last. When only providers or servers have updates,
+it shows a round arrow in a quieter colour. Hover either one to see each update
+with its versions. **Restart** always restarts right away; its tooltip says what
+can update once the app is back.
+
 The sidebar's **Update everything** action shows the eligible updates for each
 connected environment before you confirm. It updates providers first, then
 supported remote servers, and installs this desktop app last. Servers requiring
