@@ -415,6 +415,83 @@ jobs:
             exit 1
           fi
 
+          # Pi's qualification runs its live suites against the server's Pi code.
+          if [[ "$PROVIDER" == pi ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/src/provider/pi \
+            apps/server/src/customModels.ts \
+            apps/server/src/customModelCapabilities.ts \
+            apps/server/src/customModelReadiness.ts \
+            packages/provider-core \
+            packages/provider-pi \
+            packages/provider-testing \
+            packages/contracts \
+            packages/scient-analysis \
+            packages/scient-compute \
+            packages/scient-document-artifacts \
+            packages/scient-execution \
+            packages/scient-operations \
+            packages/scient-project-init \
+            packages/scient-sources; then
+            echo "What Pi's live qualification runs changed during this run; retry from current main." >&2
+            exit 1
+          fi
+
+          # Oh My Pi qualification runs the app's own managed activation and RPC check.
+          if [[ "$PROVIDER" == omp ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/scripts/qualify-omp-rpc.ts \
+            ':(glob)apps/server/src/*.ts' \
+            apps/server/src/auth \
+            apps/server/src/provider/omp \
+            apps/server/src/scient/providerLifecycle \
+            apps/server/src/scient/threadSections \
+            apps/server/src/sourceControl/sourceControlHostSecrets.ts \
+            apps/server/src/usage/usageAccountingSettingsSecrets.ts \
+            packages/effect-omp-rpc \
+            packages/provider-acp \
+            packages/provider-acp-registry \
+            packages/provider-core \
+            packages/provider-cursor \
+            packages/provider-grok \
+            packages/provider-muse \
+            packages/provider-opencode \
+            packages/provider-pi \
+            packages/source-control-azure-devops \
+            packages/source-control-bitbucket \
+            packages/source-control-core \
+            packages/source-control-forgejo \
+            packages/source-control-gitcafe \
+            packages/source-control-github \
+            packages/source-control-gitlab \
+            packages/contracts \
+            packages/scient-analysis \
+            packages/scient-compute \
+            packages/scient-document-artifacts \
+            packages/scient-execution \
+            packages/scient-operations \
+            packages/scient-project-init \
+            packages/scient-sources; then
+            echo "Oh My Pi qualification changed during this run; retry from current main." >&2
+            exit 1
+          fi
+
+          # Muse qualification runs the app's managed Muse check.
+          if [[ "$PROVIDER" == muse ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            apps/server/scripts/qualify-muse-runtime.ts \
+            apps/server/src/scient/providerLifecycle/MuseManagedRuntimeQualification.ts \
+            packages/provider-core \
+            packages/provider-muse \
+            packages/contracts \
+            packages/scient-analysis \
+            packages/scient-compute \
+            packages/scient-document-artifacts \
+            packages/scient-execution \
+            packages/scient-operations \
+            packages/scient-project-init \
+            packages/scient-sources; then
+            echo "Muse qualification changed during this run; retry from current main." >&2
+            exit 1
+          fi
+
           user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"

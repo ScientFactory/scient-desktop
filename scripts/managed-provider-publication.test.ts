@@ -140,3 +140,64 @@ describe("serialized provider publication", () => {
     expect(published.providers.droid).toEqual(racedCatalog.providers.droid);
   });
 });
+
+/**
+ * Runs the workflow's publication guards for `provider` after `changed` moved
+ * on main since the qualified source, and returns how the shell ended.
+ */
+function runGuards(provider: string, changed: string) {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-publication-guard-"));
+  try {
+    const remote = NodePath.join(root, "remote.git");
+    const source = NodePath.join(root, "source");
+    NodeFS.mkdirSync(source);
+    git(root, "init", "--bare", remote);
+    git(source, "init", "-b", "main");
+    git(source, "config", "user.email", "fixture@example.invalid");
+    git(source, "config", "user.name", "Fixture");
+    git(source, "commit", "--allow-empty", "-m", "qualified source");
+    const sha = git(source, "rev-parse", "HEAD");
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(source, changed)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(source, changed), "changed on main\n");
+    git(source, "add", ".");
+    git(source, "commit", "-m", "main moved on");
+    git(source, "remote", "add", "origin", remote);
+    git(source, "push", "origin", "HEAD:refs/heads/main");
+    const workflow = parse(
+      NodeFS.readFileSync(
+        NodePath.join(repository, ".github/workflows/managed-provider-runtime-update-provider.yml"),
+        "utf8",
+      ),
+    );
+    const script: string = workflow.jobs.publish.steps.find(
+      (step: { name: string }) => step.name === "Merge and publish the qualified provider",
+    ).run;
+    // Everything before the publication itself: the ancestry check and every guard.
+    const guards = script.slice(0, script.indexOf('user_id="$('));
+    expect(guards).toContain("git diff --quiet");
+    return NodeChildProcess.spawnSync("bash", ["-c", `${guards}\nexit 0`], {
+      cwd: source,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: { ...process.env, PROVIDER: provider, SOURCE_SHA: sha, RUNNER_TEMP: root },
+    });
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+describe("publication guards", () => {
+  it.each([
+    ["claudeAgent", "scripts/qualify-managed-runtime-catalog.ts", true],
+    ["pi", "apps/server/src/provider/pi/PiRpcClient.ts", true],
+    ["pi", "apps/server/src/provider/omp/OmpTarget.ts", false],
+    ["omp", "apps/server/src/provider/omp/OmpTarget.ts", true],
+    ["omp", "apps/server/src/provider/pi/PiRpcClient.ts", false],
+    ["muse", "packages/provider-muse/src/index.ts", true],
+    ["muse", "apps/server/src/provider/omp/OmpTarget.ts", false],
+  ] as const)("%s, after %s changed on main: voided %s", (provider, changed, voided) => {
+    const result = runGuards(provider, changed);
+    expect(result.status, result.stderr).toBe(voided ? 1 : 0);
+    if (voided) expect(result.stderr).toMatch(/changed during this run; retry/u);
+  });
+});
