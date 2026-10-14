@@ -18,12 +18,14 @@ import {
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
   readonly spanAttributes?: Record<string, unknown>;
+  // SCIENT-FORK:START — open options for the Overleaf state store's own SQLite file.
   /**
    * Applied while the Bun client opens the file. The Node client sets no busy
    * timeout and no journal mode on open, so it needs neither.
    */
   readonly busyTimeout?: Duration.Input;
   readonly disableWAL?: boolean;
+  // SCIENT-FORK:END
 };
 
 type Loader = {
@@ -34,8 +36,7 @@ const defaultSqliteClientLoaders = {
   node: () => import("@t3tools/shared/nodeSqliteClient"),
 } satisfies Record<string, () => Promise<Loader>>;
 
-/** A client for any SQLite file on the running runtime (Bun or Node), without V2 setup. */
-export const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
+const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
   config: RuntimeSqliteLayerConfig,
 ) {
   const runtime = process.versions.bun !== undefined ? "bun" : "node";
@@ -43,6 +44,9 @@ export const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(functi
   const clientModule = yield* Effect.promise<Loader>(loader);
   return clientModule.layer(config);
 }, Layer.unwrap);
+// SCIENT-FORK:START — the Overleaf state store opens its own SQLite file, without V2 setup.
+export { makeRuntimeSqliteLayer };
+// SCIENT-FORK:END
 
 import { initializeV2Database } from "./initializeV2Database.ts";
 import { refreshLegacyV1Snapshot } from "./refreshLegacyV1Snapshot.ts";
