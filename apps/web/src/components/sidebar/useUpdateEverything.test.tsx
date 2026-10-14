@@ -62,8 +62,8 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 vi.mock("~/hooks/useSettings", () => ({ useEnvironmentSettings: () => false }));
 vi.mock("~/hooks/useCopyToClipboard", () => ({ useCopyToClipboard: () => ({}) }));
-vi.mock("../ProviderUpdatesAction", () => ({
-  useProviderUpdates: () => ({ machines: [], updateAll: testState.updateProviders }),
+vi.mock("~/scient/providerUpdates/useProviderUpdateInventory", () => ({
+  useProviderUpdateInventory: () => ({ machines: [], updateAll: testState.updateProviders }),
 }));
 vi.mock("~/scient/desktopUpdate/serverReleaseAvailability", async (importOriginal) => {
   const original =

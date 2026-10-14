@@ -70,7 +70,9 @@ import {
   isProviderUpdateActive,
   type ProviderSettingsUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
-import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
+// SCIENT-FORK:START — "Update all" includes Scient-managed runtimes.
+import { ProviderUpdateAllAction } from "../../scient/providerUpdates/ProviderUpdateAllAction";
+// SCIENT-FORK:END
 import { Button } from "../ui/button";
 import {
   Empty,
@@ -1192,7 +1194,8 @@ export function EnvironmentProviderSettings({
         }
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
-            <ProviderUpdatesAction />
+            {/* SCIENT-FORK: Scient's list, managed runtimes included. */}
+            <ProviderUpdateAllAction />
             <Tooltip>
               <TooltipTrigger
                 render={

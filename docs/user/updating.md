@@ -129,8 +129,15 @@ resume interrupted threads. Continuation still requires that server's supported
 capability and enabled setting; it does not revive stopped or settled work.
 
 **Settings → Providers** shows provider updates for the selected environment.
-**Update all** updates every outdated provider on every connected environment
-at once. Hover it to see which providers it will update. Two kinds are left
-out on purpose: providers that only offer a manual update command, and
-Scient-managed runtimes, which keep their own qualified update and repair
-actions rather than a bulk path.
+**Update all** updates every outdated provider on every connected environment.
+Hover it to see each one with its installed and new version, and whether
+Scient manages it or it is a system installation. A runtime several provider
+instances share is updated once.
+
+Scient-managed runtimes take their qualified release through Scient's own
+update: it downloads and verifies the release, then switches over once the
+provider's running work has finished. **Update all** waits for that, and
+**Update everything** installs this desktop app only after every managed
+runtime is active. Providers that only offer a manual update command, and custom
+paths, are left out. One notice reports every result; a failure on one machine
+does not stop the others.

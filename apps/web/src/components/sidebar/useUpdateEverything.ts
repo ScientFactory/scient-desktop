@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useLayoutEffect, useMemo, useRef } from "react";
 
@@ -9,7 +8,6 @@ import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
 import { environmentSession } from "~/state/session";
-import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, useServerUpdate } from "../ServerUpdateAction";
 import {
   collectRestartingMachines,
@@ -19,6 +17,9 @@ import {
 } from "./updateEverything.logic";
 // SCIENT-FORK:START — T3 npm publication does not qualify a Scient server artifact.
 import { useScientServerReleasePublished } from "~/scient/desktopUpdate/serverReleaseAvailability";
+// Provider updates include Scient-managed runtimes, each line with its versions.
+import { describeProviderUpdateItem } from "~/scient/providerUpdates/providerUpdateInventory";
+import { useProviderUpdateInventory } from "~/scient/providerUpdates/useProviderUpdateInventory";
 import {
   currentConfirmedServerTargets,
   supportedBulkServerTargets,
@@ -75,7 +76,8 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   }, [servers]);
   // SCIENT-FORK:END
   const restarts = collectRestartingMachines(machines, servers, localUpdateVersion !== null);
-  const providers = useProviderUpdates();
+  // SCIENT-FORK: managed runtimes included; see useProviderUpdateInventory.
+  const providers = useProviderUpdateInventory();
   const updateServer = useServerUpdate();
 
   const { summary, lines } = describeUpdateEverything({
@@ -84,9 +86,8 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     providerMachines: providers.machines.map((machine) => ({
       environmentId: machine.environmentId,
       label: machine.label,
-      providers: machine.candidates.map(
-        (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-      ),
+      // SCIENT-FORK: one line per runtime, with versions and owner.
+      providers: machine.items.map(describeProviderUpdateItem),
     })),
   });
 

@@ -44,7 +44,7 @@ export function isManagedRuntimeUpdateCandidate(provider: ServerProvider): boole
 }
 
 export function collectManagedRuntimeUpdateCandidates(
-  groups: ReadonlyArray<LocalEnvironmentUpdateGroup>,
+  groups: ReadonlyArray<Pick<LocalEnvironmentUpdateGroup, "environmentId" | "label" | "providers">>,
 ): ManagedRuntimeUpdateCandidate[] {
   return groups.flatMap((group) =>
     group.providers.flatMap((provider) => {
