@@ -175,6 +175,18 @@ export function makeDroidCredentialRedactor(input: {
     );
 }
 
+/**
+ * The cause Droid gives for a failed request. Up to 0.235 Droid sends it as the
+ * error's `data` text, after a generic "Internal error: Agent error" message.
+ * From 0.241 `data` is `{ reason, sessionId }` and the cause follows
+ * "Internal error: " in the message itself.
+ */
+export function droidRequestFailureDetail(error: EffectAcpErrors.AcpRequestError): string {
+  return typeof error.data === "string" && error.data.trim()
+    ? error.data.trim()
+    : error.errorMessage.replace(/^Internal error:\s*/u, "").trim();
+}
+
 /** `unconfirmed`: a policy may disable the guard, or Droid did not show it runs. */
 export type DroidToolGuard = "enforced" | "disabled-by-policy" | "unconfirmed";
 export type DroidAcpRuntimeFactory = (
