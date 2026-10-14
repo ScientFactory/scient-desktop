@@ -1,22 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import {
-  settleManagedRuntimeUpdateRuns,
-  type ManagedRuntimeUpdateRun,
-} from "../providerConnection/ManagedRuntimeUpdateNotification.logic";
 import { useStartProviderRuntimeAction } from "../providerConnection/useProviderLifecycleController";
+import { appProviderSnapshots, watchManagedRuntimeUpdate } from "./managedRuntimeUpdateWatch";
 import {
   collectProviderUpdateMachines,
   getProviderUpdateResultsToastView,
   runProviderUpdates,
   systemProviderUpdateOutcome,
   type ProviderUpdateEnvironment,
-  type ProviderUpdateItem,
   type ProviderUpdateOutcome,
 } from "./providerUpdateInventory";
 
@@ -29,7 +25,8 @@ const UNSTARTED_MANAGED_UPDATE: ProviderUpdateOutcome = {
  * Every runtime with a one-click update on every connected machine, Scient's
  * managed copies included, and a function that updates them all and reports
  * every result in one notice. The returned promise settles when each update
- * has finished: a managed one once its new runtime is active.
+ * has finished: a managed one once its new runtime is active. The run does not
+ * depend on the calling component staying mounted.
  */
 export function useProviderUpdateInventory() {
   const { environments } = useEnvironments();
@@ -48,42 +45,6 @@ export function useProviderUpdateInventory() {
     [environments],
   );
   const machines = useMemo(() => collectProviderUpdateMachines(snapshots), [snapshots]);
-
-  // Managed updates finish in later provider snapshots; each waiter rechecks its run.
-  const snapshotsRef = useRef(snapshots);
-  const waitersRef = useRef(new Set<() => void>());
-  useEffect(() => {
-    snapshotsRef.current = snapshots;
-    for (const check of waitersRef.current) check();
-  }, [snapshots]);
-
-  const waitForManaged = useCallback(
-    (item: ProviderUpdateItem, operationId: string) =>
-      new Promise<ProviderUpdateOutcome>((resolve) => {
-        let run: ManagedRuntimeUpdateRun = {
-          target: {
-            environmentId: item.environmentId,
-            environmentLabel: item.machineLabel,
-            instanceId: item.instanceId,
-            driver: item.driver,
-            availableVersion: item.offeredVersion,
-          },
-          operationId,
-          observed: false,
-          outcome: { status: "pending" },
-          waitingMessage: null,
-        };
-        const check = () => {
-          run = settleManagedRuntimeUpdateRuns([run], snapshotsRef.current)[0] ?? run;
-          if (run.outcome.status === "pending") return;
-          waitersRef.current.delete(check);
-          resolve(run.outcome);
-        };
-        waitersRef.current.add(check);
-        check();
-      }),
-    [],
-  );
 
   const updateAll = async () => {
     const results = await runProviderUpdates(machines, {
@@ -106,7 +67,7 @@ export function useProviderUpdateInventory() {
           finished:
             operationId === null
               ? Promise.resolve(UNSTARTED_MANAGED_UPDATE)
-              : waitForManaged(item, operationId),
+              : watchManagedRuntimeUpdate(appProviderSnapshots, item, operationId),
         };
       },
     });

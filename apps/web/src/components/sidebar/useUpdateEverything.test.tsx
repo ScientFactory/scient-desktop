@@ -62,6 +62,10 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 vi.mock("~/hooks/useSettings", () => ({ useEnvironmentSettings: () => false }));
 vi.mock("~/hooks/useCopyToClipboard", () => ({ useCopyToClipboard: () => ({}) }));
+vi.mock("~/scient/providerUpdates/managedRuntimeUpdateWatch", () => ({
+  appProviderSnapshots: {},
+  waitForManagedRuntimesIdle: async () => {},
+}));
 vi.mock("~/scient/providerUpdates/useProviderUpdateInventory", () => ({
   useProviderUpdateInventory: () => ({ machines: [], updateAll: testState.updateProviders }),
 }));

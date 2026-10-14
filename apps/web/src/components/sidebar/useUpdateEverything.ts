@@ -21,6 +21,10 @@ import { useScientServerReleasePublished } from "~/scient/desktopUpdate/serverRe
 import { describeProviderUpdateItem } from "~/scient/providerUpdates/providerUpdateInventory";
 import { useProviderUpdateInventory } from "~/scient/providerUpdates/useProviderUpdateInventory";
 import {
+  appProviderSnapshots,
+  waitForManagedRuntimesIdle,
+} from "~/scient/providerUpdates/managedRuntimeUpdateWatch";
+import {
   currentConfirmedServerTargets,
   supportedBulkServerTargets,
 } from "./updateEverything.logic";
@@ -102,7 +106,12 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     run: (local: { downloadLocal?: () => Promise<boolean>; installLocal?: () => Promise<void> }) =>
       runUpdateEverything({
         ...local,
-        updateProviders: providers.updateAll,
+        // SCIENT-FORK: servers restart and this app installs only once no managed
+        // runtime is mid-update, including ones this pass did not start.
+        updateProviders: async () => {
+          await providers.updateAll();
+          await waitForManagedRuntimesIdle(appProviderSnapshots);
+        },
         updateServers: async () => {
           const current = currentConfirmedServerTargets(servers, committedServersRef.current);
           await Promise.all(current.map((server) => updateServer(server)));

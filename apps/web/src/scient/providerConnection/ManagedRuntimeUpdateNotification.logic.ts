@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderRuntimeOperation,
   type ServerProvider,
 } from "@t3tools/contracts";
 
@@ -20,16 +21,23 @@ export interface ManagedRuntimeUpdateCandidate {
   readonly availableVersion: string | null;
 }
 
-/** Managed-runtime offers use Scient's lifecycle actions, never T3 CLI advisories. */
-export function isManagedRuntimeUpdateCandidate(provider: ServerProvider): boolean {
-  const runtime = provider.connection?.runtime;
-  const operation = runtime?.operation;
-  const operationIsActive =
+/** Whether a managed runtime operation is still downloading, staging or activating. */
+export function isManagedRuntimeOperationActive(
+  operation: ProviderRuntimeOperation | null | undefined,
+): boolean {
+  return (
     operation !== null &&
     operation !== undefined &&
     operation.status !== "succeeded" &&
     operation.status !== "failed" &&
-    operation.status !== "cancelled";
+    operation.status !== "cancelled"
+  );
+}
+
+/** Managed-runtime offers use Scient's lifecycle actions, never T3 CLI advisories. */
+export function isManagedRuntimeUpdateCandidate(provider: ServerProvider): boolean {
+  const runtime = provider.connection?.runtime;
+  const operationIsActive = isManagedRuntimeOperationActive(runtime?.operation);
 
   // A system runtime can stand in for a private copy that failed its capability
   // check; updating the private copy is how it gets selected again.
@@ -120,7 +128,7 @@ export type ManagedRuntimeUpdateOutcome =
 
 const UNCONFIRMED_MANAGED_UPDATE_MESSAGE =
   "Scient could not confirm the update. Review the provider in Settings.";
-const DISCONNECTED_MANAGED_UPDATE_MESSAGE =
+export const DISCONNECTED_MANAGED_UPDATE_MESSAGE =
   "Scient lost contact with this environment during the update. Review the provider in Settings.";
 
 /**
@@ -151,7 +159,17 @@ export function resolveManagedRuntimeUpdateOutcome(input: {
     if (operation.status === "cancelled") return { status: "cancelled" };
     return { status: "pending" };
   }
-  if (!input.observed || !runtime) return { status: "pending" };
+  if (!runtime) return { status: "pending" };
+  if (!input.observed) {
+    // Not seen yet: a lagging snapshot is still pending, but the expected
+    // version already active means it finished before it could be seen.
+    return input.expectedVersion !== null &&
+      runtime.source === "scient_managed" &&
+      runtime.managedVersion === input.expectedVersion &&
+      !isManagedRuntimeOperationActive(operation)
+      ? { status: "succeeded", version: runtime.managedVersion }
+      : { status: "pending" };
+  }
   return input.expectedVersion !== null &&
     runtime.source === "scient_managed" &&
     runtime.managedVersion === input.expectedVersion
