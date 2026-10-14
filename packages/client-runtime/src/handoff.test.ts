@@ -4,6 +4,8 @@ import {
   OrchestrationV2ContextTransfer,
   OrchestrationV2TurnItem,
   ThreadId,
+  type OrchestrationV2ThreadProjection,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -11,6 +13,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isForkInitializationHandoff,
   resolveHandoffEndpoints,
+  resolvePendingHandoff,
   type HandoffTimelineRun,
 } from "./handoff.ts";
 
@@ -220,5 +223,41 @@ describe("frozen fork initialization provenance", () => {
   it("does not guess the cause of already-copied history", () => {
     const item = decodeItem({ ...frozen(), forkInitialization: undefined });
     expect(isForkInitializationHandoff({ ...localRow, item }, [transfer])).toBe(false);
+  });
+});
+
+const projection = {
+  runs: [{ ...run("source", 1, from, "source"), startedAt: "2026-10-11T00:00:00Z" }],
+} as unknown as OrchestrationV2ThreadProjection;
+
+describe("pending context handoff", () => {
+  it("appears on selection, updates the destination, and disappears on returning", () => {
+    expect(resolvePendingHandoff(projection, { instanceId: to, model: "first" }, [])).toEqual({
+      from: [{ instanceId: from, model: "source" }],
+      to: { instanceId: to, model: "first" },
+    });
+    expect(
+      resolvePendingHandoff(projection, { instanceId: to, model: "second" }, [])?.to.model,
+    ).toBe("second");
+    expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
+    expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
+  });
+  it("only previews a same-provider model change when it needs a fresh native thread", () => {
+    const providers = [
+      { instanceId: from, requiresNewThreadForModelChange: true },
+    ] as unknown as ServerProvider[];
+    expect(
+      resolvePendingHandoff(projection, { instanceId: from, model: "other" }, providers)?.to.model,
+    ).toBe("other");
+  });
+  it("resumes compatible account overlays without showing a handoff", () => {
+    const providers = [from, to].map((instanceId) => ({
+      instanceId,
+      driver: "codex",
+      continuation: { groupKey: "shared" },
+    })) as unknown as ServerProvider[];
+    expect(
+      resolvePendingHandoff(projection, { instanceId: to, model: "target" }, providers),
+    ).toBeNull();
   });
 });

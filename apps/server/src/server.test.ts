@@ -14033,6 +14033,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const entered = yield* Deferred.make<void>();
       const scriptExit = yield* Deferred.make<void>();
+      const setupCancelled = yield* Deferred.make<void>();
       const fixture = yield* makeNativeLaunchFixture("recreated-during-setup", {
         layers: {
           projectSetupScriptRunner: {
@@ -14048,6 +14049,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   async: false,
                   completion: Deferred.await(scriptExit).pipe(
                     Effect.as({ exitCode: 0, durationMs: 1 }),
+                    Effect.onInterrupt(() => Deferred.succeed(setupCancelled, undefined)),
                   ),
                 }),
               ),
@@ -14095,6 +14097,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               commandId: CommandId.make("delete-preparing-incarnation"),
               threadId: fixture.threadId,
             });
+            // Observe the actual cancellation while completion is still blocked.
+            yield* Deferred.await(setupCancelled);
             const deleted = yield* fixture.app.v2.threads.getThreadProjection(fixture.threadId);
             const deletedSequence = yield* fixture.app.v2.eventSink.latestSequence();
             assert.isNotNull(deleted.thread.deletedAt);
@@ -14125,7 +14129,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(replacement.runs, []);
       const sequence = yield* fixture.app.v2.eventSink.latestSequence();
       yield* Deferred.succeed(scriptExit, undefined);
-      yield* fixture.snapshotWhere((snapshot) => snapshot.phase === "failed");
+      // Deletion cancels the preparing run and its blocked setup before release.
+      // Late completion must not revive that execution or touch the replacement.
+      yield* fixture.snapshotWhere((snapshot) => snapshot.phase === "cancelled");
       assert.deepEqual(
         yield* fixture.app.v2.threads.getThreadProjection(replacementId),
         replacement,

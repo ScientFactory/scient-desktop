@@ -135,7 +135,10 @@ import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
-import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import {
+  isBufferedProviderNotification,
+  isUndeliveredMailboxSteer,
+} from "./NotificationMailbox.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -3158,7 +3161,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed.`,
         });
       }
-      if (projection.runs.some((run) => run.status === "queued")) {
+      const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+      const queuedMessages =
+        queuedRuns.length === 0
+          ? []
+          : (yield* loadProjectionForCommand(command, ["messages"], {
+              messageIds: queuedRuns.map((run) => run.userMessageId),
+            })).messages;
+      // Automatic wakes are hidden from the user queue and must not block snooze.
+      // Snooze only changes visibility, so keep those deliveries intact.
+      const automaticMessageIds = new Set(
+        queuedMessages
+          .filter(
+            (message) =>
+              message.notification !== undefined || message.delegatedCompletion !== undefined,
+          )
+          .map((message) => message.id),
+      );
+      if (queuedRuns.some((run) => !automaticMessageIds.has(run.userMessageId))) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -7357,6 +7377,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
+        ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
       };
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,
@@ -7474,7 +7495,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         text: command.task,
         attachments: [],
         modelSelection: command.modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode:
+          command.workspaceStrategy === undefined
+            ? { type: "start_immediately" }
+            : { type: "defer_start", workspaceStrategy: command.workspaceStrategy },
       } satisfies Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
       yield* dispatchMessage(childMessageCommand, events, effects);
 
@@ -9553,9 +9577,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   /**
-   * What Stop holds besides the run it interrupts: queued runs wait for the user, the
-   * thread's pull request watches end, and every wake its delegated tasks still owe is
-   * dropped, since Stop stops those tasks too. Nothing automatic starts the thread again.
+   * What Stop holds besides the run it interrupts: durable queued messages wait for the
+   * user, buffered provider wakes are cancelled, and the thread's pull request watches end.
+   * Every wake its delegated tasks still owe is dropped, since Stop stops those tasks too.
    * `cohortRunIds` are dropped even when they owe nothing, like a plain interrupt's.
    */
   const holdStoppedThread = (input: {
@@ -9571,6 +9595,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const emitEvent = emit(input.events, input.command);
       const { thread, runs, subagents } = input.projection;
+      const queuedRuns = runs.filter((run) => run.status === "queued");
+      const queuedMessages =
+        queuedRuns.length === 0
+          ? []
+          : (yield* projectionStore
+              .getThreadRecords(thread.id, ["messages"], {
+                messageIds: queuedRuns.map((run) => run.userMessageId),
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) => new OrchestratorProjectionError({ threadId: thread.id, cause }),
+                ),
+              )).messages;
+      const bufferedMessageIds = new Set(
+        queuedMessages.filter(isBufferedProviderNotification).map((message) => message.id),
+      );
       for (const run of runs) {
         // A resumed queue can have a lower ordinal than a pending continuation source.
         // Stop must reach those sources even when interrupting the resumed run succeeds.
@@ -9580,7 +9620,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ) {
           yield* markStoppedRun({ ...input, thread, run });
         }
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+        if (run.status !== "queued") continue;
+        // Stop discards the provider's wake buffer, so its queued placeholders cannot resume.
+        if (bufferedMessageIds.has(run.userMessageId)) {
+          yield* dispatchQueuedRunCancel(
+            {
+              type: "queued-run.cancel",
+              commandId: input.command.commandId,
+              threadId: thread.id,
+              runId: run.id,
+            },
+            input.events,
+          );
+          continue;
+        }
+        if (run.queueHeld === true) continue;
         yield* emitEvent({
           type: "run.updated",
           threadId: thread.id,
@@ -9749,9 +9803,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           item.driver !== owner.driver ||
           item.providerInstanceId !== owner.providerInstanceId ||
           item.childThreadId !== task.childThreadId ||
-          Option.isSome(
-            yield* providerSessions.get(target.providerSessionId).pipe(mapDispatchError(command)),
-          )
+          ("outcome" in target &&
+            (!["pending", "running", "waiting"].includes(task.status) ||
+              (task.startedAt !== null &&
+                DateTime.toEpochMillis(task.startedAt) >
+                  DateTime.toEpochMillis(target.stoppedAt)))) ||
+          (!("outcome" in target) &&
+            Option.isSome(
+              yield* providerSessions.get(target.providerSessionId).pipe(mapDispatchError(command)),
+            ))
         ) {
           return;
         }
@@ -9761,6 +9821,65 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
             commandId: command.commandId,
           });
+        if ("outcome" in target) {
+          const outcome = target.outcome;
+          const ended = yield* endOrphanedNativeSubagent({
+            projection,
+            subagentId: task.id,
+            result: outcome.result,
+            status: outcome.status,
+            completedAt: outcome.completedAt,
+            now,
+            emitted: yield* Ref.get(events),
+            allocateEventId,
+          }).pipe(mapDispatchError(command));
+          yield* Ref.update(events, (current) => [...current, ...ended]);
+          if (task.childThreadId !== null) {
+            const child = yield* projectionStore
+              .getThreadRecords(task.childThreadId, ["nodes", "turnItems"], {
+                turnItemRunIds: [null],
+                turnItemStatuses: ["pending", "running", "waiting"],
+              })
+              .pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+                mapDispatchError(command),
+              );
+            if (
+              child !== null &&
+              isProviderNativeSubagentThread(child.thread) &&
+              child.thread.lineage.parentThreadId === task.threadId &&
+              child.thread.providerInstanceId === task.providerInstanceId &&
+              child.thread.forkedFrom?.type === "node" &&
+              child.thread.forkedFrom.nodeId === task.id
+            ) {
+              const childRoots = child.nodes.filter(
+                (candidate) =>
+                  candidate.kind === "root_turn" &&
+                  candidate.runId === null &&
+                  candidate.parentNodeId === null &&
+                  candidate.threadId === child.thread.id &&
+                  candidate.rootNodeId === candidate.id &&
+                  candidate.nativeItemRef?.driver === task.driver &&
+                  candidate.nativeItemRef.strength === "strong" &&
+                  candidate.nativeItemRef.nativeId === target.nativeTaskId,
+              );
+              const childEnded = yield* endRunlessRootTurns({
+                threadId: child.thread.id,
+                providerInstanceId: task.providerInstanceId,
+                projection: { nodes: childRoots, turnItems: child.turnItems },
+                status: outcome.status,
+                completedAt: outcome.completedAt,
+                now,
+                emitted: yield* Ref.get(events),
+                allocateEventId,
+              }).pipe(mapDispatchError(command));
+              yield* Ref.update(events, (current) => [...current, ...childEnded]);
+            }
+          }
+          return;
+        }
         type NativeProjection = Pick<
           OrchestrationV2ThreadProjection,
           "nodes" | "subagents" | "turnItems"
@@ -10139,7 +10258,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const providerSessionId = providerThread.providerSessionId;
       const nativeTaskId = subagent.nativeTaskRef.nativeId;
       const now = yield* DateTime.now;
-      // Record the request with its effect; the provider notification supplies the outcome.
+      // The effect can repair stale projections only after the provider confirms an outcome.
       yield* emit(
         events,
         command,

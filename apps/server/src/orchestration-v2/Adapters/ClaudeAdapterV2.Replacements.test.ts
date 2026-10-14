@@ -430,7 +430,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             () => events.filter((event) => event.type === "turn.terminal").length === 2,
             "user turn terminal after replace",
           );
-          assert.isTrue(yield* hasPendingBackgroundWork);
+          // Native completion was published while idle, before the wake replay.
+          assert.isFalse(yield* hasPendingBackgroundWork);
+          assert.equal(subagentEvents().at(-1)?.subagent.status, "completed");
           assert.lengthOf(continuationRequests, 1);
 
           yield* Queue.offer(

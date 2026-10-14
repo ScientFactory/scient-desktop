@@ -368,7 +368,11 @@ export function useReadingBookkeepingFrame({
   }, [handleScrollOnNextFrame, scheduleBookkeepingRef]);
   useEffect(
     () => () => {
-      if (bookkeepingFrameRef.current !== null) cancelAnimationFrame(bookkeepingFrameRef.current);
+      if (bookkeepingFrameRef.current !== null) {
+        cancelAnimationFrame(bookkeepingFrameRef.current);
+        // Effect replay must be able to schedule again after cancelling this frame.
+        bookkeepingFrameRef.current = null;
+      }
     },
     [],
   );

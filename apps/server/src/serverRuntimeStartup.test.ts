@@ -443,6 +443,7 @@ it.effect.each([
               },
             }),
             Layer.succeed(ThreadLaunch.ThreadLaunchService, {
+              prepareRun: () => Effect.die("Bootstrap fixture does not prepare delegated runs."),
               checkWorktreeBase: () =>
                 Effect.die("Bootstrap fixture does not preflight worktree bases."),
               retryPreparation: () =>

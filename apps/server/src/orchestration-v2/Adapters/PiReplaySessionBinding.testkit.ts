@@ -191,49 +191,49 @@ export class PiReplaySessionBinding {
  */
 export const piReplayFixtureProvenance = {
   simple: {
-    liveDigest: "94c02b2a4c160960e802ce7a60500ede4f2bcdf1acda015ecd2b807d09f629c8",
+    liveDigest: "a3038b63a741d0706f5714c9c094e5459c2748486e4f931091a449b74830a219",
     originalDigest: "e22ab72047abe327745e481bf6290fe381f6bd990f51e47228869fb50bb0b8c0",
     reopened: false,
   },
   multi_turn: {
-    liveDigest: "a1d513eff3be6c55eab7e9c9b8411531a3f8d710bcad87442f651512d3483097",
+    liveDigest: "b11ab56b379e5c4aae41ab609be781d8c4e2e718c1ebda1b7a1c92e484e93c15",
     originalDigest: "71b8237c9be726330faa7a9d8e7ae1888966bbe8f16ffd0096593459b3afb1a7",
     reopened: false,
   },
   pi_compaction: {
-    liveDigest: "86650a95ce59c17a924babd523664d95c1fa066b3fb362dffabf99f487aff8b9",
+    liveDigest: "7b20a36515c95f0ee9b174970a1420146d6bfe18e6bb4c7e8189b3571a424182",
     originalDigest: "26226612d6558dbb6a3bcc5ae696859a5106e1e2b3ab1b52a2138f2dae043a67",
     reopened: false,
   },
   provider_thread_resume: {
-    liveDigest: "185d652abd58478516a218bed51abc36205c4da869d29fc2689c3b175c1f7133",
+    liveDigest: "804aa44fe169a4d281966526614d65806858018f6a2528a99179cd60d43c3be7",
     originalDigest: "9b54ec08420f59e0fa94786f91baebd7e0ae045343e7f568324163fb12fdcf38",
     reopened: true,
   },
   message_steering: {
-    liveDigest: "697bc09d2f06e2ad39b52e1c73b83f0e84b34458ab3e743faf9d9afac135cfa8",
+    liveDigest: "50748e9ca229d49bc4a6afe4688237a2e48a21cbaf308aea5396a42de8f17fa0",
     originalDigest: "57eed804122a202e5804019400e576fdf337221f23c9b7231b0e8b19b2cf20ab",
     reopened: false,
   },
   thread_rollback: {
-    liveDigest: "5c188585e6a18349a9da7513837428f4c063f471fe969765d68adeaea60dda90",
+    liveDigest: "0e98bbeaad78f60edc79fad0043a5aeaf85876c4d3df0cd1e5f08fac55949ce0",
     originalDigest: "bd1ddccb72e23676b8c22fda18e9b456457ff18df82354b829b113c4b87edac5",
     reopened: false,
     initialResponseAfterModelsRequest: true,
   },
   thread_rollback_after_stop: {
-    liveDigest: "4501b147a9cca12db9992c85b6ef76deed7e46a55235e1be641d5f9e14780d07",
+    liveDigest: "eef1cfbf3585818ad3272d100c657f2d7aaf28ab56be0c7aea8df6097b20e542",
     originalDigest: "e66dc46f638aa02af9d14817ece8cf4c8cd245613695ef596237b75a938f8f25",
     reopened: true,
   },
   turn_interrupt_mid_tool: {
-    liveDigest: "fda7e49b3ee7b86d1a8b04fe864c1a56623c3a180a3c7b1c3203a0a57cb900f7",
+    liveDigest: "8f277a8a8ebe2acbbd7b3c0d9797692759ade416550f53a019886957e4a79a6d",
     originalDigest: "b50659656021ebc140cfe82ca309bff241a6dcb6853360ed13c1af709e0ab373",
     reopened: false,
   },
 } as const;
 
-/** Restore only the official lazy-discovery delta and verify both full-byte receipts. */
+/** Reverse the reviewed lazy-discovery and queued-start deltas; verify both full-byte receipts. */
 export function restorePiOriginalSkillDiscoveryRecording(input: {
   readonly scenario: string;
   readonly liveBytes: string;
@@ -270,6 +270,36 @@ export function restorePiOriginalSkillDiscoveryRecording(input: {
       throw new Error(`Pi ${input.scenario} fixture lacks a unique skill-discovery anchor.`);
     return matches[0]!;
   };
+  // The current prompt contract adds atomic queued-start steering to these
+  // exact recorded outbound prompts. Reverse only that reviewed wire delta;
+  // the immutable original-byte digest below still rejects unrelated edits.
+  const queuedStartPromptLines: Readonly<Record<string, ReadonlyArray<number>>> = {
+    simple: [18],
+    multi_turn: [18, 53],
+    pi_compaction: [18, 74, 106, 156],
+    provider_thread_resume: [18, 84],
+    message_steering: [18],
+    thread_rollback: [18, 64, 116],
+    thread_rollback_after_stop: [18, 54, 180, 243],
+    turn_interrupt_mid_tool: [18],
+  };
+  for (const index of queuedStartPromptLines[input.scenario] ?? []) {
+    const line = lines[index];
+    const entry = line === undefined ? undefined : decodeLine(line);
+    if (
+      !Predicate.isObject(entry) ||
+      entry.type !== "expect_outbound" ||
+      !Predicate.isObject(entry.frame) ||
+      entry.frame.type !== "prompt" ||
+      entry.frame.streamingBehavior !== "steer" ||
+      line === undefined ||
+      !line.endsWith(',"streamingBehavior":"steer"}}')
+    )
+      throw new Error(
+        `Pi ${input.scenario} queued-start prompt delta differs from its reviewed recording.`,
+      );
+    lines[index] = line.slice(0, -',"streamingBehavior":"steer"}}'.length) + "}}";
+  }
   const hasSkillDiscoveryFrame = (record: unknown) => {
     if (!Predicate.isObject(record) || !Predicate.isObject(record.frame)) return false;
     return (
@@ -330,7 +360,9 @@ export function restorePiOriginalSkillDiscoveryRecording(input: {
     NodeCrypto.createHash("sha256").update(restoredBytes).digest("hex") !==
     provenance.originalDigest
   )
-    throw new Error(`Pi ${input.scenario} fixture differs beyond the lazy-discovery edit.`);
+    throw new Error(
+      `Pi ${input.scenario} fixture differs beyond the reviewed discovery and queued-start edits.`,
+    );
   return restoredBytes;
 }
 
@@ -429,7 +461,7 @@ export function reconcilePiSimpleSettleTail(input: {
   // Pin every deciding native frame and original order, including all five tree entries.
   if (
     NodeCrypto.createHash("sha256").update(JSON.stringify(entries)).digest("hex") !==
-    "5e8019ee5d21344a897e59d31a09233ea72738fd82c5933435538d87fd987ac8"
+    "f9913a09bae619b065ef05b45b22c3cf365c8adf283b19eeb3964d30a771a281"
   )
     return fail();
   return [
@@ -457,31 +489,31 @@ const recordedPiSchedules: Readonly<
   Record<string, { readonly digest: string; readonly states: ReadonlyArray<number> }>
 > = {
   multi_turn: {
-    digest: "84da8d5ab3b9b500dcbc2681b1d0c575401965553881c6bbe764cc27780b702b",
+    digest: "ff4d9816808398c07daa988990fcc85b08851c97a68f5d4524c3980413cecc26",
     states: [41, 74],
   },
   pi_compaction: {
-    digest: "de6c27e1fadb538654e93d5d65882a81fc6a461f4a9d7011b458bcbfae4f2e83",
+    digest: "f2114d37cc02f63aa45d5d626298f67b450e4d690e323d22477accce407bc064",
     states: [44, 62, 94, 126, 144, 186],
   },
   provider_thread_resume: {
-    digest: "6ec26787a941b714f1867d0a175ede364d6d312dace70e0333c51e9c15c398ac",
+    digest: "169e2165685d45ad0be48b704b873316e65274eab756b0cc621e2a470627e429",
     states: [57, 122],
   },
   message_steering: {
-    digest: "5bffbb8e116e6d7f228726e3f5f226f1a86230e3692ca6cf0a263028a37076cf",
+    digest: "46250b34128fbbe66654670d792e08d5cf5100796b1e1d5da4eca175c64fa467",
     states: [61],
   },
   thread_rollback: {
-    digest: "3519b99523e0b61a69c30b7c577bc95e1cdead26e681bf9a66f9f429bf3263fe",
+    digest: "0087de24750c1d4eaddc62ebbd4d44cdbed445436dedb2ad0c7dacce1f7f1f18",
     states: [52, 85, 169],
   },
   thread_rollback_after_stop: {
-    digest: "7cdf647104f7123086ada95f77d37da0fb9e171a19cd3e70df0811f19c50b66b",
+    digest: "be829d74fdb991dc79c1362d58ae72861bc84cbbc06b1c738e275d6c9309bd8c",
     states: [42, 212, 282],
   },
   turn_interrupt_mid_tool: {
-    digest: "c6e5325118f4fad39a0ece6eabeb5eb28793243d5703ae670550cf958cb4b83a",
+    digest: "7e4284f2f36bd7aa9586e3f800e82660152b11d35388af0126e13d5ee2846077",
     states: [],
   },
 };

@@ -103,6 +103,11 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 
+const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
+  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+);
+
 // Effect returns a declared tool failure as `isError` with its encoded payload
 // as JSON text, never as `structuredContent`.
 const declaredFailure = (result: McpSchema.CallToolResult) => {
@@ -837,7 +842,7 @@ describe("orchestrator MCP toolkit", () => {
             ProjectHandlersLive,
           ).pipe(Layer.provide(projectGuardDependencies));
           const layerTest = Layer.mergeAll(
-            McpHttpServer.layerOrchestratorToolkit,
+            layerOrchestratorToolkit,
             McpHttpServer.layerThreadToolkit,
             projectGuardRegistration,
           ).pipe(
@@ -4712,7 +4717,7 @@ describe("orchestrator MCP toolkit", () => {
             model: codexModel,
           }),
         ]);
-        const layerTest = McpHttpServer.layerOrchestratorToolkit.pipe(
+        const layerTest = layerOrchestratorToolkit.pipe(
           Layer.provide(
             Layer.merge(
               Layer.mock(ProjectService.ProjectService)({}),

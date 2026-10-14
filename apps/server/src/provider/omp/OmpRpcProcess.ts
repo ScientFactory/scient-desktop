@@ -429,7 +429,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
   const resolvedBinary = yield* resolveCommandPath(options.command, {
     env,
     bypassCache: true,
-  }).pipe(Effect.orElseSucceed(() => options.command));
+  }).pipe(Effect.map((resolved) => resolved ?? options.command));
   const executableIdentity = yield* canonicalOmpExecutablePath(resolvedBinary);
   // The gate is a type-level requirement: an ungated process could start
   // while a managed activation replaces its runtime.

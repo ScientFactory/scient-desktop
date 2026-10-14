@@ -33,7 +33,7 @@ async function loadBridge(result: unknown, mode = "full-access") {
   let hook: ToolHook | undefined;
   let extension = makePiMcpExtensionSource(SCIENT_ORCHESTRATION_INSTRUCTIONS);
   for (const declaration of [
-    'import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+    'import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";',
     'import * as NodeFSP from "node:fs/promises";',
     'import * as NodePath from "node:path";',
     'import { Type } from "typebox";',
