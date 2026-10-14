@@ -122,12 +122,12 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
       }),
   );
 
-  it.live("keeps the epoch across a restart until a plain save, then never revives it", () =>
+  it.live("keeps epochs stable between service instances and advances them on each save", () =>
     plain(async (h) => {
       await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
       const untouched = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
       let methods = await h.restart();
-      // Nothing published plainly: LaTeX evidence bound to this epoch survives a restart.
+      // Instances in one process share the run's count, so their epochs agree.
       expect(await h.run(methods.getMutationEpoch({ cwd: h.cwd }))).toBe(untouched);
       await h.run(
         methods.writeFile({
@@ -147,7 +147,7 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
           expectedRevision: revision("B"),
         }),
       );
-      // A later run's counts never match an earlier run's epoch.
+      // Every save advances the epoch past every earlier one.
       const later = await h.run(methods.getMutationEpoch({ cwd: h.cwd }));
       expect(later).not.toBe(saved);
       expect(later).not.toBe(untouched);
@@ -375,6 +375,77 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
       }),
     );
 
+    it.live("lets a held callback take a sibling while their parent waits", () =>
+      plain(async (h) => {
+        const parent = NodePath.join(h.cwd, "paper");
+        const a = NodePath.join(parent, "a"),
+          b = NodePath.join(parent, "b");
+        await NodeFSP.mkdir(a, { recursive: true });
+        await NodeFSP.mkdir(b);
+        const epoch = await h.run(h.methods.getMutationEpoch({ cwd: a }));
+        const parentQueued = Promise.withResolvers<void>();
+        const fence = h.run(
+          h.methods.withWorkspacePublicationFence({ cwd: a, expectedEpoch: epoch }, () =>
+            Effect.gen(function* () {
+              yield* Effect.promise(() => parentQueued.promise);
+              yield* h.methods.writeFile({ cwd: b, relativePath: "x.tex", contents: "B" });
+            }),
+          ),
+        );
+        await NodeTimersPromises.setTimeout(20);
+        const parentSave = h.run(
+          h.methods.writeFile({ cwd: parent, relativePath: "p.tex", contents: "P" }),
+        );
+        await NodeTimersPromises.setTimeout(20);
+        parentQueued.resolve();
+        await fence;
+        await parentSave;
+        expect(await NodeFSP.readFile(NodePath.join(b, "x.tex"), "utf8")).toBe("B");
+        expect(await NodeFSP.readFile(NodePath.join(parent, "p.tex"), "utf8")).toBe("P");
+      }),
+    );
+
+    it.live("refuses one mutation id used for two different saves at once", () =>
+      plain(async (h) => {
+        const other = NodePath.join(h.root, "other");
+        await NodeFSP.mkdir(other);
+        const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+        const gate = Promise.withResolvers<void>();
+        const fence = h.run(
+          h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
+            Effect.promise(() => gate.promise),
+          ),
+        );
+        // The first save holds its id while it waits behind the fence.
+        const waiting = h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "a.tex",
+            contents: "A",
+            mutationId: "shared",
+          }),
+        );
+        await NodeTimersPromises.setTimeout(20);
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: other,
+              relativePath: "b.tex",
+              contents: "B",
+              mutationId: "shared",
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileMutationIntentConflictError" });
+        gate.resolve();
+        await fence;
+        await waiting;
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "a.tex"), "utf8")).toBe("A");
+        await expect(NodeFSP.lstat(NodePath.join(other, "b.tex"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }),
+    );
+
     it.live("makes reads and epoch reads wait while a fence owns the workspace", () =>
       plain(async (h) => {
         await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
@@ -385,14 +456,18 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
             Effect.promise(() => gate.promise),
           ),
         );
-        let settled = false;
+        let settled = false,
+          epochRead = false;
         const read = h.settledRead("main.tex").then((value) => {
           settled = true;
           return value;
         });
-        const reread = h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+        const reread = h.run(h.methods.getMutationEpoch({ cwd: h.cwd })).then((value) => {
+          epochRead = true;
+          return value;
+        });
         await NodeTimersPromises.setTimeout(50);
-        expect(settled).toBe(false);
+        expect([settled, epochRead]).toEqual([false, false]);
         gate.resolve();
         await fence;
         expect(await read).toMatchObject({ contents: "A" });

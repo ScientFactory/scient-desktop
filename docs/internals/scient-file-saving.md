@@ -18,9 +18,10 @@ plainly under the same leases and checks.
 leases, no one-step replace or create), Linux (no strict current-root
 authority), or no helper at all. Mutations, settled reads, epoch reads and
 publication fences own their workspace root in this process, like native root
-leases (`main` locked per file): work on overlapping roots runs one at a time in
-arrival order, unrelated roots run independently, and a held callback must not
-wait for its own root. A request cancelled while it waits never runs. After the
+leases (`main` locked per file): work on overlapping roots runs one at a time,
+unrelated roots run independently, and a waiter is held back only by active
+overlapping work, so a held callback can always take an unrelated root (it must
+not wait for its own). A request cancelled while it waits never runs. After the
 wait each mutation resolves its path again and refuses one that now resolves
 elsewhere (`target_changed`). No earlier versions are kept; version history is
 empty and Overleaf retention reports that it needs native publication.
@@ -47,18 +48,19 @@ Plain publication, in either mode:
   previous bytes as unchanged, anything else stays unknown.
 - Advances the workspace mutation epoch before its rename, so build fences and
   PDF exports captured earlier refuse. One count covers every root, including
-  nested ones. The count is kept in memory: until a run publishes plainly the
-  epoch is what it was before a restart; afterwards the run's own nonce keeps it
-  from matching any earlier run's epoch, so a LaTeX PDF built in an earlier run
-  after a plain save is rebuilt once. Builds and exports also re-check source
-  contents.
+  nested ones. The count is kept in memory for the process run and shared by
+  every service instance. A plain host always names the run in its epochs, so no
+  epoch from an earlier run is accepted after a restart, and an open LaTeX PDF is
+  rebuilt once after each restart. A native host names the run only once it has
+  published plainly, so its epochs stay stable across restarts. Builds and
+  exports also re-check source contents.
 
 Plain moves link the file to its new name (never replacing one), confirm the new
 name holds the same file with the inspected bytes, then remove the old name; if
 that fails the new name is removed again, but only while it is still the link
 this move created. Plain moves need hard links, as on `main`. A mutation id a
-plain publication has started or answered cannot be reused by a later native
-move or delete. Plain deletes check the current revision first. Both can remove folders
+plain operation is using cannot be used for a different intent meanwhile, and a
+later native move or delete cannot reuse one a plain publication has answered. Plain deletes check the current revision first. Both can remove folders
 they leave empty.
 
 Plain publication cannot stop another program from changing the file between
