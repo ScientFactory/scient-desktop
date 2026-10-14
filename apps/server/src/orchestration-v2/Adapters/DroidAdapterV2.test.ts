@@ -1084,16 +1084,32 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
     ),
   );
 
-  it.effect(
-    "attributes native and custom-model authentication failures to the executing model",
-    () =>
+  it.effect.each([
+    {
+      droid: "0.235",
+      error: { code: -32603, message: "Internal error: Agent error", data: "401 Invalid API key" },
+    },
+    {
+      droid: "0.241",
+      error: {
+        code: -32603,
+        message: "Internal error: 401 Invalid API key",
+        data: { sessionId: "fixture-session", reason: "model_authentication_failed" },
+      },
+    },
+  ])(
+    "attributes native and custom-model authentication failures to the executing model (Droid $droid)",
+    ({ error }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const h = yield* harness(false, false, false, undefined, {
-            body: `function onPrompt(message) { fail(message, { code: -32603, message: "Internal error: Agent error", data: "401 Invalid API key" }); }`,
+            body: `function onPrompt(message) { fail(message, ${encodeJson(error)}); }`,
           });
           yield* h.send(1, "full-access");
-          assert.equal((yield* h.terminal).status, "failed");
+          const native = yield* h.terminal;
+          assert.equal(native.status, "failed");
+          if (native.status === "failed")
+            assert.equal(native.failure.message, "401 Invalid API key");
           yield* h.send(2, "full-access", "default", "custom", "custom:scient-fixture");
           assert.equal((yield* h.terminal).status, "failed");
           assert.deepEqual(h.rejectedAuthentication, ["401 Invalid API key"]);

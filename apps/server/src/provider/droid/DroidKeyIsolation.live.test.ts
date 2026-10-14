@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { beforeAll } from "vite-plus/test";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
+import { droidRequestFailureDetail } from "../acp/DroidAcpSupport.ts";
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
 import { factoryFixtureBody, qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 
@@ -37,11 +38,16 @@ const PROBE_COMMAND = [
   "env",
   // A transform defeats Droid's own output masking.
   "env | rev",
-  "echo ---settings---",
-  'cat "$FACTORY_RUNTIME_SETTINGS_PATH" | rev',
-  'cat "$FACTORY_RUNTIME_SETTINGS_PATH"',
+  // The command's supervising shell and the Droid processes above it, with their
+  // environments: from 0.241 the shell runs under a separate `droid exec` worker.
+  // The overlay's path is in the arguments of the Droid that reads it; Droid up
+  // to 0.235 also gives it to commands.
+  'settings="$FACTORY_RUNTIME_SETTINGS_PATH"; process=$PPID',
   "echo ---process---",
-  "ps eww $PPID",
+  'for _ in 1 2 3; do ps eww -o command= -p "$process"; ps eww -o command= -p "$process" | rev; settings=${settings:-$(ps -o command= -p "$process" | sed -n "s/^[^ ]*droid .*--settings \\([^ ]*\\).*/\\1/p")}; process=$(ps -o ppid= -p "$process" | tr -d " "); done',
+  "echo ---settings---",
+  'cat "$settings" | rev',
+  'cat "$settings"',
 ].join("; ");
 
 /**
@@ -240,7 +246,6 @@ it.effect.skipIf(!binary)(
         .join("\n");
       expect(toolOutput).not.toContain(realKey);
       expect(toolOutput).not.toContain([...realKey].toReversed().join(""));
-      expect(toolOutput).toContain("FACTORY_RUNTIME_SETTINGS_PATH");
       expect(toolOutput).toContain("---settings---");
       // Droid masks the overlay's apiKey in direct output; reversed, the agent
       // reads the capability, which is all it holds (the documented residual).
@@ -388,7 +393,9 @@ for (const protocol of Object.keys(MODEL_PATHS) as Array<keyof typeof MODEL_PATH
         expect(modelRequests).toBeGreaterThanOrEqual(1);
         // Droid fails the prompt with the endpoint's error, which is Scient's notice.
         expect(error._tag).toBe("AcpRequestError");
-        expect(error._tag === "AcpRequestError" && error.data).toBe(REPORTED_ERROR[protocol]);
+        expect(error._tag === "AcpRequestError" && droidRequestFailureDetail(error)).toBe(
+          REPORTED_ERROR[protocol],
+        );
         expect(acpTraffic.join("\n")).not.toContain(realKey);
         expect(filesContaining(root, realKey)).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
