@@ -65,6 +65,8 @@ export const scriptedOmpRpc = (input: {
   readonly switchCancelled?: boolean;
   /** A switch without a model fails, as when none of the session's saved models can be restored. */
   readonly savedModelUnrestorable?: boolean;
+  /** A switch takes effect and then reports this error, as a failure after the session changed. */
+  readonly switchErrorAfterChange?: string;
   readonly promptError?: string;
   readonly modelsError?: string;
   readonly modelsResponse?: unknown;
@@ -219,6 +221,8 @@ export const scriptedOmpRpc = (input: {
             if (input.switchCancelled) return respond(frame, { cancelled: true });
             state.sessionFile = (frame as Frame & { readonly sessionPath?: string }).sessionPath;
             if (bound) state.model = { provider: frame.provider ?? "", id: frame.modelId ?? "" };
+            if (input.switchErrorAfterChange)
+              return respond(frame, undefined, input.switchErrorAfterChange);
             return respond(frame, { cancelled: false });
           }
           case "get_available_models":

@@ -2767,6 +2767,50 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect(
+    "fails a resume whose bound switch errs after changing sessions, without switching again",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const owned = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
+          const models = [{ provider: "test", id: "selected" }];
+          const initial = { provider: "test", id: "selected" };
+          const firstPeer = scriptedOmpRpc({ models, initial, version: "18.8.4" });
+          const first = yield* harness(false, { makeProcess: firstPeer.makeProcess }).pipe(
+            Effect.provideService(Scope.Scope, owned),
+          );
+          yield* Scope.close(owned, Exit.void);
+          const secondPeer = scriptedOmpRpc({
+            models,
+            initial,
+            version: "18.8.4",
+            switchErrorAfterChange: "Session switched but its model could not be set",
+          });
+          const second = yield* harness(false, {
+            threadId: first.openInput.threadId,
+            makeProcess: secondPeer.makeProcess,
+          });
+          const result = yield* second.runtime
+            .resumeThread({
+              providerThread: first.input.providerThread,
+              modelSelection: {
+                instanceId: second.input.modelSelection.instanceId,
+                model: "test/selected",
+              },
+            })
+            .pipe(Effect.result);
+          assert.equal(result._tag, "Failure");
+          assert.deepEqual(
+            secondPeer.state.frames
+              .filter((frame) => frame.type === "switch_session")
+              .map((frame) => ({ provider: frame.provider, modelId: frame.modelId })),
+            [{ provider: "test", modelId: "selected" }],
+          );
+        }),
+      ),
+  );
+
   it.effect.each(
     (["home", "profile", "workspace"] as const).map((changed) => ({
       caseTitle: `refuses cross-install native OMP resume when its ${changed} changes before switching history`,

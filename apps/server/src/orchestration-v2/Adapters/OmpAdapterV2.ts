@@ -827,9 +827,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               fresh = false;
               // Since OMP 18.6.3 a switch fails when none of the conversation's saved
               // models can be restored, rather than continue on another model. Binding
-              // the thread's own selection keeps the native conversation. The agent
-              // rejects a pair it does not know before changing sessions, so falling
-              // back to the plain switch is the previous behavior.
+              // the thread's own selection keeps the native conversation. Only the
+              // unknown-pair rejection is certain to precede any session change, so
+              // only it falls back to the plain switch, the previous behavior.
               const bound =
                 modelSelection &&
                 modelSelection.model !== "default" &&
@@ -839,11 +839,14 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               if (bound?.provider.startsWith("scient_") && client.refreshModels)
                 yield* client.refreshModels().pipe(Effect.ignore);
               const result = yield* bound
-                ? client
-                    .switchSession(real, bound)
-                    .pipe(
-                      Effect.catchTags({ OmpRpcCommandError: () => client.switchSession(real) }),
-                    )
+                ? client.switchSession(real, bound).pipe(
+                    Effect.catchTags({
+                      OmpRpcCommandError: (error) =>
+                        error.detail.startsWith("Model not found")
+                          ? client.switchSession(real)
+                          : Effect.fail(error),
+                    }),
+                  )
                 : client.switchSession(real);
               if (result.cancelled)
                 return yield* new NativeSessionOperationError({
