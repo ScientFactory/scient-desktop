@@ -24,9 +24,13 @@ been authorized for this new candidate.
   paths. The 68 clean overlaps and untouched Scient consumers were included in
   source review, rather than treating textual conflict removal as acceptance.
 - Branch: `codex/t3-sync-85272eeeae-20261014`; upstream push URL: `DISABLED`.
+- Source/fixture correction commit: `041ba8c3478343b78dc591bb65b681889d78b569`,
+  tree `a6220e72a61d8cbcb76c89576ae2d06421817d98`, preserving the original
+  integration merge and all donors. Its production delta is two reader files;
+  the other eleven paths are tests.
 - No later owned-main catch-up is present. Public main was reverified at the
-  owned base immediately before committing the integration. Future owned-main
-  movement must preserve this upstream merge.
+  owned base again after local corrections. Future owned-main movement must
+  preserve this upstream merge.
 
 ## Integrated behavior and composition
 
@@ -143,12 +147,81 @@ suites will execute in hosted CI, while the local opt-in Pi group ran here.
 The selector is feedback/coverage mapping, not an exhaustive dependency graph or
 a substitute for the final applicable matrix.
 
-Pending at this receipt revision: final pushed-head hosted static/type/build,
-workspace/server/web/browser tests and applicable mobile/native/packaging/release
-smoke checks; exact-candidate isolated app and proportional visual interaction;
-final receipt/cursor advancement. No full local aggregate was run by design under
-the explicit per-pass instruction. Device inventory currently reports required
-AgentDevice 0.21.24 unavailable; native mobile interaction is not established.
+## Findings from hosted qualification and native visual review
+
+The first hosted run, `38497582559` at `01c3a87f7e80`, failed 23 cases across
+workspace/server jobs. Static/type/build, web unit/layout, provenance, Rust,
+Compute, desktop/remote packaging, release smoke and mobile static analysis passed
+at that earlier head. Those results do not qualify the corrected final head.
+The server-three log was truncated; its completed JSON artifact was parsed for
+all 16 failures instead of assuming the visible tail was complete.
+
+The failures exposed stale consumer fixtures, including untouched Scient suites:
+Pi's resumed fake supplied one idle observation but contradicted the second
+currentness read; live Claude Stop withheld its own native acknowledgement;
+idle native outcomes superseded old wake expectations; locally ended tasks
+correctly returned void without manufacturing native proof; a generated Pi import
+parser omitted `ExtensionContext`; named Claude defaults still expected 4.5 rather
+than the donor's 5.5; the SQLite witness demanded one exact sampled estimate;
+attachment fixtures assumed changed bytes retained their old identity; native
+preparation deletion expected failure rather than observed cancellation.
+
+Corrections preserve exact request/acknowledgement ordering, outcome identity,
+no duplicate wake publication, immutable original bytes/references, actual
+same-identity conflicting-file refusal and retained unready publication pins,
+explicit provider-instance ordering, and interruption/tombstone/replacement
+proof. Production native guards, timeout values and qualification ceilings were
+unchanged. Fifty-one focused repair checks passed in four serial runs: 1.935s,
+5.050s, 2.725s and 11.961s. Other cases were explicitly skipped or outside those
+files. This was narrow repair feedback before another hosted aggregate, not a
+local full-suite substitute or a measured cold full-suite speedup.
+
+The actual isolated Electron app exposed a persistent end-control overlap that
+the existing non-StrictMode browser harness missed. A pending handoff footer
+changes Legend's header/footer metrics without an item-size or viewport event;
+the existing reader owner now receives `onMetricsChange`. More decisively,
+production development `StrictMode` replays effect cleanup/setup: cancelling a
+scheduled reader frame left its handle non-null and permanently blocked further
+bookkeeping. Cleanup now clears that same handle after cancellation.
+
+The same real timeline/handoff/end-control fixture now mounts under StrictMode.
+Before the cleanup repair it failed because no reader report arrived after
+positioning; after repair it passed. Earlier footer-only reflow also failed
+before registering metrics and passed afterward. These are separate deciding
+failures. No second controller, scroll writer, physical-bottom shortcut, altered
+three-line tolerance, margin workaround or continuously running loop was added.
+Temporary numeric diagnostics were removed before the final evidence and commit.
+
+Independent bounded cross-reviews accepted the repaired fixture/source delta.
+Affected server and web typechecks passed in 4.364s and 3.703s; the final staged
+five-seam check passed on tree `a6220e72a61d8cbcb76c89576ae2d06421817d98`.
+Each receipt retains its own head/input hash. Later reader-only changes and
+reviewed formatting do not turn earlier server/provider receipts into full-final
+qualification. Backend/provider/desktop production inputs are unchanged by the
+correction commit; final hosted CI remains responsible for broader coverage.
+
+The synthetic native candidate uses its own checkout state, HOME, desktop identity,
+ports and model endpoint. Observed interactions include fresh onboarding/provider
+order, actual public Pi custom-model routing, rich Markdown/native questions with
+choice and free text, controlled streaming Stop with a retained held queue and
+explicit Resume, mixed-script/math/table/Mermaid/Vega-Lite/Plotly rendering,
+workspace HTML routing, ordinary LaTeX keyboard edit/save/reload and built PDF
+rendering, and light/dark surfaces. No live user profile or credentials were copied.
+
+After a fresh renderer reload, inserting/removing a pending same-model handoff
+kept the above-end viewport at 300px and the mounted answer anchor unchanged.
+After end navigation and lazy figure settlement, physical scroll equalled its
+7262px maximum, the answer endpoint was visible at 697.47px, the handoff remained
+visible and the end control was absent. The preceding callback-only attempt did
+not fix the native issue and is retained as failed evidence. Screenshots and
+bounded observations live in the external evidence directory, not product source.
+
+Pending: final pushed-head hosted qualification, Yaacov's visual acceptance and
+final receipt/cursor advancement. The isolated app remains available for review.
+Native mobile interaction is not established: the device inventory lacks required
+AgentDevice 0.21.24. Mobile static analysis passing is a separate result; no device
+setup change or native mobile visual claim is included. No full local aggregate
+was run under the explicit per-pass instruction.
 
 No universal enabled-provider, Windows, mobile-publication, physical power-loss,
 OAuth or microphone acceptance is inferred from the above evidence. Public main
