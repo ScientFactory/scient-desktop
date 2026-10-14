@@ -164,7 +164,9 @@ it("lists everything an update covers beside Beta release notes", async () => {
     },
     remote: true,
   });
-  await userEvent.hover(button);
+  // Keyboard focus opens the release notes without depending on pointer state.
+  await userEvent.tab();
+  expect(document.activeElement).toBe(button);
   await expect
     .poll(() => document.body.textContent ?? "")
     .toContain("Codex 0.48.0 → 0.50.1 · managed by Scient");
@@ -182,7 +184,7 @@ it("keeps the update list reachable below long release notes", async () => {
     updateState: { ...appUpdate, channel: "beta", releaseNotes },
     remote: true,
   });
-  await userEvent.hover(button);
+  await userEvent.tab();
   await expect
     .poll(() => [...document.querySelectorAll("p")].find((p) => p.textContent?.startsWith("Codex")))
     .toBeDefined();
