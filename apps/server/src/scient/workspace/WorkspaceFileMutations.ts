@@ -974,21 +974,34 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     plainRun.generation === 0 && !alwaysNameRun
       ? ""
       : `plain:${plainRun.nonce}:${plainRun.generation}\n`;
-  /** Mutation ids of plain operations in flight, with their intent fingerprints. */
-  const plainClaims = new Map<string, string>();
-  /** Claims an id for one intent; a different intent using it meanwhile is refused. */
-  const claimPlain = (id: string, fingerprint: string) => {
+  /** Mutation ids of plain operations in flight: their intent and how many requests hold it. */
+  const plainClaims = new Map<string, { readonly fingerprint: string; holders: number }>();
+  const intentConflict = (id: string) =>
+    new RetainedMutationError(
+      "intent",
+      "Mutation identity was reused for a changed target, condition or bytes.",
+      id,
+    );
+  /** Refuses an id held in flight for a different intent. */
+  const assertUnclaimed = (id: string, fingerprint: string) => {
     const held = plainClaims.get(id);
-    if (held !== undefined && held !== fingerprint)
-      throw new RetainedMutationError(
-        "intent",
-        "Mutation identity was reused for a changed target, condition or bytes.",
-        id,
-      );
-    if (held !== undefined) return () => undefined;
-    plainClaims.set(id, fingerprint);
+    if (held !== undefined && held.fingerprint !== fingerprint) throw intentConflict(id);
+  };
+  /**
+   * Claims an id for one intent until every request holding it (an original and its
+   * retries) has ended; a different intent using it meanwhile is refused.
+   */
+  const claimPlain = (id: string, fingerprint: string) => {
+    assertUnclaimed(id, fingerprint);
+    const held = plainClaims.get(id) ?? { fingerprint, holders: 0 };
+    held.holders += 1;
+    plainClaims.set(id, held);
+    let released = false;
     return () => {
-      plainClaims.delete(id);
+      if (released) return;
+      released = true;
+      held.holders -= 1;
+      if (held.holders === 0 && plainClaims.get(id) === held) plainClaims.delete(id);
     };
   };
   const plainReceipts = new Map<
@@ -1377,6 +1390,37 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const qualified = creation
       ? capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata
       : capabilities.atomicExchange;
+    // Plain and native intents share mutation ids: a plain one claims its id before waiting,
+    // and a native one refuses an id held for a different intent.
+    const fingerprint = plainFingerprint(resolved, intent);
+    if (!(!qualified && allowPlain)) {
+      if (allowPlain) assertUnclaimed(intent.id, fingerprint);
+      return admitByteRoot(input, resolved, intent, signal, allowPlain, qualified, existingParent);
+    }
+    const release = claimPlain(intent.id, fingerprint);
+    try {
+      return await admitByteRoot(
+        input,
+        resolved,
+        intent,
+        signal,
+        allowPlain,
+        qualified,
+        existingParent,
+      );
+    } finally {
+      release();
+    }
+  };
+  const admitByteRoot = async (
+    input: { cwd: string; relativePath: string },
+    resolved: Resolved,
+    intent: PlainIntent,
+    signal: AbortSignal,
+    allowPlain: boolean,
+    qualified: boolean,
+    existingParent: NativeFileLeaseBinding,
+  ): Promise<RetainedMutationResult | undefined> => {
     return withRoot(
       resolved.root,
       async (

@@ -446,6 +446,56 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
       }),
     );
 
+    it.live("keeps an id claimed while an identical retry still waits", () =>
+      plain(async (h) => {
+        const other = NodePath.join(h.root, "other");
+        await NodeFSP.mkdir(other);
+        const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+        const gate = Promise.withResolvers<void>();
+        const fence = h.run(
+          h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
+            Effect.promise(() => gate.promise),
+          ),
+        );
+        const save = h.methods.writeFile({
+          cwd: h.cwd,
+          relativePath: "a.tex",
+          contents: "A",
+          mutationId: "retried",
+        });
+        // The original claims first and waits; its retry joins; then the original is cancelled.
+        const originalWaiting = Promise.withResolvers<void>(),
+          cancelNow = Promise.withResolvers<void>();
+        const cancelling = h.run(
+          Effect.gen(function* () {
+            const original = yield* Effect.forkChild(save);
+            yield* Effect.sleep("20 millis");
+            originalWaiting.resolve();
+            yield* Effect.promise(() => cancelNow.promise);
+            yield* Fiber.interrupt(original);
+          }),
+        );
+        await originalWaiting.promise;
+        const retry = h.run(save);
+        await NodeTimersPromises.setTimeout(20);
+        cancelNow.resolve();
+        await cancelling;
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: other,
+              relativePath: "b.tex",
+              contents: "B",
+              mutationId: "retried",
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileMutationIntentConflictError" });
+        gate.resolve();
+        await fence;
+        expect(await retry).toMatchObject({ revision: revision("A") });
+      }),
+    );
+
     it.live("makes reads and epoch reads wait while a fence owns the workspace", () =>
       plain(async (h) => {
         await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
@@ -581,6 +631,53 @@ describe("plain creation on a native host", () => {
       {},
       null,
       modes[1][1],
+    ),
+  );
+});
+
+describe("plain creation beside native replacement", () => {
+  it.live("refuses a native save reusing an id a waiting plain creation holds", () =>
+    fileMutationFixture(
+      async (h) => {
+        const other = NodePath.join(h.root, "other");
+        await NodeFSP.mkdir(other);
+        await NodeFSP.writeFile(NodePath.join(other, "b.tex"), "B");
+        const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+        const gate = Promise.withResolvers<void>();
+        const fence = h.run(
+          h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
+            Effect.promise(() => gate.promise),
+          ),
+        );
+        // Creation is plain on this volume and waits behind the fence, holding its id.
+        const created = h.run(
+          h.methods.createBinaryFile({
+            cwd: h.cwd,
+            relativePath: "new.tex",
+            bytes: Buffer.from("N"),
+            mutationId: "shared",
+          }),
+        );
+        await NodeTimersPromises.setTimeout(50);
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: other,
+              relativePath: "b.tex",
+              contents: "C",
+              expectedRevision: revision("B"),
+              mutationId: "shared",
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileMutationIntentConflictError" });
+        expect(await NodeFSP.readFile(NodePath.join(other, "b.tex"), "utf8")).toBe("B");
+        gate.resolve();
+        await fence;
+        expect(await created).toMatchObject({ revision: revision("N") });
+      },
+      {},
+      null,
+      (helper) => filePublicationHelperWithout(helper, ["atomicCreateMetadata"]),
     ),
   );
 });
