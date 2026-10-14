@@ -1054,12 +1054,20 @@ describe("Oh My Pi session runtime outcomes", () => {
           toolName: "bash",
           result: { details: { async: { state: "completed" } } },
         },
+        // A new call's argument stream may precede its start.
+        {
+          type: "tool_stream_update",
+          toolCallId: "own-tool",
+          toolName: "read",
+          update: { text: "a" },
+        },
         { type: "tool_execution_start", toolCallId: "own-tool", toolName: "read" },
         { type: "tool_execution_update", toolCallId: "own-tool", toolName: "read" },
       );
       const produced = yield* h.settleFrames;
       yield* Scope.close(h.scope, Exit.void);
       expect(produced.filter((update) => update.type === "tool")).toMatchObject([
+        { toolCallId: "own-tool", phase: "updated" },
         { toolCallId: "own-tool", phase: "started" },
         { toolCallId: "own-tool", phase: "updated" },
       ]);

@@ -43,6 +43,8 @@ const OMP_INBOX_CAPACITY = 256;
 const OMP_SETTLED_PROMPT_MEMORY = 16;
 /** Prompt outcome frames held while the open turn waits for its prompt id. */
 const OMP_PENDING_OUTCOME_MEMORY = 16;
+/** Tool call ids of earlier turns, so their late frames cannot touch a newer turn. */
+const OMP_EARLIER_TOOL_CALL_MEMORY = 512;
 
 const ompDrainRetry = (attempt: number, busy: boolean): "confirm" | "retry" | "give-up" => {
   if (!busy) return "confirm";
@@ -395,12 +397,19 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     | undefined;
   const completedAssistantIds = new Set<string>();
   /**
-   * Tool calls the open turn started and has not seen end. Since OMP 18.10.2
-   * a backgrounded tool keeps sending updates after its call returned, even
-   * after the run ended, so a late frame can reach the next turn; only the
-   * turn that started a tool reports it.
+   * Tool calls the open turn reported, and those of earlier turns. Since OMP
+   * 18.10.2 a backgrounded tool keeps sending updates after its call returned,
+   * even after the run ended, so a late frame can reach the next turn. A call
+   * belongs to the turn that first reported it: its argument stream may come
+   * before its start.
    */
   const turnToolCallIds = new Set<string>();
+  const earlierToolCallIds = new Set<string>();
+  const ownsToolCall = (toolCallId: string) => {
+    if (earlierToolCallIds.has(toolCallId)) return false;
+    turnToolCallIds.add(toolCallId);
+    return true;
+  };
   let assistantMessageSeen = false;
   let failureDetail: string | undefined;
   /** The prompt command itself failed; its sender reports that error. */
@@ -565,6 +574,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       activeAssistantTimestamp = undefined;
       latestCompletedAssistantReference = undefined;
       completedAssistantIds.clear();
+      for (const toolCallId of turnToolCallIds) {
+        earlierToolCallIds.add(toolCallId);
+        if (earlierToolCallIds.size > OMP_EARLIER_TOOL_CALL_MEMORY) {
+          earlierToolCallIds.delete(earlierToolCallIds.values().next().value as string);
+        }
+      }
       turnToolCallIds.clear();
       assistantMessageSeen = false;
       drainRetries = 0;
@@ -1093,7 +1108,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (event.type === "tool_stream_update") {
         if (!turnIsOpen(turn) || staleRunOpen()) return;
         const toolCallId = text(event.toolCallId);
-        if (toolCallId && turnToolCallIds.has(toolCallId)) {
+        if (toolCallId && ownsToolCall(toolCallId)) {
           yield* publish({
             type: "tool",
             phase: "updated",
@@ -1113,9 +1128,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (!turnIsOpen(turn) || staleRunOpen()) return;
         const name = text(event.toolName) ?? text(event.name) ?? "tool";
         const toolCallId = text(event.toolCallId) ?? text(event.id) ?? name;
-        if (event.type === "tool_execution_start") turnToolCallIds.add(toolCallId);
-        else if (!turnToolCallIds.has(toolCallId)) return;
-        if (event.type === "tool_execution_end") turnToolCallIds.delete(toolCallId);
+        // A start claims its call for this turn, even an id an earlier turn used.
+        if (event.type === "tool_execution_start") {
+          earlierToolCallIds.delete(toolCallId);
+          turnToolCallIds.add(toolCallId);
+        } else if (!ownsToolCall(toolCallId)) return;
         const detail =
           detailText(event.partialResult) ?? detailText(event.result) ?? detailText(event.output);
         const failed = toolFailed(event);
