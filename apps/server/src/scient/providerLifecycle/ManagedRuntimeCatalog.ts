@@ -24,9 +24,12 @@ import {
   type ManagedRuntimeArtifactReceipt,
   type ManagedRuntimeCatalogProvider,
 } from "@scientfactory/provider-runtime";
+import type { ProviderRuntimeCatalogFreshness } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -40,6 +43,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
   HttpClient,
+  HttpClientError,
   HttpClientRequest,
   HttpClientResponse,
   HttpIncomingMessage,
@@ -506,6 +510,8 @@ export interface ManagedRuntimeCatalogService {
   readonly refresh: Effect.Effect<ManagedRuntimeCatalogData>;
   /** Explicit user refresh; bypasses the automatic TTL and retry windows. */
   readonly refreshNow: Effect.Effect<ManagedRuntimeCatalogData>;
+  /** When the list was last checked, and whether the latest check failed. */
+  readonly freshness: Effect.Effect<ProviderRuntimeCatalogFreshness>;
   /** Acquire a process-scoped stream of authoritative catalog changes. */
   readonly subscribeChanges: Effect.Effect<
     Stream.Stream<ManagedRuntimeCatalogChange>,
@@ -519,12 +525,35 @@ export interface ManagedRuntimeCatalogChange {
   readonly changedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider>;
 }
 
+/** A catalog never checked remotely, as the bundled-only service reports it. */
+export const UNCHECKED_CATALOG_FRESHNESS: ProviderRuntimeCatalogFreshness = {
+  checkedAt: null,
+  failure: null,
+  checksDisabled: false,
+};
+
 const bundledOnlyService: ManagedRuntimeCatalogService = {
   current: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
   refresh: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
   refreshNow: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
+  freshness: Effect.succeed(UNCHECKED_CATALOG_FRESHNESS),
   subscribeChanges: Effect.succeed(Stream.empty),
 };
+
+/** Why a catalog check failed, in plain words, without its URL or response body. */
+export function catalogCheckFailureMessage(cause: Cause.Cause<unknown>): string {
+  const error = Cause.squash(cause);
+  if (Cause.isTimeoutError(error)) return "The check timed out.";
+  if (HttpClientError.isHttpClientError(error)) {
+    if (error.reason._tag === "StatusCodeError") {
+      return `The release list answered with HTTP ${error.reason.response.status}.`;
+    }
+    if (error.reason._tag === "TransportError") return "Scient could not reach the release list.";
+  }
+  return "Scient could not read the release list.";
+}
+
+const isoFromMillis = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
 /** Bundled-only by default; the production server explicitly provides `layer`. */
 export class ManagedRuntimeCatalog extends Context.Reference<ManagedRuntimeCatalogService>(
@@ -549,6 +578,10 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
     let fetchedAtMs: number | null = null;
     let lastAttemptMs: number | null = null;
     let etag: string | null = null;
+    // What the user is told about the list: its last good check, which the disk
+    // cache carries across restarts, and the latest check when it failed.
+    let checkedAtMs: number | null = null;
+    let failure: { readonly atMs: number; readonly message: string } | null = null;
     const refreshSemaphore = yield* Semaphore.make(1);
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.sliding<ManagedRuntimeCatalogChange>(managedProviders.length),
@@ -563,6 +596,7 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
         );
         if (cached === null) return;
         catalog = mergeManagedRuntimeCatalogs(catalog, cached.catalog);
+        checkedAtMs = cached.fetchedAtMs;
         // Fetch the complete feed once per process. An older app may have
         // filtered out entries while retaining the full response's validator.
         fetchedAtMs = null;
@@ -612,9 +646,16 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
         return { response, data };
       }).pipe(
         Effect.timeout(FETCH_TIMEOUT_MS),
-        Effect.catchCause(() => Effect.succeed(null)),
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            failure = { atMs: now, message: catalogCheckFailureMessage(cause) };
+            return null;
+          }),
+        ),
       );
       if (fetched === null) return catalog;
+      checkedAtMs = now;
+      failure = null;
       if (fetched.data === null) {
         fetchedAtMs = now;
         yield* persistCache(now);
@@ -660,6 +701,18 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
       current: ensureDiskCacheLoaded.pipe(Effect.map(() => catalog)),
       refresh: guardedRefresh,
       refreshNow: guardedRefreshNow,
+      freshness: Effect.gen(function* () {
+        yield* ensureDiskCacheLoaded;
+        const settings = yield* settingsService.getSettings.pipe(
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+        return {
+          checkedAt: checkedAtMs === null ? null : isoFromMillis(checkedAtMs),
+          failure:
+            failure === null ? null : { at: isoFromMillis(failure.atMs), message: failure.message },
+          checksDisabled: settings !== null && !settings.enableProviderUpdateChecks,
+        };
+      }),
       subscribeChanges: PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription)),
     });
   });

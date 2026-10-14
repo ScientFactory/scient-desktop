@@ -44,6 +44,7 @@ import {
   resolveFetchedManagedRuntimeCatalog,
   changedManagedRuntimeProviders,
   decodeBoundedCatalogJson,
+  UNCHECKED_CATALOG_FRESHNESS,
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
 
@@ -886,11 +887,62 @@ describe("ManagedRuntimeCatalog service", () => {
     ),
   );
 
+  it.live("reports when the list was last checked and why the latest check failed", () =>
+    Effect.gen(function* () {
+      const responses = [
+        () => new Response(null, { status: 503 }),
+        () => Response.json(remoteCatalog()),
+        () => new Response(null, { status: 503 }),
+      ];
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+        Effect.provide(httpClientLayer(() => responses.shift()!())),
+      );
+      assert.deepStrictEqual(yield* service.freshness, UNCHECKED_CATALOG_FRESHNESS);
+
+      yield* service.refreshNow;
+      const failedFirst = yield* service.freshness;
+      assert.strictEqual(failedFirst.checkedAt, null);
+      assert.strictEqual(failedFirst.failure?.message, "The release list answered with HTTP 503.");
+
+      yield* service.refreshNow;
+      const checked = yield* service.freshness;
+      assert.notStrictEqual(checked.checkedAt, null);
+      assert.strictEqual(checked.failure, null);
+
+      // A failed check keeps the last good list and when it was checked.
+      const kept = yield* service.refreshNow;
+      assert.strictEqual(kept.providers.codex?.version, newerCodexVersion);
+      const failedLater = yield* service.freshness;
+      assert.strictEqual(failedLater.checkedAt, checked.checkedAt);
+      assert.strictEqual(failedLater.failure?.message, "The release list answered with HTTP 503.");
+
+      // The disk cache carries the last good check across a restart.
+      const rebooted = yield* makeWithOptions({ startBackgroundRefresh: false });
+      assert.deepStrictEqual(yield* rebooted.freshness, {
+        checkedAt: checked.checkedAt,
+        failure: null,
+        checksDisabled: false,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "managed-runtime-catalog-freshness-test",
+          response: () => Response.json(remoteCatalog()),
+        }),
+      ),
+    ),
+  );
+
   it.live("keeps the bundled catalog when remote data is malformed", () =>
     Effect.gen(function* () {
       const service = yield* makeWithOptions({ startBackgroundRefresh: false });
       assert.deepStrictEqual(yield* service.refresh, BUNDLED_MANAGED_RUNTIME_CATALOG);
       assert.deepStrictEqual(yield* service.refreshNow, BUNDLED_MANAGED_RUNTIME_CATALOG);
+      assert.strictEqual(
+        (yield* service.freshness).failure?.message,
+        "Scient could not read the release list.",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -916,6 +968,10 @@ describe("ManagedRuntimeCatalog service", () => {
       assert.deepStrictEqual(yield* service.refresh, BUNDLED_MANAGED_RUNTIME_CATALOG);
       assert.deepStrictEqual(yield* service.refreshNow, BUNDLED_MANAGED_RUNTIME_CATALOG);
       assert.strictEqual(fetchCount, 0);
+      assert.deepStrictEqual(yield* service.freshness, {
+        ...UNCHECKED_CATALOG_FRESHNESS,
+        checksDisabled: true,
+      });
     }).pipe(
       Effect.scoped,
       Effect.provide(

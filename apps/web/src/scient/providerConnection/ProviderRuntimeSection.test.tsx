@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderManagedRuntimeAction,
+  type ProviderRuntimeCatalogFreshness,
   type ProviderRuntimePlan,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -269,6 +270,33 @@ describe("ProviderRuntimeSection", () => {
       // Status and actions share one line once the row is wide enough.
       expect(markup).toContain("@min-[32rem]/runtime-row:grid-cols-[minmax(0,1fr)_auto]");
       expect(markup).toContain("px-3 py-3 sm:px-4");
+    });
+
+    it("says when Scient last checked for a newer release, and why a check failed", () => {
+      const runtime = managedProvider.connection!.runtime!;
+      const withCatalog = (catalog: ProviderRuntimeCatalogFreshness): ServerProvider => ({
+        ...managedProvider,
+        connection: { ...managedProvider.connection!, runtime: { ...runtime, catalog } },
+      });
+      const checkedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+      expect(
+        render({
+          provider: withCatalog({ checkedAt, failure: null, checksDisabled: false }),
+          presentation: "row",
+        }),
+      ).toContain("Up to date · checked 5m ago");
+      const failed = render({
+        provider: withCatalog({
+          checkedAt,
+          failure: { at: new Date().toISOString(), message: "The check timed out." },
+          checksDisabled: false,
+        }),
+        presentation: "row",
+      });
+      expect(failed).toContain(
+        "Couldn&#x27;t check for updates just now, last checked 5m ago. The check timed out.",
+      );
+      expect(failed).toContain("text-warning-foreground");
     });
 
     it("keeps its own frame outside settings", () => {

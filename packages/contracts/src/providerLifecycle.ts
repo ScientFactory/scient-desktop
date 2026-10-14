@@ -182,6 +182,25 @@ export const ProviderRegistryInstallation = Schema.Struct({
 });
 export type ProviderRegistryInstallation = typeof ProviderRegistryInstallation.Type;
 
+/**
+ * How current Scient's list of qualified managed releases is. The last good
+ * list stays in use when a check fails.
+ */
+export const ProviderRuntimeCatalogFreshness = Schema.Struct({
+  /** When the list was last fetched or confirmed unchanged; null before the first check. */
+  checkedAt: Schema.NullOr(IsoDateTime),
+  /** The latest check, when it failed. */
+  failure: Schema.NullOr(
+    Schema.Struct({
+      at: IsoDateTime,
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+  /** Automatic update checks are turned off in this server's settings. */
+  checksDisabled: Schema.Boolean,
+});
+export type ProviderRuntimeCatalogFreshness = typeof ProviderRuntimeCatalogFreshness.Type;
+
 export const ProviderRuntimeSummary = Schema.Struct({
   source: ProviderRuntimeSource,
   supportTier: ProviderRuntimeSupportTier,
@@ -191,6 +210,8 @@ export const ProviderRuntimeSummary = Schema.Struct({
   /** Latest qualified catalog version when `update` is currently available. */
   availableManagedVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   previousManagedVersion: Schema.NullOr(TrimmedNonEmptyString),
+  /** For runtimes Scient can manage; optional so older servers keep decoding. */
+  catalog: Schema.optionalKey(ProviderRuntimeCatalogFreshness),
   operation: Schema.NullOr(ProviderRuntimeOperation),
   message: TrimmedNonEmptyString,
   diagnostics: Schema.optionalKey(ProviderRuntimeDiagnostics),
