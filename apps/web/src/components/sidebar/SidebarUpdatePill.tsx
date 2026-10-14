@@ -425,7 +425,10 @@ function SidebarUpdateControl() {
         showUpdateIconState
           ? cn(
               // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing.
-              "h-5 w-16 gap-0.5 rounded-(--control-radius) bg-primary px-0.5 text-2xs font-medium whitespace-nowrap text-primary-foreground",
+              "h-5 rounded-(--control-radius) bg-primary text-2xs font-medium whitespace-nowrap text-primary-foreground",
+              // This app's states fit the fixed width; "Update"/"Updating" for other
+              // machines and providers grow to their label with even insets.
+              iconStatus === "everything" ? "min-w-16 gap-1 px-1.5" : "w-16 gap-0.5 px-0.5",
               !isInteractionDisabled && "hover:bg-primary/90",
             )
           : cn(

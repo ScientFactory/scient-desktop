@@ -11,9 +11,12 @@ import { SidebarNewThreadRow } from "../../scient/sidebar/SidebarNewThreadRow";
 import { SidebarFooter, SidebarProvider } from "../ui/sidebar";
 import { TooltipProvider } from "../ui/tooltip";
 import { SidebarUtilityMenu } from "./SidebarChrome";
+import type { useUpdateEverything } from "./useUpdateEverything";
 
 const fixture = vi.hoisted(() => ({
   updateState: null as DesktopUpdateState | null,
+  /** Replaces the remote half of the update button when set. */
+  everything: null as ReturnType<typeof useUpdateEverything> | null,
   navigate: vi.fn(),
   preload: vi.fn(() => Promise.resolve([])),
   importConversation: vi.fn(),
@@ -43,6 +46,15 @@ vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/desktopUpdate", () => ({
   useDesktopUpdateState: () => fixture.updateState,
 }));
+vi.mock("./useUpdateEverything", async (original) => {
+  const actual = await original<typeof import("./useUpdateEverything")>();
+  return {
+    useUpdateEverything: (localUpdateVersion: string | null) => {
+      const real = actual.useUpdateEverything(localUpdateVersion);
+      return fixture.everything ?? real;
+    },
+  };
+});
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
   useEnvironments: () => ({
@@ -65,6 +77,7 @@ let root: Root | undefined;
 afterEach(() => {
   root?.unmount();
   host?.remove();
+  fixture.everything = null;
   vi.clearAllMocks();
 });
 
@@ -188,6 +201,61 @@ it.each(["available", "downloading", "downloaded", "error"] as const)(
     if (status === "downloaded" && import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
       await page.screenshot({
         path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/restart-wide.png`,
+        element: host!,
+      });
+    }
+  },
+);
+
+it.each(["Update", "Updating"] as const)(
+  "fits the %s label for other machines and providers inside the minimum sidebar",
+  async (label) => {
+    fixture.everything = {
+      hasUpdates: true,
+      summary: "Update 1 server and 2 providers",
+      lines: ["alvin: server to 0.6.21, Codex, Claude"],
+      restarts: [],
+      // The run stays in progress so the button keeps its running label.
+      run: () => new Promise<void>(() => {}),
+    };
+    await mountFooter(216, {
+      ...updateState,
+      status: "idle",
+      downloadedVersion: null,
+      availableVersion: null,
+    });
+    if (label === "Updating") {
+      await page.getByRole("button", { name: /^Update: / }).click();
+      await page.getByRole("button", { name: "Update", exact: true }).click();
+      await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
+    }
+    const pill = page.getByRole("button", { name: new RegExp(`^${label}: `) });
+    await expect.element(pill).toBeVisible();
+
+    const button = pill.element() as HTMLButtonElement;
+    expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
+    const rect = button.getBoundingClientRect();
+    expect(rect.width).toBeGreaterThan(64);
+    const icon = button.querySelector("svg")!.getBoundingClientRect();
+    const text = button.querySelector("span.tabular-nums")!.getBoundingClientRect();
+    expect(icon.left - rect.left).toBeGreaterThanOrEqual(5);
+    expect(Math.abs(icon.left - rect.left - (rect.right - text.right))).toBeLessThanOrEqual(1);
+
+    const footer = host!
+      .querySelector<HTMLElement>('[data-sidebar="footer"]')!
+      .getBoundingClientRect();
+    let previousRight = footer.left;
+    for (const visible of [...host!.querySelectorAll("button")].filter(
+      (candidate) => candidate.getClientRects().length,
+    )) {
+      const bounds = visible.getBoundingClientRect();
+      expect(bounds.left).toBeGreaterThanOrEqual(previousRight);
+      expect(bounds.right).toBeLessThanOrEqual(footer.right);
+      previousRight = bounds.right;
+    }
+    if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+      await page.screenshot({
+        path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/everything-${label.toLowerCase()}.png`,
         element: host!,
       });
     }
