@@ -10,10 +10,13 @@ macOS and visual checks remain separate obligations. This instruction does not
 change the repository's general qualification policy.
 
 The integration pointer advances to this exact integrated, qualified target in
-this candidate. The final record changes only maintainer metadata; hosted CI must
-still check that pushed revision. Yaacov's visual acceptance remains pending.
-A draft PR or passing checks are not delivery. No merge, queue admission, release
-or publication has been authorized for this new candidate.
+this candidate. The metadata-only revision `0942f72166471db1597a113e2a14f49d9a36991d`
+passed all 13 required hosted checks in CI run 38507777070, final attempt 3. One
+reader-cancellation layout case and one symlinked Markdown export case failed in
+the first attempt and passed in same-head targeted retries without source, fixture,
+timeout or assertion changes; their intermittent causes are unestablished. Yaacov
+approved the visual review of the isolated candidate on 2026-10-14. Merge delivery
+uses the history-preserving merge queue; release and publication remain separate.
 
 - Owned base: `f1f2c0a214314c0a4ae2506a9a43ce28b749cfaa`, the actual public-main
   merge of Scient PR #534.
@@ -274,8 +277,8 @@ None of these attempts is advertised as a passing product witness.
 The candidate's integration pointers now record the original literal merge and
 this reviewed scope. Public main was reverified at the owned base after all
 supplemental native work; no catch-up or newer upstream target was added.
-The final metadata-only pushed revision still requires hosted checks. Both
-isolated clients remain available; Yaacov's visual acceptance is pending.
+The final metadata-only revision passed hosted checks as recorded above, and
+Yaacov approved the visual review of the isolated candidate.
 
 No universal enabled-provider, Windows, mobile-publication, physical power-loss,
 OAuth or microphone acceptance is inferred from the above evidence. Public main
