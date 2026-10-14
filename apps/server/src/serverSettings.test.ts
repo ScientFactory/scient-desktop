@@ -2073,7 +2073,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               [ProviderInstanceId.make("claude_work")]: named("claudeAgent"),
             },
           }),
-          { instanceId: ProviderInstanceId.make("claude_work"), model: "claude-haiku-4-5" },
+          { instanceId: ProviderInstanceId.make("claude_work"), model: "claude-haiku-5-5" },
         );
       }),
     );
@@ -2092,7 +2092,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               [ProviderInstanceId.make("a_fork")]: named("someForkDriver"),
             },
           }),
-          { instanceId: ProviderInstanceId.make("claude_a"), model: "claude-haiku-4-5" },
+          { instanceId: ProviderInstanceId.make("claude_a"), model: "claude-haiku-5-5" },
         );
       }),
     );

@@ -9390,6 +9390,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           });
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
           const sdkStops: Array<{ query: number; taskId: string }> = [];
+          const sdkStopRequests = yield* Queue.unbounded<{ query: number; taskId: string }>();
           const interrupts: number[] = [];
           const closes: number[] = [];
           const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
@@ -9418,7 +9419,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     stopTask: (taskId) =>
                       Effect.sync(() => {
                         sdkStops.push({ query, taskId });
-                      }),
+                      }).pipe(Effect.andThen(Queue.offer(sdkStopRequests, { query, taskId }))),
                     interrupt: Effect.sync(() => {
                       interrupts.push(query);
                     }),
@@ -9618,7 +9619,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
 
           if (replacementParentActive) {
-            yield* stop!({ providerThread, nativeTaskId: "agent-live-sibling" });
+            const siblingStop = yield* stop!({
+              providerThread,
+              nativeTaskId: "agent-live-sibling",
+            }).pipe(Effect.forkScoped);
+            assert.deepEqual(yield* Queue.take(sdkStopRequests), {
+              query: 1,
+              taskId: "agent-live-sibling",
+            });
             assert.deepEqual(sdkStops, [{ query: 1, taskId: "agent-live-sibling" }]);
             assert.equal(latestTask("agent-live-sibling")?.status, "running");
             yield* Queue.offer(
@@ -9637,6 +9645,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               () => latestTask("agent-live-sibling")?.status === "cancelled",
               "live sibling stop acknowledged",
             );
+            const siblingOutcome = yield* Fiber.join(siblingStop);
+            if (siblingOutcome === undefined)
+              return yield* Effect.die("The live sibling Stop requires its native outcome.");
+            assert.equal(siblingOutcome.status, "cancelled");
+            assert.equal(siblingOutcome.result, "Stopped by user");
             assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
             yield* Queue.offer(
               processQueues[1]!,
@@ -9665,7 +9678,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }
               return yield* Effect.die("Timed out waiting for the idle subagent resume.");
             });
-            yield* stop!({ providerThread, nativeTaskId: TASK_ID });
+            const resumedStop = yield* stop!({ providerThread, nativeTaskId: TASK_ID }).pipe(
+              Effect.forkScoped,
+            );
+            assert.deepEqual(yield* Queue.take(sdkStopRequests), { query: 1, taskId: TASK_ID });
             assert.deepEqual(sdkStops, [
               { query: 1, taskId: "agent-live-sibling" },
               { query: 1, taskId: TASK_ID },
@@ -9683,6 +9699,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 status: "stopped",
               }),
             );
+            const resumedOutcome = yield* Fiber.join(resumedStop);
+            if (resumedOutcome === undefined)
+              return yield* Effect.die("The resumed Stop requires its native outcome.");
+            assert.equal(resumedOutcome.status, "cancelled");
+            assert.equal(resumedOutcome.result, "Stopped resumed work");
+            yield* awaitUntil(
+              () => latestTask(TASK_ID)?.result === "Stopped resumed work",
+              "idle resumed task native outcome published",
+            );
+            const acknowledgedTask = latestTask(TASK_ID)!;
+            assert.equal(acknowledgedTask.status, "cancelled");
+            assert.equal(acknowledgedTask.id, originalTask.id);
+            assert.equal(acknowledgedTask.runId, launch.runId);
+            assert.deepEqual(acknowledgedTask.nativeTaskRef, originalTask.nativeTaskRef);
+            assert.isNotNull(acknowledgedTask.completedAt);
+            const acknowledgedTaskEvents = tasks().filter(
+              (event) => event.subagent.nativeTaskRef?.nativeId === TASK_ID,
+            );
             const continuation = makeClaudeTestTurnInput({
               threadId,
               providerThread,
@@ -9695,12 +9729,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               messageCreationSource: "provider",
             });
             yield* runtime.startTurn(continuation);
-            yield* awaitUntil(
-              () =>
-                latestTask(TASK_ID)?.runId === continuation.runId &&
-                latestTask(TASK_ID)?.status === "cancelled",
-              "resumed stop notification drained",
-            );
             yield* Queue.offer(
               processQueues[1]!,
               makeResultFrame({
@@ -9709,6 +9737,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
             );
             yield* awaitUntil(() => terminals().length === 3, "resume continuation completed");
+            // The native Stop applied the outcome while idle. Its later wake must
+            // neither replay the old task_started nor create a second terminal row.
+            assert.deepEqual(latestTask(TASK_ID), acknowledgedTask);
+            assert.deepEqual(
+              tasks().filter((event) => event.subagent.nativeTaskRef?.nativeId === TASK_ID),
+              acknowledgedTaskEvents,
+            );
             assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
           }
         }).pipe(
@@ -13931,13 +13966,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             // Parent failure assigns a local outcome without a task_notification.
             yield* TestClock.adjust("2 seconds");
             assert.isTrue(Exit.isFailure(yield* Fiber.join(stopping)));
-            // Local parent cleanup still cannot provide a confirmed outcome on retry.
+            // A locally ended task is already stopped, but supplies no native
+            // outcome proof and must not call the SDK again on retry.
+            const eventsBeforeRetry = [...harness.events];
+            const stopsBeforeRetry = [...stoppedTasks];
             const retry = yield* harness.runtime.stopSubagent!({
               providerThread: harness.providerThread,
               nativeTaskId: WORKFLOW_TASK_ID,
-            }).pipe(Effect.exit, Effect.forkScoped);
-            yield* TestClock.adjust("2 seconds");
-            assert.isTrue(Exit.isFailure(yield* Fiber.join(retry)));
+            }).pipe(Effect.exit);
+            assert.deepEqual(retry, Exit.succeed(undefined));
+            assert.deepEqual(stoppedTasks, stopsBeforeRetry);
+            assert.deepEqual(harness.events, eventsBeforeRetry);
           }
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
           assert.equal(workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status, settled);

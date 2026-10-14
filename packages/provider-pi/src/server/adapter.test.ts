@@ -623,7 +623,8 @@ describe("PiAdapterV2", () => {
         fake.setStreaming(streaming);
         yield* runtime.resumeThread({ providerThread });
         yield* startTurn(runtime, providerThread);
-        yield* fake.takeRequest("prompt");
+        const prompt = yield* fake.takeRequest("prompt");
+        assert.equal(prompt.streamingBehavior, "steer");
         yield* fake.emit({ type: "agent_start" });
         yield* fake.emit({
           type: "message_end",
@@ -633,7 +634,8 @@ describe("PiAdapterV2", () => {
             stopReason: "stop",
           },
         });
-        fake.queueState({ isStreaming: false });
+        // The native run has settled, so both guarded state reads must see it idle.
+        fake.setStreaming(false);
         yield* fake.emit({ type: "agent_settled" });
         const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
         assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");

@@ -2008,7 +2008,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
                 contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
                 // SCIENT-FORK:START — never pins to the end; content position is not kept during
-                // any restore; scrolls and row size changes run the per-frame bookkeeping.
+                // any restore; scrolls, row sizes and header/footer measurements run the
+                // same per-frame bookkeeping. A footer is metadata, never the reading end.
                 maintainScrollAtEnd={false}
                 maintainVisibleContentPosition={
                   findActive || citationPositioning || restoringThreadPosition
@@ -2018,6 +2019,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 maintainScrollAtEndThreshold={1}
                 onScroll={handleScrollOnNextFrame}
                 onItemSizeChanged={handleScrollOnNextFrame}
+                onMetricsChange={handleScrollOnNextFrame}
                 // SCIENT-FORK:END
                 className={cn(
                   "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
