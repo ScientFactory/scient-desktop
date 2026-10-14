@@ -209,6 +209,8 @@ export const ProviderRuntimeSummary = Schema.Struct({
   managedVersion: Schema.NullOr(TrimmedNonEmptyString),
   /** Latest qualified catalog version when `update` is currently available. */
   availableManagedVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  /** The newest qualified release for this computer, whether or not it can be installed here. */
+  qualifiedVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   previousManagedVersion: Schema.NullOr(TrimmedNonEmptyString),
   /** For runtimes Scient can manage; optional so older servers keep decoding. */
   catalog: Schema.optionalKey(ProviderRuntimeCatalogFreshness),

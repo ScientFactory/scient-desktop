@@ -512,7 +512,11 @@ export interface ManagedRuntimeCatalogService {
   readonly refreshNow: Effect.Effect<ManagedRuntimeCatalogData>;
   /** When the list was last checked, and whether the latest check failed. */
   readonly freshness: Effect.Effect<ProviderRuntimeCatalogFreshness>;
-  /** Acquire a process-scoped stream of authoritative catalog changes. */
+  /**
+   * Acquire a process-scoped stream of finished checks. Each names the
+   * providers whose qualified release changed, possibly none; every check also
+   * changes the freshness that runtime summaries carry.
+   */
   readonly subscribeChanges: Effect.Effect<
     Stream.Stream<ManagedRuntimeCatalogChange>,
     never,
@@ -653,12 +657,16 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
           }),
         ),
       );
-      if (fetched === null) return catalog;
+      if (fetched === null) {
+        yield* PubSub.publish(changesPubSub, { catalog, changedProviders: [] });
+        return catalog;
+      }
       checkedAtMs = now;
       failure = null;
       if (fetched.data === null) {
         fetchedAtMs = now;
         yield* persistCache(now);
+        yield* PubSub.publish(changesPubSub, { catalog, changedProviders: [] });
         return catalog;
       }
 
@@ -669,9 +677,7 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
       etag = fetched.response.headers.etag?.trim() || null;
       fetchedAtMs = now;
       yield* persistCache(now);
-      if (changedProviders.length > 0) {
-        yield* PubSub.publish(changesPubSub, { catalog, changedProviders });
-      }
+      yield* PubSub.publish(changesPubSub, { catalog, changedProviders });
       return catalog;
     });
 

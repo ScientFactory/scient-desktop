@@ -11,6 +11,7 @@ const runtime = (overrides: Partial<ProviderRuntimeSummary>): ProviderRuntimeSum
   actions: ["repair", "remove"],
   managedVersion: "0.235.0",
   availableManagedVersion: null,
+  qualifiedVersion: "0.235.0",
   previousManagedVersion: null,
   operation: null,
   message: "Scient is using an app-private, verified runtime.",
@@ -28,6 +29,13 @@ describe("describeProviderRuntimeCatalog", () => {
       "Update 0.241.1 available · checked 3h ago",
       false,
     ],
+    [
+      "a newer release this server cannot install",
+      { qualifiedVersion: "0.241.1" },
+      "Latest qualified 0.241.1 · checked 3h ago",
+      false,
+    ],
+    ["no known newest release", { qualifiedVersion: null }, "Checked 3h ago", false],
     [
       "a failed check, keeping the last good one",
       {

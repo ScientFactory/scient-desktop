@@ -4,8 +4,8 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 
 /**
  * One line on Scient's qualified releases for a runtime it manages or can
- * manage: whether one is newer than the installed copy, and how current that
- * list is ("Update 0.241.1 available · checked 5m ago"), with the reason when
+ * manage: how the installed copy compares with the newest one, and how current
+ * that list is ("Update 0.241.1 available · checked 5m ago"), with the reason when
  * the latest check failed. Null when the runtime has nothing to do with Scient's
  * list.
  */
@@ -24,14 +24,25 @@ export function describeProviderRuntimeCatalog(
     runtime.availableManagedVersion && runtime.availableManagedVersion !== runtime.managedVersion
       ? runtime.availableManagedVersion
       : null;
+  const qualified = runtime.qualifiedVersion ?? null;
+  // "Up to date" needs the installed copy to be the newest qualified release,
+  // known from a check that succeeded.
+  const current =
+    runtime.source === "scient_managed" &&
+    qualified !== null &&
+    runtime.managedVersion === qualified &&
+    catalog.checkedAt !== null &&
+    catalog.failure === null &&
+    !catalog.checksDisabled;
   const releases = available
     ? `Update ${available} available`
-    : runtime.source === "scient_managed" &&
-        catalog.checkedAt !== null &&
-        catalog.failure === null &&
-        !catalog.checksDisabled
+    : current
       ? "Up to date"
-      : null;
+      : runtime.source === "scient_managed" &&
+          qualified !== null &&
+          qualified !== runtime.managedVersion
+        ? `Latest qualified ${qualified}`
+        : null;
   const lastChecked = catalog.checkedAt ? `last checked ${relativeTime(catalog.checkedAt)}` : null;
   const freshness = catalog.checksDisabled
     ? "automatic update checks are off"

@@ -276,7 +276,10 @@ describe("ProviderRuntimeSection", () => {
       const runtime = managedProvider.connection!.runtime!;
       const withCatalog = (catalog: ProviderRuntimeCatalogFreshness): ServerProvider => ({
         ...managedProvider,
-        connection: { ...managedProvider.connection!, runtime: { ...runtime, catalog } },
+        connection: {
+          ...managedProvider.connection!,
+          runtime: { ...runtime, qualifiedVersion: "1.1.17", catalog },
+        },
       });
       const checkedAt = new Date(Date.now() - 5 * 60_000).toISOString();
       expect(

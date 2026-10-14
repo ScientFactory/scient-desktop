@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import { MANAGED_RUNTIME_CATALOG_PROVIDERS } from "@scientfactory/provider-runtime";
 import { CodexDriver } from "../../provider/Drivers/CodexDriver.ts";
 import { ClaudeDriver } from "../../provider/Drivers/ClaudeDriver.ts";
@@ -24,6 +25,11 @@ import { MuseDriver } from "../../provider/MuseDriverComposition.ts";
 import type { ProviderManagedRuntimeActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
+import {
+  BUNDLED_MANAGED_RUNTIME_CATALOG,
+  ManagedRuntimeCatalog,
+  UNCHECKED_CATALOG_FRESHNESS,
+} from "./ManagedRuntimeCatalog.ts";
 import {
   catalogProviderForDriver,
   layer,
@@ -110,6 +116,40 @@ describe("ManagedRuntimeCatalogReconciler", () => {
         calls,
         instances.map((instance) => instance.instanceId),
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refreshes every managed provider after a check that changed no release", () =>
+    Effect.gen(function* () {
+      // Startup, then the check: its summary carries when the catalog was checked.
+      const checked = yield* Deferred.make<void>();
+      let calls = 0;
+      const registry = ProviderRegistry.of({
+        ...makeProviderRegistryMock([provider]),
+        getProviderManagedRuntimeActionsForInstance: () =>
+          Effect.gen(function* () {
+            calls += 1;
+            if (calls === 2) yield* Deferred.succeed(checked, undefined);
+            return undefined;
+          }),
+      });
+      const catalog = ManagedRuntimeCatalog.of({
+        current: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
+        refresh: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
+        refreshNow: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
+        freshness: Effect.succeed(UNCHECKED_CATALOG_FRESHNESS),
+        subscribeChanges: Effect.succeed(
+          Stream.make({ catalog: BUNDLED_MANAGED_RUNTIME_CATALOG, changedProviders: [] }),
+        ),
+      });
+      yield* Layer.build(
+        layer.pipe(
+          Layer.provide(Layer.succeed(ProviderRegistry, registry)),
+          Layer.provide(Layer.succeed(ManagedRuntimeCatalog, catalog)),
+        ),
+      );
+      yield* Deferred.await(checked);
+      assert.strictEqual(calls, 2);
     }).pipe(Effect.scoped),
   );
 

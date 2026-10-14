@@ -1099,6 +1099,34 @@ describe("ManagedRuntimeCatalog service", () => {
     ),
   );
 
+  it.live("announces every finished check, including failed and unchanged ones", () =>
+    Effect.gen(function* () {
+      const responses = [
+        () => new Response(null, { status: 503 }),
+        () => Response.json(BUNDLED_MANAGED_RUNTIME_CATALOG),
+      ];
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+        Effect.provide(httpClientLayer(() => responses.shift()!())),
+      );
+      const changes = yield* service.subscribeChanges;
+      yield* service.refreshNow;
+      yield* service.refreshNow;
+      const announced = yield* changes.pipe(Stream.take(2), Stream.runCollect);
+      assert.deepStrictEqual(
+        [...announced].map((change) => change.changedProviders),
+        [[], []],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "managed-runtime-catalog-check-events-test",
+          response: () => Response.json(remoteCatalog()),
+        }),
+      ),
+    ),
+  );
+
   it.live("emits the exact provider whose qualified release changed", () =>
     Effect.gen(function* () {
       const service = yield* makeWithOptions({ startBackgroundRefresh: false });
