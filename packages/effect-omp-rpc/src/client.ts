@@ -126,8 +126,13 @@ export interface OmpRpcClient {
     level: OmpThinkingLevel,
   ) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
   readonly compact: (customInstructions?: string) => Effect.Effect<OmpRpcResponse, OmpRpcError>;
+  /**
+   * With a model (OMP 18.6.3+), the session continues on it instead of its
+   * saved model, whose restoration is then not required.
+   */
   readonly switchSession: (
     sessionPath: string,
+    model?: { readonly provider: string; readonly modelId: string },
   ) => Effect.Effect<OmpSwitchSessionResult, OmpRpcError>;
   readonly setSubagentSubscription: (
     level: "off" | "progress" | "events",
@@ -980,9 +985,13 @@ export const makeOmpRpcClient = Effect.fn("OmpRpcClient.make")(function* (
         type: "compact",
         ...(customInstructions ? { customInstructions } : {}),
       }),
-    switchSession: (sessionPath) =>
+    switchSession: (sessionPath, model) =>
       commandData(
-        { type: "switch_session", sessionPath },
+        {
+          type: "switch_session",
+          sessionPath,
+          ...(model ? { provider: model.provider, modelId: model.modelId } : {}),
+        },
         decodeSwitchSession,
         "Invalid switch_session response.",
       ),

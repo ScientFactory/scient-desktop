@@ -2694,6 +2694,79 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect.each([
+    {
+      caseTitle:
+        "resumes on the thread's model when OMP cannot restore the conversation's saved one (18.6.3+)",
+      version: "18.8.4",
+      selected: "test/selected",
+      unrestorable: true,
+      switches: [{ provider: "test", modelId: "selected" }],
+    },
+    {
+      caseTitle: "resumes on the saved model when OMP does not know the thread's model",
+      version: "18.8.4",
+      selected: "test/gone",
+      unrestorable: false,
+      switches: [{ provider: "test", modelId: "gone" }, {}],
+    },
+    {
+      caseTitle: "resumes without a model before OMP 18.6.3",
+      version: "18.4.8",
+      selected: "test/selected",
+      unrestorable: false,
+      switches: [{}],
+    },
+    {
+      caseTitle: "resumes without a model on the default selection",
+      version: "18.8.4",
+      selected: "default",
+      unrestorable: false,
+      switches: [{}],
+    },
+  ])("$caseTitle", ({ version, selected, unrestorable, switches }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const owned = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
+        const models = [{ provider: "test", id: "selected" }];
+        const initial = { provider: "test", id: "selected" };
+        const firstPeer = scriptedOmpRpc({ models, initial, version });
+        const first = yield* harness(false, { makeProcess: firstPeer.makeProcess }).pipe(
+          Effect.provideService(Scope.Scope, owned),
+        );
+        yield* Scope.close(owned, Exit.void);
+        const secondPeer = scriptedOmpRpc({
+          models,
+          initial,
+          version,
+          savedModelUnrestorable: unrestorable,
+        });
+        const second = yield* harness(false, {
+          threadId: first.openInput.threadId,
+          makeProcess: secondPeer.makeProcess,
+        });
+        const resumed = yield* second.runtime.resumeThread({
+          providerThread: first.input.providerThread,
+          modelSelection: { instanceId: second.input.modelSelection.instanceId, model: selected },
+        });
+        assert.equal(
+          resumed.nativeThreadRef?.nativeId,
+          first.input.providerThread.nativeThreadRef?.nativeId,
+        );
+        assert.deepEqual(
+          secondPeer.state.frames
+            .filter((frame) => frame.type === "switch_session")
+            .map((frame) => ({
+              ...(frame.provider === undefined ? {} : { provider: frame.provider }),
+              ...(frame.modelId === undefined ? {} : { modelId: frame.modelId }),
+            })),
+          switches,
+        );
+      }),
+    ),
+  );
+
   it.effect.each(
     (["home", "profile", "workspace"] as const).map((changed) => ({
       caseTitle: `refuses cross-install native OMP resume when its ${changed} changes before switching history`,

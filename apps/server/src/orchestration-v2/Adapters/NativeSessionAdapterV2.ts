@@ -5,6 +5,7 @@ import {
   completeDestructiveNativeInterrupt,
 } from "../scient-provider/NativeProducerLifecycle.ts";
 import {
+  type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
@@ -163,6 +164,8 @@ export interface NativeSession {
   readonly resume: (
     nativeId: string,
     resumeCursor?: unknown,
+    /** The thread's model, when it belongs to this provider instance. */
+    modelSelection?: ModelSelection,
   ) => Effect.Effect<void, NativeSessionOperationError>;
 }
 
@@ -1313,7 +1316,13 @@ export function makeNativeSessionAdapterV2(
                 return yield* protocolError(
                   "The native thread reference belongs to another provider driver.",
                 );
-              yield* native.resume(nativeId, request.providerThread.nativeMetadata?.resumeCursor);
+              yield* native.resume(
+                nativeId,
+                request.providerThread.nativeMetadata?.resumeCursor,
+                request.modelSelection?.instanceId === options.instanceId
+                  ? request.modelSelection
+                  : undefined,
+              );
               return yield* register(request.threadId ?? input.threadId, request.providerThread);
             }).pipe(
               Effect.mapError(

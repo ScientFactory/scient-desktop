@@ -63,6 +63,8 @@ export const scriptedOmpRpc = (input: {
   readonly readyDelay?: Effect.Effect<void>;
   readonly supportedProtocolVersions?: ReadonlyArray<number>;
   readonly switchCancelled?: boolean;
+  /** A switch without a model fails, as when none of the session's saved models can be restored. */
+  readonly savedModelUnrestorable?: boolean;
   readonly promptError?: string;
   readonly modelsError?: string;
   readonly modelsResponse?: unknown;
@@ -198,10 +200,27 @@ export const scriptedOmpRpc = (input: {
               isSettled: !state.pendingAsyncWork,
             });
           }
-          case "switch_session":
+          case "switch_session": {
+            // OMP 18.6.3: a provider/modelId pair replaces the saved model and
+            // skips its check; an unknown pair fails before the switch.
+            const bound = frame.provider !== undefined && frame.modelId !== undefined;
+            if (bound && !find(frame.provider ?? "", frame.modelId ?? ""))
+              return respond(
+                frame,
+                undefined,
+                `Model not found: ${frame.provider}/${frame.modelId}`,
+              );
+            if (!bound && input.savedModelUnrestorable)
+              return respond(
+                frame,
+                undefined,
+                `Could not restore model ${state.model.provider}/${state.model.id}`,
+              );
             if (input.switchCancelled) return respond(frame, { cancelled: true });
             state.sessionFile = (frame as Frame & { readonly sessionPath?: string }).sessionPath;
+            if (bound) state.model = { provider: frame.provider ?? "", id: frame.modelId ?? "" };
             return respond(frame, { cancelled: false });
+          }
           case "get_available_models":
             return respond(
               frame,

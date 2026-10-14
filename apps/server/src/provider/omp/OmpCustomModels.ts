@@ -971,7 +971,18 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
             ),
           setThinkingLevel: (level) => guarded(nativeProcess.setThinkingLevel(level)),
           compact: (instructions) => guarded(nativeProcess.compact(instructions)),
-          switchSession: (sessionPath) => guarded(nativeProcess.switchSession(sessionPath)),
+          switchSession: (sessionPath, model) =>
+            guarded(
+              Effect.suspend(() =>
+                model === undefined
+                  ? nativeProcess.switchSession(sessionPath)
+                  : pendingProvider(model.provider)
+                    ? fail(OMP_PENDING_CONNECTION_DETAIL)
+                    : awaitCurrent.pipe(
+                        Effect.andThen(nativeProcess.switchSession(sessionPath, model)),
+                      ),
+              ),
+            ),
           setSubagentSubscription: (level) => guarded(nativeProcess.setSubagentSubscription(level)),
           setHostTools: (tools) => guarded(nativeProcess.setHostTools(tools)),
           setHostUriSchemes: (schemes) => guarded(nativeProcess.setHostUriSchemes(schemes)),

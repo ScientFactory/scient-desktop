@@ -43,6 +43,10 @@ const decodeCommand = Schema.decodeUnknownSync(
     }),
   ),
 );
+/** Every field a command frame carries. */
+const decodeCommandFields = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 const line = (value: unknown) => encoder.encode(`${encodeJson(value)}\n`);
 
@@ -680,8 +684,11 @@ describe("Oh My Pi RPC client", () => {
         const switchFiber = yield* client
           .switchSession("/state/session.jsonl")
           .pipe(Effect.forkScoped);
-        const switchRequest = decodeCommand(yield* Queue.take(stdin));
+        const switchFrame = yield* Queue.take(stdin);
+        const switchRequest = decodeCommand(switchFrame);
         expect(switchRequest.type).toBe("switch_session");
+        expect(decodeCommandFields(switchFrame)).not.toHaveProperty("provider");
+        expect(decodeCommandFields(switchFrame)).not.toHaveProperty("modelId");
         yield* Queue.offer(
           stdout,
           line({
@@ -693,6 +700,30 @@ describe("Oh My Pi RPC client", () => {
           }),
         );
         expect(yield* Fiber.join(switchFiber)).toEqual({ cancelled: false });
+
+        // OMP 18.6.3+: a model replaces the session's saved one; it travels as a pair.
+        const boundFiber = yield* client
+          .switchSession("/state/session.jsonl", { provider: "vendor", modelId: "a/b" })
+          .pipe(Effect.forkScoped);
+        const boundFrame = yield* Queue.take(stdin);
+        const boundRequest = decodeCommand(boundFrame);
+        expect(decodeCommandFields(boundFrame)).toMatchObject({
+          type: "switch_session",
+          sessionPath: "/state/session.jsonl",
+          provider: "vendor",
+          modelId: "a/b",
+        });
+        yield* Queue.offer(
+          stdout,
+          line({
+            id: boundRequest.id,
+            type: "response",
+            command: "switch_session",
+            success: true,
+            data: { cancelled: false },
+          }),
+        );
+        expect(yield* Fiber.join(boundFiber)).toEqual({ cancelled: false });
       }),
     ),
   );
