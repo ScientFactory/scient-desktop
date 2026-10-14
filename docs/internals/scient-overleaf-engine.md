@@ -1,7 +1,11 @@
 # Overleaf manuscript engine
 
 This is an unmounted server foundation, not an available product feature. No
-routes, UI, automatic synchronization or network publication coordinator uses it.
+routes, UI, automatic synchronization or network publication coordinator uses
+it; the coordinator is being built in steps. Its plan, contract, owner decisions
+and status live on the working-documents PR
+[#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
+closed rather than merged; this file records what is implemented.
 The planned workflow is manual, folder-first synchronization through a private
 bare Git repository. The workspace's repository and checkpoint index do not
 participate in its merge protocol.
@@ -143,15 +147,79 @@ author label. The coordinator's review must disclose the rename loss and must no
 promise that label. A discarded acknowledgement was simulated after an accepted
 push; actual network loss remains unverified.
 
+## Connection state
+
+`OverleafStateStore` keeps each manual connection's durable state under
+`stateDir/overleaf`, outside every workspace. A connection document changes
+only by compare-and-set on its revision, through a synced temporary file, a
+rename and a directory sync, so a crash or a full disk leaves the previous or
+the next complete document, never a partial one. Orphaned temporaries are
+removed when a process takes the lease. An unreadable or newer-schema document
+is reported as such, never treated as missing or reset; it can only be moved
+to `quarantine/` with its bytes intact.
+
+`OverleafConnectionState` defines what a document and a replacement must
+keep, and the store refuses violations, validating every document before it is
+written. The base never moves backwards or changes without a new generation.
+Each publication attempt records its operation, request, plan digest,
+workspace authority, parent, candidate and base generation; those never
+change, and only its classification may move forward: `unknown` to
+`accepted`, `out-of-date`, `not-sent` or `superseded-unresolved`, and
+`superseded-unresolved` to `accepted`. Each outcome needs its kind of evidence.
+A new attempt takes a fresh number and is recorded `unknown` on the current
+base, before any send. Acceptance adopts exactly the candidate on the base it
+was built for; a rejection or `not-sent` leaves the base alone. A base change
+must supersede every attempt still unknown in the same replacement, and late
+acceptance of a superseded attempt is recorded without moving the later base.
+At most sixteen attempts may be unresolved. A pending apply link is immutable
+until cleared. A retained copy keeps its revision, time and sync count; a
+changed copy never becomes releasable again, and a copy is dropped only after
+seven days and a later completed sync (`completedSyncCount`).
+`overleafRequiredPins` names the private refs (bases, local snapshots, pending
+apply target, unresolved attempts) that cleanup must keep.
+
+Request receipts are created once per request ID. A repeat with the same
+payload returns the original receipt instead of running again; reuse with a
+different payload, or a second different terminal status, is refused.
+
+Writes require a process lease: an exclusive lock on `lease.sqlite`, held by
+a dedicated SQLite connection for the store's lifetime and released by the
+kernel if the process dies. Another server sharing the directory gets
+`OverleafStateLockedError` instead of waiting or stealing. The lease is taken
+at the first write rather than at startup, so a server that started while an
+older one was still exiting gains write access once the older one is gone.
+Reads need no lease.
+
+The applier's application directory (displaced copies and journals) is
+`stateDir/overleaf/retained/<connection>` when Scient's state shares the
+checkout's volume and lies outside it. Otherwise it is a hidden
+`.scient-overleaf/<environment>/<connection>` folder beside the checkout on the
+project's own disk, so projects on external disks are supported. Either way it
+is private, owned by the server user, not a symlink and outside the checkout,
+so checkout cleanup cannot erase it. Its location is recorded as the disk's
+volume UUID (from `diskutil`) plus the folder's file ID, never the device
+number, so a disk mounted again under another path is recognized. Once
+recorded, nothing is created: a missing folder (unplugged disk, deleted
+folder) or a different folder in its place is reported, never replaced.
+Before use, a probe exchanges two files through the host's exchange helper;
+a disk that cannot (exFAT and FAT among them) is refused. Without a helper,
+the declared development fallback requires hard links instead. Each refusal
+has its own reason: disk not connected, no volume UUID, unsupported file
+system, read-only or shared parent, checkout at the root of its disk, unsafe
+folder, missing or replaced folder.
+
 ## Remaining integration gates
 
+The coordinator contract on [#535](https://github.com/ScientFactory/scient-desktop/pull/535)
+defines the remaining work and tracks each step's status.
 Before exposing operations, implement connection ownership/binding checks,
 prepare/apply/publish recovery, bounded inventory and repository retention,
 checkout suspension for checkpoint restores and worktree/VCS operations, and
 the editor-flush bridge. The coordinator must implement cancellation between
 stages; the local filesystem critical section completes before cancellation can
 release its save lock. Qualify unsaved editor buffers, reloads and LaTeX builds
-in the development app. Real Overleaf Cloud protocol behavior and packaged,
-signed macOS helper behavior are separate gates. A local bare Git remote does
-not establish the Cloud bridge's commit/history or publication-acknowledgement
-semantics. Server Pro, Windows and Linux remain unverified product environments.
+in the development app. The exercised Cloud protocol behavior is recorded on #535;
+packaged, signed macOS helper behavior is a separate gate. A local bare Git
+remote does not establish the Cloud bridge's commit/history or
+publication-acknowledgement semantics. Server Pro, Windows and Linux remain
+unverified product environments.
