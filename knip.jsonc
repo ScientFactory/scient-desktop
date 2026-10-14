@@ -120,6 +120,9 @@
       // reports an entire component module when nothing imports it.
       "ignoreIssues": {
         "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
+        // Upstream's provider "Update all", kept as upstream ships it so syncs stay
+        // clean; Scient's scient/providerUpdates/ProviderUpdateAllAction replaces it.
+        "src/components/ProviderUpdatesAction.tsx": ["files"],
         // Retained donor UI for the explicitly disabled subscription-sharing mode.
         // Keep file auditing active everywhere else; remove these exact exceptions
         // when that mode has approved native-client activation.
