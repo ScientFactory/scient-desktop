@@ -442,7 +442,7 @@ visual review and requested the installer-review candidate's shutdown; its owned
 service, processes and ports were confirmed stopped. Merge and auto-merge are
 owner-authorized through the required GitHub queue; release remains separate.
 
-The current qualified local alignment through
+The local alignment through
 `b03534fa7b847e8403322e416189c6293e6846e0` is recorded in
 [the 2026-10-13 receipt](docs/internals/t3-upstream-sync-20261013-b03534fa7b.md)
 ([Scient PR #534](https://github.com/ScientFactory/scient-desktop/pull/534)).
@@ -459,6 +459,25 @@ desktop acceptance and deferred mobile visual review from exact-head hosted CI,
 merge-group checks and actual delivery. No full-suite or end-to-end speedup is
 asserted. The isolated development candidate was verified stopped; release
 remains separate authorization.
+
+The current qualified alignment candidate through
+`85272eeeae53c5baa1cba1a36d84bbec81a3a0b5` is recorded in
+[the 2026-10-14 receipt](docs/internals/t3-upstream-sync-20261014-85272eeeae.md)
+([Scient PR #559](https://github.com/ScientFactory/scient-desktop/pull/559)).
+Literal merge `62d67b9db546917f452b5e1b67bfa9587260aa35` has exact owned base
+`f1f2c0a214314c0a4ae2506a9a43ce28b749cfaa` and the frozen official target as
+parents, retaining all 49 ordinary donor commits. Clean overlaps and untouched
+Scient consumers were included in independent review. Narrow owners preserve
+native Stop and queue authority, provider-instance identity and scoped guidance,
+immutable migrations/attachments, scientific readers and publication holds.
+Strict migration-ledger policy now has one marked Scient owner before execution;
+reader footer metrics and StrictMode cleanup use the existing reader scheduler.
+The receipt separates passing exact-head hosted qualification, local native Pi
+and macOS checks, representative iOS interaction and remaining platform/live-flow
+exclusions from the owner's pending visual acceptance and eventual delivery.
+Hosted CI replaces duplicate covered local checks only under the owner's explicit
+instruction for this pass; general qualification policy is unchanged. No cold
+full-suite or end-to-end alignment speedup is asserted. Release remains separate.
 
 ## Receiving T3 updates
 

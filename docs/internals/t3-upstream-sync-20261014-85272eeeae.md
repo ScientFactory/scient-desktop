@@ -2,16 +2,18 @@
 
 ## Boundaries and status
 
-Source integration and independent composition review are complete. Qualification
-is in progress. Yaacov explicitly requested that tests covered by hosted CI run
+Source integration, independent composition review and the recorded applicable
+automated/native checks passed at `49bb6b63efef4267fbe1c402a220ddad1c67ea3d`.
+Yaacov explicitly requested that tests covered by hosted CI run
 there instead of being duplicated locally for this pass. Local uncovered native,
 macOS and visual checks remain separate obligations. This instruction does not
 change the repository's general qualification policy.
 
-The current integration pointer remains at the preceding qualified target until
-this candidate's applicable gate passes. A draft PR, green focused check or source
-review is not delivery. No merge, queue admission, release or publication has
-been authorized for this new candidate.
+The integration pointer advances to this exact integrated, qualified target in
+this candidate. The final record changes only maintainer metadata; hosted CI must
+still check that pushed revision. Yaacov's visual acceptance remains pending.
+A draft PR or passing checks are not delivery. No merge, queue admission, release
+or publication has been authorized for this new candidate.
 
 - Owned base: `f1f2c0a214314c0a4ae2506a9a43ce28b749cfaa`, the actual public-main
   merge of Scient PR #534.
@@ -143,7 +145,7 @@ or authenticated Claude service quality.
 
 The maintained six-boundary early selector was exercised as an impact plan. Its
 unknown-path fallback conservatively selected all boundaries. Covered default
-suites will execute in hosted CI, while the local opt-in Pi group ran here.
+suites executed in hosted CI, while the local opt-in Pi group ran here.
 The selector is feedback/coverage mapping, not an exhaustive dependency graph or
 a substitute for the final applicable matrix.
 
@@ -216,12 +218,64 @@ visible and the end control was absent. The preceding callback-only attempt did
 not fix the native issue and is retained as failed evidence. Screenshots and
 bounded observations live in the external evidence directory, not product source.
 
-Pending: final pushed-head hosted qualification, Yaacov's visual acceptance and
-final receipt/cursor advancement. The isolated app remains available for review.
-Native mobile interaction is not established: the device inventory lacks required
-AgentDevice 0.21.24. Mobile static analysis passing is a separate result; no device
-setup change or native mobile visual claim is included. No full local aggregate
-was run under the explicit per-pass instruction.
+## Completed hosted and supplemental native qualification
+
+[CI run 38502370354](https://github.com/ScientFactory/scient-desktop/actions/runs/38502370354)
+completed successfully at `49bb6b63efef4267fbe1c402a220ddad1c67ea3d`, tree
+`fdd0029254f5577f12c3d95774a18c6812e54d3e`. All 13 required checks passed.
+GitHub's tested PR merge `5edd336989d9dfb80302df6bd7a669051675148e` has the
+exact owned base and this head as parents and an identical tree. This is PR-head
+evidence, not merge-group qualification or public-main delivery.
+
+Completed reports enumerate 980 server files: 11,908 cases passed, 183 were
+skipped, and three further not-run cases are reported as pending. The 983 web
+files passed 12,046 cases with no skips. Workspace, browser-layout, static/type/
+build/brand, provenance, Rust, Compute, desktop/remote packaging, release-smoke
+and mobile-static jobs passed. EAS preview and web deployment were intentionally
+skipped. The exact-head transfer report stayed within every enforced ceiling;
+Codex wire size was unchanged and Claude wire size decreased by 36 bytes.
+Raw reports, job/check identities and the transfer comment are retained in
+`hosted-ci-02-*` and `ci-reports-02/` in the external evidence directory.
+No full local aggregate was duplicated under the explicit per-pass instruction.
+
+The initial device inventory's missing AgentDevice version flag did not establish
+runtime unavailability. Scient's normal Device panel and returned executable,
+configuration and session opened the retained synthetic iOS 26.5 simulator.
+The current native client built and installed with SDK 27.0 in 212.509s;
+before/after source inputs were identical. The native fingerprint was
+`9a6f635ddf503de6e68d0048370415ea7daca55a`. No SDK/device-configuration repair or
+alternate automation system was used. A dedicated Metro at port 8094 served this
+checkout's development bundle to the existing development identity, paired with
+the candidate's synthetic backend and exact project/thread through a one-use grant.
+
+Actual iOS interaction verified a pending handoff after selecting another
+configured Pi instance, its removal on returning to the current instance, and
+the full footer reachable above the open keyboard/composer with a physical
+gesture. HTML opened in the native file WebView and returned to the same thread.
+The real Pi extension's native question rendered a Markdown link and mixed
+Hebrew/English text. Selecting alpha and submitting free text completed the native
+command; response history retained the exact `Synthetic mobile acknowledgement.`
+string. Evidence and limits are in `native-mobile-summary.json` and its bounded
+logs/screenshots. Android interaction, native attachment-cache expiry/reconnect,
+two-environment PR fallback interaction and mobile figure-rendering parity were
+not established. These are not universal mobile or enabled-provider claims.
+
+Failed/setup attempts remain preserved. The first pairing invocation dropped
+`ELECTRON_RUN_AS_NODE`, which Scient's AgentDevice launcher requires, and spawned
+an unintended installed-app copy. Its exact command-owned app/backend/monitor
+processes were stopped; no other process was signalled. Its exit-zero launch
+message was not pairing proof. The corrected invocation and actual project/thread
+UI established pairing. Expo's floating developer button intercepted an initial
+Save; supported development-client flags removed that testing overlay before
+the successful repeat. AX's early bottom claim was checked against an actual
+gesture and screenshot, and an expired-ref refusal required a fresh snapshot.
+None of these attempts is advertised as a passing product witness.
+
+The candidate's integration pointers now record the original literal merge and
+this reviewed scope. Public main was reverified at the owned base after all
+supplemental native work; no catch-up or newer upstream target was added.
+The final metadata-only pushed revision still requires hosted checks. Both
+isolated clients remain available; Yaacov's visual acceptance is pending.
 
 No universal enabled-provider, Windows, mobile-publication, physical power-loss,
 OAuth or microphone acceptance is inferred from the above evidence. Public main
