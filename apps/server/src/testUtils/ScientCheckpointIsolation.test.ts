@@ -1,12 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off - these tests exercise native path aliases and Git metadata.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { afterEach, beforeEach } from "vite-plus/test";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { makeCheckpointIsolationGuard } from "./ScientCheckpointIsolation.test-support.ts";
 
@@ -49,6 +52,14 @@ it("canonicalizes symlink aliases of the checkout common directory", () => {
   assert.throws(() => guard.assertNoViolations(), /test checkout/);
 });
 
+it("rejects differently cased aliases on case-insensitive filesystems", (context) => {
+  const alias = commonDirectory.toUpperCase();
+  if (!NodeFS.existsSync(alias)) context.skip("Requires a case-insensitive filesystem");
+  const guard = makeCheckpointIsolationGuard(commonDirectory);
+  assert.throws(() => guard.check({ cwd: directory, gitCommonDir: alias }), /test checkout/);
+  assert.throws(() => guard.assertNoViolations(), /test checkout/);
+});
+
 it("allows nonexistent directories supplied by mock Git drivers", () => {
   const guard = makeCheckpointIsolationGuard(commonDirectory);
   guard.check({ cwd: directory, gitCommonDir: NodePath.join(directory, "mock", ".git") });
@@ -85,4 +96,36 @@ it.live("rejects a real linked worktree that shares the forbidden common directo
       assert.throws(() => guard.assertNoViolations(), /test checkout/);
     }),
   ),
+);
+
+it.live("fails test teardown after a recovered source capture without changing index or refs", () =>
+  Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    const cwd = NodeURL.fileURLToPath(new URL("../../", import.meta.url));
+    const git = (args: string[]) =>
+      NodeChildProcess.execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const index = git(["rev-parse", "--path-format=absolute", "--git-path", "index"]);
+    const snapshot = () => ({
+      index: NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(index)).digest("hex"),
+      refs: git(["for-each-ref", "--format=%(refname) %(objectname)"]),
+    });
+    const before = snapshot();
+    const child = NodeChildProcess.spawnSync(
+      platform === "win32" ? "pnpm.cmd" : "pnpm",
+      ["exec", "vp", "test", "src/testUtils/ScientCheckpointIsolation.violation.test.ts"],
+      {
+        cwd,
+        env: { ...process.env, SCIENT_CHECKPOINT_ISOLATION_VIOLATION: "1" },
+        encoding: "utf8",
+        timeout: 30_000,
+        shell: platform === "win32",
+      },
+    );
+    assert.equal(child.status, 1, child.stderr);
+    assert.include(
+      child.stdout + child.stderr,
+      "Checkpoint capture must not use the test checkout",
+    );
+    assert.deepEqual(snapshot(), before);
+  }),
 );

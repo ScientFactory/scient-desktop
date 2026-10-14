@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 function canonicalDirectory(directory: string): string {
   const absolute = NodePath.resolve(directory);
   try {
-    return NodeFS.realpathSync(absolute);
+    return NodeFS.realpathSync.native(absolute);
   } catch (error) {
     // Mock Git drivers can report directories that exist only in their fake filesystem.
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return absolute;
