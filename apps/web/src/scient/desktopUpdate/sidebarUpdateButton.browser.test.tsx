@@ -143,9 +143,16 @@ it("keeps Restart a direct restart and says what can update afterwards", async (
   });
   expect(button.textContent).toContain("Restart");
   expect(button.getAttribute("aria-label")).toContain("Then update 2 providers.");
-  await userEvent.click(button);
-  // The update-everything confirmation does not open.
-  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  const installUpdate = vi.fn(async () => ({ accepted: true, completed: false, state: appUpdate }));
+  Object.assign(window, { desktopBridge: { installUpdate } });
+  try {
+    await userEvent.click(button);
+    await expect.poll(() => installUpdate.mock.calls.length).toBe(1);
+    // The update-everything confirmation does not open.
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  } finally {
+    Reflect.deleteProperty(window, "desktopBridge");
+  }
 });
 
 it("lists everything an update covers beside Beta release notes", async () => {
@@ -162,6 +169,33 @@ it("lists everything an update covers beside Beta release notes", async () => {
     .poll(() => document.body.textContent ?? "")
     .toContain("Codex 0.48.0 → 0.50.1 · managed by Scient");
   expect(document.body.textContent).toContain("Newest change");
+});
+
+it("keeps the update list reachable below long release notes", async () => {
+  await page.viewport(900, 600);
+  const releaseNotes = Array.from({ length: 6 }, (_, release) => ({
+    version: `1.5.0-beta.${6 - release}`,
+    items: Array.from({ length: 8 }, (_, item) => `Change ${release}.${item} with some detail`),
+    totalItems: 8,
+  }));
+  const button = await mountButton({
+    updateState: { ...appUpdate, channel: "beta", releaseNotes },
+    remote: true,
+  });
+  await userEvent.hover(button);
+  await expect
+    .poll(() => [...document.querySelectorAll("p")].find((p) => p.textContent?.startsWith("Codex")))
+    .toBeDefined();
+  const line = [...document.querySelectorAll("p")].find((p) => p.textContent?.startsWith("Codex"))!;
+  line.scrollIntoView({ block: "nearest" });
+  // Visible inside every box that clips it, not only inside the window.
+  const { top, bottom } = line.getBoundingClientRect();
+  for (let box = line.parentElement; box; box = box.parentElement) {
+    if (getComputedStyle(box).overflowY === "visible") continue;
+    const bounds = box.getBoundingClientRect();
+    expect(top).toBeGreaterThanOrEqual(bounds.top - 1);
+    expect(bottom).toBeLessThanOrEqual(bounds.bottom + 1);
+  }
 });
 
 // Renders for choosing the shared-update colour: VITE_SCIENT_SIDEBAR_SCREENSHOTS=<dir>.

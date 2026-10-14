@@ -598,20 +598,15 @@ function SidebarUpdateControl() {
             side="top"
             tooltipStyle
           >
-            <SidebarUpdateReleaseNotes
-              shell={window.desktopBridge}
-              state={state}
-              tooltip={tooltip}
-            />
-            {/* SCIENT-FORK: release notes also list what update everything updates. */}
-            {runsEverything && !isRunningEverything ? (
-              <div className="mt-2 border-t px-1 pt-2">
+            <SidebarUpdateReleaseNotes shell={window.desktopBridge} state={state} tooltip={tooltip}>
+              {/* SCIENT-FORK: release notes also list what update everything updates. */}
+              {runsEverything && !isRunningEverything ? (
                 <UpdateEverythingTooltip
                   summary={everything.summary}
                   details={everything.scient.details}
                 />
-              </div>
-            ) : null}
+              ) : null}
+            </SidebarUpdateReleaseNotes>
           </PopoverPopup>
         ) : null}
       </Popover>

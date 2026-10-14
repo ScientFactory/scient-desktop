@@ -1,5 +1,6 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { ExternalLinkIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import {
   getDesktopUpdateReleaseHistoryUrl,
@@ -47,10 +48,13 @@ export function SidebarUpdateReleaseNotes({
   shell,
   state,
   tooltip,
+  children,
 }: {
   readonly shell: DesktopUpdateShell | undefined;
   readonly state: DesktopUpdateState;
   readonly tooltip: string;
+  // SCIENT-FORK: shown after the notes, inside their scroll area.
+  readonly children?: ReactNode;
 }) {
   if (
     (state.channel !== "beta" && state.channel !== "nightly") ||
@@ -118,6 +122,13 @@ export function SidebarUpdateReleaseNotes({
             >
               {`${state.omittedReleaseCount} older ${state.omittedReleaseCount === 1 ? "release" : "releases"} on GitHub`}
             </ReleaseLink>
+          </div>
+        ) : null}
+        {/* SCIENT-FORK: what update everything also covers. */}
+        {children ? (
+          <div>
+            <Separator className="my-3" />
+            {children}
           </div>
         ) : null}
       </div>
