@@ -1021,24 +1021,34 @@ describe("Oh My Pi session runtime outcomes", () => {
       }),
   );
 
-  /** A turn whose bash call returns once its job is backgrounded; the run then ends. */
-  const backgroundTurn = (h: Effect.Success<ReturnType<typeof wireHarness>>, toolCallId: string) =>
+  const backgroundedEnd = (toolCallId: string) => ({
+    type: "tool_execution_end",
+    toolCallId,
+    toolName: "bash",
+    result: { details: { async: { state: "running", jobId: "job-1", type: "bash" } } },
+  });
+
+  /**
+   * A turn whose bash call returns once its job is backgrounded; the run then
+   * ends. `between` arrives after that turn and before the next one begins.
+   */
+  const backgroundTurn = (
+    h: Effect.Success<ReturnType<typeof wireHarness>>,
+    toolCallId: string,
+    between: ReadonlyArray<Record<string, unknown>> = [],
+  ) =>
     Effect.gen(function* () {
       yield* h.runtime.begin("first");
       yield* h.runtime.accepted("prompt-1", true);
       yield* h.wire.send(
         { type: "agent_start" },
         { type: "tool_execution_start", toolCallId, toolName: "bash" },
-        {
-          type: "tool_execution_end",
-          toolCallId,
-          toolName: "bash",
-          result: { details: { async: { state: "running", jobId: "job-1", type: "bash" } } },
-        },
+        backgroundedEnd(toolCallId),
         assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "started" }] }),
         { type: "agent_end", messages: [], isTerminal: true },
       );
       expect(yield* h.outcome).toMatchObject({ outcome: "completed" });
+      if (between.length > 0) yield* h.wire.send(...between);
       yield* h.settleFrames;
       yield* h.runtime.begin("second");
       yield* h.runtime.accepted("prompt-2", true);
@@ -1117,7 +1127,8 @@ describe("Oh My Pi session runtime outcomes", () => {
   it.effect("a reused id reports no update while the earlier call can still report", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
-      yield* backgroundTurn(h, "call-1");
+      // A settled session does not end the job: a cancelled one can still report.
+      yield* backgroundTurn(h, "call-1", [{ type: "session_settled" }]);
       yield* h.wire.send(
         { type: "agent_start" },
         // The model names its new call as before; its arguments stream before it starts.
@@ -1142,13 +1153,49 @@ describe("Oh My Pi session runtime outcomes", () => {
     }),
   );
 
-  it.effect("a settled session frees the ids of earlier calls", () =>
+  it.effect("a run later in the same turn that backgrounds a reused id is tracked too", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
-      yield* backgroundTurn(h, "call-1");
+      yield* h.runtime.begin("first");
+      yield* h.runtime.accepted("prompt-1", true);
       yield* h.wire.send(
-        { type: "session_settled" },
         { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "read" },
+        { type: "tool_execution_end", toolCallId: "call-1", toolName: "read", result: {} },
+        { type: "agent_end", messages: [], isTerminal: false },
+        // OMP continues the turn with a new run, whose call has the same id.
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash" },
+        backgroundedEnd("call-1"),
+        assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "started" }] }),
+        { type: "agent_end", messages: [], isTerminal: true },
+      );
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed" });
+      yield* h.settleFrames;
+      yield* h.runtime.begin("second");
+      yield* h.runtime.accepted("prompt-2", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "read" },
+        jobUpdate("call-1", "running", "earlier output"),
+      );
+      const produced = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(toolFrames(produced)).toEqual([{ toolCallId: "call-1", phase: "started" }]);
+    }),
+  );
+
+  it.effect.each([
+    { caseTitle: "a job's last frame in the next turn frees its id", between: false },
+    { caseTitle: "a job's last frame between turns frees its id", between: true },
+  ])("$caseTitle", ({ between }) =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      const last = jobUpdate("call-1", "completed", "done");
+      yield* backgroundTurn(h, "call-1", between ? [last] : []);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        ...(between ? [] : [last]),
         { type: "tool_execution_start", toolCallId: "call-1", toolName: "read" },
         { type: "tool_execution_update", toolCallId: "call-1", toolName: "read" },
         { type: "tool_execution_end", toolCallId: "call-1", toolName: "read", result: {} },
@@ -1159,6 +1206,37 @@ describe("Oh My Pi session runtime outcomes", () => {
         { toolCallId: "call-1", phase: "started" },
         { toolCallId: "call-1", phase: "updated" },
         { toolCallId: "call-1", phase: "completed" },
+      ]);
+    }),
+  );
+
+  it.effect("a job that settles within its own turn leaves its id free", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("first");
+      yield* h.runtime.accepted("prompt-1", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash" },
+        backgroundedEnd("call-1"),
+        jobUpdate("call-1", "completed", "done"),
+        assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "done" }] }),
+        { type: "agent_end", messages: [], isTerminal: true },
+      );
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed" });
+      yield* h.settleFrames;
+      yield* h.runtime.begin("second");
+      yield* h.runtime.accepted("prompt-2", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "read" },
+        { type: "tool_execution_update", toolCallId: "call-1", toolName: "read" },
+      );
+      const produced = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(toolFrames(produced)).toEqual([
+        { toolCallId: "call-1", phase: "started" },
+        { toolCallId: "call-1", phase: "updated" },
       ]);
     }),
   );

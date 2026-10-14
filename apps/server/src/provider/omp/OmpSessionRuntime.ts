@@ -407,28 +407,23 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     | undefined;
   const completedAssistantIds = new Set<string>();
   /**
-   * Tool calls that can still report. Since OMP 18.10.2 a call whose result
-   * leaves a background job running (`details.async.state` "running") keeps
-   * sending `tool_execution_update` frames after it returned, even after its
-   * run ended, until the job settles; so can a call its run left executing.
-   * Every other tool frame is the open run's own. An earlier turn's call can
-   * report until the session settles, and its id may come back in a later
-   * turn; updates under that id cannot be told apart, so none is reported.
+   * Tool calls the open turn reported. OMP ends a run only once its calls
+   * returned, and its start, end and argument frames ride the run, but since
+   * 18.10.2 a call that returned with a background job running
+   * (`details.async.state` "running") keeps sending `tool_execution_update`
+   * frames until the job's last one, even after its run and turn ended. An
+   * update is the open turn's only for a call the turn reported.
    */
   const turnToolCallIds = new Set<string>();
-  /** The open turn's calls that can still report: not returned, or returned with a running job. */
-  const turnLiveToolCallIds = new Set<string>();
-  const earlierLiveToolCallIds = new Set<string>();
-  const claimToolCall = (toolCallId: string) => {
-    if (turnToolCallIds.has(toolCallId)) return;
-    turnToolCallIds.add(toolCallId);
-    turnLiveToolCallIds.add(toolCallId);
-  };
-  /** A settled session runs nothing that could still report. */
-  const releaseToolCalls = () => {
-    earlierLiveToolCallIds.clear();
-    turnLiveToolCallIds.clear();
-  };
+  /**
+   * Calls whose background job may still report, the open turn's and earlier
+   * ones'. A model can give a later call the same id; while an earlier call
+   * under that id may report, the two cannot be told apart, so the id reports
+   * no update. A job's last frame frees its id when only one call could have
+   * sent it. A settled session does not: a cancelled job can still report.
+   */
+  const turnBackgroundToolCallIds = new Set<string>();
+  const earlierBackgroundToolCallIds = new Set<string>();
   let assistantMessageSeen = false;
   let failureDetail: string | undefined;
   /** The prompt command itself failed; its sender reports that error. */
@@ -593,9 +588,10 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       activeAssistantTimestamp = undefined;
       latestCompletedAssistantReference = undefined;
       completedAssistantIds.clear();
-      for (const toolCallId of turnLiveToolCallIds) earlierLiveToolCallIds.add(toolCallId);
+      for (const toolCallId of turnBackgroundToolCallIds)
+        earlierBackgroundToolCallIds.add(toolCallId);
       turnToolCallIds.clear();
-      turnLiveToolCallIds.clear();
+      turnBackgroundToolCallIds.clear();
       assistantMessageSeen = false;
       drainRetries = 0;
       // A retry already scheduled stays the only one: it rechecks whichever
@@ -660,7 +656,6 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     Effect.gen(function* () {
       yield* sessionInfo(state.sessionFile, state.sessionId);
       if (state.isSettled !== undefined) reportsPromptResults = true;
-      if (state.isSettled === true) releaseToolCalls();
       const pending = state.isSettled === undefined ? state.hasPendingAsyncWork : !state.isSettled;
       if (pending !== undefined) yield* publish({ type: "background-work", pending });
       // An acknowledged prompt may never emit agent_start. Only count time
@@ -954,7 +949,6 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           promptReported = true;
         }
         if (event.sessionSettled !== undefined) {
-          if (event.sessionSettled) releaseToolCalls();
           yield* publish({ type: "background-work", pending: !event.sessionSettled });
         }
         evidence.promptStatus = event.status;
@@ -1127,7 +1121,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const toolCallId = text(event.toolCallId);
         if (toolCallId) {
           // An argument stream is the open run's, and may come before the call's start.
-          claimToolCall(toolCallId);
+          turnToolCallIds.add(toolCallId);
           yield* publish({
             type: "tool",
             phase: "updated",
@@ -1144,21 +1138,26 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         event.type === "tool_execution_update" ||
         event.type === "tool_execution_end"
       ) {
-        if (!turnIsOpen(turn) || staleRunOpen()) return;
         const name = text(event.toolName) ?? text(event.name) ?? "tool";
         const toolCallId = text(event.toolCallId) ?? text(event.id) ?? name;
-        if (event.type === "tool_execution_update" && earlierLiveToolCallIds.has(toolCallId)) {
-          // An earlier turn's call. Its job's last frame frees the id, unless
-          // this turn reused it and the frame could be the new call's.
-          if (!turnToolCallIds.has(toolCallId) && settlesBackgroundJob(event.partialResult)) {
-            earlierLiveToolCallIds.delete(toolCallId);
+        const published = turnIsOpen(turn) && !staleRunOpen();
+        // Background jobs are tracked from every frame, published or not.
+        if (event.type === "tool_execution_update") {
+          const turnCall = turnToolCallIds.has(toolCallId);
+          const earlierCall = earlierBackgroundToolCallIds.has(toolCallId);
+          if (settlesBackgroundJob(event.partialResult)) {
+            if (!turnCall) earlierBackgroundToolCallIds.delete(toolCallId);
+            else if (!earlierCall) turnBackgroundToolCallIds.delete(toolCallId);
           }
-          return;
+          if (!turnCall || earlierCall) return;
+        } else if (
+          event.type === "tool_execution_end" &&
+          backgroundJobState(event.result) === "running"
+        ) {
+          (published ? turnBackgroundToolCallIds : earlierBackgroundToolCallIds).add(toolCallId);
         }
-        claimToolCall(toolCallId);
-        if (event.type === "tool_execution_end" && backgroundJobState(event.result) !== "running") {
-          turnLiveToolCallIds.delete(toolCallId);
-        }
+        if (!published) return;
+        turnToolCallIds.add(toolCallId);
         const detail =
           detailText(event.partialResult) ?? detailText(event.result) ?? detailText(event.output);
         const failed = toolFailed(event);
@@ -1311,7 +1310,6 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (event.type === "session_settled") {
         // This event is newer than any state buffered before the event drain.
         pendingDrainState = undefined;
-        releaseToolCalls();
         yield* publish({ type: "session-settled" });
         return;
       }
