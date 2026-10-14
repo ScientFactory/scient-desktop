@@ -36,6 +36,7 @@ import {
 } from "./optimisticProviderValue";
 import { isRuntimePlanStale } from "./isRuntimePlanStale";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { describeProviderRuntimeCatalog } from "./providerRuntimeCatalogFreshness";
 import {
   cancelRuntimeActionLabel,
@@ -122,6 +123,23 @@ export function resolveProviderRuntimeForPresentation(
     return serverRuntime;
   }
   return localRuntime;
+}
+
+/** The qualified-release line, re-rendered each minute so "checked … ago" stays true. */
+function ProviderRuntimeCatalogLine({ runtime }: { readonly runtime: ProviderRuntimeSummary }) {
+  useNowMinute();
+  const line = describeProviderRuntimeCatalog(runtime);
+  if (!line) return null;
+  return (
+    <p
+      className={cn(
+        "mt-0.5 text-xs leading-relaxed",
+        line.failed ? "text-warning-foreground" : "text-muted-foreground",
+      )}
+    >
+      {line.text}
+    </p>
+  );
 }
 
 function runtimeSourceLabel(
@@ -611,7 +629,6 @@ export function ProviderRuntimeSection(props: {
     ) : (
       <CheckCircle2Icon className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
     );
-  const catalogLine = describeProviderRuntimeCatalog(runtime);
   const presentsCompactUpdateSeparately = props.compact && runtime.actions.includes("update");
   const trailingActions: ReadonlyArray<ProviderManagedRuntimeAction> =
     presentsCompactUpdateSeparately
@@ -653,16 +670,7 @@ export function ProviderRuntimeSection(props: {
                 {statusMessage}
               </p>
             ) : null}
-            {catalogLine ? (
-              <p
-                className={cn(
-                  "mt-0.5 text-xs leading-relaxed",
-                  catalogLine.failed ? "text-warning-foreground" : "text-muted-foreground",
-                )}
-              >
-                {catalogLine.text}
-              </p>
-            ) : null}
+            <ProviderRuntimeCatalogLine runtime={runtime} />
           </div>
         </div>
         {trailingActions.length > 0 ? (
