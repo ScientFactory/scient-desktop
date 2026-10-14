@@ -545,7 +545,7 @@ const bundledOnlyService: ManagedRuntimeCatalogService = {
 };
 
 /** Why a catalog check failed, in plain words, without its URL or response body. */
-export function catalogCheckFailureMessage(cause: Cause.Cause<unknown>): string {
+function catalogCheckFailureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   if (Cause.isTimeoutError(error)) return "The check timed out.";
   if (HttpClientError.isHttpClientError(error)) {
