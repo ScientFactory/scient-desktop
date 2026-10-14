@@ -394,6 +394,13 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
     | undefined;
   const completedAssistantIds = new Set<string>();
+  /**
+   * Tool calls the open turn started and has not seen end. Since OMP 18.10.2
+   * a backgrounded tool keeps sending updates after its call returned, even
+   * after the run ended, so a late frame can reach the next turn; only the
+   * turn that started a tool reports it.
+   */
+  const turnToolCallIds = new Set<string>();
   let assistantMessageSeen = false;
   let failureDetail: string | undefined;
   /** The prompt command itself failed; its sender reports that error. */
@@ -558,6 +565,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       activeAssistantTimestamp = undefined;
       latestCompletedAssistantReference = undefined;
       completedAssistantIds.clear();
+      turnToolCallIds.clear();
       assistantMessageSeen = false;
       drainRetries = 0;
       // A retry already scheduled stays the only one: it rechecks whichever
@@ -1085,7 +1093,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (event.type === "tool_stream_update") {
         if (!turnIsOpen(turn) || staleRunOpen()) return;
         const toolCallId = text(event.toolCallId);
-        if (toolCallId) {
+        if (toolCallId && turnToolCallIds.has(toolCallId)) {
           yield* publish({
             type: "tool",
             phase: "updated",
@@ -1105,6 +1113,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (!turnIsOpen(turn) || staleRunOpen()) return;
         const name = text(event.toolName) ?? text(event.name) ?? "tool";
         const toolCallId = text(event.toolCallId) ?? text(event.id) ?? name;
+        if (event.type === "tool_execution_start") turnToolCallIds.add(toolCallId);
+        else if (!turnToolCallIds.has(toolCallId)) return;
+        if (event.type === "tool_execution_end") turnToolCallIds.delete(toolCallId);
         const detail =
           detailText(event.partialResult) ?? detailText(event.result) ?? detailText(event.output);
         const failed = toolFailed(event);

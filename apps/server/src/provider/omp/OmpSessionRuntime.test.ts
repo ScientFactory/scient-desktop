@@ -1021,6 +1021,51 @@ describe("Oh My Pi session runtime outcomes", () => {
       }),
   );
 
+  it.effect("a backgrounded tool's late updates stay out of the next turn (OMP 18.10.2)", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("first");
+      yield* h.runtime.accepted("prompt-1", true);
+      // The call returns once bash is backgrounded; the run then ends.
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "bg-tool", toolName: "bash" },
+        { type: "tool_execution_end", toolCallId: "bg-tool", toolName: "bash", result: {} },
+        assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "started" }] }),
+        { type: "agent_end", messages: [], isTerminal: true },
+      );
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed" });
+      yield* h.settleFrames;
+      yield* h.runtime.begin("second");
+      yield* h.runtime.accepted("prompt-2", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        // OMP keeps streaming the backgrounded job into its original call.
+        {
+          type: "tool_execution_update",
+          toolCallId: "bg-tool",
+          toolName: "bash",
+          partialResult: { content: [{ type: "text", text: "still running" }] },
+        },
+        { type: "tool_stream_update", toolCallId: "bg-tool", update: { text: "more" } },
+        {
+          type: "tool_execution_end",
+          toolCallId: "bg-tool",
+          toolName: "bash",
+          result: { details: { async: { state: "completed" } } },
+        },
+        { type: "tool_execution_start", toolCallId: "own-tool", toolName: "read" },
+        { type: "tool_execution_update", toolCallId: "own-tool", toolName: "read" },
+      );
+      const produced = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(produced.filter((update) => update.type === "tool")).toMatchObject([
+        { toolCallId: "own-tool", phase: "started" },
+        { toolCallId: "own-tool", phase: "updated" },
+      ]);
+    }),
+  );
+
   it.effect("R1-F3 tool frames outside a turn are dropped; a background subagent's are not", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
