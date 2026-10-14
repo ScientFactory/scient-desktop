@@ -1534,6 +1534,22 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       resolved.relativePath,
     );
   };
+  /** Byte intents, native or plain, hold their id from admission until publication ends. */
+  const withByteClaim = async <A>(
+    resolved: Resolved,
+    intent: PlainIntent,
+    retentionOverride: string | undefined,
+    run: () => Promise<A>,
+  ) => {
+    if ((intent.kind !== "write" && intent.kind !== "create") || retentionOverride !== undefined)
+      return run();
+    const release = claimPlain(intent.id, plainFingerprint(resolved, intent));
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  };
   const publish = Effect.fn("WorkspaceFileSystem.publishRetainedIntent")(function* (
     input: { cwd: string; relativePath: string },
     resolved: Resolved,
@@ -1541,640 +1557,658 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     destination?: Resolved,
     retentionOverride?: string,
   ) {
-    return yield* owned(input, resolved.target, async (signal) => {
-      const helper = helperFor();
-      let capabilities;
-      try {
-        capabilities = await nativeFilePublicationCapabilities(helper);
-      } catch (cause) {
-        throw new RetainedMutationError(
-          "unavailable",
-          "Native capability admission failed before namespace work.",
-          intent.id,
-          [],
-          { cause },
-        );
-      }
-      if (
-        !capabilities.strictCurrentRoot ||
-        !capabilities.publicationLease ||
-        !capabilities.exclusiveMove ||
-        !capabilities.exclusiveLink
-      )
-        throw new RetainedMutationError(
-          "unavailable",
-          "This host has not qualified the required publication authority primitives.",
-          intent.id,
-        );
-      const mutationId = retentionOverride
-        ? `overleaf-${NodeCrypto.createHash("sha256").update(`${retentionOverride}\0${intent.id}`).digest("hex")}`
-        : (intent.mutationId ?? intent.id);
-      const admissionParent = await nearestParent(resolved.root, resolved.target);
-      const admissionDestination = destination
-        ? await nearestParent(destination.root, destination.target)
-        : null;
-      const plain = await qualifyBytePublication(
-        input,
-        resolved,
-        intent,
-        signal,
-        retentionOverride === undefined,
-      );
-      if (plain) return plain;
-      const id = retentionOverride ? intent.id : keyFor(mutationId);
-      const indexRoot = await ensureNativePrivateRetentionDirectory(
-        helper,
-        NodePath.join(deps.retentionStorageDirectory, "mutation-identities"),
-      );
-      const identityDirectory = await prepareRetainedDirectory(
-        indexRoot,
-        keyFor(mutationId),
-        helper,
-      );
-      const identityBinding = await bindNativeFilePublicationParent(helper, identityDirectory, "");
-      const fingerprint = bytesRevision(
-        Buffer.from(
-          JSON.stringify({
-            root: resolved.root,
-            target: resolved.target,
-            requestedPath: resolved.requestedPath,
-            destination: destination?.target ?? intent.destination ?? null,
-            requestedDestination: destination?.requestedPath ?? intent.requestedDestination ?? null,
-            kind: intent.kind,
-            condition: intent.condition,
-            expected: intent.expectedRevision,
-            desired: intent.bytes == null ? null : bytesRevision(intent.bytes),
-            executable: intent.executable ?? false,
-            guardMaxBytes: intent.guardMaxBytes ?? null,
-            expectedMutationEpoch: intent.expectedMutationEpoch ?? null,
-          }),
-        ),
-      );
-      const identityPath = NodePath.join(identityDirectory, "reference.json");
-      const preflight = await withNativeFilePublicationLease(
-        helper,
-        await publicationLeaseBindings(helper, [identityBinding]),
-        async () => {
-          const immutable = await readOptional(
-            NodePath.join(identityDirectory, "intent.json"),
-            (text) =>
-              Schema.decodeUnknownSync(
-                Schema.fromJsonString(Schema.Struct({ intent: Schema.String })),
-              )(text),
-          );
-          if (immutable && immutable.intent !== fingerprint)
-            throw new RetainedMutationError(
-              "intent",
-              "Mutation identity was reused for a changed target, condition or bytes.",
-              mutationId,
-            );
-          if (await readOptional(NodePath.join(identityDirectory, "refusal.json"), (text) => text))
-            throw new RetainedMutationError(
-              "unavailable",
-              "This intent was durably refused before publication; a reviewed new intent needs a new identity.",
-              mutationId,
-            );
-          const original = await readOptional(identityPath, decodeReference);
-          if (original) {
-            let terminal;
-            try {
-              terminal = await retainedMutationReceipt(original.recordDirectory);
-            } catch {
-              throw new RetainedMutationError(
-                "recovery",
-                "The original intent has retained directory-preparation attention.",
-                mutationId,
-                await retainedPaths(original.recordDirectory),
-              );
-            }
-            if (terminal) return terminal;
-          }
-          if (!immutable)
-            await durableJson(NodePath.join(identityDirectory, "intent.json"), {
-              intent: fingerprint,
-            });
-          return null;
-        },
-        { mode: "exclusive", signal },
-      );
-      if (preflight) return preflight;
-      if (
-        !(await bindingCurrent(admissionParent)) ||
-        (admissionDestination && !(await bindingCurrent(admissionDestination)))
-      )
-        throw new RetainedMutationError(
-          "target",
-          "Admitted namespace authority changed before directory preparation.",
-          mutationId,
-        );
-      const existingParent = admissionParent;
-      const existingDestination = admissionDestination;
-      if (
-        existingDestination &&
-        existingDestination.parentIdentity.dev !== existingParent.parentIdentity.dev
-      )
-        throw new RetainedMutationError(
-          "unavailable",
-          "Cross-volume rename cannot preserve an exclusive retained object.",
-          mutationId,
-        );
-      await deps.retentionDirectoryFor(
-        resolved.root,
-        NodePath.join(existingParent.rootPath, existingParent.parentRelativePath),
-      );
-      if (
-        deps.retentionLimitBytes != null &&
-        (intent.bytes?.byteLength ?? 0) + 16384 > deps.retentionLimitBytes
-      ) {
-        await withNativeFilePublicationLease(
-          helper,
-          await publicationLeaseBindings(helper, [identityBinding]),
-          () =>
-            durableJson(NodePath.join(identityDirectory, "refusal.json"), {
-              version: 1,
-              outcome: "unchanged",
-              reason: "storage",
-            }),
-          { mode: "exclusive", signal },
-        );
-        throw new RetainedMutationError(
-          "unavailable",
-          "Retained storage cannot admit even the desired object without retiring unresolved history.",
-          mutationId,
-        );
-      }
-      const missingParents =
-        NodePath.join(resolved.root, existingParent.parentRelativePath) !==
-          NodePath.dirname(resolved.target) ||
-        (existingDestination !== null &&
-          destination !== undefined &&
-          NodePath.join(destination.root, existingDestination.parentRelativePath) !==
-            NodePath.dirname(destination.target));
-      if (missingParents) {
-        await withNativeFilePublicationLease(
-          helper,
-          await publicationLeaseBindings(helper, [identityBinding]),
-          async () => {
-            await durableJson(NodePath.join(identityDirectory, "record.json"), {
-              version: "directory-preparation",
-              target: resolved.target,
-              requestedPath: resolved.requestedPath,
-              mutationId,
-            });
-            await durableJson(identityPath, {
-              version: 1,
-              recordDirectory: identityDirectory,
-              target: resolved.target,
-              requestedPath: resolved.requestedPath,
-              mutationId,
-              intent: fingerprint,
-            });
-          },
-          { mode: "exclusive", signal },
-        );
-      }
-      // Directory preparation is journaled before its first protected mkdir. A crash retains attention.
-      try {
-        await ensureParents(
-          resolved.root,
-          resolved.target,
-          identityBinding,
-          admissionParent,
-          signal,
-        );
-        if (destination && admissionDestination)
-          await ensureParents(
-            destination.root,
-            destination.target,
-            identityBinding,
-            admissionDestination,
-            signal,
-          );
-      } catch (cause) {
-        if (missingParents)
+    return yield* owned(input, resolved.target, (signal) =>
+      withByteClaim(resolved, intent, retentionOverride, async () => {
+        const helper = helperFor();
+        let capabilities;
+        try {
+          capabilities = await nativeFilePublicationCapabilities(helper);
+        } catch (cause) {
           throw new RetainedMutationError(
-            "recovery",
-            "Native directory preparation retired with durable attention.",
-            mutationId,
+            "unavailable",
+            "Native capability admission failed before namespace work.",
+            intent.id,
             [],
             { cause },
           );
-        throw cause;
-      }
-      try {
-        const storage = await deps.retentionDirectoryFor(
-          resolved.root,
-          NodePath.dirname(resolved.target),
+        }
+        if (
+          !capabilities.strictCurrentRoot ||
+          !capabilities.publicationLease ||
+          !capabilities.exclusiveMove ||
+          !capabilities.exclusiveLink
+        )
+          throw new RetainedMutationError(
+            "unavailable",
+            "This host has not qualified the required publication authority primitives.",
+            intent.id,
+          );
+        const mutationId = retentionOverride
+          ? `overleaf-${NodeCrypto.createHash("sha256").update(`${retentionOverride}\0${intent.id}`).digest("hex")}`
+          : (intent.mutationId ?? intent.id);
+        const admissionParent = await nearestParent(resolved.root, resolved.target);
+        const admissionDestination = destination
+          ? await nearestParent(destination.root, destination.target)
+          : null;
+        const plain = await qualifyBytePublication(
+          input,
+          resolved,
+          intent,
+          signal,
+          retentionOverride === undefined,
         );
-        await assertPrivateRetention(storage);
-        const directory = await prepareRetainedDirectory(retentionOverride ?? storage, id, helper);
-        const indexed = retentionOverride
-          ? await prepareRetainedDirectory(storage, keyFor(mutationId), helper)
-          : directory;
-        const binding = await bindNativeFilePublication(helper, {
-          rootPath: resolved.root,
-          parentRelativePath: NodePath.relative(resolved.root, NodePath.dirname(resolved.target)),
-          recordPath: directory,
-        });
-        const destinationBinding = destination
-          ? await bindNativeFilePublication(helper, {
-              rootPath: destination.root,
-              parentRelativePath: NodePath.relative(
-                destination.root,
-                NodePath.dirname(destination.target),
-              ),
-              recordPath: directory,
-            })
-          : undefined;
-        const indexBinding = await bindNativeFilePublicationParent(helper, indexed, "");
-        const epochBindings =
-          intent.expectedMutationEpoch === undefined
-            ? []
-            : [await bindNativeFilePublicationParent(helper, resolved.root, "")];
-        const budgetBindings =
-          deps.retentionLimitBytes == null
-            ? []
-            : [
-                {
-                  ...(await bindNativeFilePublicationParent(
-                    helper,
-                    deps.retentionStorageDirectory,
-                    "",
-                  )),
-                  mode: "exclusive" as const,
-                },
-              ];
-        const base = [
-          binding,
-          await bindNativeFilePublicationParent(helper, directory, ""),
-          identityBinding,
-          indexBinding,
-          ...epochBindings,
-          ...budgetBindings,
-          ...(destinationBinding ? [destinationBinding] : []),
-        ];
-        const discover = async () => [
-          ...new Map(
-            [
-              ...(await recordsIn(storage)),
-              ...(intent.expectedMutationEpoch === undefined
-                ? forTarget(await allRecords(), resolved)
-                : await recordsUnderRoot(resolved.root)),
-            ].map((entry) => [entry.directory, entry]),
-          ).values(),
-        ];
-        return await withOwnership(
-          base,
-          discover,
-          async (records, lease) => {
-            const original = await readOptional(identityPath, decodeReference);
-            if (original && (original.intent !== fingerprint || original.mutationId !== mutationId))
+        if (plain) return plain;
+        const id = retentionOverride ? intent.id : keyFor(mutationId);
+        const indexRoot = await ensureNativePrivateRetentionDirectory(
+          helper,
+          NodePath.join(deps.retentionStorageDirectory, "mutation-identities"),
+        );
+        const identityDirectory = await prepareRetainedDirectory(
+          indexRoot,
+          keyFor(mutationId),
+          helper,
+        );
+        const identityBinding = await bindNativeFilePublicationParent(
+          helper,
+          identityDirectory,
+          "",
+        );
+        const fingerprint = bytesRevision(
+          Buffer.from(
+            JSON.stringify({
+              root: resolved.root,
+              target: resolved.target,
+              requestedPath: resolved.requestedPath,
+              destination: destination?.target ?? intent.destination ?? null,
+              requestedDestination:
+                destination?.requestedPath ?? intent.requestedDestination ?? null,
+              kind: intent.kind,
+              condition: intent.condition,
+              expected: intent.expectedRevision,
+              desired: intent.bytes == null ? null : bytesRevision(intent.bytes),
+              executable: intent.executable ?? false,
+              guardMaxBytes: intent.guardMaxBytes ?? null,
+              expectedMutationEpoch: intent.expectedMutationEpoch ?? null,
+            }),
+          ),
+        );
+        const identityPath = NodePath.join(identityDirectory, "reference.json");
+        const preflight = await withNativeFilePublicationLease(
+          helper,
+          await publicationLeaseBindings(helper, [identityBinding]),
+          async () => {
+            const immutable = await readOptional(
+              NodePath.join(identityDirectory, "intent.json"),
+              (text) =>
+                Schema.decodeUnknownSync(
+                  Schema.fromJsonString(Schema.Struct({ intent: Schema.String })),
+                )(text),
+            );
+            if (immutable && immutable.intent !== fingerprint)
               throw new RetainedMutationError(
                 "intent",
                 "Mutation identity was reused for a changed target, condition or bytes.",
                 mutationId,
               );
+            if (
+              await readOptional(NodePath.join(identityDirectory, "refusal.json"), (text) => text)
+            )
+              throw new RetainedMutationError(
+                "unavailable",
+                "This intent was durably refused before publication; a reviewed new intent needs a new identity.",
+                mutationId,
+              );
+            const original = await readOptional(identityPath, decodeReference);
             if (original) {
-              if (original.recordDirectory !== identityDirectory) {
-                const receipt = await retainedMutationReceipt(original.recordDirectory);
-                if (receipt) return receipt; // Original receipt survives later D and explicit review/discard.
-                if (original.recordDirectory !== directory)
-                  throw new RetainedMutationError(
-                    "recovery",
-                    "The original publication has unknown authority; it cannot be adopted at a rebound parent.",
-                    mutationId,
-                    await retainedPaths(original.recordDirectory),
-                  );
-              }
-            }
-            const current = await Effect.runPromise(resolveTarget(input));
-            if (current.target !== resolved.target || current.root !== resolved.root)
-              throw new RetainedMutationError(
-                "target",
-                "Alias changed while waiting for native ownership.",
-                mutationId,
-              );
-            if (
-              !(await bindingCurrent(admissionParent)) ||
-              (admissionDestination && !(await bindingCurrent(admissionDestination)))
-            )
-              throw new RetainedMutationError(
-                "target",
-                "Admitted root or physical parent changed before publication.",
-                mutationId,
-              );
-            if (destination) {
-              const currentDestination = await Effect.runPromise(
-                resolveTarget({ cwd: input.cwd, relativePath: destination.named.relativePath }),
-              );
-              if (
-                currentDestination.target !== destination.target ||
-                currentDestination.root !== destination.root
-              )
-                throw new RetainedMutationError(
-                  "target",
-                  "Destination alias changed while waiting for native ownership.",
-                  mutationId,
-                );
-            }
-            await settle(records, lease, directory);
-            if (
-              intent.expectedMutationEpoch !== undefined &&
-              (await epochFor(
-                resolved.root,
-                (await recordsUnderRoot(resolved.root)).filter(
-                  (entry) => entry.directory !== directory && entry.directory !== identityDirectory,
-                ),
-              )) !== intent.expectedMutationEpoch
-            )
-              throw new RetainedMutationError(
-                "target",
-                "Workspace mutated after binary publication admission.",
-                mutationId,
-              );
-            const earlier = records.filter(
-              (entry) =>
-                entry.mutationId === mutationId &&
-                entry.directory !== directory &&
-                entry.directory !== identityDirectory,
-            );
-            if (earlier.length > 1)
-              throw new RetainedMutationError(
-                "recovery",
-                "Multiple retained records claim this intent identity; none may be replayed as a new mutation.",
-                mutationId,
-              );
-            const prior = earlier[0];
-            if (prior) {
-              const record = prior.record;
-              if (!record || record.version !== 2)
+              let terminal;
+              try {
+                terminal = await retainedMutationReceipt(original.recordDirectory);
+              } catch {
                 throw new RetainedMutationError(
                   "recovery",
-                  "An earlier legacy intent has unknown publication authority.",
+                  "The original intent has retained directory-preparation attention.",
                   mutationId,
-                  await retainedPaths(prior.directory),
+                  await retainedPaths(original.recordDirectory),
                 );
+              }
+              if (terminal) return terminal;
+            }
+            if (!immutable)
+              await durableJson(NodePath.join(identityDirectory, "intent.json"), {
+                intent: fingerprint,
+              });
+            return null;
+          },
+          { mode: "exclusive", signal },
+        );
+        if (preflight) return preflight;
+        if (
+          !(await bindingCurrent(admissionParent)) ||
+          (admissionDestination && !(await bindingCurrent(admissionDestination)))
+        )
+          throw new RetainedMutationError(
+            "target",
+            "Admitted namespace authority changed before directory preparation.",
+            mutationId,
+          );
+        const existingParent = admissionParent;
+        const existingDestination = admissionDestination;
+        if (
+          existingDestination &&
+          existingDestination.parentIdentity.dev !== existingParent.parentIdentity.dev
+        )
+          throw new RetainedMutationError(
+            "unavailable",
+            "Cross-volume rename cannot preserve an exclusive retained object.",
+            mutationId,
+          );
+        await deps.retentionDirectoryFor(
+          resolved.root,
+          NodePath.join(existingParent.rootPath, existingParent.parentRelativePath),
+        );
+        if (
+          deps.retentionLimitBytes != null &&
+          (intent.bytes?.byteLength ?? 0) + 16384 > deps.retentionLimitBytes
+        ) {
+          await withNativeFilePublicationLease(
+            helper,
+            await publicationLeaseBindings(helper, [identityBinding]),
+            () =>
+              durableJson(NodePath.join(identityDirectory, "refusal.json"), {
+                version: 1,
+                outcome: "unchanged",
+                reason: "storage",
+              }),
+            { mode: "exclusive", signal },
+          );
+          throw new RetainedMutationError(
+            "unavailable",
+            "Retained storage cannot admit even the desired object without retiring unresolved history.",
+            mutationId,
+          );
+        }
+        const missingParents =
+          NodePath.join(resolved.root, existingParent.parentRelativePath) !==
+            NodePath.dirname(resolved.target) ||
+          (existingDestination !== null &&
+            destination !== undefined &&
+            NodePath.join(destination.root, existingDestination.parentRelativePath) !==
+              NodePath.dirname(destination.target));
+        if (missingParents) {
+          await withNativeFilePublicationLease(
+            helper,
+            await publicationLeaseBindings(helper, [identityBinding]),
+            async () => {
+              await durableJson(NodePath.join(identityDirectory, "record.json"), {
+                version: "directory-preparation",
+                target: resolved.target,
+                requestedPath: resolved.requestedPath,
+                mutationId,
+              });
+              await durableJson(identityPath, {
+                version: 1,
+                recordDirectory: identityDirectory,
+                target: resolved.target,
+                requestedPath: resolved.requestedPath,
+                mutationId,
+                intent: fingerprint,
+              });
+            },
+            { mode: "exclusive", signal },
+          );
+        }
+        // Directory preparation is journaled before its first protected mkdir. A crash retains attention.
+        try {
+          await ensureParents(
+            resolved.root,
+            resolved.target,
+            identityBinding,
+            admissionParent,
+            signal,
+          );
+          if (destination && admissionDestination)
+            await ensureParents(
+              destination.root,
+              destination.target,
+              identityBinding,
+              admissionDestination,
+              signal,
+            );
+        } catch (cause) {
+          if (missingParents)
+            throw new RetainedMutationError(
+              "recovery",
+              "Native directory preparation retired with durable attention.",
+              mutationId,
+              [],
+              { cause },
+            );
+          throw cause;
+        }
+        try {
+          const storage = await deps.retentionDirectoryFor(
+            resolved.root,
+            NodePath.dirname(resolved.target),
+          );
+          await assertPrivateRetention(storage);
+          const directory = await prepareRetainedDirectory(
+            retentionOverride ?? storage,
+            id,
+            helper,
+          );
+          const indexed = retentionOverride
+            ? await prepareRetainedDirectory(storage, keyFor(mutationId), helper)
+            : directory;
+          const binding = await bindNativeFilePublication(helper, {
+            rootPath: resolved.root,
+            parentRelativePath: NodePath.relative(resolved.root, NodePath.dirname(resolved.target)),
+            recordPath: directory,
+          });
+          const destinationBinding = destination
+            ? await bindNativeFilePublication(helper, {
+                rootPath: destination.root,
+                parentRelativePath: NodePath.relative(
+                  destination.root,
+                  NodePath.dirname(destination.target),
+                ),
+                recordPath: directory,
+              })
+            : undefined;
+          const indexBinding = await bindNativeFilePublicationParent(helper, indexed, "");
+          const epochBindings =
+            intent.expectedMutationEpoch === undefined
+              ? []
+              : [await bindNativeFilePublicationParent(helper, resolved.root, "")];
+          const budgetBindings =
+            deps.retentionLimitBytes == null
+              ? []
+              : [
+                  {
+                    ...(await bindNativeFilePublicationParent(
+                      helper,
+                      deps.retentionStorageDirectory,
+                      "",
+                    )),
+                    mode: "exclusive" as const,
+                  },
+                ];
+          const base = [
+            binding,
+            await bindNativeFilePublicationParent(helper, directory, ""),
+            identityBinding,
+            indexBinding,
+            ...epochBindings,
+            ...budgetBindings,
+            ...(destinationBinding ? [destinationBinding] : []),
+          ];
+          const discover = async () => [
+            ...new Map(
+              [
+                ...(await recordsIn(storage)),
+                ...(intent.expectedMutationEpoch === undefined
+                  ? forTarget(await allRecords(), resolved)
+                  : await recordsUnderRoot(resolved.root)),
+              ].map((entry) => [entry.directory, entry]),
+            ).values(),
+          ];
+          return await withOwnership(
+            base,
+            discover,
+            async (records, lease) => {
+              const original = await readOptional(identityPath, decodeReference);
               if (
-                record.target !== resolved.target ||
-                record.destination !== (destination?.target ?? intent.destination ?? null) ||
-                record.kind !== intent.kind ||
-                record.condition !== intent.condition ||
-                record.expected !== intent.expectedRevision ||
-                record.desired !== (intent.bytes == null ? null : bytesRevision(intent.bytes)) ||
-                record.guardMaxBytes !== (intent.guardMaxBytes ?? null) ||
-                (record.expectedMutationEpoch ?? null) !== (intent.expectedMutationEpoch ?? null)
+                original &&
+                (original.intent !== fingerprint || original.mutationId !== mutationId)
               )
                 throw new RetainedMutationError(
                   "intent",
-                  "An earlier retained identity was reused with a different intent.",
+                  "Mutation identity was reused for a changed target, condition or bytes.",
                   mutationId,
                 );
-              const terminal = await retainedMutationReceipt(prior.directory);
-              if (terminal) return terminal;
-              throw new RetainedMutationError(
-                "recovery",
-                "An earlier retained identity is not a terminal publication receipt.",
-                mutationId,
-                await retainedPaths(prior.directory),
-              );
-            }
-            const attention = await attentionFor(await discover(), resolved);
-            if (attention && attention.mutationId !== mutationId)
-              throw new RetainedMutationError(
-                "recovery",
-                attention.message,
-                attention.recoveryId,
-                attention.retainedPaths,
-              );
-            const reference = {
-              version: 1 as const,
-              recordDirectory: directory,
-              target: resolved.target,
-              requestedPath: resolved.requestedPath,
-              mutationId,
-              intent: fingerprint,
-            };
-            if (retentionOverride)
-              await durableJson(NodePath.join(indexed, "reference.json"), reference);
-            if (deps.retentionLimitBytes != null) {
-              // The configured budget belongs to the shared store, not one source parent.
-              // Its exclusive lease stays owned until journal and native work retire.
-              const retainedBytes = await retainedTreeBytes(deps.retentionStorageDirectory);
-              let externalBytes = 0;
-              for (const entry of await allRecords()) {
-                if (!within(deps.retentionStorageDirectory, entry.directory))
-                  externalBytes += await retainedTreeBytes(entry.directory);
-              }
-              const targetBytes = await retainedTreeBytes(resolved.target);
-              if (
-                retainedBytes +
-                  externalBytes +
-                  targetBytes +
-                  (intent.bytes?.byteLength ?? 0) +
-                  16384 >
-                deps.retentionLimitBytes
-              ) {
-                if (missingParents)
-                  throw new RetainedMutationError(
-                    "recovery",
-                    "Directory preparation completed but storage could not admit the file publication.",
-                    mutationId,
-                  );
-                await durableJson(NodePath.join(identityDirectory, "refusal.json"), {
-                  version: 1,
-                  outcome: "unchanged",
-                  reason: "storage",
-                });
-                throw new RetainedMutationError(
-                  "unavailable",
-                  "The shared retained-object budget cannot safely admit this intent.",
-                  mutationId,
-                );
-              }
-            }
-            if (!original || original.recordDirectory === identityDirectory)
-              await durableJson(identityPath, reference);
-            let sourceMayHaveChanged = false;
-            const mutationLease: NativeFilePublicationLease = {
-              ...lease,
-              run: async (command) => {
-                const previous = sourceMayHaveChanged;
-                sourceMayHaveChanged = true;
-                const reply = await lease.run(command);
-                if (reply.outcome === "unchanged") sourceMayHaveChanged = previous;
-                return reply;
-              },
-            };
-            const completePublicationReceipt = async (
-              result: RetainedMutationResult,
-            ): Promise<RetainedMutationResult> => {
-              if (
-                intent.expectedMutationEpoch === undefined ||
-                result.outcome !== "done" ||
-                result.publicationEpoch !== undefined
-              )
-                return result;
-              // The expected-epoch root EX lease remains held. Only this exact
-              // namespace mutation can have advanced the captured native epoch.
-              const terminal = await readRetainedRecord(result.recordDirectory);
-              if (
-                terminal.version !== 2 ||
-                terminal.phase !== "done" ||
-                terminal.expectedMutationEpoch !== intent.expectedMutationEpoch
-              )
-                throw new RetainedMutationError(
-                  "recovery",
-                  "The output receipt lost its exact publication fence.",
-                  mutationId,
-                  await retainedPaths(directory),
-                );
-              lease.assertHeld();
-              const publicationEpoch = await epochFor(
-                resolved.root,
-                await recordsUnderRoot(resolved.root),
-              );
-              await durableJson(NodePath.join(result.recordDirectory, "record.json"), {
-                ...terminal,
-                publicationEpoch,
-                generation: terminal.generation + 1,
-              });
-              return { ...result, publicationEpoch };
-            };
-            try {
-              return await completePublicationReceipt(
-                await mutateRetainedFile(
-                  {
-                    ...intent,
-                    id,
-                    mutationId,
-                    cwd: resolved.root,
-                    relativePath: resolved.relativePath,
-                    requestedPath: resolved.requestedPath,
-                    retentionDirectory: retentionOverride ?? storage,
-                    nativePublicationHelper: helper,
-                    binding,
-                    ...(destinationBinding ? { destinationBinding } : {}),
-                    lease: mutationLease,
-                  },
-                  resolved.target,
-                  deps.retainedHooks,
-                ),
-              );
-            } catch (cause) {
-              if (cause instanceof RetainedMutationError && cause.reason === "intent") throw cause;
-              let admitted;
-              try {
-                admitted = await readRetainedRecord(directory);
-              } catch (e) {
-                if (!isNodeError(e, "ENOENT"))
-                  throw new RetainedMutationError(
-                    "recovery",
-                    "Admitted journal authority cannot be decoded safely.",
-                    mutationId,
-                    [],
-                    { cause: e },
-                  );
-              }
-              if (admitted?.version === 2) {
-                if (admitted.phase === "done") {
-                  try {
-                    // A terminal JSON rename may be visible despite a failed
-                    // directory sync. Re-establish durability before accepting it.
-                    await syncDirectory(directory);
-                    return await completePublicationReceipt(
-                      (await retainedMutationReceipt(directory))!,
-                    );
-                  } catch (retirement) {
+              if (original) {
+                if (original.recordDirectory !== identityDirectory) {
+                  const receipt = await retainedMutationReceipt(original.recordDirectory);
+                  if (receipt) return receipt; // Original receipt survives later D and explicit review/discard.
+                  if (original.recordDirectory !== directory)
                     throw new RetainedMutationError(
                       "recovery",
-                      "The completed namespace mutation has no durable acknowledgement.",
+                      "The original publication has unknown authority; it cannot be adopted at a rebound parent.",
                       mutationId,
-                      await retainedPaths(directory),
-                      { cause: retirement },
+                      await retainedPaths(original.recordDirectory),
                     );
-                  }
                 }
-                await durableJson(NodePath.join(directory, "record.json"), {
-                  ...admitted,
-                  phase: "done",
-                  outcome: "attention",
-                  failure: "recovery",
-                  generation: admitted.generation + 1,
-                });
+              }
+              const current = await Effect.runPromise(resolveTarget(input));
+              if (current.target !== resolved.target || current.root !== resolved.root)
+                throw new RetainedMutationError(
+                  "target",
+                  "Alias changed while waiting for native ownership.",
+                  mutationId,
+                );
+              if (
+                !(await bindingCurrent(admissionParent)) ||
+                (admissionDestination && !(await bindingCurrent(admissionDestination)))
+              )
+                throw new RetainedMutationError(
+                  "target",
+                  "Admitted root or physical parent changed before publication.",
+                  mutationId,
+                );
+              if (destination) {
+                const currentDestination = await Effect.runPromise(
+                  resolveTarget({ cwd: input.cwd, relativePath: destination.named.relativePath }),
+                );
+                if (
+                  currentDestination.target !== destination.target ||
+                  currentDestination.root !== destination.root
+                )
+                  throw new RetainedMutationError(
+                    "target",
+                    "Destination alias changed while waiting for native ownership.",
+                    mutationId,
+                  );
+              }
+              await settle(records, lease, directory);
+              if (
+                intent.expectedMutationEpoch !== undefined &&
+                (await epochFor(
+                  resolved.root,
+                  (await recordsUnderRoot(resolved.root)).filter(
+                    (entry) =>
+                      entry.directory !== directory && entry.directory !== identityDirectory,
+                  ),
+                )) !== intent.expectedMutationEpoch
+              )
+                throw new RetainedMutationError(
+                  "target",
+                  "Workspace mutated after binary publication admission.",
+                  mutationId,
+                );
+              const earlier = records.filter(
+                (entry) =>
+                  entry.mutationId === mutationId &&
+                  entry.directory !== directory &&
+                  entry.directory !== identityDirectory,
+              );
+              if (earlier.length > 1)
                 throw new RetainedMutationError(
                   "recovery",
-                  "Admitted native publication retired with retained attention.",
+                  "Multiple retained records claim this intent identity; none may be replayed as a new mutation.",
                   mutationId,
-                  await retainedPaths(directory),
-                  { cause },
                 );
-              }
-              if (!admitted) {
-                if (sourceMayHaveChanged) {
-                  await durableJson(NodePath.join(directory, "record.json"), {
-                    version: "native-publication-unknown",
-                    target: resolved.target,
-                    requestedPath: resolved.requestedPath,
-                    mutationId,
-                  }).catch(() => undefined); // The already-durable index still names this unknown authority if its journal cannot be restored.
+              const prior = earlier[0];
+              if (prior) {
+                const record = prior.record;
+                if (!record || record.version !== 2)
                   throw new RetainedMutationError(
                     "recovery",
-                    "Native namespace work lost its terminal journal; only explicit current review may retire it.",
+                    "An earlier legacy intent has unknown publication authority.",
+                    mutationId,
+                    await retainedPaths(prior.directory),
+                  );
+                if (
+                  record.target !== resolved.target ||
+                  record.destination !== (destination?.target ?? intent.destination ?? null) ||
+                  record.kind !== intent.kind ||
+                  record.condition !== intent.condition ||
+                  record.expected !== intent.expectedRevision ||
+                  record.desired !== (intent.bytes == null ? null : bytesRevision(intent.bytes)) ||
+                  record.guardMaxBytes !== (intent.guardMaxBytes ?? null) ||
+                  (record.expectedMutationEpoch ?? null) !== (intent.expectedMutationEpoch ?? null)
+                )
+                  throw new RetainedMutationError(
+                    "intent",
+                    "An earlier retained identity was reused with a different intent.",
+                    mutationId,
+                  );
+                const terminal = await retainedMutationReceipt(prior.directory);
+                if (terminal) return terminal;
+                throw new RetainedMutationError(
+                  "recovery",
+                  "An earlier retained identity is not a terminal publication receipt.",
+                  mutationId,
+                  await retainedPaths(prior.directory),
+                );
+              }
+              const attention = await attentionFor(await discover(), resolved);
+              if (attention && attention.mutationId !== mutationId)
+                throw new RetainedMutationError(
+                  "recovery",
+                  attention.message,
+                  attention.recoveryId,
+                  attention.retainedPaths,
+                );
+              const reference = {
+                version: 1 as const,
+                recordDirectory: directory,
+                target: resolved.target,
+                requestedPath: resolved.requestedPath,
+                mutationId,
+                intent: fingerprint,
+              };
+              if (retentionOverride)
+                await durableJson(NodePath.join(indexed, "reference.json"), reference);
+              if (deps.retentionLimitBytes != null) {
+                // The configured budget belongs to the shared store, not one source parent.
+                // Its exclusive lease stays owned until journal and native work retire.
+                const retainedBytes = await retainedTreeBytes(deps.retentionStorageDirectory);
+                let externalBytes = 0;
+                for (const entry of await allRecords()) {
+                  if (!within(deps.retentionStorageDirectory, entry.directory))
+                    externalBytes += await retainedTreeBytes(entry.directory);
+                }
+                const targetBytes = await retainedTreeBytes(resolved.target);
+                if (
+                  retainedBytes +
+                    externalBytes +
+                    targetBytes +
+                    (intent.bytes?.byteLength ?? 0) +
+                    16384 >
+                  deps.retentionLimitBytes
+                ) {
+                  if (missingParents)
+                    throw new RetainedMutationError(
+                      "recovery",
+                      "Directory preparation completed but storage could not admit the file publication.",
+                      mutationId,
+                    );
+                  await durableJson(NodePath.join(identityDirectory, "refusal.json"), {
+                    version: 1,
+                    outcome: "unchanged",
+                    reason: "storage",
+                  });
+                  throw new RetainedMutationError(
+                    "unavailable",
+                    "The shared retained-object budget cannot safely admit this intent.",
+                    mutationId,
+                  );
+                }
+              }
+              if (!original || original.recordDirectory === identityDirectory)
+                await durableJson(identityPath, reference);
+              let sourceMayHaveChanged = false;
+              const mutationLease: NativeFilePublicationLease = {
+                ...lease,
+                run: async (command) => {
+                  const previous = sourceMayHaveChanged;
+                  sourceMayHaveChanged = true;
+                  const reply = await lease.run(command);
+                  if (reply.outcome === "unchanged") sourceMayHaveChanged = previous;
+                  return reply;
+                },
+              };
+              const completePublicationReceipt = async (
+                result: RetainedMutationResult,
+              ): Promise<RetainedMutationResult> => {
+                if (
+                  intent.expectedMutationEpoch === undefined ||
+                  result.outcome !== "done" ||
+                  result.publicationEpoch !== undefined
+                )
+                  return result;
+                // The expected-epoch root EX lease remains held. Only this exact
+                // namespace mutation can have advanced the captured native epoch.
+                const terminal = await readRetainedRecord(result.recordDirectory);
+                if (
+                  terminal.version !== 2 ||
+                  terminal.phase !== "done" ||
+                  terminal.expectedMutationEpoch !== intent.expectedMutationEpoch
+                )
+                  throw new RetainedMutationError(
+                    "recovery",
+                    "The output receipt lost its exact publication fence.",
+                    mutationId,
+                    await retainedPaths(directory),
+                  );
+                lease.assertHeld();
+                const publicationEpoch = await epochFor(
+                  resolved.root,
+                  await recordsUnderRoot(resolved.root),
+                );
+                await durableJson(NodePath.join(result.recordDirectory, "record.json"), {
+                  ...terminal,
+                  publicationEpoch,
+                  generation: terminal.generation + 1,
+                });
+                return { ...result, publicationEpoch };
+              };
+              try {
+                return await completePublicationReceipt(
+                  await mutateRetainedFile(
+                    {
+                      ...intent,
+                      id,
+                      mutationId,
+                      cwd: resolved.root,
+                      relativePath: resolved.relativePath,
+                      requestedPath: resolved.requestedPath,
+                      retentionDirectory: retentionOverride ?? storage,
+                      nativePublicationHelper: helper,
+                      binding,
+                      ...(destinationBinding ? { destinationBinding } : {}),
+                      lease: mutationLease,
+                    },
+                    resolved.target,
+                    deps.retainedHooks,
+                  ),
+                );
+              } catch (cause) {
+                if (cause instanceof RetainedMutationError && cause.reason === "intent")
+                  throw cause;
+                let admitted;
+                try {
+                  admitted = await readRetainedRecord(directory);
+                } catch (e) {
+                  if (!isNodeError(e, "ENOENT"))
+                    throw new RetainedMutationError(
+                      "recovery",
+                      "Admitted journal authority cannot be decoded safely.",
+                      mutationId,
+                      [],
+                      { cause: e },
+                    );
+                }
+                if (admitted?.version === 2) {
+                  if (admitted.phase === "done") {
+                    try {
+                      // A terminal JSON rename may be visible despite a failed
+                      // directory sync. Re-establish durability before accepting it.
+                      await syncDirectory(directory);
+                      return await completePublicationReceipt(
+                        (await retainedMutationReceipt(directory))!,
+                      );
+                    } catch (retirement) {
+                      throw new RetainedMutationError(
+                        "recovery",
+                        "The completed namespace mutation has no durable acknowledgement.",
+                        mutationId,
+                        await retainedPaths(directory),
+                        { cause: retirement },
+                      );
+                    }
+                  }
+                  await durableJson(NodePath.join(directory, "record.json"), {
+                    ...admitted,
+                    phase: "done",
+                    outcome: "attention",
+                    failure: "recovery",
+                    generation: admitted.generation + 1,
+                  });
+                  throw new RetainedMutationError(
+                    "recovery",
+                    "Admitted native publication retired with retained attention.",
                     mutationId,
                     await retainedPaths(directory),
                     { cause },
                   );
                 }
-                if (missingParents) {
-                  await durableJson(identityPath, {
+                if (!admitted) {
+                  if (sourceMayHaveChanged) {
+                    await durableJson(NodePath.join(directory, "record.json"), {
+                      version: "native-publication-unknown",
+                      target: resolved.target,
+                      requestedPath: resolved.requestedPath,
+                      mutationId,
+                    }).catch(() => undefined); // The already-durable index still names this unknown authority if its journal cannot be restored.
+                    throw new RetainedMutationError(
+                      "recovery",
+                      "Native namespace work lost its terminal journal; only explicit current review may retire it.",
+                      mutationId,
+                      await retainedPaths(directory),
+                      { cause },
+                    );
+                  }
+                  if (missingParents) {
+                    await durableJson(identityPath, {
+                      version: 1,
+                      recordDirectory: identityDirectory,
+                      target: resolved.target,
+                      requestedPath: resolved.requestedPath,
+                      mutationId,
+                      intent: fingerprint,
+                    });
+                    throw new RetainedMutationError(
+                      "recovery",
+                      "Directory preparation remains retained after a pre-publication refusal.",
+                      mutationId,
+                      [],
+                      { cause },
+                    );
+                  }
+                  await durableJson(NodePath.join(identityDirectory, "refusal.json"), {
                     version: 1,
-                    recordDirectory: identityDirectory,
-                    target: resolved.target,
-                    requestedPath: resolved.requestedPath,
-                    mutationId,
-                    intent: fingerprint,
+                    outcome: "unchanged",
+                    reason: "native-admission",
                   });
                   throw new RetainedMutationError(
-                    "recovery",
-                    "Directory preparation remains retained after a pre-publication refusal.",
+                    "unavailable",
+                    "Native publication refused before any namespace displacement.",
                     mutationId,
                     [],
                     { cause },
                   );
                 }
-                await durableJson(NodePath.join(identityDirectory, "refusal.json"), {
-                  version: 1,
-                  outcome: "unchanged",
-                  reason: "native-admission",
-                });
-                throw new RetainedMutationError(
-                  "unavailable",
-                  "Native publication refused before any namespace displacement.",
-                  mutationId,
-                  [],
-                  { cause },
-                );
+                throw cause;
               }
-              throw cause;
-            }
-          },
-          signal,
-        );
-      } catch (cause) {
-        if (
-          missingParents &&
-          (!(cause instanceof RetainedMutationError) || cause.reason !== "recovery")
-        )
-          throw new RetainedMutationError(
-            "recovery",
-            "Directory preparation changed the namespace before publication retired.",
-            mutationId,
-            [],
-            { cause },
+            },
+            signal,
           );
-        throw cause;
-      }
-    });
+        } catch (cause) {
+          if (
+            missingParents &&
+            (!(cause instanceof RetainedMutationError) || cause.reason !== "recovery")
+          )
+            throw new RetainedMutationError(
+              "recovery",
+              "Directory preparation changed the namespace before publication retired.",
+              mutationId,
+              [],
+              { cause },
+            );
+          throw cause;
+        }
+      }),
+    );
   });
   const receipt = Effect.fnUntraced(function* (
     input: { cwd: string; relativePath: string },

@@ -636,6 +636,62 @@ describe("plain creation on a native host", () => {
 });
 
 describe("plain creation beside native replacement", () => {
+  it.live("refuses a plain creation reusing an id a waiting native save holds", () =>
+    fileMutationFixture(
+      async (h) => {
+        const other = NodePath.join(h.root, "other");
+        await NodeFSP.mkdir(other);
+        await NodeFSP.writeFile(NodePath.join(h.cwd, "a.tex"), "A");
+        const hold = (cwd: string, gate: Promise<void>) =>
+          h
+            .run(h.methods.getMutationEpoch({ cwd }))
+            .then((expectedEpoch) =>
+              h.run(
+                h.methods.withWorkspacePublicationFence({ cwd, expectedEpoch }, () =>
+                  Effect.promise(() => gate),
+                ),
+              ),
+            );
+        const gateA = Promise.withResolvers<void>(),
+          gateB = Promise.withResolvers<void>();
+        const fenceA = hold(h.cwd, gateA.promise),
+          fenceB = hold(other, gateB.promise);
+        await NodeTimersPromises.setTimeout(50);
+        // The native replacement holds its id while it waits behind the first fence.
+        const replaced = h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "a.tex",
+            contents: "C",
+            expectedRevision: revision("A"),
+            mutationId: "shared",
+          }),
+        );
+        await NodeTimersPromises.setTimeout(50);
+        await expect(
+          h.run(
+            h.methods.createBinaryFile({
+              cwd: other,
+              relativePath: "new.tex",
+              bytes: Buffer.from("N"),
+              mutationId: "shared",
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileMutationIntentConflictError" });
+        gateA.resolve();
+        gateB.resolve();
+        await Promise.all([fenceA, fenceB]);
+        expect(await replaced).toMatchObject({ revision: revision("C") });
+        await expect(NodeFSP.lstat(NodePath.join(other, "new.tex"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      },
+      {},
+      null,
+      (helper) => filePublicationHelperWithout(helper, ["atomicCreateMetadata"]),
+    ),
+  );
+
   it.live("refuses a native save reusing an id a waiting plain creation holds", () =>
     fileMutationFixture(
       async (h) => {
