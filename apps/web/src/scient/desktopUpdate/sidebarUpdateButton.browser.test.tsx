@@ -114,21 +114,54 @@ it("keeps the app's look when providers also have updates, and lists everything 
   expect(tooltip).toContain("Codex 0.48.0 → 0.50.1 · managed by Scient");
 });
 
-it("gives providers and servers alone a quieter look with a 13px icon", async () => {
+/** The computed value of a theme colour, for comparing with a rendered style. */
+function themeColor(className: string, property: "backgroundColor" | "color") {
+  const probe = document.createElement("span");
+  probe.className = className;
+  host!.append(probe);
+  const value = getComputedStyle(probe)[property];
+  probe.remove();
+  return value;
+}
+
+it("gives providers and servers alone a quieter look with a 13px icon and a visible focus ring", async () => {
   const button = await mountButton({ updateState: null, remote: true });
-  expect(button.className).toContain("bg-sidebar-control-surface");
-  expect(button.className).not.toContain("bg-primary");
+  const primary = themeColor("bg-primary", "backgroundColor");
+  expect(getComputedStyle(button).backgroundColor).not.toBe(primary);
+  expect(getComputedStyle(button).color).not.toBe(themeColor("text-primary-foreground", "color"));
   expect(button.querySelector("svg")!.getBoundingClientRect().width).toBe(13);
+  await userEvent.tab();
+  expect(document.activeElement).toBe(button);
+  expect(getComputedStyle(button).boxShadow).toContain(themeColor("bg-ring", "backgroundColor"));
   expect(await hoverTooltip(button)).toContain("Claude 2.1.3 → 2.2.0 · system install");
 });
 
-it("says what can update after a Restart, which stays a direct restart", async () => {
+it("keeps Restart a direct restart and says what can update afterwards", async () => {
   const button = await mountButton({
     updateState: { ...appUpdate, status: "downloaded", downloadedVersion: "1.5.0" },
     remote: true,
   });
   expect(button.textContent).toContain("Restart");
   expect(button.getAttribute("aria-label")).toContain("Then update 2 providers.");
+  await userEvent.click(button);
+  // The update-everything confirmation does not open.
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+});
+
+it("lists everything an update covers beside Beta release notes", async () => {
+  const button = await mountButton({
+    updateState: {
+      ...appUpdate,
+      channel: "beta",
+      releaseNotes: [{ version: "1.5.0-beta.1", items: ["Newest change"], totalItems: 1 }],
+    },
+    remote: true,
+  });
+  await userEvent.hover(button);
+  await expect
+    .poll(() => document.body.textContent ?? "")
+    .toContain("Codex 0.48.0 → 0.50.1 · managed by Scient");
+  expect(document.body.textContent).toContain("Newest change");
 });
 
 // Renders for choosing the shared-update colour: VITE_SCIENT_SIDEBAR_SCREENSHOTS=<dir>.

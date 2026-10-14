@@ -558,6 +558,7 @@ function SidebarUpdateControl() {
           {!showReleaseNotesPopover ? (
             <TooltipPopup
               align="center"
+              // SCIENT-FORK: the update-everything list needs a wider tooltip.
               className={
                 runsEverything && !isRunningEverything
                   ? "max-w-80 text-left"
@@ -602,6 +603,15 @@ function SidebarUpdateControl() {
               state={state}
               tooltip={tooltip}
             />
+            {/* SCIENT-FORK: release notes also list what update everything updates. */}
+            {runsEverything && !isRunningEverything ? (
+              <div className="mt-2 border-t px-1 pt-2">
+                <UpdateEverythingTooltip
+                  summary={everything.summary}
+                  details={everything.scient.details}
+                />
+              </div>
+            ) : null}
           </PopoverPopup>
         ) : null}
       </Popover>

@@ -11,10 +11,11 @@ import {
  * The sidebar update button when it updates providers and servers rather than
  * this app. Built from the theme's own sidebar colours, so every theme,
  * including custom and imported ones, keeps its contrast; the app's update
- * keeps the theme's primary action colour.
+ * keeps the theme's primary action colour. The outline is a border, so the
+ * button's keyboard focus ring keeps its own colour.
  */
 export const SHARED_UPDATE_BUTTON_CLASS =
-  "bg-sidebar-control-surface text-sidebar-foreground ring-1 ring-sidebar-border ring-inset";
+  "border border-sidebar-border bg-sidebar-control-surface text-sidebar-foreground";
 export const SHARED_UPDATE_BUTTON_HOVER_CLASS = "hover:bg-sidebar-row-hover";
 
 /**
