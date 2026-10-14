@@ -67,6 +67,10 @@ function classifyReason(error: unknown): MarkdownPersistenceFailureKind {
       error.failure === "mutation_intent_conflict"
     )
       return error.failure;
+    // The server proved nothing was written (a plain save failed before its rename), so
+    // trying the same intent again is safe and needs no review.
+    if (error.failure === "operation_failed" && error.publicationOutcome === "unchanged")
+      return "transient";
     if (error.failure === "operation_failed") return "operation";
     return "terminal";
   }

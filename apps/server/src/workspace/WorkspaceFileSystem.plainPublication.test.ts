@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -10,22 +11,44 @@ import {
 import { bytesRevision } from "../scient/workspace/RetainedFileMutation.ts";
 
 const revision = (text: string) => bytesRevision(Buffer.from(text));
-/** The Windows helper owns roots and leases but cannot replace or create a file in one step. */
-const windowsLike = (helper: string) =>
-  filePublicationHelperWithout(helper, [
-    "atomicExchange",
-    "atomicCreateMetadata",
-    "atomicPublicationMetadata",
-  ]);
-const plain = (body: Parameters<typeof fileMutationFixture>[0]) =>
-  fileMutationFixture(body, {}, null, windowsLike);
 const leftovers = async (directory: string) =>
   (await NodeFSP.readdir(directory)).filter((name) => name.endsWith(".scient-tmp"));
+const posix = HostProcess.Platform.defaultValue() !== "win32";
 
-describe("plain publication when the helper cannot publish atomically", () => {
+/**
+ * Plain publication in each way a host reaches it: the Windows helper (no shared leases,
+ * no one-step replace or create), a native host whose volume cannot publish in one step,
+ * and no helper at all. Where no helper can be compiled every mode runs without one.
+ */
+const modes = [
+  [
+    "a Windows-like helper",
+    (helper: string) =>
+      filePublicationHelperWithout(helper, [
+        "sharedPublicationLease",
+        "atomicExchange",
+        "atomicCreateMetadata",
+        "atomicPublicationMetadata",
+      ]),
+  ],
+  [
+    "a native helper without one-step publication",
+    (helper: string) =>
+      filePublicationHelperWithout(helper, [
+        "atomicExchange",
+        "atomicCreateMetadata",
+        "atomicPublicationMetadata",
+      ]),
+  ],
+  ["no helper", async () => undefined],
+] as const;
+
+describe.each(modes)("plain publication with %s", (_name, wrap) => {
+  const plain = (body: Parameters<typeof fileMutationFixture>[0]) =>
+    fileMutationFixture(body, {}, null, wrap);
+
   it.live("saves changed bytes, keeps permissions and leaves no temporary file", () =>
     plain(async (h) => {
-      if (!h.helper) return;
       const target = NodePath.join(h.cwd, "main.tex");
       await NodeFSP.writeFile(target, "A", { mode: 0o640 });
       const saved = await h.run(
@@ -38,7 +61,7 @@ describe("plain publication when the helper cannot publish atomically", () => {
       );
       expect(saved).toMatchObject({ relativePath: "main.tex", revision: revision("C") });
       expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
-      expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o640);
+      if (posix) expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o640);
       expect(await leftovers(h.cwd)).toEqual([]);
       expect(await h.settledRead("main.tex")).toMatchObject({ contents: "C" });
     }),
@@ -46,7 +69,6 @@ describe("plain publication when the helper cannot publish atomically", () => {
 
   it.live("refuses a stale revision without touching the file", () =>
     plain(async (h) => {
-      if (!h.helper) return;
       const target = NodePath.join(h.cwd, "main.tex");
       await NodeFSP.writeFile(target, "outside B");
       await expect(
@@ -67,39 +89,39 @@ describe("plain publication when the helper cannot publish atomically", () => {
     }),
   );
 
-  it.live("reports a failure before the rename as unchanged, with the system's error", () =>
-    plain(async (h) => {
-      if (!h.helper) return;
-      const folder = NodePath.join(h.cwd, "locked");
-      await NodeFSP.mkdir(folder);
-      await NodeFSP.writeFile(NodePath.join(folder, "main.tex"), "A");
-      await NodeFSP.chmod(folder, 0o555);
-      try {
-        await expect(
-          h.run(
-            h.methods.writeFile({
-              cwd: h.cwd,
-              relativePath: "locked/main.tex",
-              contents: "C",
-              expectedRevision: revision("A"),
-            }),
-          ),
-        ).rejects.toMatchObject({
-          _tag: "WorkspaceFileSystemOperationError",
-          publicationOutcome: "unchanged",
-          cause: { code: "EACCES" },
-        });
-      } finally {
-        await NodeFSP.chmod(folder, 0o755);
-      }
-      expect(await NodeFSP.readFile(NodePath.join(folder, "main.tex"), "utf8")).toBe("A");
-      expect(await leftovers(folder)).toEqual([]);
-    }),
+  it.live.skipIf(!posix)(
+    "reports a failure before the rename as unchanged, with the system's error",
+    () =>
+      plain(async (h) => {
+        const folder = NodePath.join(h.cwd, "locked");
+        await NodeFSP.mkdir(folder);
+        await NodeFSP.writeFile(NodePath.join(folder, "main.tex"), "A");
+        await NodeFSP.chmod(folder, 0o555);
+        try {
+          await expect(
+            h.run(
+              h.methods.writeFile({
+                cwd: h.cwd,
+                relativePath: "locked/main.tex",
+                contents: "C",
+                expectedRevision: revision("A"),
+              }),
+            ),
+          ).rejects.toMatchObject({
+            _tag: "WorkspaceFileSystemOperationError",
+            publicationOutcome: "unchanged",
+            cause: { code: "EACCES" },
+          });
+        } finally {
+          await NodeFSP.chmod(folder, 0o755);
+        }
+        expect(await NodeFSP.readFile(NodePath.join(folder, "main.tex"), "utf8")).toBe("A");
+        expect(await leftovers(folder)).toEqual([]);
+      }),
   );
 
   it.live("replays a retried save, converges after a restart and refuses a reused identity", () =>
     plain(async (h) => {
-      if (!h.helper) return;
       const target = NodePath.join(h.cwd, "main.tex");
       await NodeFSP.writeFile(target, "A");
       const input = {
@@ -123,7 +145,6 @@ describe("plain publication when the helper cannot publish atomically", () => {
 
   it.live("creates exclusively, including missing folders, and refuses an existing file", () =>
     plain(async (h) => {
-      if (!h.helper) return;
       const created = await h.run(
         h.methods.createBinaryFile({
           cwd: h.cwd,
@@ -155,9 +176,9 @@ describe("plain publication when the helper cannot publish atomically", () => {
 
   it.live("advances the workspace epoch so stale build fences and exports refuse", () =>
     plain(async (h) => {
-      if (!h.helper) return;
       await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
       const before = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+      expect(await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }))).toBe(before);
       await h.run(
         h.methods.writeFile({
           cwd: h.cwd,
@@ -177,6 +198,12 @@ describe("plain publication when the helper cannot publish atomically", () => {
         ),
       ).rejects.toMatchObject({ _tag: "WorkspaceFileTargetChangedError" });
       await expect(NodeFSP.lstat(artifact)).rejects.toMatchObject({ code: "ENOENT" });
+      await h.run(
+        h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: after }, () =>
+          Effect.promise(() => NodeFSP.writeFile(artifact, "current")),
+        ),
+      );
+      expect(await NodeFSP.readFile(artifact, "utf8")).toBe("current");
       const pdf = Buffer.from("%PDF-1.7\0binary");
       const exported = await h.run(
         h.methods.writeBinaryFile({
@@ -203,6 +230,103 @@ describe("plain publication when the helper cannot publish atomically", () => {
           }),
         ),
       ).rejects.toMatchObject({ _tag: "WorkspaceFileTargetChangedError" });
+      // A save under a nested root advances the enclosing root's epoch too.
+      await NodeFSP.mkdir(NodePath.join(h.cwd, "chapter"));
+      const outer = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+      await h.run(
+        h.methods.writeFile({
+          cwd: NodePath.join(h.cwd, "chapter"),
+          relativePath: "one.tex",
+          contents: "One",
+        }),
+      );
+      expect(await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }))).not.toBe(outer);
     }),
   );
 });
+
+describe.each(modes.filter(([name]) => name !== "a native helper without one-step publication"))(
+  "plain moves and deletes with %s",
+  (_name, wrap) => {
+    const plain = (body: Parameters<typeof fileMutationFixture>[0]) =>
+      fileMutationFixture(body, {}, null, wrap);
+
+    it.live("moves a file only when its revision is current and never over another file", () =>
+      plain(async (h) => {
+        await NodeFSP.writeFile(NodePath.join(h.cwd, "a.tex"), "A");
+        await NodeFSP.writeFile(NodePath.join(h.cwd, "taken.tex"), "T");
+        await expect(
+          h.run(
+            h.methods.renameFile({
+              cwd: h.cwd,
+              relativePath: "a.tex",
+              destinationRelativePath: "taken.tex",
+              expectedRevision: revision("A"),
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileExistsError" });
+        await expect(
+          h.run(
+            h.methods.renameFile({
+              cwd: h.cwd,
+              relativePath: "a.tex",
+              destinationRelativePath: "b.tex",
+              expectedRevision: revision("stale"),
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileRevisionConflictError" });
+        const moved = await h.run(
+          h.methods.renameFile({
+            cwd: h.cwd,
+            relativePath: "a.tex",
+            destinationRelativePath: "parts/b.tex",
+            expectedRevision: revision("A"),
+            mutationId: "move",
+          }),
+        );
+        expect(moved).toMatchObject({
+          destinationRelativePath: "parts/b.tex",
+          revision: revision("A"),
+          mutationId: "move",
+        });
+        await expect(NodeFSP.lstat(NodePath.join(h.cwd, "a.tex"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "parts/b.tex"), "utf8")).toBe("A");
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "taken.tex"), "utf8")).toBe("T");
+      }),
+    );
+
+    it.live("deletes only the current revision and removes folders it empties", () =>
+      plain(async (h) => {
+        await NodeFSP.mkdir(NodePath.join(h.cwd, "old/deep"), { recursive: true });
+        const target = NodePath.join(h.cwd, "old/deep/x.tex");
+        await NodeFSP.writeFile(target, "X");
+        await expect(
+          h.run(
+            h.methods.deleteFile({
+              cwd: h.cwd,
+              relativePath: "old/deep/x.tex",
+              expectedRevision: revision("stale"),
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileRevisionConflictError" });
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("X");
+        await h.run(
+          h.methods.deleteFile({
+            cwd: h.cwd,
+            relativePath: "old/deep/x.tex",
+            expectedRevision: revision("X"),
+            removeEmptyFolders: true,
+          }),
+        );
+        await expect(NodeFSP.lstat(NodePath.join(h.cwd, "old"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        expect(
+          await h.run(h.methods.listFileVersions({ cwd: h.cwd, relativePath: "old/deep/x.tex" })),
+        ).toMatchObject({ versions: [], attention: null });
+      }),
+    );
+  },
+);

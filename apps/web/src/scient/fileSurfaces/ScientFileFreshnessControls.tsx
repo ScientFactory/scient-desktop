@@ -313,9 +313,9 @@ export function ScientFileFreshnessStatus(
   const failed =
     props.sessionAttention === "failure" ||
     (props.saveError?.relativePath === props.relativePath && props.saveError !== null);
+  // Any failed read, with or without an earlier copy on screen, means the file isn't loaded.
   const readFailed =
-    props.sessionAttention === "refresh" ||
-    Boolean(props.relativePath && props.readError && props.hasFallbackData);
+    props.sessionAttention === "refresh" || Boolean(props.relativePath && props.readError);
   const attention =
     props.saveError?.relativePath === props.relativePath
       ? (props.saveError?.attention ?? props.sessionAttention)

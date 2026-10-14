@@ -128,10 +128,28 @@ import * as Socket from "effect/socket/Socket";
 import * as SqlClient from "effect/sql/SqlClient";
 import { afterAll, beforeAll, vi } from "vite-plus/test";
 
+import {
+  nativeFilePublicationCapabilities,
+  resolveNativeFilePublicationHelperPath,
+} from "./scient/workspace/NativeFilePublication.ts";
+
 const decodeWorkflowSubagent = Schema.decodeUnknownSync(OrchestrationV2SubagentJson);
 const encodeWorkflowSubagent = Schema.encodeSync(OrchestrationV2SubagentJson);
 const decodeWorkflowTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+// Retained history exists only where the resolved helper grants native publication authority.
+const nativePublicationServer = await (async () => {
+  const helper = await resolveNativeFilePublicationHelperPath();
+  if (helper === undefined) return false;
+  const capabilities = await nativeFilePublicationCapabilities(helper);
+  return (
+    capabilities.strictCurrentRoot &&
+    capabilities.publicationLease &&
+    capabilities.sharedPublicationLease &&
+    capabilities.exclusiveMove &&
+    capabilities.exclusiveLink
+  );
+})();
 const SUCCESSFUL_GIT_EXECUTION = {
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout: "",
@@ -9420,7 +9438,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect(
+  it.effect.skipIf(!nativePublicationServer)(
     "preserves websocket file mutation ownership, retained history, and recovery refusal",
     () =>
       Effect.gen(function* () {

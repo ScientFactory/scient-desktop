@@ -78,6 +78,20 @@ describe("Markdown persistence transport", () => {
     expect(classifyMarkdownPersistenceFailure(cause)).toBe("terminal");
   });
 
+  it("retries only operation failures the server proved left the file unchanged", () => {
+    const failed = (publicationOutcome?: "unchanged" | "retained-attention") =>
+      new ProjectWriteFileError({
+        cwd: target.cwd,
+        relativePath: target.relativePath,
+        failure: "operation_failed",
+        osErrorCode: "ENOSPC",
+        ...(publicationOutcome ? { publicationOutcome } : {}),
+      });
+    expect(classifyMarkdownPersistenceFailure(failed("unchanged"))).toBe("transient");
+    expect(classifyMarkdownPersistenceFailure(failed())).toBe("operation");
+    expect(classifyMarkdownPersistenceFailure(failed("retained-attention"))).toBe("operation");
+  });
+
   it("never confirms decoded-equal text whose raw bytes differ from the requested save", async () => {
     const malformedBytes = Uint8Array.from([0xff]);
     mocks.run

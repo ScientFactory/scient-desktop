@@ -4,7 +4,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "@effect/vitest";
-import { fileMutationFixture } from "../scient/workspace/fileExchange.testkit.ts";
+import {
+  fileMutationFixture,
+  nativePublicationHost,
+} from "../scient/workspace/fileExchange.testkit.ts";
 import {
   bytesRevision,
   directoryIdentity,
@@ -16,7 +19,9 @@ import {
 import { WorkspaceFileSystemOperationError } from "./WorkspaceFileSystem.ts";
 const revision = (text: string) => bytesRevision(Buffer.from(text));
 const deferred = () => Promise.withResolvers<void>();
-describe("native workspace publication admission", () => {
+// Hosts without native publication authority save plainly (WorkspaceFileSystem.plainPublication.test.ts).
+const native = await nativePublicationHost();
+describe.skipIf(!native)("native workspace publication admission", () => {
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
     "saves changed bytes, preserves permissions, and replays the receipt without overwriting outside edits",
     () =>

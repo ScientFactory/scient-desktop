@@ -1,52 +1,65 @@
 # Saving workspace files
 
-Every save, create, rename and delete goes through `publish` in
-`apps/server/src/scient/workspace/WorkspaceFileMutations.ts`. A save takes one of
-two paths, chosen by what the native helper (`native/file-exchange`) reports for
-the file's root and parent folder.
+Workspace mutations live in
+`apps/server/src/scient/workspace/WorkspaceFileMutations.ts`. When the service
+is created it asks the native helper (`native/file-exchange`) what it can do and
+chooses one of two modes for the host.
 
-**Native publication.** Used when the helper has strict current-root authority,
-publication leases, exclusive move and link, and one-step replacement
-(`atomicExchange`) or, for a new file, one-step complete creation
-(`atomicCreateMetadata`). It keeps the previous version and a durable record, so
-an interrupted save can be recovered and reviewed. macOS on APFS qualifies.
+**Native publication.** Requires strict current-root authority, publication
+leases including shared ancestor leases, and exclusive move and link. macOS
+qualifies. Saves, creates, renames and deletes keep the previous version and a
+durable record, so an interrupted operation can be recovered and reviewed. A
+save also needs one-step replacement (`atomicExchange`) and a new file one-step
+complete creation (`atomicCreateMetadata`); where a volume lacks these (creating
+on a macOS volume without clone support), that one operation is published
+plainly under the same leases and checks.
 
-**Plain publication.** Used for saves and new files when the helper only provides
-leases: Windows (no one-step replacement or creation), Linux (no strict
-current-root authority), and new files on macOS volumes without clone support. It runs under
-the same root and parent leases, after the same pending-record settlement,
-attention, epoch and revision checks. It then writes a temporary file next to
-the target, flushes it, and renames it over the target, or hard-links it for an
-exclusive create (copy-exclusive on volumes without hard links). Permissions of
-an existing file are kept. On Windows, a rename refused because another program
-briefly holds the file is retried with short back-off. No earlier version is
-kept, as on `main` before native publication existed.
+**Plain host.** Used when any of those primitives is missing: Windows (no shared
+leases, no one-step replace or create), Linux (no strict current-root
+authority), or no helper at all. Every mutation, settled read, epoch read and
+publication fence runs behind one in-process lock, as on `main` before native
+publication existed. No earlier versions are kept; version history is empty and
+Overleaf retention reports that it needs native publication.
 
-Plain publication keeps these guarantees:
+Plain publication, in either mode:
 
-- A stale revision is refused and the file is untouched (`revision_conflict`).
-- A lost reply converges: if the requested bytes are already on disk, the save
+- Writes a temporary file next to the target and flushes it, then checks the
+  folder and the guarded revision again and renames the file over the target
+  (Windows retries a rename refused because another program briefly holds the
+  file). A new file is hard-linked into place, never replacing one; on volumes
+  without hard links the name is reserved exclusively and the complete file
+  renamed over that empty reservation. Permissions of an existing file are kept.
+- Refuses a stale revision and leaves the file untouched (`revision_conflict`).
+- Converges a lost reply: if the requested bytes are already on disk the save
   succeeds without writing. A retry with the same mutation id in the same server
-  run replays its receipt; reusing the id for different bytes is refused.
-- Each plain save advances the workspace mutation epoch (an in-memory count with
-  a per-run nonce), so build fences and PDF exports captured before it refuse.
-  Exports also re-check source contents, which covers a server restart.
-- A failure before the final rename or link reports an `"unchanged"`
-  publication outcome with the operating system's error code.
+  run replays its receipt; reusing the id for different bytes is refused, also
+  across the plain and native paths.
+- Reports a failure that left the target exactly as before as an `"unchanged"`
+  publication outcome with the operating system's error code. If the rename or
+  link call fails it re-reads the target: the requested bytes count as done, the
+  previous bytes as unchanged, anything else stays unknown.
+- Advances the workspace mutation epoch before its rename, so build fences and
+  PDF exports captured earlier refuse. One count covers every root, including
+  nested ones. Until a run publishes plainly the epoch stays what it was before a
+  restart; builds and exports also re-check source contents.
 
-Overleaf retention (an explicit retention directory), renames and deletes still
-require native publication authority. Windows qualifies for them; Linux does not
-yet (no strict current-root authority), so renames and deletes are refused there.
-Without any helper, reads fail as well, so a missing helper is an installation
-fault rather than a save fallback case.
+Plain moves link the file to its new name (never replacing one), confirm it is
+the same file, then remove the old name; if that fails the new name is removed
+again. Plain deletes check the current revision first. Both can remove folders
+they leave empty.
+
+Plain publication cannot stop another program from changing the file between
+the final check and the rename, and cannot pin folders against being swapped
+while it works. These are the guarantees `main` had; native publication is what
+removes them.
 
 ## What the user sees
 
-Routine saves are silent. A transient failure retries after 0.25, 1 and 3
-seconds; meanwhile the LaTeX file status reads "Retrying…". Only then does the
-document show a one-line notice (`ScientMarkdownPersistenceNotice`, shared by
-Markdown and LaTeX): a plain title with the reason in words when the system gave
-one ("Couldn't save: the disk is full."), one short sentence, the actions, and
-**Details** with the raw error, code and references for bug reports. A failure
-the server proved unchanged reads "Couldn't save … Nothing was written." rather
-than an unknown outcome.
+Routine saves are silent. A failure the server proved left the file unchanged
+retries after 0.25, 1 and 3 seconds (the LaTeX file status reads "Retrying…"),
+then the document shows a one-line notice (`ScientMarkdownPersistenceNotice`,
+shared by Markdown and LaTeX): "Couldn't save: the disk is full. Your changes are
+still here." with **Try again** and **Details** (raw error, code and references,
+with **Copy details**). Outcomes that need checking keep their review actions
+with plain labels: **Show file on disk**, **Continue from this version**, **Open
+earlier version**.

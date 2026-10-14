@@ -22,7 +22,10 @@ import {
   directoryIdentity,
   type RetainedMutationHooks,
 } from "./RetainedFileMutation.ts";
-import { ensureNativePrivateRetentionDirectory } from "./NativeFilePublication.ts";
+import {
+  ensureNativePrivateRetentionDirectory,
+  nativeFilePublicationCapabilities,
+} from "./NativeFilePublication.ts";
 
 let compiled: Promise<string | undefined> | undefined;
 /** Compile the shipped boundary, never silently reuse a developer's binary or a pathname fallback. */
@@ -51,6 +54,20 @@ export function filePublicationTestHelper() {
     ]);
     return helper;
   })());
+}
+
+/** Whether the compiled helper gives this host native publication authority. */
+export async function nativePublicationHost() {
+  const helper = await filePublicationTestHelper();
+  if (helper === undefined) return false;
+  const capabilities = await nativeFilePublicationCapabilities(helper);
+  return (
+    capabilities.strictCurrentRoot &&
+    capabilities.publicationLease &&
+    capabilities.sharedPublicationLease &&
+    capabilities.exclusiveMove &&
+    capabilities.exclusiveLink
+  );
 }
 
 /** Wraps the helper so it reports capabilities as unavailable, as the Windows helper does. */
@@ -88,7 +105,7 @@ export const fileMutationFixture = Effect.fnUntraced(
     }) => Promise<void>,
     hooks: RetainedMutationHooks = {},
     retentionLimitBytes: number | null = null,
-    wrapHelper?: (helper: string) => Promise<string>,
+    wrapHelper?: (helper: string) => Promise<string | undefined>,
   ) {
     const compiledHelper = yield* Effect.promise(filePublicationTestHelper);
     const helper =

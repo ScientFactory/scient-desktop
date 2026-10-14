@@ -122,7 +122,9 @@ export function ScientMarkdownPersistenceNotice({
     reviewMatches && !review.missing ? `Disk revision: ${review.revision}` : null,
   ].filter((line): line is string => line !== null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  // Names the exact text last copied, so different details never read as copied.
+  const [copiedText, setCopiedText] = useState<string | null>(null);
+  const detailsText = details.join("\n");
 
   useEffect(() => {
     if (issue === previousIssue.current) return;
@@ -422,20 +424,20 @@ export function ScientMarkdownPersistenceNotice({
                 className="w-full overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 font-mono text-muted-foreground"
                 data-persistence-reason={reason !== null || undefined}
               >
-                {details.join("\n")}
+                {detailsText}
               </pre>
               <Button
                 size="xs"
                 variant="outline"
                 onClick={() =>
-                  void navigator.clipboard?.writeText(details.join("\n")).then(
-                    () => setCopied(true),
-                    () => setCopied(false),
+                  void navigator.clipboard?.writeText(detailsText).then(
+                    () => setCopiedText(detailsText),
+                    () => setCopiedText(null),
                   )
                 }
               >
                 <Copy className="size-3" aria-hidden="true" />
-                {copied ? "Copied" : "Copy details"}
+                {copiedText === detailsText ? "Copied" : "Copy details"}
               </Button>
             </div>
           ) : null}

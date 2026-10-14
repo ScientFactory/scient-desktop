@@ -10,6 +10,7 @@ import type {
 import { EnvironmentId, ProjectWriteFileError } from "@t3tools/contracts";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 import { ScientMarkdownPersistenceNotice } from "./ScientMarkdownPersistenceNotice";
+import { classifyMarkdownPersistenceFailure } from "../persistence/markdownPersistenceTransport";
 import { MarkdownPersistenceRegistry } from "../persistence/markdownPersistenceRegistry";
 import {
   markdownViewTransition,
@@ -232,7 +233,7 @@ describe("Markdown persistence feedback", () => {
     const open = vi.fn();
     const host = mount(coordinator, { onOpenFile: open });
     expect(
-      [...host.querySelectorAll("button")].some((button) => button.textContent === "Retry"),
+      [...host.querySelectorAll("button")].some((button) => button.textContent === "Try again"),
     ).toBe(false);
     await act(async () => click(host, "Open earlier version"));
     expect(open).toHaveBeenCalledWith("/synthetic-retained/old.md");
@@ -622,7 +623,48 @@ describe("Markdown persistence feedback", () => {
     expect(shadow.activeElement).toBe(source);
   });
 
-  it("names the system's reason in plain words and keeps technical details behind Details", async () => {
+  it("retries a save the server proved unwritten, then offers Try again with the reason", async () => {
+    let attempts = 0;
+    const coordinator = new MarkdownPersistenceCoordinator({
+      source: "A",
+      revision: "rA",
+      write: async () => {
+        attempts++;
+        throw new ProjectWriteFileError({
+          cwd: "/synthetic",
+          relativePath: "notes.md",
+          failure: "operation_failed",
+          osErrorCode: "ENOSPC",
+          publicationOutcome: "unchanged",
+        });
+      },
+      read: async () => ({ source: "A", revision: "rA" }),
+      classifyFailure: classifyMarkdownPersistenceFailure,
+      retryDelaysMs: [10, 20],
+    });
+    const host = mount(coordinator);
+    await act(async () => {
+      coordinator.change("B");
+      void coordinator.flushNow();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    // Still retrying: nothing to act on yet.
+    expect(host.querySelector("[role=region]")).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(attempts).toBe(3);
+    const region = host.querySelector("[role=region]")!;
+    expect(region.textContent).toContain("Couldn’t save: the disk is full.");
+    expect(region.textContent).toContain("Your changes are still here.");
+    expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "Try again",
+      "Details",
+    ]);
+    expect(coordinator.getSnapshot()).toMatchObject({ attention: null, draftSource: "B" });
+  });
+
+  it("words an unknown outcome the server proved unchanged as a refusal, details behind Details", async () => {
     const coordinator = new MarkdownPersistenceCoordinator({
       source: "A",
       revision: "rA",

@@ -83,6 +83,18 @@ describe("ScientFileFreshnessStatus", () => {
     );
     expect(refresh).toContain('aria-label="File status: The latest file couldn’t be loaded"');
     expect(refresh).not.toContain("Not saved");
+
+    // A file that never loaded is not "Saved", even with no earlier copy on screen.
+    const neverLoaded = renderToStaticMarkup(
+      <ScientFileFreshnessStatus
+        {...quiet}
+        pending={false}
+        readError="Failed to read"
+        hasFallbackData={false}
+      />,
+    );
+    expect(neverLoaded).toContain('aria-label="File status: The latest file couldn’t be loaded"');
+    expect(neverLoaded).not.toContain('aria-label="File status: Saved"');
   });
 });
 
