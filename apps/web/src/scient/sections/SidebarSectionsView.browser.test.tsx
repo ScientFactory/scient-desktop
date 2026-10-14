@@ -28,7 +28,13 @@ vi.mock("./actions", () => ({
 }));
 
 const { SidebarSectionsView } = await import("./SidebarSectionsView");
-const { GENERAL_SECTION_GROUP_ID, groupThreadsBySection } = await import("./logic");
+const { GENERAL_SECTION_GROUP_ID, groupThreadsBySection, sectionGroupId } = await import("./logic");
+
+/** The group id of section `id` on the test environment; General stays General. */
+const groupKey = (id: string) =>
+  id === GENERAL_SECTION_GROUP_ID ? id : sectionGroupId({ environmentId: "env", sectionId: id });
+/** The section a drop files into, on the test environment. */
+const into = (sectionId: string) => ({ environmentId: "env", sectionId });
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -44,8 +50,8 @@ afterEach(() => {
 
 type Row = { readonly id: string };
 
-const thread = (id: string, sectionId: string | null) =>
-  ({ id, environmentId: "env", sectionId, pinnedAt: null, session: null }) as never;
+const thread = (id: string, sectionId: string | null, environmentId = "env") =>
+  ({ id, environmentId, sectionId, pinnedAt: null, session: null }) as never;
 
 function renderView(
   onReorderSections: (ids: readonly string[]) => void,
@@ -55,6 +61,9 @@ function renderView(
     readonly renaming?: string;
     readonly onRename?: (name: string) => void;
     readonly promoted?: boolean;
+    /** Adds a General thread on another environment, whose sections aren't listed. */
+    readonly foreignThread?: boolean;
+    readonly environmentLabels?: ReadonlyMap<string, string>;
     readonly onManualPlacement?: (
       groupId: string,
       order: readonly string[],
@@ -69,12 +78,12 @@ function renderView(
     order,
   }));
   const groups = groupThreadsBySection({
-    sections: sections as never,
-    generalIndex: 0,
+    layouts: [{ environmentId: "env", sections: sections as never, generalIndex: 0 }],
     pinned: [],
     active: [
       thread("g1", null),
       thread("g2", null),
+      ...(options.foreignThread ? [thread("x1", "a", "other")] : []),
       ...(options.promoted ? [3, 1, 2] : [1, 2, 3]).map((n) => thread(`a${n}`, "a")),
       ...[1, 2, 3].map((n) => thread(`b${n}`, "b")),
     ],
@@ -86,11 +95,12 @@ function renderView(
   root.render(
     <SidebarSectionsView
       groups={groups as never}
+      environmentLabels={options.environmentLabels ?? null}
       {...(options.promoted
-        ? { canonicalGroupOrders: new Map([["a", ["env:a1", "env:a2", "env:a3"]]]) }
+        ? { canonicalGroupOrders: new Map([[groupKey("a"), ["env:a1", "env:a2", "env:a3"]]]) }
         : {})}
       {...(options.onManualPlacement ? { onManualPlacement: options.onManualPlacement } : {})}
-      collapsedGroupIds={new Set(options.collapsed ?? [])}
+      collapsedGroupIds={new Set((options.collapsed ?? []).map(groupKey))}
       routeThreadKey={null}
       onToggleGroup={() => {}}
       snoozedThreads={[]}
@@ -132,7 +142,7 @@ function renderView(
       onReorderSections={onReorderSections}
       onSectionMenu={() => {}}
       onNewThreadInSection={() => {}}
-      renamingSectionId={options.renaming ?? null}
+      renamingSectionId={options.renaming === undefined ? null : groupKey(options.renaming)}
       onRenamingSectionChange={() => {}}
       onRenameSection={(_id: string, name: string) => options.onRename?.(name)}
       onStartCreateSection={() => {}}
@@ -143,8 +153,11 @@ function renderView(
 const nextFrame = () =>
   new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 16)));
 
-const headerOf = (groupId: string) =>
-  document.querySelector<HTMLElement>(`[data-section-header="${groupId}"]`)!;
+/** A header by section id (or General's id). */
+const headerOf = (id: string) =>
+  document.querySelector<HTMLElement>(
+    `[data-section-header="${globalThis.CSS.escape(groupKey(id))}"]`,
+  )!;
 
 /** Layout position, ignoring the transforms blocks slide by. */
 const layoutTops = () =>
@@ -205,7 +218,9 @@ it("drags a section as a block without hiding rows or reflowing the list", async
 
   pointer("pointerup", document, x, y);
   await nextFrame();
-  expect(onReorderSections).toHaveBeenCalledWith([GENERAL_SECTION_GROUP_ID, "c", "a", "b"]);
+  expect(onReorderSections).toHaveBeenCalledWith(
+    [GENERAL_SECTION_GROUP_ID, "c", "a", "b"].map(groupKey),
+  );
   expect(document.querySelectorAll("[data-row]").length).toBe(rowCount);
 });
 
@@ -229,7 +244,7 @@ it("still files a dragged thread into the section it is dropped in", async () =>
   await nextFrame();
   expect(moveThreadsToSection).toHaveBeenCalledWith(
     [expect.objectContaining({ threadId: "g1" })],
-    "b",
+    into("b"),
   );
 });
 
@@ -256,7 +271,7 @@ it("files a thread dragged up onto a collapsed section's header into that sectio
   await nextFrame();
   expect(moveThreadsToSection).toHaveBeenCalledWith(
     [expect.objectContaining({ threadId: "b2" })],
-    "a",
+    into("a"),
   );
 });
 
@@ -300,7 +315,7 @@ it.each([
     await nextFrame();
     expect(moveThreadsToSection).toHaveBeenCalledWith(
       [expect.objectContaining({ threadId: source })],
-      "a",
+      into("a"),
     );
     const ids = [...document.querySelectorAll<HTMLElement>("[data-row]")].map(
       (node) => node.dataset.row,
@@ -646,7 +661,7 @@ it.each([false, true])(
     await vi.waitFor(() =>
       expect(moveThreadsToSection).toHaveBeenCalledWith(
         [expect.objectContaining({ threadId: "b2" })],
-        "a",
+        into("a"),
       ),
     );
     expect(reorderActiveThread).not.toHaveBeenCalled();
@@ -667,6 +682,41 @@ it.each([false, true])(
   },
 );
 
+it("refuses to drop a thread into another environment's section", async () => {
+  renderView(vi.fn(), { foreignThread: true });
+  await nextFrame();
+  // Its section id names a section only on the test environment: it shows in General.
+  const general = [...document.querySelectorAll<HTMLElement>("[data-row]")].map(
+    (node) => node.dataset.row,
+  );
+  expect(general.indexOf("x1")).toBeLessThan(general.indexOf("a1"));
+  const row = document.querySelector<HTMLElement>('[data-row="x1"]')!;
+  const start = row.getBoundingClientRect();
+  const x = start.left + 20;
+  let y = start.top + start.height / 2;
+  pointer("pointerdown", row, x, y);
+  const target = document.querySelector<HTMLElement>('[data-row="b2"]')!.getBoundingClientRect();
+  while (y < target.top + 4) {
+    y += 12;
+    pointer("pointermove", document, x, y);
+    await nextFrame();
+  }
+  // B never reads as a destination.
+  expect(headerOf("b").firstElementChild!.className).not.toContain("text-primary");
+  pointer("pointerup", document, x, y);
+  await nextFrame();
+  expect(moveThreadsToSection).not.toHaveBeenCalled();
+  expect(reorderActiveThread).not.toHaveBeenCalled();
+});
+
+it("names each section's machine when sections from several machines show", async () => {
+  renderView(vi.fn(), { environmentLabels: new Map([["env", "Lab server"]]) });
+  await nextFrame();
+  expect(headerOf("a").textContent).toContain("· Lab server");
+  // General belongs to no machine.
+  expect(headerOf(GENERAL_SECTION_GROUP_ID).textContent).not.toContain("Lab server");
+});
+
 it("keeps a manual drop in the promoted display without saving unrelated automatic positions", async () => {
   const onManualPlacement = vi.fn();
   renderView(vi.fn(), { promoted: true, onManualPlacement });
@@ -683,7 +733,7 @@ it("keeps a manual drop in the promoted display without saving unrelated automat
   pointer("pointerup", document, x, target.bottom - 4);
   await vi.waitFor(() => expect(onManualPlacement).toHaveBeenCalledTimes(1));
   expect(onManualPlacement.mock.calls[0]!.slice(0, 3)).toEqual([
-    "a",
+    groupKey("a"),
     ["env:a3", "env:a2", "env:a1"],
     "env:a2",
   ]);

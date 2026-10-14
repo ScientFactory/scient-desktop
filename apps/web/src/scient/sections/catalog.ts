@@ -1,107 +1,155 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type ThreadSection, ThreadSectionId } from "@t3tools/contracts";
+import { EnvironmentId, type ThreadSection, ThreadSectionId } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
 import { randomUUID } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import {
-  environmentServerConfigsAtom,
-  primaryServerSettingsAtom,
-  serverEnvironment,
-} from "../../state/server";
+import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
+import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   type CatalogRenameResult,
+  type EnvironmentSectionLayout,
   type RemovedSection,
   type SectionLayout,
+  type SectionOccupancy,
+  type SectionOrigin,
+  type SectionRef,
   catalogWithCreatedSection,
-  catalogWithEnvironments,
   catalogWithRenamedSection,
   catalogWithRestoredSection,
   catalogWithoutSection,
   layoutFromGroupOrder,
   mergeListedGroupOrder,
   readThreadSections,
-  type SectionOccupancy,
-  type SectionOrigin,
   sectionLayoutOrder,
   sweepEmptySections,
 } from "./logic";
 import { type CatalogEdit, type LiveLayout, writeCatalog } from "./catalogWrite";
 
-function readLiveLayout(): LiveLayout {
-  const settings = appAtomRegistry.get(primaryServerSettingsAtom);
-  return { sections: settings.threadSections, generalIndex: settings.threadSectionsGeneralIndex };
+/** One environment's section catalog, as its server stores it. */
+export interface EnvironmentSectionCatalog extends EnvironmentSectionLayout {
+  readonly environmentId: EnvironmentId;
 }
 
-// Writes run one at a time so this client's edits never race each other.
-// Edits from other clients are caught by the server-side precondition below.
-let writeQueue: Promise<unknown> = Promise.resolve();
+// Reused while an environment's stored catalog is unchanged, so unrelated
+// config updates keep every catalog's identity.
+const previousCatalogs = new Map<EnvironmentId, EnvironmentSectionCatalog & { raw: unknown }>();
 
-export interface ThreadSectionCatalog {
-  /** Sections in display order, General excluded. */
-  readonly sections: readonly ThreadSection[];
-  /** How many sections precede General. */
-  readonly generalIndex: number;
-  /** Whether the primary environment is connected and can store sections. */
+/**
+ * Every environment whose server stores sections, primary first, then in
+ * connection order. Each lists its own sections: a section belongs to the
+ * environment whose catalog holds it, whichever client is looking. The
+ * hosted app has no primary and still sees every environment's catalog.
+ */
+export const sectionCatalogsAtom = Atom.make((get): readonly EnvironmentSectionCatalog[] => {
+  const configs = get(environmentServerConfigsAtom);
+  const primaryEnvironmentId = get(primaryEnvironmentIdAtom);
+  const catalogs: EnvironmentSectionCatalog[] = [];
+  for (const environmentId of previousCatalogs.keys()) {
+    if (!configs.has(environmentId)) previousCatalogs.delete(environmentId);
+  }
+  for (const [environmentId, config] of configs) {
+    if (config.environment.capabilities.threadSections !== true) continue;
+    const raw = config.settings.threadSections;
+    const generalIndex = config.settings.threadSectionsGeneralIndex;
+    const previous = previousCatalogs.get(environmentId);
+    const catalog =
+      previous !== undefined && previous.raw === raw && previous.generalIndex === generalIndex
+        ? previous
+        : { environmentId, sections: readThreadSections(raw), generalIndex, raw };
+    previousCatalogs.set(environmentId, catalog);
+    catalogs.push(catalog);
+  }
+  return catalogs.toSorted(
+    (left, right) =>
+      Number(right.environmentId === primaryEnvironmentId) -
+      Number(left.environmentId === primaryEnvironmentId),
+  );
+}).pipe(Atom.withLabel("scient-sections-environment-catalogs"));
+
+/** The catalog of one environment, outside React; null when its server stores no sections. */
+export function readSectionCatalog(environmentId: string): EnvironmentSectionCatalog | null {
+  return (
+    appAtomRegistry
+      .get(sectionCatalogsAtom)
+      .find((catalog) => catalog.environmentId === environmentId) ?? null
+  );
+}
+
+function readLiveLayout(environmentId: EnvironmentId): LiveLayout | null {
+  const settings = appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId));
+  return settings === null
+    ? null
+    : { sections: settings.threadSections, generalIndex: settings.threadSectionsGeneralIndex };
+}
+
+// Each environment's writes run one at a time, so this client's edits never
+// race each other. Edits from other clients are caught by the server-side
+// precondition (see `writeCatalog`).
+const writeQueues = new Map<EnvironmentId, Promise<unknown>>();
+
+export interface ThreadSectionCatalogs {
+  /** See `sectionCatalogsAtom`. */
+  readonly catalogs: readonly EnvironmentSectionCatalog[];
+  /** Whether any connected environment stores sections. */
   readonly available: boolean;
-  /** Creates a section, or returns the existing one with that name. */
-  readonly create: (name: string, origin?: SectionOrigin) => Promise<ThreadSection | null>;
-  readonly rename: (sectionId: string, name: string) => Promise<CatalogRenameResult | null>;
+  readonly catalogFor: (environmentId: string) => EnvironmentSectionCatalog | null;
+  /** Creates a section in one environment, or returns its existing one with that name. */
+  readonly create: (
+    environmentId: EnvironmentId,
+    name: string,
+    origin?: SectionOrigin,
+  ) => Promise<ThreadSection | null>;
+  readonly rename: (ref: SectionRef, name: string) => Promise<CatalogRenameResult | null>;
   /** Removes the entry; its threads join General until it is restored. */
-  readonly remove: (sectionId: string) => Promise<RemovedSection | null>;
-  readonly restore: (removed: RemovedSection) => Promise<boolean>;
+  readonly remove: (ref: SectionRef) => Promise<RemovedSection | null>;
+  readonly restore: (environmentId: EnvironmentId, removed: RemovedSection) => Promise<boolean>;
   /** Restores sections removed together, each at its old position. */
-  readonly restoreAll: (removed: readonly RemovedSection[]) => Promise<boolean>;
-  /** Runs one cleanup pass (see `sweepEmptySections`); resolves the sections it removed. */
-  readonly sweepEmpty: (input: {
-    readonly occupancy: SectionOccupancy;
-    readonly visibleEnvironmentIds: ReadonlySet<string> | null;
-    readonly afterDays: number;
-    readonly isCurrent?: () => boolean;
-  }) => Promise<readonly RemovedSection[]>;
-  /** Records that these environments hold threads in the section. */
-  readonly recordEnvironments: (
-    sectionId: string,
-    environmentIds: readonly string[],
+  readonly restoreAll: (
+    environmentId: EnvironmentId,
+    removed: readonly RemovedSection[],
   ) => Promise<boolean>;
+  /** Runs one cleanup pass (see `sweepEmptySections`); resolves the sections it removed. */
+  readonly sweepEmpty: (
+    environmentId: EnvironmentId,
+    input: {
+      readonly occupancy: SectionOccupancy;
+      readonly judge: boolean;
+      readonly afterDays: number;
+      readonly isCurrent?: () => boolean;
+    },
+  ) => Promise<readonly RemovedSection[]>;
   /**
-   * Applies a new order of the listed groups (General included). Sections not
-   * listed, such as those hidden by a project scope or created elsewhere
-   * meanwhile, keep their slots.
+   * Applies a new order of one environment's listed groups: its section ids
+   * and General. Sections not listed, such as those hidden by a project scope
+   * or created elsewhere meanwhile, keep their slots.
    */
-  readonly reorder: (listedGroupIds: readonly string[]) => Promise<boolean>;
+  readonly reorder: (
+    environmentId: EnvironmentId,
+    listedGroupIds: readonly string[],
+  ) => Promise<boolean>;
 }
 
-export function useThreadSectionCatalog(): ThreadSectionCatalog {
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const rawSections = usePrimarySettings((settings) => settings.threadSections);
-  const generalIndex = usePrimarySettings((settings) => settings.threadSectionsGeneralIndex);
-  const sections = useMemo(() => readThreadSections(rawSections), [rawSections]);
+export function useThreadSectionCatalogs(): ThreadSectionCatalogs {
+  const catalogs = useAtomValue(sectionCatalogsAtom);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
-  const available =
-    primaryEnvironmentId !== null &&
-    serverConfigs.get(primaryEnvironmentId)?.environment.capabilities.threadSections === true;
 
-  /** Applies `edit` to the stored catalog (see `writeCatalog`), one write at a time. */
+  /** Applies `edit` to one environment's stored catalog (see `writeCatalog`), one write at a time. */
   const write = useCallback(
-    <R>(edit: CatalogEdit<R>) => {
+    <R>(environmentId: EnvironmentId, edit: CatalogEdit<R>) => {
       const run = async (): Promise<{ ok: boolean; result: R | null }> => {
-        // A primary that predates sections can't store the catalog.
-        if (primaryEnvironmentId === null || !available) return { ok: false, result: null };
+        // A server that predates sections, or one not loaded, can't store a catalog.
+        const stored = readSectionCatalog(environmentId) ? readLiveLayout(environmentId) : null;
+        if (stored === null) return { ok: false, result: null };
         return writeCatalog({
-          stored: readLiveLayout(),
+          stored,
           edit,
           send: async (patch) => {
-            const outcome = await updateSettings({
-              environmentId: primaryEnvironmentId,
-              input: { patch },
-            });
+            const outcome = await updateSettings({ environmentId, input: { patch } });
             if (outcome._tag !== "Success") return null;
             return {
               sections: outcome.value.threadSections,
@@ -110,16 +158,17 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
           },
         });
       };
-      const next = writeQueue.then(run, run);
-      writeQueue = next;
+      const queue = writeQueues.get(environmentId) ?? Promise.resolve();
+      const next = queue.then(run, run);
+      writeQueues.set(environmentId, next);
       return next;
     },
-    [available, primaryEnvironmentId, updateSettings],
+    [updateSettings],
   );
 
   const create = useCallback(
-    async (name: string, origin?: SectionOrigin) => {
-      const { ok, result } = await write((layout) => {
+    async (environmentId: EnvironmentId, name: string, origin?: SectionOrigin) => {
+      const { ok, result } = await write(environmentId, (layout) => {
         const created = catalogWithCreatedSection(
           layout.sections,
           name,
@@ -139,9 +188,9 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const rename = useCallback(
-    async (sectionId: string, name: string) => {
-      const { ok, result } = await write((layout) => {
-        const renamed = catalogWithRenamedSection(layout.sections, sectionId, name);
+    async (ref: SectionRef, name: string) => {
+      const { ok, result } = await write(EnvironmentId.make(ref.environmentId), (layout) => {
+        const renamed = catalogWithRenamedSection(layout.sections, ref.sectionId, name);
         return {
           layout:
             renamed.kind === "renamed"
@@ -157,9 +206,9 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const remove = useCallback(
-    async (sectionId: string) => {
-      const { ok, result } = await write((layout) => {
-        const removed = catalogWithoutSection(layout.sections, layout.generalIndex, sectionId);
+    async (ref: SectionRef) => {
+      const { ok, result } = await write(EnvironmentId.make(ref.environmentId), (layout) => {
+        const removed = catalogWithoutSection(layout.sections, layout.generalIndex, ref.sectionId);
         return {
           layout: removed.removed ? removed : null,
           result: removed.removed,
@@ -172,9 +221,9 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const restore = useCallback(
-    async (removed: RemovedSection) =>
+    async (environmentId: EnvironmentId, removed: RemovedSection) =>
       (
-        await write((layout) => ({
+        await write(environmentId, (layout) => ({
           layout: catalogWithRestoredSection(layout.sections, removed),
           result: true,
         }))
@@ -183,9 +232,9 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const restoreAll = useCallback(
-    async (removed: readonly RemovedSection[]) =>
+    async (environmentId: EnvironmentId, removed: readonly RemovedSection[]) =>
       (
-        await write((layout) => {
+        await write(environmentId, (layout) => {
           let next: SectionLayout = {
             catalog: [...layout.sections],
             generalIndex: layout.generalIndex,
@@ -201,19 +250,24 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
   );
 
   const sweepEmpty = useCallback(
-    async (input: {
-      readonly occupancy: SectionOccupancy;
-      readonly visibleEnvironmentIds: ReadonlySet<string> | null;
-      readonly afterDays: number;
-      readonly isCurrent?: () => boolean;
-    }) => {
-      const { ok, result } = await write((layout) => {
+    async (
+      environmentId: EnvironmentId,
+      input: {
+        readonly occupancy: SectionOccupancy;
+        readonly judge: boolean;
+        readonly afterDays: number;
+        readonly isCurrent?: () => boolean;
+      },
+    ) => {
+      const { ok, result } = await write(environmentId, (layout) => {
         if (input.isCurrent?.() === false) return { layout: null, result: [] };
         const swept = sweepEmptySections({
           sections: layout.sections,
           generalIndex: layout.generalIndex,
           now: new Date(),
-          ...input,
+          occupancy: input.occupancy,
+          judge: input.judge,
+          afterDays: input.afterDays,
         });
         return { layout: swept, result: swept?.removed ?? [] };
       });
@@ -222,29 +276,12 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
     [write],
   );
 
-  const recordEnvironments = useCallback(
-    async (sectionId: string, environmentIds: readonly string[]) => {
-      const { ok, result } = await write((layout) => {
-        if (!layout.sections.some((section) => section.id === sectionId)) {
-          return { layout: null, result: false, needsCurrentLayout: true };
-        }
-        const catalog = catalogWithEnvironments(layout.sections, sectionId, environmentIds);
-        return {
-          layout: catalog === null ? null : { catalog, generalIndex: layout.generalIndex },
-          result: true,
-        };
-      });
-      return ok && result === true;
-    },
-    [write],
-  );
-
   const reorder = useCallback(
-    async (listedGroupIds: readonly string[]) =>
+    async (environmentId: EnvironmentId, listedGroupIds: readonly string[]) =>
       // Merged against each attempt's catalog, so a retry after another
       // client's edit still leaves unlisted sections where that edit put them.
       (
-        await write((layout) => ({
+        await write(environmentId, (layout) => ({
           layout: layoutFromGroupOrder(
             layout.sections,
             mergeListedGroupOrder(
@@ -258,32 +295,25 @@ export function useThreadSectionCatalog(): ThreadSectionCatalog {
     [write],
   );
 
+  const catalogFor = useCallback(
+    (environmentId: string) =>
+      catalogs.find((catalog) => catalog.environmentId === environmentId) ?? null,
+    [catalogs],
+  );
+
   return useMemo(
     () => ({
-      sections,
-      generalIndex,
-      available,
+      catalogs,
+      available: catalogs.length > 0,
+      catalogFor,
       create,
       rename,
       remove,
       restore,
       restoreAll,
       sweepEmpty,
-      recordEnvironments,
       reorder,
     }),
-    [
-      available,
-      create,
-      generalIndex,
-      recordEnvironments,
-      remove,
-      rename,
-      reorder,
-      restore,
-      restoreAll,
-      sections,
-      sweepEmpty,
-    ],
+    [catalogFor, catalogs, create, remove, rename, reorder, restore, restoreAll, sweepEmpty],
   );
 }

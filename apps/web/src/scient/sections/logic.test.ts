@@ -4,16 +4,19 @@ import { describe, expect, it } from "vitest";
 import {
   GENERAL_SECTION_GROUP_ID,
   catalogWithCreatedSection,
-  catalogWithEnvironments,
   catalogWithRenamedSection,
   catalogWithRestoredSection,
   catalogWithoutSection,
+  combinedSectionLayoutOrder,
+  environmentGroupOrder,
   groupThreadsBySection,
   layoutFromGroupOrder,
   mergeListedGroupOrder,
   newSectionTitle,
-  sectionIdsInProjectScope,
+  sectionGroupId,
+  sectionGroupIdsInProjectScope,
   sectionLayoutOrder,
+  sectionRefFromGroupId,
   capitalizeSectionName,
   normalizeSectionName,
   readThreadSections,
@@ -132,33 +135,135 @@ describe("catalog edits", () => {
   });
 });
 
+/** A section's group id in environment `a`, the environment most tests use. */
+const g = (sectionId: string, environmentId = "a") => sectionGroupId({ environmentId, sectionId });
+
+describe("section group ids", () => {
+  it("names a section by its id and environment, and reads both back", () => {
+    for (const ref of [
+      { environmentId: "a", sectionId: "research" },
+      { environmentId: "ssh:host@lab", sectionId: "odd@id:with/parts" },
+    ]) {
+      const groupId = sectionGroupId(ref);
+      // Never a scoped thread key, and never General.
+      expect(groupId).not.toContain(":");
+      expect(groupId).not.toBe(GENERAL_SECTION_GROUP_ID);
+      expect(sectionRefFromGroupId(groupId)).toEqual(ref);
+    }
+    expect(sectionRefFromGroupId(GENERAL_SECTION_GROUP_ID)).toBeNull();
+    expect(sectionRefFromGroupId("research")).toBeNull();
+    expect(sectionRefFromGroupId("%E0%A4%A@a")).toBeNull();
+  });
+
+  it("keeps the same section id in two environments apart", () => {
+    expect(g("research", "a")).not.toBe(g("research", "b"));
+  });
+});
+
 describe("groupThreadsBySection", () => {
-  const thread = (id: string, sectionId: string | null) => ({ id, sectionId });
+  const thread = (id: string, sectionId: string | null, environmentId = "a") => ({
+    id,
+    environmentId,
+    sectionId,
+  });
+  const layout = (generalIndex: number, sections = [RESEARCH, PERMA], environmentId = "a") => ({
+    environmentId,
+    sections,
+    generalIndex,
+  });
 
   it("files unknown sections under General, keeps pinned rows first and shows empty sections", () => {
     const groups = groupThreadsBySection({
-      sections: [RESEARCH, PERMA],
-      generalIndex: 0,
+      layouts: [layout(0)],
       pinned: [thread("p1", "perma")],
       active: [thread("a1", "perma"), thread("a2", "deleted"), thread("a3", null)],
     });
     expect(groups.map((group) => [group.id, group.threads.map((entry) => entry.id)])).toEqual([
       [GENERAL_SECTION_GROUP_ID, ["a2", "a3"]],
-      ["research", []],
-      ["perma", ["p1", "a1"]],
+      [g("research"), []],
+      [g("perma"), ["p1", "a1"]],
     ]);
+    expect(groups.map((group) => group.environmentId)).toEqual([null, "a", "a"]);
   });
 
   it("places General at its stored position, clamped to the list", () => {
     const ids = (generalIndex: number) =>
-      groupThreadsBySection({
-        sections: [RESEARCH, PERMA],
-        generalIndex,
-        pinned: [],
-        active: [],
-      }).map((group) => group.id);
-    expect(ids(1)).toEqual(["research", GENERAL_SECTION_GROUP_ID, "perma"]);
-    expect(ids(9)).toEqual(["research", "perma", GENERAL_SECTION_GROUP_ID]);
+      groupThreadsBySection({ layouts: [layout(generalIndex)], pinned: [], active: [] }).map(
+        (group) => group.id,
+      );
+    expect(ids(1)).toEqual([g("research"), GENERAL_SECTION_GROUP_ID, g("perma")]);
+    expect(ids(9)).toEqual([g("research"), g("perma"), GENERAL_SECTION_GROUP_ID]);
+  });
+
+  it("resolves a thread's section only in its own environment's catalog", () => {
+    const groups = groupThreadsBySection({
+      layouts: [layout(2), layout(1, [RESEARCH], "b")],
+      pinned: [],
+      active: [
+        thread("on-a", "research", "a"),
+        thread("on-b", "research", "b"),
+        // Filed by a client that resolved it against another catalog.
+        thread("foreign", "perma", "b"),
+        // An environment without a catalog has no sections.
+        thread("old", "research", "old"),
+      ],
+    });
+    expect(groups.map((group) => [group.id, group.threads.map((entry) => entry.id)])).toEqual([
+      [g("research", "a"), ["on-a"]],
+      [g("perma", "a"), []],
+      [g("research", "b"), ["on-b"]],
+      [GENERAL_SECTION_GROUP_ID, ["foreign", "old"]],
+    ]);
+  });
+});
+
+describe("combining environments' layouts", () => {
+  const A = { environmentId: "a", sections: [RESEARCH, PERMA], generalIndex: 1 };
+  const B = {
+    environmentId: "b",
+    sections: [section("x", "X", 0), section("y", "Y", 1)],
+    generalIndex: 2,
+  };
+
+  it("lists each environment's sections around one General, keeping each order", () => {
+    expect(combinedSectionLayoutOrder([A, B])).toEqual([
+      g("research"),
+      g("x", "b"),
+      g("y", "b"),
+      GENERAL_SECTION_GROUP_ID,
+      g("perma"),
+    ]);
+    // One environment reads exactly as its own layout.
+    expect(combinedSectionLayoutOrder([A])).toEqual(
+      sectionLayoutOrder(A.sections, A.generalIndex).map((id) =>
+        id === GENERAL_SECTION_GROUP_ID ? id : g(id),
+      ),
+    );
+    expect(combinedSectionLayoutOrder([])).toEqual([GENERAL_SECTION_GROUP_ID]);
+  });
+
+  it("splits a combined order into each environment's own order", () => {
+    const order = [g("perma"), g("x", "b"), GENERAL_SECTION_GROUP_ID, g("research"), g("y", "b")];
+    expect(environmentGroupOrder("a", order)).toEqual([
+      "perma",
+      GENERAL_SECTION_GROUP_ID,
+      "research",
+    ]);
+    expect(environmentGroupOrder("b", order)).toEqual(["x", GENERAL_SECTION_GROUP_ID, "y"]);
+    // Nothing of its own listed, nothing to reorder.
+    expect(environmentGroupOrder("c", order)).toBeNull();
+  });
+
+  it("round-trips: a split order rebuilds each environment's stored layout", () => {
+    const combined = combinedSectionLayoutOrder([A, B]);
+    for (const layout of [A, B]) {
+      const own = environmentGroupOrder(layout.environmentId, combined)!;
+      const rebuilt = layoutFromGroupOrder(layout.sections, own);
+      expect(rebuilt.generalIndex).toBe(layout.generalIndex);
+      expect(rebuilt.catalog.map((entry) => entry.id)).toEqual(
+        layout.sections.map((entry) => entry.id),
+      );
+    }
   });
 });
 
@@ -627,7 +732,7 @@ describe("sweepEmptySections", () => {
   const sweep = (
     sections: ThreadSection[],
     occupied: string[] | Record<string, string[]>,
-    options: { generalIndex?: number; visible?: string[] | null } = {},
+    options: { generalIndex?: number; judge?: boolean } = {},
   ) =>
     sweepEmptySections({
       sections,
@@ -637,7 +742,7 @@ describe("sweepEmptySections", () => {
           ? occupied.map((id) => [id, new Set(["a"])])
           : Object.entries(occupied).map(([id, environments]) => [id, new Set(environments)]),
       ),
-      visibleEnvironmentIds: options.visible === null ? null : new Set(options.visible ?? ["a"]),
+      judge: options.judge ?? true,
       now,
       afterDays: 7,
     });
@@ -653,28 +758,26 @@ describe("sweepEmptySections", () => {
     expect(sweep(cleared!.catalog, ["research", "perma"])).toBeNull();
   });
 
-  it("records the environments holding a section's threads", () => {
-    const swept = sweep([RESEARCH], { research: ["b", "a"] });
-    expect(swept?.catalog[0]?.environmentIds).toEqual(["b", "a"]);
+  it("records the environment holding a section's threads", () => {
+    const swept = sweep([RESEARCH], { research: ["a"] });
+    expect(swept?.catalog[0]?.environmentIds).toEqual(["a"]);
     // Already recorded: nothing to write.
     expect(sweep(swept!.catalog, { research: ["a"] })).toBeNull();
   });
 
-  it("never judges a section from a client that can't see all its environments", () => {
-    // Filed from environment b; this client only sees a, so it can't call it empty.
-    const fromB = { ...RESEARCH, environmentIds: ["b"], emptySince: daysAgo(30) };
-    expect(sweep([fromB], [], { visible: ["a"] })).toBeNull();
-    // A client that sees b as well judges it.
-    expect(sweep([fromB], [], { visible: ["a", "b"] })?.removed).toHaveLength(1);
+  it("judges a section by its own environment even when older clients recorded others", () => {
+    // Written when one primary catalog served every environment.
+    const legacy = { ...RESEARCH, environmentIds: ["a", "b"], emptySince: daysAgo(30) };
+    expect(sweep([legacy], [])?.removed).toHaveLength(1);
   });
 
   it("only records when it can't judge, so a brief visit still resets the clock", () => {
     const stale = { ...RESEARCH, emptySince: daysAgo(30) };
     // A thread joins: the record-only pass clears the stamp at once.
-    const joined = sweep([stale], ["research"], { visible: null });
+    const joined = sweep([stale], ["research"], { judge: false });
     expect(joined?.catalog[0]?.emptySince).toBeUndefined();
     // The thread leaves again: a record-only pass neither stamps nor removes.
-    expect(sweep(joined!.catalog, [], { visible: null })).toBeNull();
+    expect(sweep(joined!.catalog, [], { judge: false })).toBeNull();
     // The next judging pass starts a fresh count instead of removing.
     const judged = sweep(joined!.catalog, []);
     expect(judged?.removed).toEqual([]);
@@ -709,25 +812,6 @@ describe("sweepEmptySections", () => {
     expect(restored.catalog.map((entry) => entry.id)).toEqual(["research", "perma"]);
     expect(restored.catalog[0]?.emptySince).toBeUndefined();
     expect(restored.catalog[0]?.environmentIds).toEqual(["a"]);
-  });
-});
-
-describe("catalogWithEnvironments", () => {
-  it("clears an old cleanup deadline before filing into an already recorded environment", () => {
-    const recorded = catalogWithEnvironments(
-      [{ ...RESEARCH, environmentIds: ["remote"], emptySince: "2020-01-01T00:00:00.000Z" }],
-      RESEARCH.id,
-      ["remote"],
-    );
-    expect(recorded?.[0]?.emptySince).toBeUndefined();
-    expect(recorded?.[0]?.environmentIds).toEqual(["remote"]);
-    expect(recorded).not.toBeNull();
-  });
-  it("adds only environments not yet recorded", () => {
-    const recorded = catalogWithEnvironments([RESEARCH, PERMA], "perma", ["a"]);
-    expect(recorded?.[1]?.environmentIds).toEqual(["a"]);
-    expect(catalogWithEnvironments(recorded!, "perma", ["a"])).toBeNull();
-    expect(catalogWithEnvironments(recorded!, "gone", ["a"])).toBeNull();
   });
 });
 
@@ -794,6 +878,10 @@ describe("sections in a project scope", () => {
     section("orphan", "Orphan", 4),
     { ...section("moved", "Moved", 5), createdInProjects: [A] },
   ];
+  const layouts = [{ environmentId: "local", sections, generalIndex: 0 }];
+  /** Section ids of the listed groups. */
+  const ids = (listed: ReadonlySet<string> | null) =>
+    [...(listed ?? [])].map((groupId) => sectionRefFromGroupId(groupId)?.sectionId).toSorted();
   const threads = [
     thread("project-a", "mine"),
     thread("project-b", "theirs"),
@@ -807,8 +895,8 @@ describe("sections in a project scope", () => {
 
   it("lists every section under All projects", () => {
     expect(
-      sectionIdsInProjectScope({
-        sections,
+      sectionGroupIdsInProjectScope({
+        layouts,
         scopeProjectKeys: null,
         loadedEnvironmentIds: loaded,
         threads,
@@ -817,63 +905,89 @@ describe("sections in a project scope", () => {
   });
 
   it("lists sections with the project's threads, and its own empty ones", () => {
-    const listed = sectionIdsInProjectScope({
-      sections,
+    const listed = sectionGroupIdsInProjectScope({
+      layouts,
       scopeProjectKeys: scopeA,
       loadedEnvironmentIds: loaded,
       threads,
     });
-    expect([...(listed ?? [])].toSorted()).toEqual(["fresh", "mine", "shared"]);
+    expect(ids(listed)).toEqual(["fresh", "mine", "shared"]);
   });
 
   it("lists a section with threads in two projects under both", () => {
-    const listedB = sectionIdsInProjectScope({
-      sections,
+    const listedB = sectionGroupIdsInProjectScope({
+      layouts,
       scopeProjectKeys: new Set(["local:project-b"]),
       loadedEnvironmentIds: loaded,
       threads,
     });
-    expect([...(listedB ?? [])].toSorted()).toEqual(["moved", "shared", "theirs"]);
+    expect(ids(listedB)).toEqual(["moved", "shared", "theirs"]);
   });
 
-  it("does not call a section empty while an environment that held its threads is not loaded", () => {
-    const remoteOnly = {
-      ...section("remote", "Remote", 0),
-      createdInProjects: [A],
-      environmentIds: ["remote-env"],
+  it("does not call a section empty while its environment's threads are not loaded", () => {
+    const remoteOnly = { ...section("remote", "Remote", 0), createdInProjects: [A] };
+    const args = {
+      layouts: [{ environmentId: "remote-env", sections: [remoteOnly], generalIndex: 0 }],
+      scopeProjectKeys: scopeA,
+      threads: [],
     };
-    const args = { sections: [remoteOnly], scopeProjectKeys: scopeA, threads: [] };
-    expect([
-      ...(sectionIdsInProjectScope({ ...args, loadedEnvironmentIds: loaded }) ?? []),
-    ]).toEqual([]);
-    expect([
-      ...(sectionIdsInProjectScope({
-        ...args,
-        loadedEnvironmentIds: new Set(["local", "remote-env"]),
-      }) ?? []),
-    ]).toEqual(["remote"]);
+    expect(ids(sectionGroupIdsInProjectScope({ ...args, loadedEnvironmentIds: loaded }))).toEqual(
+      [],
+    );
+    expect(
+      ids(
+        sectionGroupIdsInProjectScope({
+          ...args,
+          loadedEnvironmentIds: new Set(["local", "remote-env"]),
+        }),
+      ),
+    ).toEqual(["remote"]);
+  });
+
+  it("does not list a section for a thread that resolves it on another environment", () => {
+    // The thread on "other" carries an id only the local catalog holds.
+    const listed = sectionGroupIdsInProjectScope({
+      layouts: [
+        { environmentId: "local", sections: [section("mine", "Mine", 0)], generalIndex: 0 },
+      ],
+      scopeProjectKeys: new Set(["other:project-a"]),
+      loadedEnvironmentIds: new Set(["local", "other"]),
+      threads: [{ environmentId: "other", projectId: "project-a", sectionId: "mine" }],
+    });
+    expect(ids(listed)).toEqual([]);
   });
 
   it("counts snoozed and settled threads, which the sections list does not show", () => {
     // The grouping only sees pinned and active threads; visibility sees all.
-    const listed = sectionIdsInProjectScope({
-      sections: [section("later", "Later", 0)],
+    const listed = sectionGroupIdsInProjectScope({
+      layouts: [
+        { environmentId: "local", sections: [section("later", "Later", 0)], generalIndex: 0 },
+      ],
       scopeProjectKeys: scopeA,
       loadedEnvironmentIds: loaded,
       threads: [thread("project-a", "later")],
     });
-    expect([...(listed ?? [])]).toEqual(["later"]);
+    expect(ids(listed)).toEqual(["later"]);
   });
 
   it("hides unlisted sections but never General or a section holding a shown thread", () => {
     const groups = groupThreadsBySection({
-      sections: [section("mine", "Mine", 0), section("theirs", "Theirs", 1)],
-      generalIndex: 1,
+      layouts: [
+        {
+          environmentId: "local",
+          sections: [section("mine", "Mine", 0), section("theirs", "Theirs", 1)],
+          generalIndex: 1,
+        },
+      ],
       pinned: [],
-      active: [{ id: "t1", sectionId: "theirs" }],
-      listedSectionIds: new Set(["mine"]),
+      active: [{ id: "t1", environmentId: "local", sectionId: "theirs" }],
+      listedGroupIds: new Set([g("mine", "local")]),
     });
-    expect(groups.map((group) => group.id)).toEqual(["mine", GENERAL_SECTION_GROUP_ID, "theirs"]);
+    expect(groups.map((group) => group.id)).toEqual([
+      g("mine", "local"),
+      GENERAL_SECTION_GROUP_ID,
+      g("theirs", "local"),
+    ]);
   });
 
   it("keeps hidden sections in their slots when the listed ones are reordered", () => {

@@ -1,27 +1,31 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  type EnvironmentId,
-  type ScopedThreadRef,
-  type ThreadId,
-  ThreadSectionId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
+import type { SectionRef } from "./logic";
 
 /**
  * "New thread in this section" opens an ordinary draft. The draft already
  * knows the thread id it will create, so the section is remembered here and
- * filed once that thread exists on the server. Entries outlive a restart and
- * expire after a week, so an abandoned draft leaves nothing behind for long.
+ * filed once that thread exists on the server. A section belongs to one
+ * environment, so a draft moved to another environment before it was sent is
+ * not filed. Entries outlive a restart and expire after a week, so an
+ * abandoned draft leaves nothing behind for long.
  */
 const STORAGE_KEY = "scient:sidebar:pending-new-thread-sections";
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const PendingEntries = Schema.Record(
   Schema.String,
-  Schema.Struct({ sectionId: Schema.String, rememberedAt: Schema.Number }),
+  Schema.Struct({
+    sectionId: Schema.String,
+    // Absent on entries saved before sections were environment-local: those
+    // file into the section of that id on whichever environment the thread is.
+    environmentId: Schema.optionalKey(Schema.String),
+    rememberedAt: Schema.Number,
+  }),
 );
 type PendingEntries = typeof PendingEntries.Type;
 
@@ -44,8 +48,15 @@ function write(entries: PendingEntries): void {
   setLocalStorageItem(STORAGE_KEY, entries, PendingEntries);
 }
 
-export function rememberSectionForNewThread(threadId: string, sectionId: ThreadSectionId): void {
-  write({ ...read(), [threadId]: { sectionId, rememberedAt: Date.now() } });
+export function rememberSectionForNewThread(threadId: string, section: SectionRef): void {
+  write({
+    ...read(),
+    [threadId]: {
+      sectionId: section.sectionId,
+      environmentId: section.environmentId,
+      rememberedAt: Date.now(),
+    },
+  });
 }
 
 /**
@@ -68,14 +79,12 @@ type PendingThread = {
   readonly environmentId: EnvironmentId;
   readonly sectionId?: string | null | undefined;
 };
-type ApplyPendingSection = (
-  target: ScopedThreadRef,
-  sectionId: ThreadSectionId,
-) => Promise<boolean>;
+type ApplyPendingSection = (target: ScopedThreadRef, section: SectionRef) => Promise<boolean>;
 
 /**
  * Files each newly created thread whose draft was opened from a section. An
- * entry is dropped only once its write succeeds; a failed write is retried on
+ * entry is dropped once its write succeeds, or once the thread turns out to
+ * live on another environment than the section; a failed write is retried on
  * a later update until the entry expires.
  */
 export function applyPendingNewThreadSections(
@@ -96,16 +105,20 @@ export function applyPendingNewThreadSections(
     }
     // Our optimistic membership is not an acknowledgment of the pending write.
     if (filing.has(id)) continue;
-    // Already filed (here or by another window): nothing left to do.
-    if (thread.sectionId != null) {
+    // Already filed (here or by another window), or the draft moved to
+    // another environment, whose catalog doesn't hold this section.
+    if (
+      thread.sectionId != null ||
+      (entry.environmentId !== undefined && entry.environmentId !== thread.environmentId)
+    ) {
       forgetSectionForNewThread(id);
       continue;
     }
     filing.add(id);
-    void apply(
-      scopeThreadRef(thread.environmentId, thread.id),
-      ThreadSectionId.make(entry.sectionId),
-    )
+    void apply(scopeThreadRef(thread.environmentId, thread.id), {
+      environmentId: thread.environmentId,
+      sectionId: entry.sectionId,
+    })
       .then(
         (filed) => {
           if (filed && read()[id] === entry) forgetSectionForNewThread(id);

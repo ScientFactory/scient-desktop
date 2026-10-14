@@ -27,7 +27,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { type ScopedThreadRef, type ThreadSection, ThreadSectionId } from "@t3tools/contracts";
+import { type ScopedThreadRef, ThreadSectionId } from "@t3tools/contracts";
 import { ChevronRightIcon, EllipsisIcon, PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   Fragment,
@@ -64,6 +64,7 @@ import {
   sectionShifts,
   sectionGroupIdFromHeaderItemId,
   sectionHeaderItemId,
+  sectionRefFromGroupId,
 } from "./logic";
 import type { SectionCreateAnchor } from "./NewSectionPopover";
 import { readTypedSectionName } from "./sectionNameInput";
@@ -88,6 +89,8 @@ export interface SidebarSectionsViewProps {
   ) => void;
   readonly onInteractionChange?: (active: boolean) => void;
   readonly groups: readonly SectionGroup<Shell>[];
+  /** Machine names for section headers, by environment; null when one environment's sections show. */
+  readonly environmentLabels?: ReadonlyMap<string, string> | null;
   readonly collapsedGroupIds: ReadonlySet<string>;
   /** The open thread stays visible even inside a collapsed section. */
   readonly routeThreadKey: string | null;
@@ -118,12 +121,13 @@ export interface SidebarSectionsViewProps {
   readonly trailing?: ReactNode;
   readonly onSettleThread: (threadRef: ScopedThreadRef) => void;
   readonly onReorderSections: (orderedIds: readonly string[]) => void;
-  readonly onSectionMenu: (section: ThreadSection, position: { x: number; y: number }) => void;
+  readonly onSectionMenu: (group: SectionGroup<Shell>, position: { x: number; y: number }) => void;
   /** Null starts an ordinary thread from General. */
-  readonly onNewThreadInSection: (section: ThreadSection | null) => void;
+  readonly onNewThreadInSection: (group: SectionGroup<Shell> | null) => void;
+  /** The group id of the section being renamed. */
   readonly renamingSectionId: string | null;
-  readonly onRenamingSectionChange: (sectionId: string | null) => void;
-  readonly onRenameSection: (sectionId: string, name: string) => void;
+  readonly onRenamingSectionChange: (groupId: string | null) => void;
+  readonly onRenameSection: (groupId: string, name: string) => void;
   readonly onStartCreateSection: (anchor: SectionCreateAnchor) => void;
 }
 
@@ -479,6 +483,14 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       const source = items.find((item) => item.id === activeKey);
       const shown = resolveSectionsDropTarget(items, activeKey, overId, placement);
       if (thread === undefined || source?.kind !== "thread" || shown === null) return null;
+      // A thread joins only its own environment's sections; General takes any.
+      if (
+        shown.kind === "section" &&
+        shown.groupId !== GENERAL_SECTION_GROUP_ID &&
+        sectionRefFromGroupId(shown.groupId)?.environmentId !== thread.environmentId
+      ) {
+        return null;
+      }
       const fullOrder = shown.kind === "section" ? fullOrderByGroup.get(shown.groupId) : undefined;
       const target =
         shown.kind === "section" && fullOrder !== undefined
@@ -505,8 +517,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         lifecycleByKey: planLifecycleByKey,
         pinnedKeysById,
         activeKeysById,
-        toSectionId: (groupId) =>
-          groupId === GENERAL_SECTION_GROUP_ID ? null : ThreadSectionId.make(groupId),
+        toSectionId: (groupId) => {
+          const ref = sectionRefFromGroupId(groupId);
+          return ref === null ? null : ThreadSectionId.make(ref.sectionId);
+        },
         canWriteOrderKeys: (ids, group) =>
           ids.every((id) => {
             const row = threadByKey.get(id);
@@ -605,7 +619,12 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         }
         if (
           plan.sectionId !== undefined &&
-          !(await moveThreadsToSection([threadRef], plan.sectionId))
+          !(await moveThreadsToSection(
+            [threadRef],
+            plan.sectionId === null
+              ? null
+              : { environmentId: thread.environmentId, sectionId: plan.sectionId },
+          ))
         ) {
           release();
           return;
@@ -722,6 +741,11 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   itemId={item.id}
                   group={group}
                   label={group.section?.name ?? "General"}
+                  machine={
+                    group.environmentId === null
+                      ? null
+                      : (props.environmentLabels?.get(group.environmentId) ?? null)
+                  }
                   collapsed={collapsedGroupIds.has(group.id)}
                   isDropTarget={dragTarget?.kind === "section" && dragTarget.groupId === group.id}
                   lifted={drag?.kind === "section" && drag.groupId === group.id}
@@ -732,10 +756,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                   onCancelRename={() => props.onRenamingSectionChange(null)}
                   onRename={(name) => props.onRenameSection(group.id, name)}
                   onMenu={(position) => {
-                    if (group.section) props.onSectionMenu(group.section, position);
+                    if (group.section) props.onSectionMenu(group, position);
                   }}
                   onNewThread={() => {
-                    props.onNewThreadInSection(group.section);
+                    props.onNewThreadInSection(group.section === null ? null : group);
                   }}
                 />
               );
@@ -808,6 +832,8 @@ function SectionHeaderRow(props: {
   itemId: string;
   group: SectionGroup<Shell>;
   label: string;
+  /** The section's machine, shown while sections from several machines are listed. */
+  machine: string | null;
   collapsed: boolean;
   isDropTarget: boolean;
   /** The section being dragged: it slides with its rows and takes the accent. */
@@ -889,6 +915,11 @@ function SectionHeaderRow(props: {
                 collapsed count and chevron stay whole beside them. */}
             <span className="flex h-full min-w-0 items-center gap-2">
               <FadeTruncate text={props.label} className="shrink" />
+              {props.machine !== null ? (
+                <span className="-ml-1 max-w-24 shrink-0 truncate font-normal opacity-70">
+                  · {props.machine}
+                </span>
+              ) : null}
               {props.collapsed ? (
                 <span className="-ml-1 shrink-0 tabular-nums">({group.threads.length})</span>
               ) : null}

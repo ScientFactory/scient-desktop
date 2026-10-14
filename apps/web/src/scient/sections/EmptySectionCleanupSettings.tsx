@@ -7,27 +7,32 @@ import { useState } from "react";
 
 import { SettingResetButton, SettingsRow } from "../../components/settings/settingsLayout";
 import { searchableSetting } from "../../components/settings/settingsSearch";
+import {
+  useScopedSettings,
+  useUpdateScopedSettings,
+} from "../../components/settings/useScopedSettings";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 
 const DEFAULT_DAYS = 7;
+const SETTING_KEYS = ["threadSectionsDeleteEmptyAfterDays"] as const;
 
 /**
  * Settings → General → Organization: optional cleanup of empty sections.
- * Primary-only, like the section catalog it acts on: the value lives in the
- * primary environment's settings whatever environment the page has selected.
+ * Each environment stores its own sections, and this value with them, so it
+ * follows the environment the settings page has selected.
  */
 export function EmptySectionCleanupSettings() {
-  const afterDays = usePrimarySettings((settings) => settings.threadSectionsDeleteEmptyAfterDays);
-  const updatePrimarySettings = useUpdatePrimarySettings();
+  const afterDays = useScopedSettings((settings) => settings.threadSectionsDeleteEmptyAfterDays);
+  const updateScopedSettings = useUpdateScopedSettings();
   const update = (days: number | null) => {
-    void updatePrimarySettings({ threadSectionsDeleteEmptyAfterDays: days });
+    updateScopedSettings({ threadSectionsDeleteEmptyAfterDays: days });
   };
   return (
     <>
       <SettingsRow
         serverScoped
+        settingKeys={SETTING_KEYS}
         {...searchableSetting("delete-empty-sections")}
         description="Remove sidebar sections that have held no threads for this long. General is never removed."
         resetAction={
@@ -49,6 +54,7 @@ export function EmptySectionCleanupSettings() {
       {afterDays !== null ? (
         <SettingsRow
           serverScoped
+          settingKeys={SETTING_KEYS}
           title={searchableSetting("days-before-deleting-empty-sections").title}
           description="Adding a thread to a section restarts its count."
           control={<DaysInput value={afterDays} onCommit={update} />}

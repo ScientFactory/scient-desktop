@@ -5,10 +5,12 @@ import { NonNegativeInt, ThreadSectionId, TrimmedNonEmptyString } from "../baseS
 /**
  * A named group the user files threads into. Sections are independent of the
  * lifecycle shelves (pinned, active, snoozed, settled); a thread belongs to at
- * most one. The catalog lives in the primary environment's server settings so
- * every window and attached client sees the same list. Membership is stored
- * on each thread, so removing a catalog entry leaves its threads' IDs intact:
- * they read as unsectioned, and restoring the entry brings them back.
+ * most one. Each environment's server settings hold the catalog of its own
+ * sections, and a thread's section id resolves only against the catalog of
+ * the thread's environment, so every client connected to that environment
+ * sees the same sections. Membership is stored on each thread, so removing a
+ * catalog entry leaves its threads' IDs intact: they read as unsectioned, and
+ * restoring the entry brings them back.
  */
 /** A physical project: the environment it lives on and its id there. */
 export const ThreadSectionProjectRef = Schema.Struct({
@@ -24,9 +26,10 @@ export const ThreadSection = Schema.Struct({
   /** When the section was last seen without threads; drives optional auto-delete. */
   emptySince: Schema.optionalKey(Schema.String),
   /**
-   * Environments that have held its threads. Optional cleanup judges a
-   * section only from a client connected to every one of them, since no
-   * single client or server sees every environment's threads.
+   * Environments that have held its threads. Current clients record only the
+   * catalog's own environment. Entries written when one primary catalog served
+   * every environment can list others; clients of that version still read
+   * this to decide when they may judge a section empty.
    */
   environmentIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   /**
