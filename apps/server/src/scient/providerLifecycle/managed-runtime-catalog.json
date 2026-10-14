@@ -669,61 +669,61 @@
     "muse": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "1.4.7-R6101.1",
+      "version": "1.4.8-R6256.1",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "muse-aarch64-macos",
-          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-aarch64-macos",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.8-R6256.1&file=muse-aarch64-macos",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "87ff5a31b63e30b6ac04d3e8298285517e753c126fb6f3aee80accf28c4562f1"
+            "digest": "5721763b4723f961709cd28f69aa049763965b46c4d4d70f883a0a90e5ddf39c"
           },
-          "size": 358892272
+          "size": 366924368
         },
         "darwin-x64": {
           "artifactName": "muse-x86-macos",
-          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-macos",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.8-R6256.1&file=muse-x86-macos",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "6d766da6601a0aae8bd22294c0854970286e1b9ade3009f0d0289b7875a10c58"
+            "digest": "94ea8fd1c73664c22e5c6157d8706945b667b11bd1c7c51691811e79f17dfcf1"
           },
-          "size": 380381680
+          "size": 388198336
         },
         "linux-arm64-glibc": {
           "artifactName": "muse-aarch64-linux",
-          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-aarch64-linux",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.8-R6256.1&file=muse-aarch64-linux",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "48db3c7468cd4f401eff9b415fb7e0cdfe0351fb1730649ceae2a0f766e23b85"
+            "digest": "592aabe306186794e05d9329ccef7d49116abf0a8bcbc1e07703d22ef1b34f3a"
           },
-          "size": 325916776
+          "size": 329390184
         },
         "linux-x64-glibc": {
           "artifactName": "muse-x86-linux",
-          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-linux",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.8-R6256.1&file=muse-x86-linux",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "36e3dac91f56c15572b95be55d70ee9fd9685cd9ab49f747bab4746c8d7c2518"
+            "digest": "416eaa520e6bf98c7d67f8d2772a2464d41839c1cb7a75d299845400f484fd4b"
           },
-          "size": 363518168
+          "size": 370907352
         },
         "win32-arm64": {
           "artifactName": "muse-aarch64-windows.exe",
-          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-aarch64-windows.exe",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.8-R6256.1&file=muse-aarch64-windows.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "6580be6e5ab03b7a1e3ebe427b50693f6adce4e52ea808c5ea87ba07ccac2b9f"
+            "digest": "7b646466fb1720973038c4665bfa2c653c67ae9641ded1fbe0d07a53ca999962"
           },
-          "size": 427460856
+          "size": 434256120
         },
         "win32-x64": {
           "artifactName": "muse-x86-windows.exe",
-          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-windows.exe",
+          "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.8-R6256.1&file=muse-x86-windows.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "2d1ac7af0a9ea77643cb8690eee70f52f0f8476c46b194f143c831f481aea59d"
+            "digest": "f9d7be3fce39eb23a1bdda019568e0ae7156514c75c408f54c8c4ddaa297800e"
           },
-          "size": 467174136
+          "size": 474286840
         }
       }
     }
