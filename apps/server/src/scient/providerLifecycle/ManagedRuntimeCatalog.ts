@@ -694,10 +694,18 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
         ),
         serviceScope,
       );
+      // Turning checks on or off changes what every summary says even when no
+      // fetch follows (checks off, or a check still within its TTL).
+      let checksEnabled: boolean | null = null;
       yield* Effect.forkIn(
         settingsChanges.pipe(
           Stream.runForEach((settings) =>
-            settings.enableProviderUpdateChecks ? guardedRefresh.pipe(Effect.asVoid) : Effect.void,
+            Effect.gen(function* () {
+              if (settings.enableProviderUpdateChecks) yield* guardedRefresh;
+              if (checksEnabled === settings.enableProviderUpdateChecks) return;
+              checksEnabled = settings.enableProviderUpdateChecks;
+              yield* PubSub.publish(changesPubSub, { catalog, changedProviders: [] });
+            }),
           ),
         ),
         serviceScope,

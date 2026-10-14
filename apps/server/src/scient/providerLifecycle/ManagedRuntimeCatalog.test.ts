@@ -1127,6 +1127,40 @@ describe("ManagedRuntimeCatalog service", () => {
     ),
   );
 
+  it.live("announces turning automatic checks off, though nothing is fetched", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const current = yield* settings.getSettings;
+      const off = { ...current, enableProviderUpdateChecks: false };
+      const service = yield* makeWithOptions().pipe(
+        Effect.provideService(
+          ServerSettings.ServerSettingsService,
+          ServerSettings.ServerSettingsService.of({
+            ...settings,
+            getSettings: Effect.succeed(off),
+            // The change arrives after this test has subscribed.
+            subscribeChanges: Effect.succeed(
+              Stream.fromEffect(Effect.sleep("50 millis").pipe(Effect.as(off))),
+            ),
+          }),
+        ),
+      );
+      const changes = yield* service.subscribeChanges;
+      const announced = Option.getOrThrow(yield* changes.pipe(Stream.runHead));
+      assert.deepStrictEqual(announced.changedProviders, []);
+      assert.strictEqual((yield* service.freshness).checksDisabled, true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "managed-runtime-catalog-checks-off-test",
+          response: () => Response.json(remoteCatalog()),
+          settings: { enableProviderUpdateChecks: false },
+        }),
+      ),
+    ),
+  );
+
   it.live("emits the exact provider whose qualified release changed", () =>
     Effect.gen(function* () {
       const service = yield* makeWithOptions({ startBackgroundRefresh: false });
