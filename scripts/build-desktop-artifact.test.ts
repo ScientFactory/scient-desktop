@@ -977,6 +977,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // Windows uses a custom OpenWith ProgID to preserve the user's default.
       assert.deepStrictEqual(win.fileAssociations, []);
 
+      const macInfo = (mac.mac as { extendInfo: Record<string, unknown> }).extendInfo;
+      assert.strictEqual(macInfo.NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac, true);
       // Scient has not activated default-browser OS registration.
       assert.deepStrictEqual((mac.mac as Record<string, unknown>).protocols, [
         { name: "Scient", schemes: ["scient"] },

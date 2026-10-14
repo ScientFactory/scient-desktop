@@ -248,9 +248,24 @@ export const layerExecutor: Layer.Layer<
                 providerSessionId: request.providerSessionId,
                 providerThreadId: request.providerThreadId,
                 providerTurnId: request.providerTurnId,
-                ...(request.subagent === undefined ? {} : { subagent: request.subagent }),
+                ...(request.subagent === undefined
+                  ? {}
+                  : {
+                      subagent: {
+                        ...request.subagent,
+                        requestedAt: DateTime.makeUnsafe(effect.createdAt),
+                      },
+                    }),
               })
               .pipe(
+                Effect.tapError((cause) =>
+                  request.subagent === undefined
+                    ? Effect.void
+                    : Effect.logWarning("orchestration-v2.subagent-stop-failed", {
+                        effectId: effect.id,
+                        cause,
+                      }),
+                ),
                 Effect.catch((cause) =>
                   Effect.gen(function* () {
                     if (
@@ -272,29 +287,38 @@ export const layerExecutor: Layer.Layer<
                     return "not-interrupted" as const;
                   }),
                 ),
-                // Live native children remain SDK-authoritative. Only a released
-                // session permits repairing the captured child locally.
-                Effect.flatMap((outcome) =>
-                  request.subagent !== undefined && outcome !== "session-absent"
-                    ? Effect.void
-                    : threads
-                        .dispatch({
-                          type: "thread.background-work.settle",
-                          commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                          threadId: effect.threadId,
-                          providerThreadId: request.providerThreadId,
-                          providerTurnId: request.providerTurnId,
-                          ...(request.subagent === undefined
-                            ? {}
-                            : {
-                                subagent: {
-                                  ...request.subagent,
-                                  providerSessionId: request.providerSessionId,
-                                },
-                              }),
-                        })
-                        .pipe(Effect.asVoid),
-                ),
+                // A native outcome and physical session release are distinct proofs.
+                Effect.flatMap((outcome) => {
+                  if (
+                    request.subagent !== undefined &&
+                    outcome !== "session-absent" &&
+                    typeof outcome !== "object"
+                  )
+                    return Effect.void;
+                  return threads
+                    .dispatch({
+                      type: "thread.background-work.settle",
+                      commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                      threadId: effect.threadId,
+                      providerThreadId: request.providerThreadId,
+                      providerTurnId: request.providerTurnId,
+                      ...(request.subagent === undefined
+                        ? {}
+                        : {
+                            subagent: {
+                              ...request.subagent,
+                              providerSessionId: request.providerSessionId,
+                              ...(typeof outcome === "object"
+                                ? {
+                                    stoppedAt: DateTime.makeUnsafe(effect.createdAt),
+                                    outcome,
+                                  }
+                                : {}),
+                            },
+                          }),
+                    })
+                    .pipe(Effect.asVoid);
+                }),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({

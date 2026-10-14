@@ -52,10 +52,15 @@ const layerSetup = (filesystemPaths?: RetiredThreadFilesystemPaths) =>
       yield* sql`PRAGMA busy_timeout = 5000;`;
       yield* sql`PRAGMA foreign_keys = ON;`;
       yield* sql`PRAGMA journal_mode = WAL;`;
+      // SCIENT-FORK:START — preserve committed scientific work across power loss.
+      yield* sql`PRAGMA synchronous = FULL;`;
+      // SCIENT-FORK:END
       // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
       // largest size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
       yield* runMigrations();
+      // Analyze missing or substantially changed index statistics under a bounded analysis limit.
+      yield* sql`PRAGMA optimize = 0x10012;`;
       // SCIENT-FORK:START
       yield* runScientMigrations(sql);
       // SCIENT-FORK:END

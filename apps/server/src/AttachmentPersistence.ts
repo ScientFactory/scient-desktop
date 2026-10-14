@@ -9,7 +9,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ServerConfig from "./config.ts";
-import { attachmentRelativePath, createDeterministicAttachmentId } from "./attachmentStore.ts";
+import {
+  attachmentRelativePath,
+  chatAttachmentStableKey,
+  createDeterministicAttachmentId,
+} from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { reserveAttachment } from "./orchestration-v2/AttachmentFileUse.ts";
 
@@ -53,7 +57,7 @@ export const persistChatAttachments = Effect.fn("AttachmentPersistence.persistCh
         }
         const rawId = createDeterministicAttachmentId(
           input.threadId,
-          `${input.messageId}:${index}`,
+          chatAttachmentStableKey(input.messageId, index, bytes),
         );
         if (rawId === null) {
           return yield* new PersistChatAttachmentsError({

@@ -197,7 +197,7 @@ const probeConfiguredOmpRuntime =
       const resolvedBinary = yield* resolveCommandPath(binary, {
         env: environment,
         bypassCache: true,
-      }).pipe(Effect.orElseSucceed(() => binary));
+      }).pipe(Effect.map((resolved) => resolved ?? binary));
       const identity = yield* canonicalOmpExecutablePath(resolvedBinary);
       yield* gate.acquireProcess(identity, { target: ompTarget, kind: "one-shot" });
       return yield* readConfiguredRuntimeVersion({

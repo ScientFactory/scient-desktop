@@ -33,6 +33,8 @@ import {
   OrchestratorThreadAboveModeLimitError,
 } from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
@@ -44,6 +46,11 @@ import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+);
 
 describe("OrchestratorMcpService", () => {
   it.effect.each(["legacy", "task-scoped"] as const)(
@@ -183,7 +190,7 @@ describe("OrchestratorMcpService", () => {
           assert.notEqual(commandIds[0], commandIds[1]);
         }).pipe(
           Effect.provide(
-            OrchestratorMcpService.layer.pipe(
+            layerOrchestratorService.pipe(
               Layer.provide(fullAccessCapturedPolicyLayer),
               Layer.provide(layerDependencies),
             ),
@@ -322,7 +329,7 @@ describe("OrchestratorMcpService", () => {
           assert.equal(yield* Ref.get(dispatched), 1);
         }).pipe(
           Effect.provide(
-            OrchestratorMcpService.layer.pipe(
+            layerOrchestratorService.pipe(
               Layer.provide(fullAccessCapturedPolicyLayer),
               Layer.provide(layerDependencies),
             ),
@@ -405,7 +412,7 @@ describe("OrchestratorMcpService", () => {
         assert.deepEqual(yield* Ref.get(dispatched), []);
       }).pipe(
         Effect.provide(
-          OrchestratorMcpService.layer.pipe(
+          layerOrchestratorService.pipe(
             Layer.provide(
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
@@ -503,7 +510,7 @@ describe("OrchestratorMcpService", () => {
         );
       }).pipe(
         Effect.provide(
-          OrchestratorMcpService.layer.pipe(
+          layerOrchestratorService.pipe(
             Layer.provide(
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
@@ -607,7 +614,7 @@ describe("OrchestratorMcpService", () => {
         );
       }).pipe(
         Effect.provide(
-          OrchestratorMcpService.layer.pipe(
+          layerOrchestratorService.pipe(
             Layer.provide(
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
@@ -769,7 +776,7 @@ describe("OrchestratorMcpService", () => {
         };
       }).pipe(
         Effect.provide(
-          OrchestratorMcpService.layer.pipe(
+          layerOrchestratorService.pipe(
             Layer.provide(
               Layer.mock(ProviderSessionManagerV2)({
                 resolveMcpInvocationPolicy: () =>
@@ -1070,7 +1077,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           );
         }).pipe(
           Effect.provide(
-            OrchestratorMcpService.layer.pipe(
+            layerOrchestratorService.pipe(
               Layer.provide(
                 Layer.mock(ProviderSessionManagerV2)({
                   // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
@@ -1133,7 +1140,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
       }).pipe(
         Effect.provide(
-          OrchestratorMcpService.layer.pipe(
+          layerOrchestratorService.pipe(
             Layer.provide(fullAccessCapturedPolicyLayer),
             Layer.provide(layerDependencies),
           ),
@@ -1241,7 +1248,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(request.modelSelection.model, "ant-model");
         }).pipe(
           Effect.provide(
-            OrchestratorMcpService.layer.pipe(
+            layerOrchestratorService.pipe(
               Layer.provide(
                 Layer.mock(ProviderSessionManagerV2)({
                   // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
@@ -1355,7 +1362,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(request.modelSelection.model, "ant-model");
       }).pipe(
         Effect.provide(
-          OrchestratorMcpService.layer.pipe(
+          layerOrchestratorService.pipe(
             Layer.provide(
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
@@ -1432,7 +1439,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
       }).pipe(
         Effect.provide(
-          OrchestratorMcpService.layer.pipe(
+          layerOrchestratorService.pipe(
             Layer.provide(
               Layer.mock(ProviderSessionManagerV2)({
                 // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
@@ -1496,7 +1503,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(error.code, "invalid_request");
       }).pipe(
         Effect.provide(
-          OrchestratorMcpService.layer.pipe(
+          layerOrchestratorService.pipe(
             Layer.provide(fullAccessCapturedPolicyLayer),
             Layer.provide(layerDependencies),
           ),
@@ -1608,7 +1615,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(request.modelSelection.instanceId, altInstanceId);
       }).pipe(
         Effect.provide(
-          OrchestratorMcpService.layer.pipe(
+          layerOrchestratorService.pipe(
             Layer.provide(fullAccessCapturedPolicyLayer),
             Layer.provide(layerDependencies),
           ),
@@ -1741,7 +1748,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(retryCommand.modelSelection.instanceId, codexInstanceId);
         }).pipe(
           Effect.provide(
-            OrchestratorMcpService.layer.pipe(
+            layerOrchestratorService.pipe(
               Layer.provide(fullAccessCapturedPolicyLayer),
               Layer.provide(layerDependencies),
             ),
@@ -2042,7 +2049,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             }
           }).pipe(
             Effect.provide(
-              OrchestratorMcpService.layer.pipe(
+              layerOrchestratorService.pipe(
                 Layer.provide(
                   Layer.mock(ProviderSessionManagerV2)({
                     // Controlled policy input; actual credential/run ownership is qualified by the toolkit integration.
@@ -2165,7 +2172,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(newCreations, 1);
         }).pipe(
           Effect.provide(
-            OrchestratorMcpService.layer.pipe(
+            layerOrchestratorService.pipe(
               Layer.provide(fullAccessCapturedPolicyLayer),
               Layer.provide(layerDependencies),
             ),
@@ -2222,7 +2229,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       boundThread: OrchestrationV2ThreadShell | null,
       upserted: Ref.Ref<number>,
     ) =>
-      OrchestratorMcpService.layer.pipe(
+      layerOrchestratorService.pipe(
         Layer.provide(fullAccessCapturedPolicyLayer),
         Layer.provide(
           Layer.mergeAll(
@@ -2267,7 +2274,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         }),
       ];
       const calls = { tasks: 0, threads: [] as ProjectId[] };
-      const layer = OrchestratorMcpService.layer.pipe(
+      const layer = layerOrchestratorService.pipe(
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
@@ -2428,7 +2435,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             ),
           ),
           Effect.provide(
-            OrchestratorMcpService.layer.pipe(
+            layerOrchestratorService.pipe(
               Layer.provide(
                 Layer.mergeAll(
                   NodeServices.layer,
@@ -2514,7 +2521,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         // The edit's own check reads the thread; the read after the save fails.
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
-            OrchestratorMcpService.layer.pipe(
+            layerOrchestratorService.pipe(
               Layer.provide(
                 Layer.mergeAll(
                   NodeServices.layer,

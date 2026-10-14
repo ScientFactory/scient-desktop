@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import type * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -25,6 +26,7 @@ import {
   makeInterruptPendingStart,
   type InterruptPendingStart,
 } from "./scient-fork/PendingStartInterrupt.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -61,12 +63,19 @@ export interface ProviderTurnControlServiceV2Shape {
   readonly interruptPendingStart: InterruptPendingStart;
   // SCIENT-FORK:END
   readonly interrupt: (input: {
-    readonly subagent?: { readonly id: NodeId; readonly nativeTaskId: string };
+    readonly subagent?: {
+      readonly id: NodeId;
+      readonly nativeTaskId: string;
+      readonly requestedAt?: DateTime.Utc;
+    };
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
-  }) => Effect.Effect<"adapter-stopped" | "session-absent", ProviderTurnControlError>;
+  }) => Effect.Effect<
+    "adapter-stopped" | "session-absent" | void | ProviderAdapter.ProviderAdapterV2SubagentOutcome,
+    ProviderTurnControlError
+  >;
   readonly steer: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -210,11 +219,13 @@ export const layer: Layer.Layer<
               cause: "The provider does not support stopping a native subagent.",
             });
           }
-          yield* session.value.stopSubagent({
+          return yield* session.value.stopSubagent({
             providerThread: loaded.providerThread,
             nativeTaskId: input.subagent.nativeTaskId,
+            ...(input.subagent.requestedAt === undefined
+              ? {}
+              : { requestedAt: input.subagent.requestedAt }),
           });
-          return "adapter-stopped" as const;
         }
         // A settled turn reaches its adapter too: only the adapter knows
         // whether it still runs work for the thread, and each one either

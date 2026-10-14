@@ -425,6 +425,13 @@ into behavior tests.
 
 ### Live Scient migration preflight
 
+The upstream migration host [`Migrations.ts`](../../apps/server/src/persistence/Migrations.ts)
+mounts [`scientMigrationLedger.ts`](../../apps/server/src/persistence/scientMigrationLedger.ts)
+after preview reconciliation and before any migration runs. This Scient owner validates the
+entire recorded ledger even for a partial migration request: shipped names and defined steps
+are immutable; intentionally retired IDs remain accepted. Keep the validation at this exact
+host boundary so an incompatible ledger cannot silently skip a shipped migration.
+
 [`Sqlite.ts`](../../apps/server/src/persistence/Sqlite.ts) still invokes the independent
 [`scientMigrator.ts`](../../apps/server/src/orchestration-v2/scient-fork/scientMigrator.ts) runner.
 Keep `scient_schema_migrations` separate from upstream's ledger and preserve its immutable ID/name
