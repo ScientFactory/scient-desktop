@@ -468,6 +468,8 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
         ? (availableArtifact?.version ?? null)
         : null,
       previousManagedVersion: latest?.previousVersion ?? null,
+      qualifiedVersion: currentArtifact?.version ?? null,
+      catalog: yield* catalogService.freshness,
       operation: null,
       message,
       diagnostics: makeManagedProviderRuntimeDiagnostics({

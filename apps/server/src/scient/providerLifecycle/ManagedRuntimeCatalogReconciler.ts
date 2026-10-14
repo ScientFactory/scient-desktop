@@ -73,13 +73,17 @@ export const reconcileManagedRuntimeProviders = Effect.fn(
   );
 });
 
-/** Process-owned bridge from catalog changes to canonical provider snapshots. */
+/**
+ * Process-owned bridge from catalog checks to canonical provider snapshots.
+ * Every summary carries when the catalog was last checked, so each finished
+ * check refreshes every managed provider, not only those whose release changed.
+ */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const catalog = yield* ManagedRuntimeCatalog;
     const changes = yield* catalog.subscribeChanges;
     yield* changes.pipe(
-      Stream.runForEach((change) => reconcileManagedRuntimeProviders(change.changedProviders)),
+      Stream.runForEach(() => reconcileManagedRuntimeProviders(MANAGED_RUNTIME_CATALOG_PROVIDERS)),
       Effect.forkScoped,
     );
 
