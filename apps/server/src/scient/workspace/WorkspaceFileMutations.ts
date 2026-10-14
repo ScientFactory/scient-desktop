@@ -4,7 +4,6 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
-import * as NodeAsyncHooks from "node:async_hooks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   ProjectDeleteFileInput,
@@ -213,18 +212,6 @@ const within = (root: string, target: string) => {
     relative !== ".." && !relative.startsWith(`..${NodePath.sep}`) && !NodePath.isAbsolute(relative)
   );
 };
-const PlainEpoch = Schema.Struct({ nonce: Schema.String, generation: Schema.Number });
-const decodePlainEpoch = Schema.decodeUnknownSync(Schema.fromJsonString(PlainEpoch));
-/** The persisted plain publication count, or a fresh one. */
-async function loadPlainEpoch(file: string): Promise<{ nonce: string; generation: number }> {
-  try {
-    const stored = decodePlainEpoch(await NodeFSP.readFile(file, "utf8"));
-    return { nonce: stored.nonce, generation: stored.generation };
-  } catch {
-    return { nonce: NodeCrypto.randomUUID(), generation: 0 };
-  }
-}
-
 /** A plain publication failed before it could change the target. */
 class PlainPublicationUnchangedError extends Error {
   constructor(cause: unknown) {
@@ -969,28 +956,18 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   // for every mutation; native hosts use it to create a file where the volume cannot create it
   // completely in one step. Overleaf retention always requires native publication.
   // A plain publication can change any overlapping root, so one count advances every epoch.
-  // The count persists beside retained storage, so epochs (and LaTeX build evidence bound to
-  // them) stay valid across a restart and keep advancing afterwards.
-  const plainEpochFile = NodePath.join(
-    NodePath.dirname(deps.retentionStorageDirectory),
-    "plain-publication-epoch.json",
-  );
-  const plainEpoch = yield* Effect.promise(() => loadPlainEpoch(plainEpochFile));
-  let plainEpochWrites: Promise<void> = Promise.resolve();
-  /** Called before a plain publishing call: from here every earlier epoch is stale. */
-  const advancePlainEpoch = async () => {
+  // It lives in memory: until a run publishes plainly the epoch stays what it was before a
+  // restart; afterwards the run's nonce keeps its counts from matching any other run's, so
+  // LaTeX evidence bound to an earlier run's plain epoch earns one rebuild after a restart.
+  const plainEpoch = { nonce: NodeCrypto.randomUUID(), generation: 0 };
+  /** Called right before a plain publishing call: from here every earlier epoch is stale. */
+  const advancePlainEpoch = () => {
     plainEpoch.generation += 1;
-    const stored = { nonce: plainEpoch.nonce, generation: plainEpoch.generation };
-    const write = plainEpochWrites.then(async () => {
-      await NodeFSP.mkdir(NodePath.dirname(plainEpochFile), { recursive: true });
-      await durableJson(plainEpochFile, stored);
-    });
-    // Persistence is best effort: the in-memory count already protects this run.
-    plainEpochWrites = write.catch(() => undefined);
-    await plainEpochWrites;
   };
   const plainEpochComponent = () =>
     plainEpoch.generation === 0 ? "" : `plain:${plainEpoch.nonce}:${plainEpoch.generation}\n`;
+  /** Mutation ids a plain publication has started or answered; native moves and deletes refuse them. */
+  const plainClaims = new Set<string>();
   const plainReceipts = new Map<
     string,
     { readonly fingerprint: string; readonly result: RetainedMutationResult }
@@ -1032,7 +1009,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     target: string,
     id: string,
   ) =>
-    plainReceipts.has(id)
+    plainReceipts.has(id) || plainClaims.has(id)
       ? Effect.fail(
           errorFor(
             input,
@@ -1153,7 +1130,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           });
       }
       // From here the target may change, so every epoch captured earlier is stale.
-      await advancePlainEpoch();
+      advancePlainEpoch();
       if (!exclusive) {
         try {
           await replaceByRename(temporary, resolved.target);
@@ -1244,6 +1221,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const fingerprint = plainFingerprint(resolved, intent);
     const replayed = replayPlain(intent.id, fingerprint);
     if (replayed) return replayed;
+    plainClaims.add(intent.id);
     if (
       intent.expectedMutationEpoch !== undefined &&
       (await beforePublication(epoch)) !== intent.expectedMutationEpoch
@@ -3137,29 +3115,65 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     });
   /** Every mutation on a host without native publication authority, behind one lock. */
   function makePlainHostMethods(): WorkspaceFileMutationMethods {
-    let queue: Promise<void> = Promise.resolve();
-    const holder = new NodeAsyncHooks.AsyncLocalStorage<true>();
-    /**
-     * Serializes mutations and publication fences. Work started inside a held callback (a
-     * fence commit) runs directly instead of waiting for itself; a cancelled wait never runs.
-     */
-    const exclusive = <A>(run: () => Promise<A>, signal: AbortSignal): Promise<A> => {
-      if (holder.getStore()) return run();
-      const result = queue.then(() => {
-        if (signal.aborted)
-          throw new RetainedMutationError(
-            "unavailable",
-            "Publication acquisition cancelled before namespace work.",
-            "cancelled",
-          );
-        return holder.run(true, run);
-      });
-      queue = result.then(
-        () => undefined,
-        () => undefined,
-      );
-      return result;
+    // Ownership per workspace root, like native root leases: work on overlapping roots runs
+    // one at a time in arrival order, unrelated roots run independently. As with native
+    // leases, a held callback must not wait for its own (or an overlapping) root.
+    const active = new Set<string>();
+    const waiting: { readonly root: string; readonly start: () => void }[] = [];
+    const overlaps = (a: string, b: string) => a === b || within(a, b) || within(b, a);
+    const pump = () => {
+      for (let index = 0; index < waiting.length;) {
+        const waiter = waiting[index]!;
+        if (
+          [...active].some((key) => overlaps(rootOf(key), waiter.root)) ||
+          waiting.slice(0, index).some((earlier) => overlaps(earlier.root, waiter.root))
+        ) {
+          index++;
+          continue;
+        }
+        waiting.splice(index, 1);
+        waiter.start();
+      }
     };
+    const cancelled = () =>
+      new RetainedMutationError(
+        "unavailable",
+        "Publication acquisition cancelled before namespace work.",
+        "cancelled",
+      );
+    /** Runs `run` while owning `root`; a request cancelled while it waits never runs. */
+    const owning = async <A>(root: string, signal: AbortSignal, run: () => Promise<A>) => {
+      if (signal.aborted) throw cancelled();
+      const key = `${root}\0${NodeCrypto.randomUUID()}`;
+      await new Promise<void>((resolve, reject) => {
+        const waiter = {
+          root,
+          start: () => {
+            signal.removeEventListener("abort", abandon);
+            active.add(key);
+            resolve();
+          },
+        };
+        const abandon = () => {
+          const index = waiting.indexOf(waiter);
+          if (index < 0) return;
+          waiting.splice(index, 1);
+          reject(cancelled());
+          pump();
+        };
+        signal.addEventListener("abort", abandon, { once: true });
+        waiting.push(waiter);
+        pump();
+      });
+      try {
+        return await run();
+      } finally {
+        active.delete(key);
+        pump();
+      }
+    };
+    // `active` holds root keys; overlap is judged on the root part.
+    const rootOf = (key: string) => key.slice(0, key.indexOf("\0"));
     const plainEpochOf = async (root: string) => {
       const identity = await directoryIdentity(root);
       return NodeCrypto.createHash("sha256")
@@ -3178,17 +3192,18 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           ),
         ),
       );
-    /** The requested path still resolves as it did before the wait for the lock. */
+    /** The requested path still resolves as it did before the wait for ownership. */
     const stillResolves = async (
       input: { cwd: string; relativePath: string },
       resolved: Resolved,
       id: string,
     ) => {
-      const current = await beforePublication(() => Effect.runPromise(resolveTarget(input)));
+      const exit = await Effect.runPromiseExit(resolveTarget(input));
       if (
-        current.root !== resolved.root ||
-        current.target !== resolved.target ||
-        current.requestedPath !== resolved.requestedPath
+        Exit.isFailure(exit) ||
+        exit.value.root !== resolved.root ||
+        exit.value.target !== resolved.target ||
+        exit.value.requestedPath !== resolved.requestedPath
       )
         throw new RetainedMutationError(
           "target",
@@ -3202,10 +3217,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     ) {
       const resolved = yield* resolveTarget(input);
       const result = yield* owned(input, resolved.target, (signal) =>
-        exclusive(async () => {
+        owning(resolved.root, signal, async () => {
           await stillResolves(input, resolved, intent.id);
           return admitPlain(input, resolved, intent, () => plainEpochOf(resolved.root));
-        }, signal),
+        }),
       );
       yield* workspaceEntries.refresh(input.cwd);
       return { relativePath: resolved.named.relativePath, result };
@@ -3229,33 +3244,60 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         folder = NodePath.dirname(folder);
       }
     };
-    // Plain publications replace whole files by rename, so a read never sees one half done
-    // and needs no lock; callbacks may freely use the file service.
-    const settledRead = <A, E, R>(
+    /**
+     * Reads run while owning the root, so they never pair a newer epoch with older bytes.
+     * `missingOf` names the path whose absence the read should report, if any.
+     */
+    const ownedRead = <A, E, R>(
       input: { cwd: string; relativePath?: string },
+      missingOf: (root: string) => Promise<boolean>,
       read: (
         attention: ProjectFilePublicationAttention | null,
         settlement: WorkspaceFileReadSettlement,
       ) => Effect.Effect<A, E, R>,
     ) =>
       Effect.gen(function* () {
-        // The root must still be a workspace directory, reported as the native path does.
-        yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
-        const relativePath = input.relativePath;
-        const currentMissing =
-          relativePath === undefined
-            ? false
-            : yield* resolveTarget({ cwd: input.cwd, relativePath }, true).pipe(
-                Effect.flatMap((resolved) =>
-                  Effect.tryPromise({
-                    try: () => missing(resolved.target),
-                    catch: (cause) =>
-                      errorFor({ cwd: input.cwd, relativePath }, resolved.target, cause),
-                  }),
-                ),
-              );
-        return yield* read(null, { currentMissing });
+        const context = yield* Effect.context<R>();
+        const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
+        const exit = yield* owned(
+          { cwd: input.cwd, relativePath: input.relativePath ?? "." },
+          normalized,
+          async (signal) => {
+            const root = await NodeFSP.realpath(normalized);
+            return owning(root, signal, async () =>
+              Effect.runPromiseExitWith(context)(
+                read(null, { currentMissing: await missingOf(root) }),
+                { signal },
+              ),
+            );
+          },
+        );
+        return Exit.isFailure(exit) ? yield* Effect.failCause(exit.cause) : exit.value;
       });
+    const settledFileRead: WorkspaceFileMutationMethods["withSettledFileRead"] = (input, read) =>
+      ownedRead(
+        input,
+        async () => missing((await Effect.runPromise(resolveTarget(input, true))).target),
+        read,
+      );
+    // As the native read: only a path inside the root is checked for absence.
+    const settledWorkspaceRead: WorkspaceFileMutationMethods["withSettledWorkspaceRead"] = (
+      input,
+      read,
+    ) =>
+      ownedRead(
+        input,
+        async (root) => {
+          const path = input.relativePath;
+          const target = path === undefined ? null : NodePath.resolve(root, path);
+          if (target === null || target === root || !within(root, target)) return false;
+          const resolved = await Effect.runPromise(
+            resolveTarget({ cwd: root, relativePath: NodePath.relative(root, target) }, true),
+          );
+          return missing(resolved.target);
+        },
+        read,
+      );
     const doneReceipt = (id: string, revision: string | null): RetainedMutationResult => ({
       outcome: "done",
       recordDirectory: "",
@@ -3297,9 +3339,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         resolvedPath: destination.target,
       };
       const result = yield* owned(input, source.target, (signal) =>
-        exclusive(async () => {
+        owning(source.root, signal, async () => {
           const replayed = replayPlain(id, fingerprint);
           if (replayed) return replayed;
+          plainClaims.add(id);
           await stillResolves(input, source, id);
           await stillResolves(destinationInput, destination, id);
           const guard = input.expectedRevision === undefined ? undefined : 1024 * 1024;
@@ -3333,16 +3376,43 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               "The destination folder changed before a plain move.",
               id,
             );
-          /** The new name holds exactly the inspected file; otherwise it is removed again. */
-          const confirmDestination = async (sameFile: boolean) => {
-            const moved = await inspectGuardedFile(destination.target, guard);
-            const exact =
-              moved !== null &&
-              moved.revision === snapshot.revision &&
-              (!sameFile || sameIdentity(moved.identity, snapshot.identity));
-            if (exact) return;
+          /** Removes the new name only while it is still the link this move created. */
+          const undoLink = async () => {
+            const current = await fileIdentity(destination.target).catch(() => null);
+            if (current === null || !sameIdentity(current, snapshot.identity)) return false;
             await NodeFSP.unlink(destination.target);
-            if (moved !== null && moved.revision !== snapshot.revision)
+            return true;
+          };
+          advancePlainEpoch();
+          // A link never replaces a destination; the source is removed only after it.
+          try {
+            await NodeFSP.link(source.target, destination.target);
+          } catch (cause) {
+            if (isNodeError(cause, "EEXIST")) throw new WorkspaceFileExistsError(destinationFields);
+            if (!(await missing(destination.target))) throw cause;
+            // Includes volumes without hard links: plain moves need them, as on main.
+            throw new PlainPublicationUnchangedError(cause);
+          }
+          // The new name must hold the inspected bytes before the old name goes.
+          let moved: GuardedSnapshot;
+          try {
+            moved = await inspectGuardedFile(destination.target, guard);
+          } catch (cause) {
+            if (await undoLink()) throw new PlainPublicationUnchangedError(cause);
+            throw cause;
+          }
+          if (
+            moved === null ||
+            !sameIdentity(moved.identity, snapshot.identity) ||
+            moved.revision !== snapshot.revision
+          ) {
+            if (!(await undoLink()))
+              throw new RetainedMutationError(
+                "recovery",
+                "The moved file was replaced while it was being moved.",
+                id,
+              );
+            if (moved !== null && sameIdentity(moved.identity, snapshot.identity))
               throw new WorkspaceFileRevisionConflictError({
                 ...fields,
                 currentRevision: moved.leadingRevision,
@@ -3352,54 +3422,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               "The source changed while it was being moved.",
               id,
             );
-          };
-          await advancePlainEpoch();
-          // A link never replaces a destination; the source is removed only after it.
-          try {
-            await NodeFSP.link(source.target, destination.target);
-            await confirmDestination(true);
-          } catch (cause) {
-            if (isNodeError(cause, "EEXIST")) throw new WorkspaceFileExistsError(destinationFields);
-            if (
-              cause instanceof RetainedMutationError ||
-              isRevisionConflict(cause) ||
-              !linkUnsupported(cause)
-            ) {
-              if (cause instanceof RetainedMutationError || isRevisionConflict(cause)) throw cause;
-              if (!(await missing(destination.target))) throw cause;
-              throw new PlainPublicationUnchangedError(cause);
-            }
-            // No hard links on this volume: copy exclusively, confirm, then remove the source.
-            const bytes = await beforePublication(() => NodeFSP.readFile(source.target));
-            if (bytesRevision(bytes) !== snapshot.revision)
-              throw new WorkspaceFileRevisionConflictError({
-                ...fields,
-                currentRevision: bytesRevision(bytes.subarray(0, 1024 * 1024)),
-              });
-            const mode =
-              Number((await beforePublication(() => NodeFSP.stat(source.target))).mode) & 0o7777;
-            await writeExclusivelyInPlace(destination.target, bytes, mode, destinationFields);
-            await confirmDestination(false);
-            const after = await inspectGuardedFile(source.target, guard);
-            if (
-              after === null ||
-              !sameIdentity(after.identity, snapshot.identity) ||
-              after.revision !== snapshot.revision
-            ) {
-              await NodeFSP.unlink(destination.target);
-              throw new RetainedMutationError(
-                "target",
-                "The source changed while it was being moved.",
-                id,
-              );
-            }
           }
           try {
             await NodeFSP.unlink(source.target);
           } catch (cause) {
             // Undo the new name so the move is either complete or did not happen.
-            await NodeFSP.unlink(destination.target);
-            throw new PlainPublicationUnchangedError(cause);
+            if (await undoLink()) throw new PlainPublicationUnchangedError(cause);
+            throw cause;
           }
           await syncDirectory(folder);
           await syncDirectory(NodePath.dirname(source.target));
@@ -3407,7 +3436,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           const done = doneReceipt(id, snapshot.revision);
           rememberPlain(id, fingerprint, done);
           return done;
-        }, signal),
+        }),
       );
       yield* workspaceEntries.refresh(input.cwd);
       return {
@@ -3428,8 +3457,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         expected: input.expectedRevision,
       });
       yield* owned(input, resolved.target, (signal) =>
-        exclusive(async () => {
+        owning(resolved.root, signal, async () => {
           if (replayPlain(id, fingerprint)) return;
+          plainClaims.add(id);
           await stillResolves(input, resolved, id);
           const link = await beforePublication(() =>
             NodeFSP.lstat(resolved.requestedPath).catch((e: unknown) => {
@@ -3456,7 +3486,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               publicationOutcome: "unchanged",
               currentRevision: snapshot.leadingRevision,
             });
-          await advancePlainEpoch();
+          advancePlainEpoch();
           try {
             await NodeFSP.unlink(resolved.target);
           } catch (cause) {
@@ -3468,7 +3498,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           await syncDirectory(NodePath.dirname(resolved.target));
           if (input.removeEmptyFolders) await pruneEmptyParents(resolved.root, resolved.target);
           rememberPlain(id, fingerprint, doneReceipt(id, null));
-        }, signal),
+        }),
       );
       yield* workspaceEntries.refresh(input.cwd);
       return {
@@ -3540,13 +3570,14 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       }),
       renameFile: renamePlain,
       deleteFile: deletePlain,
-      withSettledFileRead: settledRead,
-      withSettledWorkspaceRead: settledRead,
+      withSettledFileRead: settledFileRead,
+      withSettledWorkspaceRead: settledWorkspaceRead,
       getMutationEpoch: Effect.fn("WorkspaceFileSystem.getMutationEpoch")(function* (input) {
         const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
-        return yield* owned({ cwd: input.cwd, relativePath: "." }, normalized, async () =>
-          plainEpochOf(await NodeFSP.realpath(normalized)),
-        );
+        return yield* owned({ cwd: input.cwd, relativePath: "." }, normalized, async (signal) => {
+          const root = await NodeFSP.realpath(normalized);
+          return owning(root, signal, () => plainEpochOf(root));
+        });
       }),
       withWorkspacePublicationFence: <A, E, R>(
         input: { cwd: string; expectedEpoch: string },
@@ -3555,16 +3586,21 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         Effect.gen(function* () {
           const context = yield* Effect.context<R>();
           const normalized = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd);
-          const exit = yield* owned({ cwd: input.cwd, relativePath: "." }, normalized, (signal) =>
-            exclusive(async () => {
-              if ((await plainEpochOf(await NodeFSP.realpath(normalized))) !== input.expectedEpoch)
-                throw new RetainedMutationError(
-                  "target",
-                  "Workspace mutated after build admission.",
-                  "build-fence",
-                );
-              return Effect.runPromiseExitWith(context)(commit(), { signal });
-            }, signal),
+          const exit = yield* owned(
+            { cwd: input.cwd, relativePath: "." },
+            normalized,
+            async (signal) => {
+              const root = await NodeFSP.realpath(normalized);
+              return owning(root, signal, async () => {
+                if ((await plainEpochOf(root)) !== input.expectedEpoch)
+                  throw new RetainedMutationError(
+                    "target",
+                    "Workspace mutated after build admission.",
+                    "build-fence",
+                  );
+                return Effect.runPromiseExitWith(context)(commit(), { signal });
+              });
+            },
           );
           return Exit.isFailure(exit) ? yield* Effect.failCause(exit.cause) : exit.value;
         }),

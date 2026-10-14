@@ -122,21 +122,23 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
       }),
   );
 
-  it.live("keeps the epoch across a restart and advances it on the next save", () =>
+  it.live("keeps the epoch across a restart until a plain save, then never revives it", () =>
     plain(async (h) => {
       await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
+      const untouched = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+      let methods = await h.restart();
+      // Nothing published plainly: LaTeX evidence bound to this epoch survives a restart.
+      expect(await h.run(methods.getMutationEpoch({ cwd: h.cwd }))).toBe(untouched);
       await h.run(
-        h.methods.writeFile({
+        methods.writeFile({
           cwd: h.cwd,
           relativePath: "main.tex",
           contents: "B",
           expectedRevision: revision("A"),
         }),
       );
-      const saved = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
-      const methods = await h.restart();
-      // LaTeX build evidence bound to this epoch stays valid after a restart.
-      expect(await h.run(methods.getMutationEpoch({ cwd: h.cwd }))).toBe(saved);
+      const saved = await h.run(methods.getMutationEpoch({ cwd: h.cwd }));
+      methods = await h.restart();
       await h.run(
         methods.writeFile({
           cwd: h.cwd,
@@ -145,7 +147,10 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
           expectedRevision: revision("B"),
         }),
       );
-      expect(await h.run(methods.getMutationEpoch({ cwd: h.cwd }))).not.toBe(saved);
+      // A later run's counts never match an earlier run's epoch.
+      const later = await h.run(methods.getMutationEpoch({ cwd: h.cwd }));
+      expect(later).not.toBe(saved);
+      expect(later).not.toBe(untouched);
     }),
   );
 
@@ -353,26 +358,45 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
       }),
     );
 
-    it.live("lets fence commits and read callbacks use the file service", () =>
+    it.live("lets a callback owning one workspace use another, unrelated one", () =>
       plain(async (h) => {
+        const other = NodePath.join(h.root, "other");
+        await NodeFSP.mkdir(other);
         const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
         await h.run(
           h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
-            h.methods.writeFile({ cwd: h.cwd, relativePath: "inside.tex", contents: "Fence" }),
-          ),
-        );
-        const other = NodePath.join(h.root, "other");
-        await NodeFSP.mkdir(other);
-        await h.run(
-          h.methods.withSettledWorkspaceRead({ cwd: h.cwd }, () =>
             Effect.gen(function* () {
               yield* h.methods.getMutationEpoch({ cwd: other });
               yield* h.methods.writeFile({ cwd: other, relativePath: "x.tex", contents: "X" });
             }),
           ),
         );
-        expect(await NodeFSP.readFile(NodePath.join(h.cwd, "inside.tex"), "utf8")).toBe("Fence");
         expect(await NodeFSP.readFile(NodePath.join(other, "x.tex"), "utf8")).toBe("X");
+      }),
+    );
+
+    it.live("makes reads and epoch reads wait while a fence owns the workspace", () =>
+      plain(async (h) => {
+        await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
+        const epoch = await h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+        const gate = Promise.withResolvers<void>();
+        const fence = h.run(
+          h.methods.withWorkspacePublicationFence({ cwd: h.cwd, expectedEpoch: epoch }, () =>
+            Effect.promise(() => gate.promise),
+          ),
+        );
+        let settled = false;
+        const read = h.settledRead("main.tex").then((value) => {
+          settled = true;
+          return value;
+        });
+        const reread = h.run(h.methods.getMutationEpoch({ cwd: h.cwd }));
+        await NodeTimersPromises.setTimeout(50);
+        expect(settled).toBe(false);
+        gate.resolve();
+        await fence;
+        expect(await read).toMatchObject({ contents: "A" });
+        expect(await reread).toBe(epoch);
       }),
     );
 
