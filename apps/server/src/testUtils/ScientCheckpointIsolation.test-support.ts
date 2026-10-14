@@ -14,12 +14,17 @@ function canonicalDirectory(directory: string): string {
 }
 
 /** Keep safety failures observable even when the runtime recovers a checkpoint failure. */
-export function makeCheckpointIsolationGuard(checkoutCommonDirectory: string) {
-  const forbiddenDirectory = canonicalDirectory(checkoutCommonDirectory);
+export function makeCheckpointIsolationGuard(checkoutCommonDirectory: string | (() => string)) {
+  let forbiddenDirectory: string | undefined;
   const violations: string[] = [];
 
   return {
     check(input: { readonly cwd: string; readonly gitCommonDir: string }): void {
+      forbiddenDirectory ??= canonicalDirectory(
+        typeof checkoutCommonDirectory === "string"
+          ? checkoutCommonDirectory
+          : checkoutCommonDirectory(),
+      );
       const directory = canonicalDirectory(NodePath.resolve(input.cwd, input.gitCommonDir));
       if (directory !== forbiddenDirectory) return;
       const message =

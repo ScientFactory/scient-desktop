@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - test setup resolves the checkout before any fixture runs.
+// @effect-diagnostics nodeBuiltinImport:off - lazy checkout detection at the test-only Git boundary.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
 import * as Effect from "effect/Effect";
@@ -7,24 +7,25 @@ import { afterEach, vi } from "vite-plus/test";
 import { makeCheckpointIsolationGuard } from "./ScientCheckpointIsolation.test-support.ts";
 
 const checkout = NodeURL.fileURLToPath(new URL("../../../../", import.meta.url));
-const commonDirectory = NodeChildProcess.execFileSync(
-  "git",
-  ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-  {
-    cwd: checkout,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      GIT_DIR: undefined,
-      GIT_WORK_TREE: undefined,
-      GIT_COMMON_DIR: undefined,
-      GIT_INDEX_FILE: undefined,
-      GIT_OBJECT_DIRECTORY: undefined,
-      GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+const guard = makeCheckpointIsolationGuard(() =>
+  NodeChildProcess.execFileSync(
+    "git",
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    {
+      cwd: checkout,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_DIR: undefined,
+        GIT_WORK_TREE: undefined,
+        GIT_COMMON_DIR: undefined,
+        GIT_INDEX_FILE: undefined,
+        GIT_OBJECT_DIRECTORY: undefined,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+      },
     },
-  },
-).trim();
-const guard = makeCheckpointIsolationGuard(commonDirectory);
+  ).trim(),
+);
 
 vi.mock("../vcs/ScientCheckpointCapture.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../vcs/ScientCheckpointCapture.ts")>();

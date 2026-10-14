@@ -21,19 +21,32 @@ it.effect.skipIf(process.env.SCIENT_CHECKPOINT_ISOLATION_VIOLATION !== "1")(
           ["rev-parse", "--path-format=absolute", "--git-common-dir"],
           { cwd, encoding: "utf8" },
         ).trim();
+        let stagingReached = false;
+        let gitReached = false;
         const result = yield* prepareCheckpointStagingRepo({
           cwd,
           gitCommonDir,
           operation: "checkpoint-isolation-regression",
           path: yield* Path.Path,
           fileSystem: FileSystem.makeNoop({
-            makeTempDirectoryScoped: () => Effect.die("Forbidden staging was reached"),
+            makeTempDirectoryScoped: () =>
+              Effect.sync(() => {
+                stagingReached = true;
+                throw new Error("Forbidden staging was reached");
+              }),
           }),
-          execute: () => Effect.die("Forbidden Git execution was reached"),
+          execute: () =>
+            Effect.sync(() => {
+              gitReached = true;
+              throw new Error("Forbidden Git execution was reached");
+            }),
           commitEnv: {},
           cleanGitEnv: {},
         }).pipe(Effect.catchCause(() => Effect.succeed("completed")));
         assert.equal(result, "completed");
+        assert.isFalse(stagingReached);
+        assert.isFalse(gitReached);
+        process.stdout.write("guard-body-completed-without-staging\n");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );

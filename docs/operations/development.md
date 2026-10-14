@@ -163,8 +163,11 @@ layers remain authoritative. Tests needing real checkpoints must bind a small, i
 Git repository from `checkpointWorkspace`, not the source checkout or a linked worktree
 sharing its Git common directory. Server test setup rejects capture into that common
 directory before staging and fails teardown even if the runtime recovers the capture error.
-The harness cleans up profiles it creates; callers retain ownership of supplied profile
-layers, including profiles shared across restart tests.
+Checkout Git metadata is resolved only on the first capture in each isolated test file.
+Replay profile creation is scoped, including adapter testkits and direct callers. The
+allocating scope cleans up the complete profile, even on initialization failure; borrowed
+profile layers do not own it. Allocate shared restart profiles in the enclosing test scope,
+not in the first runtime's shorter-lived scope.
 
 Complete Electron's dependency installation before running concurrent desktop suites:
 `pnpm --filter @t3tools/desktop exec install-electron`.

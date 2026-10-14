@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - these tests exercise native path aliases and Git metadata.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -42,6 +41,20 @@ it("allows an independent fixture common directory", () => {
   const guard = makeCheckpointIsolationGuard(commonDirectory);
   guard.check({ cwd: fixture, gitCommonDir: fixture });
   guard.assertNoViolations();
+});
+
+it("resolves checkout metadata only on the first capture, not setup or teardown", () => {
+  let resolutions = 0;
+  const guard = makeCheckpointIsolationGuard(() => {
+    resolutions++;
+    return commonDirectory;
+  });
+  guard.assertNoViolations();
+  assert.equal(resolutions, 0);
+  guard.check({ cwd: directory, gitCommonDir: directory });
+  guard.check({ cwd: directory, gitCommonDir: directory });
+  guard.assertNoViolations();
+  assert.equal(resolutions, 1);
 });
 
 it("canonicalizes symlink aliases of the checkout common directory", () => {
@@ -98,18 +111,10 @@ it.live("rejects a real linked worktree that shares the forbidden common directo
   ),
 );
 
-it.live("fails test teardown after a recovered source capture without changing index or refs", () =>
+it.live("fails test teardown after a recovered source capture before staging", () =>
   Effect.gen(function* () {
     const platform = yield* HostProcess.Platform;
     const cwd = NodeURL.fileURLToPath(new URL("../../", import.meta.url));
-    const git = (args: string[]) =>
-      NodeChildProcess.execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
-    const index = git(["rev-parse", "--path-format=absolute", "--git-path", "index"]);
-    const snapshot = () => ({
-      index: NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(index)).digest("hex"),
-      refs: git(["for-each-ref", "--format=%(refname) %(objectname)"]),
-    });
-    const before = snapshot();
     const child = NodeChildProcess.spawnSync(
       platform === "win32" ? "pnpm.cmd" : "pnpm",
       ["exec", "vp", "test", "src/testUtils/ScientCheckpointIsolation.violation.test.ts"],
@@ -126,6 +131,6 @@ it.live("fails test teardown after a recovered source capture without changing i
       child.stdout + child.stderr,
       "Checkpoint capture must not use the test checkout",
     );
-    assert.deepEqual(snapshot(), before);
+    assert.include(child.stdout, "guard-body-completed-without-staging");
   }),
 );
