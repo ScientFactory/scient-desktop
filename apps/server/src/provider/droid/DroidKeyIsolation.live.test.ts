@@ -38,13 +38,15 @@ const PROBE_COMMAND = [
   "env",
   // A transform defeats Droid's own output masking.
   "env | rev",
-  // The command's supervising shell and the Droid processes above it, with their
-  // environments: from 0.241 the shell runs under a separate `droid exec` worker.
-  // The overlay's path is in the arguments of the Droid that reads it; Droid up
-  // to 0.235 also gives it to commands.
+  // The command's supervising shell and every Droid process above it, with their
+  // environments, and nothing beyond Droid: from 0.241 the shell runs under a
+  // separate `droid exec` worker. The overlay's path is in the arguments of the
+  // Droid that reads it; Droid up to 0.235 also gives it to commands.
   'settings="$FACTORY_RUNTIME_SETTINGS_PATH"; process=$PPID',
   "echo ---process---",
-  'for _ in 1 2 3; do ps eww -o command= -p "$process"; ps eww -o command= -p "$process" | rev; settings=${settings:-$(ps -o command= -p "$process" | sed -n "s/^[^ ]*droid .*--settings \\([^ ]*\\).*/\\1/p")}; process=$(ps -o ppid= -p "$process" | tr -d " "); done',
+  'ps eww -o command= -p "$process"; ps eww -o command= -p "$process" | rev',
+  'process=$(ps -o ppid= -p "$process" | tr -d " ")',
+  'while ps -o command= -p "$process" | grep -q "^[^ ]*droid "; do ps eww -o command= -p "$process"; ps eww -o command= -p "$process" | rev; settings=${settings:-$(ps -o command= -p "$process" | sed -n "s/^[^ ]*droid .*--settings \\([^ ]*\\).*/\\1/p")}; process=$(ps -o ppid= -p "$process" | tr -d " "); done',
   "echo ---settings---",
   'cat "$settings" | rev',
   'cat "$settings"',
@@ -251,6 +253,8 @@ it.effect.skipIf(!binary)(
       // reads the capability, which is all it holds (the documented residual).
       expect(toolOutput).toContain([..."scient-cap-"].toReversed().join(""));
       expect(toolOutput).toContain("---process---");
+      // The walk reached the Droid that reads the overlay.
+      expect(toolOutput).toMatch(/--settings \S*settings\.json/u);
       // Nothing Droid sent Scient, and nothing it wrote to disk, holds the key.
       expect(acpTraffic.join("\n")).not.toContain(realKey);
       expect(filesContaining(root, realKey)).toEqual([]);
