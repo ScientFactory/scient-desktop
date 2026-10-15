@@ -71,7 +71,7 @@ export const sectionCatalogsAtom = Atom.make((get): readonly EnvironmentSectionC
 }).pipe(Atom.withLabel("scient-sections-environment-catalogs"));
 
 /** The catalog of one environment, outside React; null when its server stores no sections. */
-export function readSectionCatalog(environmentId: string): EnvironmentSectionCatalog | null {
+function readSectionCatalog(environmentId: string): EnvironmentSectionCatalog | null {
   return (
     appAtomRegistry
       .get(sectionCatalogsAtom)
