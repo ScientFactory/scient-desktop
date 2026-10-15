@@ -68,7 +68,10 @@ interface ActiveConnection {
   readonly scope: Scope.Closeable;
   readonly attemptRef: Ref.Ref<ProviderConnectionAttempt | undefined>;
   readonly authorizationCodeSubmittedRef: Ref.Ref<boolean>;
-  /** Questions published after the attempt was described, so an answer cannot hide the next one. */
+  /**
+   * Questions published so far; the latest is the one open. An answer names
+   * it, and cannot hide the next one.
+   */
   readonly questionsAskedRef: Ref.Ref<number>;
   readonly fiberRef: Ref.Ref<Fiber.Fiber<void, never> | undefined>;
   readonly transitionLock: Semaphore.Semaphore;
@@ -93,6 +96,7 @@ function operation(input: {
   readonly userCode?: string;
   readonly account?: string | undefined;
   readonly instructions?: string | undefined;
+  readonly questionId?: string | undefined;
 }): ProviderConnectionOperation {
   return {
     operationId: input.operationId,
@@ -112,8 +116,12 @@ function operation(input: {
     ...(input.userCode ? { userCode: input.userCode } : {}),
     ...(input.account ? { account: input.account } : {}),
     ...(input.instructions ? { instructions: input.instructions } : {}),
+    ...(input.questionId ? { questionId: input.questionId } : {}),
   };
 }
+
+/** The id the `count`th question of an operation is published and answered under. */
+const questionIdFor = (count: number) => `question-${count}`;
 
 const makeError = (input: {
   readonly provider: ProviderDriverKind;
@@ -461,6 +469,8 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
             return undefined;
           }
           yield* Ref.set(attemptRef, attempt);
+          const asking = attempt.submitAuthorizationCode !== undefined;
+          if (asking) yield* Ref.set(questionsAskedRef, 1);
           return yield* providerRegistry.setProviderConnectionOperation({
             instanceId: input.instanceId,
             operation: operation({
@@ -468,6 +478,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               method: input.method,
               account: input.account,
               instructions: attempt.instructions,
+              ...(asking ? { questionId: questionIdFor(1) } : {}),
               status: waitingStatus,
               startedAt,
               message: waitingMessage,
@@ -479,7 +490,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                       : {}),
                   }
                 : {}),
-              acceptsAuthorizationCode: attempt.submitAuthorizationCode !== undefined,
+              acceptsAuthorizationCode: asking,
               ...(attempt.authorizationResponseKind
                 ? { authorizationResponseKind: attempt.authorizationResponseKind }
                 : {}),
@@ -521,7 +532,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   ...attempt,
                   submitAuthorizationCode: question.submitAuthorizationCode,
                 });
-                yield* Ref.update(questionsAskedRef, (count) => count + 1);
+                const asked = yield* Ref.updateAndGet(questionsAskedRef, (count) => count + 1);
                 yield* providerRegistry.setProviderConnectionOperation({
                   instanceId: input.instanceId,
                   operation: {
@@ -529,6 +540,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     status: waitingStatus,
                     message: waitingMessage,
                     acceptsAuthorizationCode: true,
+                    questionId: questionIdFor(asked),
                     ...(question.instructions ? { instructions: question.instructions } : {}),
                   },
                 });
@@ -705,6 +717,22 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               message: "This provider sign-in flow does not accept an authorization code.",
             });
           }
+          // An answer names the question it was typed for. Only the first
+          // question takes one from a client that predates question ids.
+          const questionsAsked = yield* Ref.get(active.questionsAskedRef);
+          if (
+            input.questionId === undefined
+              ? questionsAsked > 1
+              : input.questionId !== questionIdFor(questionsAsked)
+          ) {
+            return yield* makeError({
+              provider: target.provider,
+              instanceId: input.instanceId,
+              reason: "authorization_code_not_supported",
+              message:
+                "That answer was for an earlier question. Answer the question the provider is asking now.",
+            });
+          }
 
           const claimed = yield* Ref.modify(
             active.authorizationCodeSubmittedRef,
@@ -721,7 +749,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           return {
             active,
             submitAuthorizationCode: attempt.submitAuthorizationCode,
-            questionsAsked: yield* Ref.get(active.questionsAskedRef),
+            questionsAsked,
           };
         }),
       );

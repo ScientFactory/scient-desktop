@@ -890,7 +890,11 @@ Scient Agent.
   the previous answer (Cloudflare asks for a token, an account id and a gateway id). Each one
   that arrives after the attempt was described, including the first, is published on the
   waiting operation (`nextQuestion`); an answer's `verifying` never replaces a question that
-  already followed it. What the user pastes is removed from any error the agent returns.
+  already followed it. Every question is published with a server-minted `questionId` that the
+  answer echoes, and each answer is bound to the agent request it was asked in, so an answer
+  typed for an earlier question is refused rather than taken for the open one. A client that
+  predates `questionId` can answer only an operation's first question. What the user pastes is
+  removed from any error the agent returns.
   Sign-out sends `logout`, and the
   lifecycle manager then stops the provider's sessions on whichever instances are current: every
   process that could have read the sign-in started before it was removed. Removal and stop are

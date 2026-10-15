@@ -310,6 +310,38 @@ describe("Scient Agent sign-in", () => {
     ),
   );
 
+  it.live("never sends an answer to an earlier question as the answer to the open one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const agent = yield* makeAgent;
+        const starting = yield* start(agent, "cloudflare-workers-ai").pipe(Effect.forkChild);
+        yield* agent.say({ id: "ui-1", method: "input", title: "Paste your Cloudflare API token" });
+        const attempt = yield* Fiber.join(starting);
+        const answerFirst = attempt.submitAuthorizationCode!;
+        yield* answerFirst("the-token");
+        const next = yield* attempt.nextQuestion!.pipe(Effect.forkChild);
+        yield* agent.say({
+          id: "ui-2",
+          method: "input",
+          title: "Enter your Cloudflare account ID",
+        });
+        const second = yield* Fiber.join(next);
+
+        // A second answer to the first question, kept by another client.
+        const stale = yield* answerFirst("another-token").pipe(Effect.flip);
+        assert.strictEqual(stale.message, "Scient Agent is not waiting for an answer.");
+        assert.deepStrictEqual(yield* Ref.get(agent.answers), [{ id: "ui-1", value: "the-token" }]);
+
+        // The second question is still open.
+        yield* second.submitAuthorizationCode("the-account");
+        assert.deepStrictEqual(yield* Ref.get(agent.answers), [
+          { id: "ui-1", value: "the-token" },
+          { id: "ui-2", value: "the-account" },
+        ]);
+      }),
+    ),
+  );
+
   it.live("starts nothing without a named account or for another method", () =>
     Effect.scoped(
       Effect.gen(function* () {

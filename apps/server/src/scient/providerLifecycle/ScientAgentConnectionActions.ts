@@ -152,7 +152,7 @@ const deviceCode = (instructions: string | undefined): string | undefined => {
 
 type Prompt =
   | { readonly _tag: "Link"; readonly url: string | undefined; readonly instructions?: string }
-  | { readonly _tag: "Question"; readonly title: string | undefined };
+  | { readonly _tag: "Question"; readonly id: string; readonly title: string | undefined };
 
 export function makeScientAgentConnectionActions(input: {
   /** Starts one isolated agent process in the caller's scope. */
@@ -200,8 +200,9 @@ export function makeScientAgentConnectionActions(input: {
           }
           if (event.method === "input" && event.id) {
             // A sign-in can ask several questions, one after each answer.
-            return Ref.set(openQuestion, event.id).pipe(
-              Effect.andThen(Queue.offer(prompts, { _tag: "Question", title: event.title })),
+            const id = event.id;
+            return Ref.set(openQuestion, id).pipe(
+              Effect.andThen(Queue.offer(prompts, { _tag: "Question", id, title: event.title })),
             );
           }
           return Effect.void;
@@ -263,10 +264,15 @@ export function makeScientAgentConnectionActions(input: {
       const linkInstructions = instructionsText(link?.instructions);
       const userCode = deviceCode(linkInstructions);
       const instructions = instructionsText(question?.title) ?? linkInstructions;
-      const submitAuthorizationCode = (code: string) =>
+      // Each answer belongs to the question it was asked for: once the agent
+      // has moved on, an answer to an earlier question is refused, not sent
+      // as the answer to the one now open.
+      const answer = (id: string) => (code: string) =>
         Effect.gen(function* () {
-          const id = yield* Ref.getAndSet(openQuestion, undefined);
-          if (id === undefined) {
+          const taken = yield* Ref.modify(openQuestion, (open) =>
+            open === id ? [true, undefined] : [false, open],
+          );
+          if (!taken) {
             return yield* connectionError("Scient Agent is not waiting for an answer.");
           }
           const value = code.trim();
@@ -291,7 +297,10 @@ export function makeScientAgentConnectionActions(input: {
         while (true) {
           const prompt = yield* Queue.take(prompts);
           if (prompt._tag === "Question") {
-            return { instructions: instructionsText(prompt.title), submitAuthorizationCode };
+            return {
+              instructions: instructionsText(prompt.title),
+              submitAuthorizationCode: answer(prompt.id),
+            };
           }
         }
       });
@@ -301,7 +310,7 @@ export function makeScientAgentConnectionActions(input: {
         initialStatus: userCode ? "waiting_for_device_code" : "waiting_for_browser",
         ...(userCode ? { userCode } : {}),
         ...(instructions ? { instructions } : {}),
-        ...(question ? { submitAuthorizationCode } : {}),
+        ...(question ? { submitAuthorizationCode: answer(question.id) } : {}),
         nextQuestion,
         waitForCompletion: completion,
         cancel,

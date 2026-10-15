@@ -1724,6 +1724,7 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
         (operation) => operation?.acceptsAuthorizationCode === true,
       );
       assert.strictEqual(waiting?.instructions, "Paste the redirect URL");
+      assert.strictEqual(waiting?.questionId, "question-1");
       assert.strictEqual(waiting?.account, "openai-codex");
       assert.strictEqual(waiting?.authorizationUrl, "https://auth.example.com/");
 
@@ -1942,11 +1943,12 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       account: "cloudflare-ai-gateway",
     });
     const operationId = started.providers[0]!.connection!.accountOperation!.operationId;
-    const answer = (authorizationCode: string) =>
+    const answer = (authorizationCode: string, questionId?: string) =>
       manager.submitAuthorizationCode({
         instanceId: SCIENT_INSTANCE,
         operationId,
         authorizationCode,
+        ...(questionId === undefined ? {} : { questionId }),
       });
     return { ...signIn, manager, operationId, takeUntil, asks, stillShown, answer };
   });
@@ -1963,8 +1965,9 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
           shown?.authorizationUrl,
           "https://developers.cloudflare.com/ai-gateway/configuration/authentication/",
         );
+        assert.strictEqual(shown?.questionId, `question-${index + 1}`);
         assert.deepStrictEqual(yield* signIn.stillShown, []);
-        yield* signIn.answer(values[index]!);
+        yield* signIn.answer(values[index]!, shown?.questionId);
       }
       assert.deepStrictEqual(signIn.answers, [
         { id: "ask-1", value: "cfut_token" },
@@ -1976,6 +1979,37 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       const ended = yield* signIn.takeUntil((operation) => operation?.status === "connected");
       assert.strictEqual(ended?.account, "cloudflare-ai-gateway");
     }),
+  );
+
+  it.effect(
+    "refuses an answer to a question the agent has moved past, and keeps the open one",
+    () =>
+      Effect.gen(function* () {
+        const signIn = yield* startCloudflareSignIn;
+        yield* signIn.asks(signIn.questions[0]!);
+        // A client that predates question ids can still answer the first one.
+        yield* signIn.answer("cfut_token");
+        const second = yield* signIn.asks(signIn.questions[1]!);
+
+        // Another client's answer to the first question arrives late.
+        const stale = yield* signIn.answer("cfut_other_token", "question-1").pipe(Effect.flip);
+        assert.strictEqual(stale.reason, "authorization_code_not_supported");
+        assert.match(stale.message, /earlier question/u);
+        // Without a question id, nothing says which question it answers.
+        const unnamed = yield* signIn.answer("cfut_other_token").pipe(Effect.flip);
+        assert.match(unnamed.message, /earlier question/u);
+        assert.deepStrictEqual(
+          signIn.answers.map((answer) => answer.id),
+          ["ask-1"],
+        );
+        // The second question is still the one shown, and still takes its answer.
+        assert.deepStrictEqual(yield* signIn.stillShown, []);
+        yield* signIn.answer("0123456789abcdef0123456789abcdef", second?.questionId);
+        assert.deepStrictEqual(signIn.answers, [
+          { id: "ask-1", value: "cfut_token" },
+          { id: "ask-2", value: "0123456789abcdef0123456789abcdef" },
+        ]);
+      }),
   );
 
   it.effect("cancels a sign-in between its questions without waiting on the agent", () =>

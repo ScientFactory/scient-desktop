@@ -35,6 +35,13 @@ export const ProviderConnectionAccountId = TrimmedNonEmptyString.check(
 );
 export type ProviderConnectionAccountId = typeof ProviderConnectionAccountId.Type;
 
+/** Names one question of a connection operation; minted by the server. */
+export const ProviderConnectionQuestionId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[A-Za-z0-9._-]+$/),
+);
+export type ProviderConnectionQuestionId = typeof ProviderConnectionQuestionId.Type;
+
 export const ProviderConnectionAccount = Schema.Struct({
   id: ProviderConnectionAccountId,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
@@ -95,6 +102,11 @@ export const ProviderConnectionOperation = Schema.Struct({
   account: Schema.optionalKey(ProviderConnectionAccountId),
   /** What the provider asks the user to do or paste, in its own words. */
   instructions: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+  /**
+   * The question an answer is accepted for. A flow can ask several in turn;
+   * a submission echoes this so an answer typed for an earlier one is refused.
+   */
+  questionId: Schema.optionalKey(ProviderConnectionQuestionId),
 });
 export type ProviderConnectionOperation = typeof ProviderConnectionOperation.Type;
 
@@ -283,6 +295,11 @@ export const ProviderConnectionSubmitAuthorizationCodeInput = Schema.Struct({
     Schema.isMaxLength(16_384),
     authorizationCodeHasNoControlCharacters,
   ),
+  /**
+   * The operation's `questionId` this answers. A client that predates it
+   * omits it, which only the first question of an operation accepts.
+   */
+  questionId: Schema.optionalKey(ProviderConnectionQuestionId),
 });
 export type ProviderConnectionSubmitAuthorizationCodeInput =
   typeof ProviderConnectionSubmitAuthorizationCodeInput.Type;
