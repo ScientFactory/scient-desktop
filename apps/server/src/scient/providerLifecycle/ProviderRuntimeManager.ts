@@ -18,6 +18,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -157,6 +158,7 @@ function operation(input: {
 }
 
 const IDLE_POLL_INTERVAL = "1 second";
+const CANCELLED_SUMMARY_TIMEOUT = "10 seconds";
 const RESELECT_INTERVAL = "10 minutes";
 
 export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
@@ -172,9 +174,16 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   // operation leaves `activeRef` when it is claimed for cancellation or
   // completion, before its worker has stopped and its result is published; it
   // stays here until then, so a restart cannot cut that cleanup off.
-  const inProgressRef = yield* Ref.make<ReadonlyMap<string, ProviderRuntimeActiveOperation>>(
-    new Map(),
-  );
+  const inProgressRef = yield* Ref.make<
+    ReadonlyMap<
+      string,
+      {
+        readonly operation: ProviderRuntimeActiveOperation;
+        /** Completes once the operation has fully settled. */
+        readonly settled: Deferred.Deferred<void>;
+      }
+    >
+  >(new Map());
 
   const readTarget = Effect.fn("ProviderRuntimeManager.readTarget")(function* (
     instanceId: ProviderInstanceId,
@@ -229,11 +238,14 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         Effect.ensuring(
           lifecycleCoordinator.release({ operationId: active.operationId }).pipe(
             Effect.andThen(
-              Ref.update(inProgressRef, (current) => {
+              Ref.modify(inProgressRef, (current) => {
                 const next = new Map(current);
                 next.delete(active.operationId);
-                return next;
+                return [current.get(active.operationId)?.settled, next] as const;
               }),
+            ),
+            Effect.flatMap((settled) =>
+              settled ? Deferred.succeed(settled, undefined) : Effect.void,
             ),
           ),
         ),
@@ -259,6 +271,12 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     yield* Effect.forEach(active.values(), (runtime) => cleanupActive(runtime, "interrupt"), {
       discard: true,
     });
+    // An operation already claimed, by a cancellation for example, is no
+    // longer in `activeRef` but may still be stopping: wait for it to settle.
+    const settling = yield* Ref.get(inProgressRef);
+    yield* Effect.forEach(settling.values(), ({ settled }) => Deferred.await(settled), {
+      discard: true,
+    });
   });
 
   yield* Effect.addFinalizer(() => cleanupAll);
@@ -267,9 +285,14 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     instanceId: ProviderInstanceId,
     active: ActiveRuntimeOperation,
   ) {
-    const latestSummary = yield* active.actions.getSummary.pipe(
-      Effect.orElseSucceed(() => active.baseSummary),
-    );
+    // Best effort, after the worker has stopped: settling runs uninterruptibly,
+    // so this read alone is bounded and interruptible. Any failure, timeout or
+    // interruption falls back to the summary taken at start, and the
+    // cancellation is still published.
+    const read = yield* Effect.interruptible(
+      active.actions.getSummary.pipe(Effect.timeout(CANCELLED_SUMMARY_TIMEOUT)),
+    ).pipe(Effect.exit);
+    const latestSummary = Exit.isSuccess(read) ? read.value : active.baseSummary;
     const finishedAt = yield* nowIso;
     return yield* providerRegistry.setProviderManagedRuntimeSummary({
       instanceId,
@@ -520,12 +543,16 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
               message: "Another account is already changing this shared provider runtime.",
             });
           }
+          const settled = yield* Deferred.make<void>();
           yield* Ref.update(inProgressRef, (current) =>
             new Map(current).set(operationId, {
-              instanceId: input.instanceId,
-              operationId,
-              action: input.action,
-              startedAt,
+              operation: {
+                instanceId: input.instanceId,
+                operationId,
+                action: input.action,
+                startedAt,
+              },
+              settled,
             }),
           );
           const cleanupStartupExit = <A, E>(exit: Exit.Exit<A, E>): Effect.Effect<void> =>
@@ -878,7 +905,12 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
 
   const activeOperations: ProviderRuntimeManagerShape["activeOperations"] = Effect.gen(
     function* () {
-      const operations = new Map(yield* Ref.get(inProgressRef));
+      const operations = new Map(
+        Array.from(
+          yield* Ref.get(inProgressRef),
+          ([id, { operation }]) => [id, operation] as const,
+        ),
+      );
       // Held but not yet recorded above: only for the instant after `start` holds it.
       for (const [instanceId, active] of yield* Ref.get(activeRef)) {
         if (operations.has(active.operationId)) continue;

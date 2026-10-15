@@ -100,10 +100,20 @@ function whenSettled<A>(
 const RECONNECT_GRACE_MS = 2 * 60_000;
 
 /**
+ * How long an "update everything" pass waits on managed runtime operations,
+ * its own and any it finds running, before giving up on them.
+ */
+export const UPDATE_PASS_LIMIT_MS = 30 * 60_000;
+
+const STILL_RUNNING_MESSAGE =
+  "The update was still running after 30 minutes. Review the provider in Settings.";
+
+/**
  * The final result of a started managed update: its new runtime active, or
  * why not. Waits through a short reconnect; losing the environment, or a
- * reconnect longer than the grace period, fails it. `onWaitingChange` hears
- * whether the staged runtime is waiting for the provider's running work.
+ * reconnect longer than the grace period, fails it, as does still running at
+ * `deadlineAt`. `onWaitingChange` hears whether the staged runtime is waiting
+ * for the provider's running work.
  */
 export function watchManagedRuntimeUpdate(
   source: ProviderSnapshotSource,
@@ -112,6 +122,8 @@ export function watchManagedRuntimeUpdate(
   options: {
     readonly reconnectGraceMs?: number;
     readonly onWaitingChange?: (waiting: boolean) => void;
+    /** When, as `Date.now()`, an update still running stops being waited for. */
+    readonly deadlineAt?: number;
   } = {},
 ): Promise<ProviderUpdateOutcome> {
   const reconnectGraceMs = options.reconnectGraceMs ?? RECONNECT_GRACE_MS;
@@ -153,7 +165,10 @@ export function watchManagedRuntimeUpdate(
       reconnectingSince = null;
       run = settleManagedRuntimeUpdateRuns([run], [environment])[0] ?? run;
       setWaiting(run.outcome.status === "pending" && run.waitingMessage !== null);
-      return run.outcome.status === "pending" ? undefined : run.outcome;
+      if (run.outcome.status !== "pending") return run.outcome;
+      return options.deadlineAt !== undefined && Date.now() >= options.deadlineAt
+        ? { status: "failed", message: STILL_RUNNING_MESSAGE }
+        : undefined;
     },
     Math.min(10_000, reconnectGraceMs),
   ).finally(() => setWaiting(false));
@@ -181,9 +196,6 @@ function withDeadline<A>(promise: Promise<A>, ms: number): Promise<A> {
     }),
   ]).finally(() => clearTimeout(timer));
 }
-
-/** How long a restart waits on a managed runtime operation that is still running. */
-const BUSY_LIMIT_MS = 30 * 60_000;
 
 interface IdleCheckTiming {
   /** How long a reconnect, or an unanswered server, may last. */
@@ -271,7 +283,7 @@ export async function waitForManagedRuntimesIdle(
   const reconnectGraceMs = timing.reconnectGraceMs ?? RECONNECT_GRACE_MS;
   const resolved: IdleCheckTiming = {
     reconnectGraceMs,
-    busyLimitMs: timing.busyLimitMs ?? BUSY_LIMIT_MS,
+    busyLimitMs: timing.busyLimitMs ?? UPDATE_PASS_LIMIT_MS,
     pollMs: timing.pollMs ?? Math.min(10_000, reconnectGraceMs),
   };
   const ids = [...new Set(environmentIds)];

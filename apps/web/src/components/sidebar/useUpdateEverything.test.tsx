@@ -67,6 +67,7 @@ vi.mock("~/state/use-atom-command", () => ({
 vi.mock("~/hooks/useSettings", () => ({ useEnvironmentSettings: () => false }));
 vi.mock("~/hooks/useCopyToClipboard", () => ({ useCopyToClipboard: () => ({}) }));
 vi.mock("~/scient/providerUpdates/managedRuntimeUpdateWatch", () => ({
+  UPDATE_PASS_LIMIT_MS: 30 * 60_000,
   appProviderSnapshots: {
     read: () =>
       testState.environments.map((environment) => ({

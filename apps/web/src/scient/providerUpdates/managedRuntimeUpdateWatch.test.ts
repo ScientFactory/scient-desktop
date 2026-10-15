@@ -367,6 +367,40 @@ describe("waitForManagedRuntimesIdle", () => {
     expect(events).toEqual(["providers failed", "servers", "install app"]);
   });
 
+  it("ends a pass whose managed update never finishes, without installing this app", async () => {
+    const live = snapshots(
+      environment(codex({ version: "0.48.0", operation: operation("activating") })),
+    );
+    // One deadline for the whole pass, as `managedRuntimeGatedSteps` sets it.
+    const deadlineAt = Date.now() + 30;
+    const events: Array<string> = [];
+    await runUpdateEverything({
+      updateProviders: async () => {
+        const results = await runProviderUpdates(
+          [{ environmentId: alvin, label: "alvin", items: [item] }],
+          {
+            updateSystem: async () => ({ status: "succeeded", version: null }),
+            startManaged: async () => ({
+              finished: watchManagedRuntimeUpdate(live.source, item, "op-1", {
+                deadlineAt,
+                reconnectGraceMs: 20,
+              }),
+            }),
+          },
+        );
+        events.push(`providers ${results[0]!.outcome.status}`);
+      },
+      updateServers: async () => {},
+      installLocal: async () => {
+        const unconfirmed = await waitForManagedRuntimesIdle(live.source, [alvin], live.answer, {
+          busyLimitMs: Math.max(0, deadlineAt - Date.now()),
+          pollMs: 10,
+        });
+        events.push(unconfirmed.size === 0 ? "install app" : "skip install");
+      },
+    });
+    expect(events).toEqual(["providers failed", "skip install"]);
+  });
   it("does not install this app when the server accepted an update but its answer was lost", async () => {
     // The connection drops after the server starts the update: the start fails
     // here, and the cached snapshot still shows no update.

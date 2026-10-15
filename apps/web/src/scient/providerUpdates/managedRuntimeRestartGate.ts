@@ -6,6 +6,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 
 import {
   appProviderSnapshots,
+  UPDATE_PASS_LIMIT_MS,
   waitForManagedRuntimesIdle,
   type ReadServerRuntimeActivity,
 } from "./managedRuntimeUpdateWatch";
@@ -15,11 +16,13 @@ import {
  * each restart held until no Scient-managed runtime update is running on that
  * machine, whoever started it. A machine Scient cannot confirm, because it
  * lost contact or an update ran past the busy limit, is not restarted, and a
- * notice says so.
+ * notice says so. One deadline covers the whole pass: the managed updates it
+ * starts and every wait before a restart.
  */
 export function managedRuntimeGatedSteps(input: {
   readonly updateAll: (options: {
     readonly onWaitingChange?: (waiting: boolean) => void;
+    readonly deadlineAt?: number;
   }) => Promise<void>;
   readonly onWaitingChange: ((waiting: boolean) => void) | undefined;
   readonly readServerRuntimeActivity: ReadServerRuntimeActivity;
@@ -32,16 +35,23 @@ export function managedRuntimeGatedSteps(input: {
   readonly hostedEnvironmentIds: ReadonlyArray<EnvironmentId>;
   readonly installLocal: (() => Promise<void>) | undefined;
 }) {
+  const deadlineAt = Date.now() + UPDATE_PASS_LIMIT_MS;
   const unconfirmed = (environmentIds: ReadonlyArray<EnvironmentId>) =>
     waitForManagedRuntimesIdle(
       appProviderSnapshots,
       environmentIds,
       input.readServerRuntimeActivity,
+      {
+        busyLimitMs: Math.max(0, deadlineAt - Date.now()),
+      },
     );
   const installLocal = input.installLocal;
   return {
     updateProviders: () =>
-      input.updateAll(input.onWaitingChange ? { onWaitingChange: input.onWaitingChange } : {}),
+      input.updateAll({
+        deadlineAt,
+        ...(input.onWaitingChange ? { onWaitingChange: input.onWaitingChange } : {}),
+      }),
     updateServers: async () => {
       const gated = currentConfirmedServerTargets(input.servers, input.currentServers());
       // A server that dropped out because it disconnected is reported with the rest.

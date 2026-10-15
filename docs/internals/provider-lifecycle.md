@@ -333,8 +333,11 @@ Removing the managed copy re-probes and returns to the healthy system source. Cr
 copied nor migrated because both sources use the provider's established account environment.
 
 `server.getProviderRuntimeOperations` returns the operations `ProviderRuntimeManager` holds as in
-progress, read from its own state, which records an operation before `start` replies. Provider
-snapshots can lag that state briefly. Servers that offer it advertise the
+progress, read from its own state. That state records an operation before `start` replies, and keeps
+it until the operation has fully settled: a cancelled or finished operation is listed until its
+worker has stopped, its result is published and its lifecycle reservation is released. Start,
+cancel and settlement keep this ownership when the caller is interrupted, and shutdown waits for
+operations still settling. Provider snapshots can lag that state briefly. Servers that offer it advertise the
 `providerRuntimeOperations` capability. **Update everything** asks it, with a fresh request per
 check, before restarting a server or installing the desktop app. Against an older server it falls
 back to that server's provider list from `server.refreshProviders`.

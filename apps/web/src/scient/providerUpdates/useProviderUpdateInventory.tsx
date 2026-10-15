@@ -60,7 +60,11 @@ export function useProviderUpdateInventory() {
   const machines = useMemo(() => collectProviderUpdateMachines(snapshots), [snapshots]);
 
   const updateAll = async (
-    options: { readonly onWaitingChange?: (waiting: boolean) => void } = {},
+    options: {
+      readonly onWaitingChange?: (waiting: boolean) => void;
+      /** When, as `Date.now()`, a managed update still running stops being waited for. */
+      readonly deadlineAt?: number;
+    } = {},
   ) => {
     let waitingCount = 0;
     const onWaitingChange = (waiting: boolean) => {
@@ -89,6 +93,7 @@ export function useProviderUpdateInventory() {
               ? Promise.resolve(UNSTARTED_MANAGED_UPDATE)
               : watchManagedRuntimeUpdate(appProviderSnapshots, item, operationId, {
                   onWaitingChange,
+                  ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
                 }),
         };
       },
