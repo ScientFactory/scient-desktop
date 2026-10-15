@@ -1150,6 +1150,52 @@ describe("ProviderRuntimeManager", () => {
       }),
   );
 
+  it.effect("keeps an interrupted cancellation in progress until its worker has stopped", () =>
+    Effect.gen(function* () {
+      const workerStopping = yield* Deferred.make<void>();
+      const finishStopping = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        // The worker takes a while to roll back once interrupted.
+        run: () =>
+          Effect.never.pipe(
+            Effect.onInterrupt(() =>
+              Deferred.succeed(workerStopping, undefined).pipe(
+                Effect.andThen(Deferred.await(finishStopping)),
+              ),
+            ),
+          ),
+      };
+      const { manager, coordinator } = yield* makeHarness(actions, [systemProvider]);
+      const started = yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      const operationId = started.providers[0]?.connection?.runtime?.operation?.operationId;
+      assert.ok(operationId);
+
+      const cancelFiber = yield* manager
+        .cancel({ instanceId: INSTANCE, operationId })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(workerStopping);
+      // The cancelling request goes away while the worker is still stopping.
+      const interrupting = yield* Fiber.interrupt(cancelFiber).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.deepStrictEqual(
+        (yield* manager.activeOperations).operations.map((active) => active.operationId),
+        [operationId],
+      );
+      assert.strictEqual((yield* coordinator.current(INSTANCE))?.operationId, operationId);
+
+      yield* Deferred.succeed(finishStopping, undefined);
+      yield* Fiber.join(interrupting);
+      assert.deepStrictEqual(yield* manager.activeOperations, { operations: [] });
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+    }),
+  );
+
   it.effect("releases the runtime reservation when initial summary discovery is interrupted", () =>
     Effect.gen(function* () {
       const summaryStarted = yield* Deferred.make<void>();
@@ -1167,6 +1213,7 @@ describe("ProviderRuntimeManager", () => {
       yield* Fiber.interrupt(startFiber);
 
       assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+      assert.deepStrictEqual(yield* manager.activeOperations, { operations: [] });
     }),
   );
 
@@ -1196,9 +1243,12 @@ describe("ProviderRuntimeManager", () => {
         .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
         .pipe(Effect.forkChild);
       yield* Deferred.await(publicationStarted);
+      // Recorded as in progress once held, and no longer once the interrupted start is cleaned up.
+      assert.strictEqual((yield* manager.activeOperations).operations.length, 1);
       yield* Fiber.interrupt(startFiber);
 
       assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+      assert.deepStrictEqual(yield* manager.activeOperations, { operations: [] });
     }),
   );
 

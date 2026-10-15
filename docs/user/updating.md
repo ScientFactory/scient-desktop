@@ -150,5 +150,6 @@ lost contact; review the provider in Settings once the machine is back.
 **Update everything** restarts a server, or installs this desktop app, only
 once that machine's server confirms that no managed runtime on it is still
 updating, including updates you started elsewhere. If Scient cannot confirm
-that, because it lost contact with the machine, it leaves that server or this
-app as it is and says so; update it once the machine reconnects.
+that, because it lost contact with the machine or an update there was still
+running after 30 minutes, it leaves that server or this app as it is and says
+so; update it once the machine reconnects or the update finishes.

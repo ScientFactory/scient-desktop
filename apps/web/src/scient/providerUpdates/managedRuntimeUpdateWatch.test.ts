@@ -302,6 +302,26 @@ describe("waitForManagedRuntimesIdle", () => {
     ).toEqual(new Set([alvin]));
   });
 
+  it("skips the restart when an operation is still running at the busy limit", async () => {
+    // Running in the snapshot, or reported running by the server: either way, a
+    // limit reached never counts as idle.
+    const live = snapshots(
+      environment(codex({ version: "0.48.0", operation: operation("activating") })),
+    );
+    expect(
+      await waitForManagedRuntimesIdle(live.source, [alvin], live.answer, {
+        busyLimitMs: 30,
+        pollMs: 10,
+      }),
+    ).toEqual(new Set([alvin]));
+    const quiet = snapshots(environment(codex({ version: "0.48.0", operation: null })));
+    expect(
+      await waitForManagedRuntimesIdle(quiet.source, [alvin], async () => true, {
+        busyLimitMs: 30,
+        pollMs: 10,
+      }),
+    ).toEqual(new Set([alvin]));
+  });
   it("ignores machines it was not asked about", async () => {
     const live = snapshots(
       environment(codex({ version: "0.48.0", operation: operation("activating") })),

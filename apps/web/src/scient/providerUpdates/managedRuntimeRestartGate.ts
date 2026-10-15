@@ -14,7 +14,8 @@ import {
  * The provider, server and install steps of an "update everything" pass, with
  * each restart held until no Scient-managed runtime update is running on that
  * machine, whoever started it. A machine Scient cannot confirm, because it
- * lost contact, is not restarted, and a notice says so.
+ * lost contact or an update ran past the busy limit, is not restarted, and a
+ * notice says so.
  */
 export function managedRuntimeGatedSteps(input: {
   readonly updateAll: (options: {
@@ -75,7 +76,7 @@ export function managedRuntimeGatedSteps(input: {
             type: "warning",
             title: `Did not update ${skipped.map((server) => server.serverLabel).join(", ")}`,
             description:
-              "Scient lost contact, so it could not confirm that no Scient-managed provider update is still running there. Update once it reconnects.",
+              "Scient could not confirm that no Scient-managed provider update is still running there: it lost contact, or an update was still running after 30 minutes. Update it once it reconnects or the update finishes.",
           }),
         );
       }
@@ -89,7 +90,7 @@ export function managedRuntimeGatedSteps(input: {
                   type: "warning",
                   title: "This app did not restart",
                   description:
-                    "Scient lost contact with this computer's server, so it could not confirm that no Scient-managed provider update is still running. Restart to install the update once it reconnects.",
+                    "Scient could not confirm that no Scient-managed provider update is still running on this computer: it lost contact with its server, or an update was still running after 30 minutes. Restart to install the update once it reconnects or the update finishes.",
                 }),
               );
               return;

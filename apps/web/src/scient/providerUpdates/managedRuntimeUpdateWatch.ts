@@ -182,6 +182,17 @@ function withDeadline<A>(promise: Promise<A>, ms: number): Promise<A> {
   ]).finally(() => clearTimeout(timer));
 }
 
+/** How long a restart waits on a managed runtime operation that is still running. */
+const BUSY_LIMIT_MS = 30 * 60_000;
+
+interface IdleCheckTiming {
+  /** How long a reconnect, or an unanswered server, may last. */
+  readonly reconnectGraceMs: number;
+  /** How long an operation may keep running before the restart is skipped. */
+  readonly busyLimitMs: number;
+  readonly pollMs: number;
+}
+
 /**
  * Whether an environment can restart without cutting off a managed runtime
  * operation, whoever started it. Waits while one runs. Only the server's own
@@ -189,15 +200,18 @@ function withDeadline<A>(promise: Promise<A>, ms: number): Promise<A> {
  * connected and idle: a cached snapshot can predate an update whose answer
  * was lost, even one that still reads connected. False when it cannot be
  * confirmed: the environment is missing or lost, or reconnects, or its server
- * goes unanswered, for longer than the grace period.
+ * goes unanswered, for longer than the grace period, or an operation is still
+ * running at the busy limit. A timeout never counts as idle.
  */
 async function confirmManagedRuntimesIdle(
   source: ProviderSnapshotSource,
   environmentId: EnvironmentId,
   readServerRuntimeActivity: ReadServerRuntimeActivity,
-  reconnectGraceMs: number,
-  pollMs: number,
+  timing: IdleCheckTiming,
 ): Promise<boolean> {
+  const { reconnectGraceMs, busyLimitMs, pollMs } = timing;
+  const checkStartedAt = Date.now();
+  const busyTooLong = () => Date.now() - checkStartedAt >= busyLimitMs;
   let reconnectingSince: number | null = null;
   let unansweredSince: number | null = null;
   for (;;) {
@@ -207,17 +221,20 @@ async function confirmManagedRuntimesIdle(
         const environment = environments.find(
           (candidate) => candidate.environmentId === environmentId,
         );
-        if (!environment || environment.connection === "lost") return "lost" as const;
+        if (!environment || environment.connection === "lost") return "unconfirmed" as const;
         if (environment.connection === "reconnecting") {
           reconnectingSince ??= Date.now();
-          return Date.now() - reconnectingSince >= reconnectGraceMs ? ("lost" as const) : undefined;
+          return Date.now() - reconnectingSince >= reconnectGraceMs
+            ? ("unconfirmed" as const)
+            : undefined;
         }
         reconnectingSince = null;
-        return hasActiveManagedOperation(environment.providers) ? undefined : ("idle" as const);
+        if (!hasActiveManagedOperation(environment.providers)) return "idle" as const;
+        return busyTooLong() ? ("unconfirmed" as const) : undefined;
       },
       pollMs,
     );
-    if (cached === "lost") return false;
+    if (cached === "unconfirmed") return false;
     // The deadline runs from before the question, so a request that never
     // settles cannot hold the pass.
     unansweredSince ??= Date.now();
@@ -237,6 +254,7 @@ async function confirmManagedRuntimesIdle(
     } else {
       unansweredSince = null;
       if (!active) return true;
+      if (busyTooLong()) return false;
     }
     // Not yet: let the snapshot catch up before asking again.
     await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -248,20 +266,18 @@ export async function waitForManagedRuntimesIdle(
   source: ProviderSnapshotSource,
   environmentIds: ReadonlyArray<EnvironmentId>,
   readServerRuntimeActivity: ReadServerRuntimeActivity,
-  timing: { readonly reconnectGraceMs?: number; readonly pollMs?: number } = {},
+  timing: Partial<IdleCheckTiming> = {},
 ): Promise<ReadonlySet<EnvironmentId>> {
   const reconnectGraceMs = timing.reconnectGraceMs ?? RECONNECT_GRACE_MS;
-  const pollMs = timing.pollMs ?? Math.min(10_000, reconnectGraceMs);
+  const resolved: IdleCheckTiming = {
+    reconnectGraceMs,
+    busyLimitMs: timing.busyLimitMs ?? BUSY_LIMIT_MS,
+    pollMs: timing.pollMs ?? Math.min(10_000, reconnectGraceMs),
+  };
   const ids = [...new Set(environmentIds)];
   const confirmed = await Promise.all(
     ids.map((environmentId) =>
-      confirmManagedRuntimesIdle(
-        source,
-        environmentId,
-        readServerRuntimeActivity,
-        reconnectGraceMs,
-        pollMs,
-      ),
+      confirmManagedRuntimesIdle(source, environmentId, readServerRuntimeActivity, resolved),
     ),
   );
   return new Set(ids.filter((_, index) => !confirmed[index]));
