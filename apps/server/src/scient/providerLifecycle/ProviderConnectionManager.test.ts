@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -23,6 +24,8 @@ import {
   ProviderRegistryRefreshError,
   type ProviderRegistryShape,
 } from "../../provider/ProviderRegistry.ts";
+import { scientAgentTarget } from "../../provider/scient/ScientAgentTarget.ts";
+import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import type {
   ProviderConnectionActions,
@@ -43,6 +46,7 @@ import {
   make as makeLifecycleCoordinator,
   ProviderLifecycleCoordinator,
 } from "./ProviderLifecycleCoordinator.ts";
+import { makeScientAgentConnectionActions } from "./ScientAgentConnectionActions.ts";
 
 const CODEX = ProviderDriverKind.make("codex");
 const CODEX_INSTANCE = ProviderInstanceId.make("codex");
@@ -1663,7 +1667,7 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
 
   it.effect("publishes a question the provider asks after the link was shown", () =>
     Effect.gen(function* () {
-      const asked = yield* Deferred.make<void>();
+      const asked = yield* Queue.unbounded<string>();
       const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
       const answers = yield* Ref.make<ReadonlyArray<string>>([]);
       const actions: ProviderConnectionActions = {
@@ -1674,12 +1678,12 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
             authorizationUrl: "https://auth.example.com/",
             authorizationUrlKind: "primary" as const,
             initialStatus: "waiting_for_browser" as const,
-            laterQuestion: Deferred.await(asked).pipe(
-              Effect.as({
-                instructions: "Paste the redirect URL",
+            nextQuestion: Queue.take(asked).pipe(
+              Effect.map((instructions) => ({
+                instructions,
                 submitAuthorizationCode: (code: string) =>
                   Ref.update(answers, (previous) => [...previous, code]),
-              }),
+              })),
             ),
             waitForCompletion: Deferred.await(completed),
             cancel: Effect.void,
@@ -1714,7 +1718,7 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
         .pipe(Effect.flip);
       assert.strictEqual(early.reason, "authorization_code_not_supported");
 
-      yield* Deferred.succeed(asked, undefined);
+      yield* Queue.offer(asked, "Paste the redirect URL");
       const waiting = yield* yieldUntil(
         published,
         (operation) => operation?.acceptsAuthorizationCode === true,
@@ -1741,7 +1745,7 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
         start: () =>
           Effect.succeed({
             initialStatus: "waiting_for_browser" as const,
-            laterQuestion: Deferred.await(asked).pipe(
+            nextQuestion: Deferred.await(asked).pipe(
               Effect.as({ submitAuthorizationCode: () => Effect.void }),
             ),
             waitForCompletion: Effect.never,
@@ -1767,6 +1771,237 @@ describe("ProviderConnectionManager with a provider that lists accounts", () => 
       const operation = (yield* Ref.get(providersRef))[0]?.connection?.accountOperation;
       assert.strictEqual(operation?.status, "cancelled");
       assert.notStrictEqual(operation?.acceptsAuthorizationCode, true);
+    }),
+  );
+
+  it.effect("keeps the next question shown when it arrives before the answer was handed over", () =>
+    Effect.gen(function* () {
+      const asked = yield* Queue.unbounded<string>();
+      const shown = yield* Deferred.make<void>();
+      const submitAuthorizationCode = () =>
+        // The provider asks again before Scient has finished with the answer.
+        Queue.offer(asked, "Enter your account ID").pipe(Effect.andThen(Deferred.await(shown)));
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () =>
+          Effect.succeed({
+            initialStatus: "waiting_for_browser" as const,
+            instructions: "Paste your API token",
+            submitAuthorizationCode,
+            nextQuestion: Queue.take(asked).pipe(
+              Effect.map((instructions) => ({ instructions, submitAuthorizationCode })),
+            ),
+            waitForCompletion: Effect.never,
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, providersRef } = yield* makeHarness({
+        actions,
+        provider: agentProvider([account({ id: "cloudflare-workers-ai", kind: "key" })]),
+        beforeSetProviderConnectionOperation: (operation) =>
+          operation?.instructions === "Enter your account ID"
+            ? Deferred.succeed(shown, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+
+      const started = yield* manager.start({
+        instanceId: SCIENT_INSTANCE,
+        method: "scient_agent_account",
+        account: "cloudflare-workers-ai",
+      });
+      const operationId = started.providers[0]!.connection!.accountOperation!.operationId;
+      yield* manager.submitAuthorizationCode({
+        instanceId: SCIENT_INSTANCE,
+        operationId,
+        authorizationCode: "the-token",
+      });
+      // The answer's own `verifying` must not hide the question that followed it.
+      const waiting = (yield* Ref.get(providersRef))[0]?.connection?.accountOperation;
+      assert.strictEqual(waiting?.status, "waiting_for_browser");
+      assert.strictEqual(waiting?.acceptsAuthorizationCode, true);
+      assert.strictEqual(waiting?.instructions, "Enter your account ID");
+    }),
+  );
+
+  /**
+   * Scient Agent behind its real RPC client, signing in to Cloudflare AI
+   * Gateway as OMP 18.10.4 does: a link, then one `input` request per value,
+   * each sent once the previous one was answered.
+   */
+  const cloudflareSignIn = () => {
+    const questions = [
+      "Paste your Cloudflare AI Gateway token/API key",
+      "Enter your Cloudflare account ID",
+      "Enter your Cloudflare AI Gateway ID",
+    ];
+    const answers: Array<{ readonly id: string | undefined; readonly value: string | undefined }> =
+      [];
+    const ask = (index: number) => ({
+      type: "extension_ui_request",
+      id: `ask-${index + 1}`,
+      method: "input",
+      title: questions[index],
+      timeout: 600_000,
+    });
+    const agent = scriptedOmpRpc({
+      models: [],
+      initial: { provider: "cloudflare-ai-gateway", id: "none" },
+      beforeReply: (frame) => {
+        if (frame.type === "login") {
+          return [
+            {
+              type: "extension_ui_request",
+              id: "link",
+              method: "open_url",
+              url: "https://developers.cloudflare.com/ai-gateway/configuration/authentication/",
+              instructions: "Create an AI Gateway token with Run permission, then copy it here.",
+            },
+            ask(0),
+          ];
+        }
+        if (frame.type !== "extension_ui_response") return [];
+        answers.push({ id: frame.id, value: frame.value });
+        return answers.length < questions.length ? [ask(answers.length)] : [];
+      },
+      // `login` answers when the test finishes it; nothing answers a UI response.
+      silentReply: (frame) => frame.type === "login" || frame.type === "extension_ui_response",
+    });
+    const actions = makeScientAgentConnectionActions({
+      open: agent.makeProcess({ target: scientAgentTarget, command: "scient-agent" }).pipe(
+        Effect.map((client) => ({
+          events: client.events,
+          command: client.command,
+          extensionUiResponse: client.extensionUiResponse,
+          redact: client.redaction.text,
+        })),
+      ),
+    });
+    const finishLogin = Effect.suspend(() =>
+      agent.emit([
+        {
+          id: agent.state.frames.find((frame) => frame.type === "login")?.id,
+          type: "response",
+          command: "login",
+          success: true,
+          data: { providerId: "cloudflare-ai-gateway" },
+        },
+      ]),
+    );
+    return { actions, questions, answers, finishLogin };
+  };
+
+  const startCloudflareSignIn = Effect.gen(function* () {
+    const signIn = cloudflareSignIn();
+    const published = yield* Queue.unbounded<ProviderConnectionOperation | null>();
+    const connected = account({
+      id: "cloudflare-ai-gateway",
+      kind: "key",
+      connected: true,
+      canDisconnect: true,
+    });
+    const { manager } = yield* makeHarness({
+      actions: signIn.actions,
+      provider: agentProvider([account({ id: "cloudflare-ai-gateway", kind: "key" })]),
+      beforeSetProviderConnectionOperation: (operation) =>
+        Queue.offer(published, operation).pipe(Effect.asVoid),
+      refreshProvider: (provider, refreshCount) =>
+        refreshCount >= 2 ? withAccounts(provider, [connected]) : provider,
+    });
+    /** What the client is shown next that matches, failing on a sign-in that ended. */
+    const takeUntil = Effect.fnUntraced(function* (
+      predicate: (operation: ProviderConnectionOperation | null) => boolean,
+    ) {
+      while (true) {
+        const operation = yield* Queue.take(published).pipe(
+          Effect.timeout("3 seconds"),
+          TestClock.withLive,
+        );
+        if (predicate(operation)) return operation;
+        const status = operation?.status;
+        if (status === "failed" || status === "cancelled" || status === "connected") {
+          return assert.fail(`The sign-in ended ${status}: ${operation?.message}`);
+        }
+      }
+    });
+    const asks = (question: string) =>
+      takeUntil(
+        (operation) =>
+          operation?.acceptsAuthorizationCode === true &&
+          operation.status !== "verifying" &&
+          operation.instructions === question,
+      );
+    /** Nothing published after a question has hidden it again. */
+    const stillShown = Queue.clear(published).pipe(
+      Effect.map((later) => later.map((operation) => operation?.status ?? null)),
+    );
+    const started = yield* manager.start({
+      instanceId: SCIENT_INSTANCE,
+      method: "scient_agent_account",
+      account: "cloudflare-ai-gateway",
+    });
+    const operationId = started.providers[0]!.connection!.accountOperation!.operationId;
+    const answer = (authorizationCode: string) =>
+      manager.submitAuthorizationCode({
+        instanceId: SCIENT_INSTANCE,
+        operationId,
+        authorizationCode,
+      });
+    return { ...signIn, manager, operationId, takeUntil, asks, stillShown, answer };
+  });
+
+  it.effect("answers every question a Scient Agent sign-in asks, in turn", () =>
+    Effect.gen(function* () {
+      const signIn = yield* startCloudflareSignIn;
+      const values = ["cfut_token", "0123456789abcdef0123456789abcdef", "default"];
+
+      for (const [index, question] of signIn.questions.entries()) {
+        const shown = yield* signIn.asks(question);
+        assert.strictEqual(shown?.status, "waiting_for_browser");
+        assert.strictEqual(
+          shown?.authorizationUrl,
+          "https://developers.cloudflare.com/ai-gateway/configuration/authentication/",
+        );
+        assert.deepStrictEqual(yield* signIn.stillShown, []);
+        yield* signIn.answer(values[index]!);
+      }
+      assert.deepStrictEqual(signIn.answers, [
+        { id: "ask-1", value: "cfut_token" },
+        { id: "ask-2", value: "0123456789abcdef0123456789abcdef" },
+        { id: "ask-3", value: "default" },
+      ]);
+
+      yield* signIn.finishLogin;
+      const ended = yield* signIn.takeUntil((operation) => operation?.status === "connected");
+      assert.strictEqual(ended?.account, "cloudflare-ai-gateway");
+    }),
+  );
+
+  it.effect("cancels a sign-in between its questions without waiting on the agent", () =>
+    Effect.gen(function* () {
+      const signIn = yield* startCloudflareSignIn;
+      yield* signIn.asks(signIn.questions[0]!);
+      yield* signIn.answer("cfut_token");
+      yield* signIn.asks(signIn.questions[1]!);
+
+      // The agent still waits for its second answer; the cancel must not.
+      const cancelling = yield* signIn.manager
+        .cancel({ instanceId: SCIENT_INSTANCE, operationId: signIn.operationId })
+        .pipe(Effect.forkChild);
+      const cancelled = yield* Fiber.join(cancelling).pipe(
+        Effect.timeout("3 seconds"),
+        TestClock.withLive,
+      );
+      assert.strictEqual(cancelled.providers[0]?.connection?.accountOperation?.status, "cancelled");
+
+      // The question left open takes no answer.
+      const late = yield* signIn.answer("0123456789abcdef0123456789abcdef").pipe(Effect.flip);
+      assert.strictEqual(late.reason, "operation_not_found");
+      assert.deepStrictEqual(
+        signIn.answers.map((answer) => answer.id),
+        ["ask-1"],
+      );
     }),
   );
 

@@ -72,12 +72,13 @@ export interface ProviderConnectionAttempt {
     | ((code: string) => Effect.Effect<void, ProviderConnectionActionFailure>)
     | undefined;
   /**
-   * For a flow whose first question can come after the attempt is described:
-   * resolves when the provider asks it. The manager then republishes the
-   * operation as accepting an answer. Absent when a question already arrived
-   * or the flow never asks one.
+   * For a flow that can ask after the attempt is described: resolves when the
+   * provider asks its next question, the first one after the link or another
+   * after an answer. The manager runs it again after each question and
+   * republishes the operation as accepting an answer. Absent when the flow
+   * asks nothing after it starts.
    */
-  readonly laterQuestion?:
+  readonly nextQuestion?:
     | Effect.Effect<{
         readonly instructions?: string | undefined;
         readonly submitAuthorizationCode: (

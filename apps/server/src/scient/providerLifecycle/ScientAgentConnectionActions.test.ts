@@ -213,7 +213,7 @@ describe("Scient Agent sign-in", () => {
         const attempt = yield* Fiber.join(starting);
         assert.strictEqual(attempt.submitAuthorizationCode, undefined);
 
-        const later = yield* attempt.laterQuestion!.pipe(Effect.forkChild);
+        const later = yield* attempt.nextQuestion!.pipe(Effect.forkChild);
         yield* agent.say({ id: "ui-0", method: "open_url", url: "https://auth.example.com/again" });
         yield* agent.say({ id: "ui-2", method: "input", title: "Paste the redirect URL" });
         const question = yield* Fiber.join(later);
@@ -271,18 +271,41 @@ describe("Scient Agent sign-in", () => {
     ),
   );
 
-  it.live("fails a sign-in that asks a second question after the first was answered", () =>
+  it.live("asks each question after the previous answer and hands every answer back", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const agent = yield* makeAgent;
-        const starting = yield* start(agent, "perplexity").pipe(Effect.forkChild);
-        yield* agent.say({ id: "ui-1", method: "input", title: "Email address" });
+        const starting = yield* start(agent, "cloudflare-workers-ai").pipe(Effect.forkChild);
+        yield* agent.say({
+          id: "ui-1",
+          method: "open_url",
+          url: "https://dash.cloudflare.com/profile/api-tokens",
+          instructions: "Create an API token with Workers AI Read and Edit permissions.",
+        });
+        yield* agent.say({ id: "ui-2", method: "input", title: "Paste your Cloudflare API token" });
         const attempt = yield* Fiber.join(starting);
-        assert.strictEqual(attempt.instructions, "Email address");
-        yield* attempt.submitAuthorizationCode!("someone@example.com");
-        yield* agent.say({ id: "ui-2", method: "input", title: "One-time code" });
-        const failure = yield* attempt.waitForCompletion.pipe(Effect.flip);
-        assert.match(failure.message, /more than one question/u);
+        assert.strictEqual(attempt.instructions, "Paste your Cloudflare API token");
+        yield* attempt.submitAuthorizationCode!("the-token");
+
+        const next = yield* attempt.nextQuestion!.pipe(Effect.forkChild);
+        yield* agent.say({
+          id: "ui-3",
+          method: "input",
+          title: "Enter your Cloudflare account ID",
+        });
+        const question = yield* Fiber.join(next);
+        assert.strictEqual(question.instructions, "Enter your Cloudflare account ID");
+        yield* question.submitAuthorizationCode("the-account");
+        assert.deepStrictEqual(yield* Ref.get(agent.answers), [
+          { id: "ui-2", value: "the-token" },
+          { id: "ui-3", value: "the-account" },
+        ]);
+        // Each question is answered once.
+        const again = yield* question.submitAuthorizationCode("again").pipe(Effect.flip);
+        assert.strictEqual(again.message, "Scient Agent is not waiting for an answer.");
+
+        yield* agent.finishLogin;
+        yield* attempt.waitForCompletion;
       }),
     ),
   );

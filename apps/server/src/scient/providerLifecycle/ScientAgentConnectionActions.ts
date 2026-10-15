@@ -3,14 +3,13 @@
  *
  * The agent owns every sign-in flow, its credentials and their storage. Scient
  * starts one isolated agent process per attempt, asks it to sign in to one
- * entry of its own list, shows the link and the question it sends, and hands a
- * pasted answer straight back to that process. Nothing the user pastes is kept
- * in Scient's state. The process lives in the attempt's scope.
+ * entry of its own list, shows the link and each question it sends, and hands
+ * every pasted answer straight back to that process. Nothing the user pastes is
+ * kept in Scient's state. The process lives in the attempt's scope.
  */
 import type { ProviderConnectionAccount, ProviderConnectionMethod } from "@t3tools/contracts";
 import type { OmpRpcClient } from "effect-omp-rpc/client";
 import { OmpRpcCommandError } from "effect-omp-rpc/errors";
-import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -177,7 +176,6 @@ export function makeScientAgentConnectionActions(input: {
       const client = yield* input.open;
       const prompts = yield* Queue.unbounded<Prompt>();
       const openQuestion = yield* Ref.make<string | undefined>(undefined);
-      const answered = yield* Ref.make(false);
       // What the user pasted is a credential the process did not start with,
       // so its own redaction does not know it. The agent may echo it in an error.
       const pasted = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -187,7 +185,6 @@ export function makeScientAgentConnectionActions(input: {
             values.reduce((next, value) => next.split(value).join("[REDACTED]"), text),
           ),
         );
-      const unsupported = yield* Deferred.make<never, ProviderConnectionActionFailure>();
 
       yield* client.events.pipe(
         Stream.runForEach((notification) => {
@@ -202,21 +199,10 @@ export function makeScientAgentConnectionActions(input: {
             });
           }
           if (event.method === "input" && event.id) {
-            const id = event.id;
-            return Effect.gen(function* () {
-              yield* Ref.set(openQuestion, id);
-              if (yield* Ref.get(answered)) {
-                // One answer is all the sign-in screen can collect.
-                yield* Deferred.fail(
-                  unsupported,
-                  connectionError(
-                    "This sign-in asks more than one question, which Scient cannot show yet. Use `scient-agent login` in a terminal for it.",
-                  ),
-                );
-                return;
-              }
-              yield* Queue.offer(prompts, { _tag: "Question", title: event.title });
-            });
+            // A sign-in can ask several questions, one after each answer.
+            return Ref.set(openQuestion, event.id).pipe(
+              Effect.andThen(Queue.offer(prompts, { _tag: "Question", title: event.title })),
+            );
           }
           return Effect.void;
         }),
@@ -241,7 +227,7 @@ export function makeScientAgentConnectionActions(input: {
         ),
         Effect.forkIn(scope),
       );
-      const completion = Effect.raceFirst(Fiber.join(login), Deferred.await(unsupported));
+      const completion = Fiber.join(login);
 
       const first = yield* Effect.raceFirst(
         Queue.take(prompts).pipe(Effect.map((prompt) => Option.some(prompt))),
@@ -283,7 +269,6 @@ export function makeScientAgentConnectionActions(input: {
           if (id === undefined) {
             return yield* connectionError("Scient Agent is not waiting for an answer.");
           }
-          yield* Ref.set(answered, true);
           const value = code.trim();
           if (value.length > 0) {
             yield* Ref.update(pasted, (values) =>
@@ -300,8 +285,9 @@ export function makeScientAgentConnectionActions(input: {
             );
         });
 
-      // A first question can also come after the link was described.
-      const laterQuestion = Effect.gen(function* () {
+      // A first question can also come after the link was described, and each
+      // answer can be followed by another question.
+      const nextQuestion = Effect.gen(function* () {
         while (true) {
           const prompt = yield* Queue.take(prompts);
           if (prompt._tag === "Question") {
@@ -315,7 +301,8 @@ export function makeScientAgentConnectionActions(input: {
         initialStatus: userCode ? "waiting_for_device_code" : "waiting_for_browser",
         ...(userCode ? { userCode } : {}),
         ...(instructions ? { instructions } : {}),
-        ...(question ? { submitAuthorizationCode } : { laterQuestion }),
+        ...(question ? { submitAuthorizationCode } : {}),
+        nextQuestion,
         waitForCompletion: completion,
         cancel,
       } satisfies ProviderConnectionAttempt;

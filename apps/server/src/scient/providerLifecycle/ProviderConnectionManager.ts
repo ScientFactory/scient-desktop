@@ -68,6 +68,8 @@ interface ActiveConnection {
   readonly scope: Scope.Closeable;
   readonly attemptRef: Ref.Ref<ProviderConnectionAttempt | undefined>;
   readonly authorizationCodeSubmittedRef: Ref.Ref<boolean>;
+  /** Questions published after the attempt was described, so an answer cannot hide the next one. */
+  readonly questionsAskedRef: Ref.Ref<number>;
   readonly fiberRef: Ref.Ref<Fiber.Fiber<void, never> | undefined>;
   readonly transitionLock: Semaphore.Semaphore;
 }
@@ -337,6 +339,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     const scope = yield* Scope.make();
     const attemptRef = yield* Ref.make<ProviderConnectionAttempt | undefined>(undefined);
     const authorizationCodeSubmittedRef = yield* Ref.make(false);
+    const questionsAskedRef = yield* Ref.make(0);
     const fiberRef = yield* Ref.make<Fiber.Fiber<void, never> | undefined>(undefined);
     const transitionLock = yield* Semaphore.make(1);
     const active: ActiveConnection = {
@@ -344,6 +347,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       scope,
       attemptRef,
       authorizationCodeSubmittedRef,
+      questionsAskedRef,
       fiberRef,
       transitionLock,
     };
@@ -488,10 +492,11 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         return { providers: yield* providerRegistry.getProviders };
       }
 
-      if (attempt.laterQuestion) {
-        // The provider can ask its first question after the link was shown.
-        // Publish it on the operation that is still waiting, and nothing else.
-        yield* attempt.laterQuestion.pipe(
+      if (attempt.nextQuestion) {
+        // The provider can ask after the link was shown, and again after each
+        // answer. Publish every question on the operation that is still
+        // waiting for it, and nothing else.
+        yield* attempt.nextQuestion.pipe(
           Effect.flatMap((question) =>
             transitionLock.withPermits(1)(
               Effect.gen(function* () {
@@ -502,10 +507,13 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     (provider) => provider.instanceId === input.instanceId,
                   )?.connection,
                 );
+                // `verifying` here is an answer being finished: the completion
+                // publishes its own `verifying` and its result in one claim.
                 if (
                   published?.operationId !== operationId ||
                   (published.status !== "waiting_for_browser" &&
-                    published.status !== "waiting_for_device_code")
+                    published.status !== "waiting_for_device_code" &&
+                    published.status !== "verifying")
                 ) {
                   return;
                 }
@@ -513,10 +521,13 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   ...attempt,
                   submitAuthorizationCode: question.submitAuthorizationCode,
                 });
+                yield* Ref.update(questionsAskedRef, (count) => count + 1);
                 yield* providerRegistry.setProviderConnectionOperation({
                   instanceId: input.instanceId,
                   operation: {
                     ...published,
+                    status: waitingStatus,
+                    message: waitingMessage,
                     acceptsAuthorizationCode: true,
                     ...(question.instructions ? { instructions: question.instructions } : {}),
                   },
@@ -524,6 +535,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               }),
             ),
           ),
+          Effect.forever,
           Effect.ignoreCause({ log: true }),
           Effect.forkIn(scope),
         );
@@ -706,7 +718,11 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               message: "Another one-time authorization code is being submitted.",
             });
           }
-          return { active, submitAuthorizationCode: attempt.submitAuthorizationCode };
+          return {
+            active,
+            submitAuthorizationCode: attempt.submitAuthorizationCode,
+            questionsAsked: yield* Ref.get(active.questionsAskedRef),
+          };
         }),
       );
       const submitted = yield* prepared
@@ -733,6 +749,10 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               reason: "operation_not_found",
               message: "The connection operation is no longer active.",
             });
+          }
+          // The provider already asked its next question, which stays shown.
+          if ((yield* Ref.get(active.questionsAskedRef)) !== prepared.questionsAsked) {
+            return { providers: yield* providerRegistry.getProviders };
           }
           const previous = publishedProviderConnectionOperation(
             (yield* providerRegistry.getProviders).find(

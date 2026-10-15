@@ -884,17 +884,19 @@ Scient Agent.
   device code and instructions are removed for read-only clients. A sign-in or
   sign-out names one entry. `ScientAgentConnectionActions` starts one isolated agent process per
   attempt, sends `login`, turns the agent's `open_url` and `input` requests into the operation's
-  link, device code and instructions, writes a pasted answer straight to that process, and ends
-  on the `login` response. The manager verifies the result against the refreshed list, not
-  against `auth`, which stays `required: false`. A question that arrives after the link was
-  described is published on the waiting operation (`laterQuestion`). What the user pastes is
-  removed from any error the agent returns. Sign-out sends `logout`, and the
+  link, device code and instructions, writes each pasted answer straight to that process, and
+  ends on the `login` response. The manager verifies the result against the refreshed list, not
+  against `auth`, which stays `required: false`. A sign-in can ask several questions, each after
+  the previous answer (Cloudflare asks for a token, an account id and a gateway id). Each one
+  that arrives after the attempt was described, including the first, is published on the
+  waiting operation (`nextQuestion`); an answer's `verifying` never replaces a question that
+  already followed it. What the user pastes is removed from any error the agent returns.
+  Sign-out sends `logout`, and the
   lifecycle manager then stops the provider's sessions on whichever instances are current: every
   process that could have read the sign-in started before it was removed. Removal and stop are
   one uninterruptible step, so a client that disconnects midway cannot leave sessions holding the
   sign-in. When the agent's process ends or never answers, the sign-in may be gone, and the
-  sessions are stopped as well; when the agent answers that it kept the sign-in, they are not. An agent build that does not report `kind` offers no sign-in. A sign-in
-  that asks a second question after the first answer fails with a pointer to the terminal.
+  sessions are stopped as well; when the agent answers that it kept the sign-in, they are not. An agent build that does not report `kind` offers no sign-in.
 - Not yet: more than one instance.
 
 `provider/scient/ScientAgent.live.test.ts` is the opt-in suite against real executables
