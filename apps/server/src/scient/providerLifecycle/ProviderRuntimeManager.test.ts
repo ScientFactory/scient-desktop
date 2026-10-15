@@ -1245,6 +1245,34 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
+  it.effect("refuses a start that would register after shutdown began", () =>
+    Effect.gen(function* () {
+      const summaryStarted = yield* Deferred.make<void>();
+      const releaseSummary = yield* Deferred.make<void>();
+      const actions: ProviderManagedRuntimeActions = {
+        // The start pauses just before it would register its operation.
+        getSummary: Deferred.succeed(summaryStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseSummary)),
+          Effect.as(systemRuntime),
+        ),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Effect.die("must not run"),
+      };
+      const { manager, coordinator, closeManager } = yield* makeHarness(actions, [systemProvider]);
+      const startFiber = yield* manager
+        .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(summaryStarted);
+
+      // Shutdown has nothing registered to wait for, so it finishes at once.
+      yield* closeManager;
+      yield* Deferred.succeed(releaseSummary, undefined);
+      const refused = yield* Fiber.join(startFiber);
+      assert.strictEqual(refused.reason, "runtime_operation_failed");
+      assert.deepStrictEqual(yield* manager.activeOperations, { operations: [] });
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+    }),
+  );
   it.effect("publishes a cancellation even when the runtime summary never answers", () =>
     Effect.gen(function* () {
       const summaryCalls = yield* Ref.make(0);

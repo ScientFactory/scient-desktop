@@ -174,6 +174,8 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   // operation leaves `activeRef` when it is claimed for cancellation or
   // completion, before its worker has stopped and its result is published; it
   // stays here until then, so a restart cannot cut that cleanup off.
+  const registrationLock = yield* Semaphore.make(1);
+  const closedRef = yield* Ref.make(false);
   const inProgressRef = yield* Ref.make<
     ReadonlyMap<
       string,
@@ -267,7 +269,11 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     });
 
   const cleanupAll = Effect.gen(function* () {
-    const active = yield* Ref.getAndSet(activeRef, new Map());
+    // Closing under the registration lock: no operation registers afterwards,
+    // and every one registered before is in both records.
+    const active = yield* registrationLock.withPermits(1)(
+      Ref.set(closedRef, true).pipe(Effect.andThen(Ref.getAndSet(activeRef, new Map()))),
+    );
     yield* Effect.forEach(active.values(), (runtime) => cleanupActive(runtime, "interrupt"), {
       discard: true,
     });
@@ -526,35 +532,49 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
             fiberRef,
             transitionLock,
           };
-          const runtimeReserved = yield* Ref.modify(activeRef, (current) => {
-            if ([...current.values()].some((candidate) => candidate.provider === target.provider)) {
-              return [false, current] as const;
-            }
-            const next = new Map(current);
-            next.set(input.instanceId, active);
-            return [true, next] as const;
-          });
-          if (!runtimeReserved) {
+          const settled = yield* Deferred.make<void>();
+          // Both records together, and never once shutdown has begun, so
+          // shutdown either settles this operation or it never starts.
+          const registration = yield* registrationLock.withPermits(1)(
+            Effect.gen(function* () {
+              if (yield* Ref.get(closedRef)) return "closed" as const;
+              const runtimeReserved = yield* Ref.modify(activeRef, (current) => {
+                if (
+                  [...current.values()].some((candidate) => candidate.provider === target.provider)
+                ) {
+                  return [false, current] as const;
+                }
+                const next = new Map(current);
+                next.set(input.instanceId, active);
+                return [true, next] as const;
+              });
+              if (!runtimeReserved) return "busy" as const;
+              yield* Ref.update(inProgressRef, (current) =>
+                new Map(current).set(operationId, {
+                  operation: {
+                    instanceId: input.instanceId,
+                    operationId,
+                    action: input.action,
+                    startedAt,
+                  },
+                  settled,
+                }),
+              );
+              return "registered" as const;
+            }),
+          );
+          if (registration !== "registered") {
             yield* lifecycleCoordinator.release({ operationId });
             return yield* makeError({
               provider: target.provider,
               instanceId: input.instanceId,
-              reason: "runtime_busy",
-              message: "Another account is already changing this shared provider runtime.",
+              reason: registration === "busy" ? "runtime_busy" : "runtime_operation_failed",
+              message:
+                registration === "busy"
+                  ? "Another account is already changing this shared provider runtime."
+                  : "Scient is shutting down. Try again once it has restarted.",
             });
           }
-          const settled = yield* Deferred.make<void>();
-          yield* Ref.update(inProgressRef, (current) =>
-            new Map(current).set(operationId, {
-              operation: {
-                instanceId: input.instanceId,
-                operationId,
-                action: input.action,
-                startedAt,
-              },
-              settled,
-            }),
-          );
           const cleanupStartupExit = <A, E>(exit: Exit.Exit<A, E>): Effect.Effect<void> =>
             Exit.isSuccess(exit)
               ? Effect.void

@@ -158,19 +158,24 @@ export function watchManagedRuntimeUpdate(
         (candidate) => candidate.environmentId === item.environmentId,
       );
       if (!environment || environment.connection === "lost") return lostContact;
+      const pastDeadline = options.deadlineAt !== undefined && Date.now() >= options.deadlineAt;
       if (environment.connection === "reconnecting") {
         reconnectingSince ??= Date.now();
-        return Date.now() - reconnectingSince >= reconnectGraceMs ? lostContact : undefined;
+        return Date.now() - reconnectingSince >= reconnectGraceMs || pastDeadline
+          ? lostContact
+          : undefined;
       }
       reconnectingSince = null;
       run = settleManagedRuntimeUpdateRuns([run], [environment])[0] ?? run;
       setWaiting(run.outcome.status === "pending" && run.waitingMessage !== null);
       if (run.outcome.status !== "pending") return run.outcome;
-      return options.deadlineAt !== undefined && Date.now() >= options.deadlineAt
-        ? { status: "failed", message: STILL_RUNNING_MESSAGE }
-        : undefined;
+      return pastDeadline ? { status: "failed", message: STILL_RUNNING_MESSAGE } : undefined;
     },
-    Math.min(10_000, reconnectGraceMs),
+    Math.min(
+      10_000,
+      reconnectGraceMs,
+      options.deadlineAt === undefined ? Infinity : Math.max(1, options.deadlineAt - Date.now()),
+    ),
   ).finally(() => setWaiting(false));
 }
 
@@ -200,7 +205,10 @@ function withDeadline<A>(promise: Promise<A>, ms: number): Promise<A> {
 interface IdleCheckTiming {
   /** How long a reconnect, or an unanswered server, may last. */
   readonly reconnectGraceMs: number;
-  /** How long an operation may keep running before the restart is skipped. */
+  /**
+   * How long the whole check may take, a running operation, a reconnect or an
+   * unanswered server included, before the restart is skipped.
+   */
   readonly busyLimitMs: number;
   readonly pollMs: number;
 }
@@ -222,8 +230,9 @@ async function confirmManagedRuntimesIdle(
   timing: IdleCheckTiming,
 ): Promise<boolean> {
   const { reconnectGraceMs, busyLimitMs, pollMs } = timing;
-  const checkStartedAt = Date.now();
-  const busyTooLong = () => Date.now() - checkStartedAt >= busyLimitMs;
+  // Every wait below, reconnects and unanswered questions included, also ends here.
+  const deadlineAt = Date.now() + busyLimitMs;
+  const busyTooLong = () => Date.now() >= deadlineAt;
   let reconnectingSince: number | null = null;
   let unansweredSince: number | null = null;
   for (;;) {
@@ -236,7 +245,7 @@ async function confirmManagedRuntimesIdle(
         if (!environment || environment.connection === "lost") return "unconfirmed" as const;
         if (environment.connection === "reconnecting") {
           reconnectingSince ??= Date.now();
-          return Date.now() - reconnectingSince >= reconnectGraceMs
+          return Date.now() - reconnectingSince >= reconnectGraceMs || busyTooLong()
             ? ("unconfirmed" as const)
             : undefined;
         }
@@ -250,23 +259,25 @@ async function confirmManagedRuntimesIdle(
     // The deadline runs from before the question, so a request that never
     // settles cannot hold the pass.
     unansweredSince ??= Date.now();
-    if (Date.now() - unansweredSince >= reconnectGraceMs) return false;
+    const answerBy = Math.min(unansweredSince + reconnectGraceMs, deadlineAt);
+    if (Date.now() >= answerBy) return false;
     const active = await withDeadline(
       readServerRuntimeActivity(environmentId),
-      reconnectGraceMs - (Date.now() - unansweredSince),
+      answerBy - Date.now(),
     ).then(
       (answer) => answer,
       () => null,
     );
     let waitMs = pollMs;
     if (active === null) {
-      const remainingMs = reconnectGraceMs - (Date.now() - unansweredSince);
+      const remainingMs = Math.min(unansweredSince + reconnectGraceMs, deadlineAt) - Date.now();
       if (remainingMs <= 0) return false;
       waitMs = Math.min(pollMs, remainingMs);
     } else {
       unansweredSince = null;
       if (!active) return true;
       if (busyTooLong()) return false;
+      waitMs = Math.min(pollMs, deadlineAt - Date.now());
     }
     // Not yet: let the snapshot catch up before asking again.
     await new Promise((resolve) => setTimeout(resolve, waitMs));

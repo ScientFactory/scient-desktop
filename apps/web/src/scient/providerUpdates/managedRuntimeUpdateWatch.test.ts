@@ -179,6 +179,17 @@ describe("watchManagedRuntimeUpdate", () => {
     expect(await result).toMatchObject({ status: "failed" });
   });
 
+  it("stops waiting through a reconnect at the pass deadline", async () => {
+    const live = snapshots(
+      environment(codex({ version: "0.48.0", operation: operation("activating") }), "reconnecting"),
+    );
+    expect(
+      await watchManagedRuntimeUpdate(live.source, item, "op-1", {
+        reconnectGraceMs: 60_000,
+        deadlineAt: Date.now() + 30,
+      }),
+    ).toMatchObject({ status: "failed" });
+  });
   it("counts an update that finished before it was ever seen", async () => {
     const live = snapshots(environment(codex({ version: "0.50.1", operation: null })));
     expect(await watchManagedRuntimeUpdate(live.source, item, "op-1")).toEqual({
@@ -320,6 +331,30 @@ describe("waitForManagedRuntimesIdle", () => {
         busyLimitMs: 30,
         pollMs: 10,
       }),
+    ).toEqual(new Set([alvin]));
+  });
+  it("ends a reconnect or an unanswered server at the deadline, within the grace period", async () => {
+    // The two-minute grace would allow more; the pass deadline does not.
+    const reconnecting = snapshots(
+      environment(codex({ version: "0.48.0", operation: null }), "reconnecting"),
+    );
+    expect(
+      await waitForManagedRuntimesIdle(reconnecting.source, [alvin], reconnecting.answer, {
+        busyLimitMs: 30,
+        pollMs: 10,
+      }),
+    ).toEqual(new Set([alvin]));
+    const silent = snapshots(environment(codex({ version: "0.48.0", operation: null })));
+    expect(
+      await waitForManagedRuntimesIdle(
+        silent.source,
+        [alvin],
+        () => new Promise<boolean>(() => {}),
+        {
+          busyLimitMs: 30,
+          pollMs: 10,
+        },
+      ),
     ).toEqual(new Set([alvin]));
   });
   it("ignores machines it was not asked about", async () => {
