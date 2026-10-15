@@ -10,9 +10,11 @@ import { manualOrderForPlacement } from "./automaticPlacement";
 
 /**
  * Pure rules for user-defined thread sections: catalog edits, grouping the
- * sidebar by section, and resolving drags in the Sections view. Membership
- * lives on each thread (`sectionId`); the catalog lives in the primary
- * environment's server settings.
+ * sidebar by section, and resolving drags in the Sections view. A section
+ * belongs to one environment: its catalog entry lives in that environment's
+ * server settings, and a thread's `sectionId` resolves only against the
+ * catalog of the thread's own environment. Section ids are unique within one
+ * catalog, so the sidebar names a section by both (`sectionGroupId`).
  */
 
 export const SidebarViewMode = Schema.Literals(["status", "sections"]);
@@ -78,7 +80,7 @@ export function newSectionTitle(threadCount: number): string {
 
 /** What a new section records about where it was made (see `ThreadSection`). */
 export interface SectionOrigin {
-  /** Environments of the threads filed into it on creation. */
+  /** The section's own environment, once it holds threads. */
   readonly environmentIds?: readonly string[];
   readonly createdInProjects?: readonly ThreadSectionProjectRef[];
 }
@@ -246,26 +248,28 @@ export function catalogWithRestoredSection(
 }
 
 /**
- * Which environments hold threads in each section, as one client sees them:
- * section id → environment ids.
+ * Which environments hold threads in each section of one catalog: section id
+ * → environment ids. Only the catalog's own environment can, since a thread
+ * resolves its section against its own environment.
  */
 export type SectionOccupancy = ReadonlyMap<string, ReadonlySet<string>>;
 
 /**
- * Records that `environmentIds` hold threads in `sectionId`. Null when they
- * are all recorded already and no empty stamp needs clearing (or the section is gone).
+ * Records that the section's environment holds its threads and clears its
+ * empty stamp, so filing a thread restarts the optional cleanup count. Null
+ * when nothing changes, or when the section is gone.
  */
-export function catalogWithEnvironments(
+export function catalogWithOccupiedSection(
   sections: ThreadSections,
   sectionId: string,
-  environmentIds: readonly string[],
+  environmentId: string,
 ): ThreadSection[] | null {
   const ordered = readThreadSections(sections);
   const index = ordered.findIndex((section) => section.id === sectionId);
   if (index < 0) return null;
   const section = ordered[index]!;
-  const merged = mergeEnvironmentIds(section.environmentIds, environmentIds);
-  if (merged === null && section.emptySince == null) return null;
+  const merged = mergeEnvironmentIds(section.environmentIds, [environmentId]);
+  if (merged === null && section.emptySince === undefined) return null;
   const { emptySince: _emptySince, ...occupied } = section;
   ordered[index] = { ...occupied, environmentIds: merged ?? section.environmentIds ?? [] };
   return ordered;
@@ -282,24 +286,22 @@ function mergeEnvironmentIds(
 }
 
 /**
- * One pass of the optional empty-section cleanup. `occupancy` is what this
- * client sees: which environments hold sidebar threads (active, pinned,
- * snoozed or settled) in each section.
+ * One pass of the optional empty-section cleanup over one environment's
+ * catalog. `occupancy` is which sections hold that environment's sidebar
+ * threads (active, pinned, snoozed or settled), as this client sees them.
  *
- * Seeing a section occupied is always trustworthy: it records those
- * environments on the section and clears its empty stamp. Seeing it empty is
- * not, because no client sees every environment. So a section is judged only
- * when `visibleEnvironmentIds` is given and includes every environment that
- * has held its threads: then it is stamped empty, or removed once stamped at
- * least `afterDays` ago. Pass null to only record occupancy. Null when nothing
- * changes.
+ * Seeing a section occupied is always trustworthy: it records the
+ * environment on the section and clears its empty stamp. Seeing it empty is
+ * not, unless this client holds the environment's complete thread list; only
+ * then (`judge`) is a section stamped empty, or removed once stamped at least
+ * `afterDays` ago. Null when nothing changes.
  */
 export function sweepEmptySections(input: {
   readonly sections: readonly ThreadSection[];
   readonly generalIndex: number;
   readonly occupancy: SectionOccupancy;
-  /** Environments whose threads this client fully sees; null records only. */
-  readonly visibleEnvironmentIds: ReadonlySet<string> | null;
+  /** Whether this client holds the environment's complete thread list; false records only. */
+  readonly judge: boolean;
   readonly now: Date;
   readonly afterDays: number;
 }): (SectionLayout & { readonly removed: RemovedSection[] }) | null {
@@ -324,10 +326,7 @@ export function sweepEmptySections(input: {
       kept.push(section);
       return;
     }
-    const visible = input.visibleEnvironmentIds;
-    const judged =
-      visible !== null && (section.environmentIds ?? []).every((id) => visible.has(id));
-    if (!judged) {
+    if (!input.judge) {
       kept.push(section);
       return;
     }
@@ -373,66 +372,179 @@ export function layoutFromGroupOrder(
   return { catalog: renumber([...ordered, ...rest]), generalIndex };
 }
 
+// ── Environments ───────────────────────────────────────────────────────
+
+/** A section in one environment's catalog. */
+export interface SectionRef {
+  readonly environmentId: string;
+  readonly sectionId: string;
+}
+
+/** One environment's catalog: sections in display order, and General's position among them. */
+export interface EnvironmentSectionLayout {
+  readonly environmentId: string;
+  readonly sections: readonly ThreadSection[];
+  readonly generalIndex: number;
+}
+
+/**
+ * The sidebar group id of a section: its id and environment, each URI-encoded
+ * around an "@". Colon-free, so it can never collide with a scoped thread key,
+ * and never equal to General's id.
+ */
+export function sectionGroupId(ref: SectionRef): string {
+  return `${encodeURIComponent(ref.sectionId)}@${encodeURIComponent(ref.environmentId)}`;
+}
+
+/** The section a group id names; null for General and anything else. */
+export function sectionRefFromGroupId(groupId: string): SectionRef | null {
+  const parts = groupId.split("@");
+  if (parts.length !== 2 || parts[0]!.length === 0 || parts[1]!.length === 0) return null;
+  try {
+    return {
+      sectionId: decodeURIComponent(parts[0]!),
+      environmentId: decodeURIComponent(parts[1]!),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Group ids in display order across environments, with one General. Each
+ * environment keeps its own order and General position: every environment's
+ * sections before its General come first, environment by environment, then
+ * General, then the rest the same way. `layouts` sets the environment order.
+ */
+export function combinedSectionLayoutOrder(layouts: readonly EnvironmentSectionLayout[]): string[] {
+  const before: string[] = [];
+  const after: string[] = [];
+  for (const layout of layouts) {
+    const general = clampGeneralIndex(layout.generalIndex, layout.sections.length);
+    layout.sections.forEach((section, index) => {
+      const groupId = sectionGroupId({
+        environmentId: layout.environmentId,
+        sectionId: section.id,
+      });
+      (index < general ? before : after).push(groupId);
+    });
+  }
+  return [...before, GENERAL_SECTION_GROUP_ID, ...after];
+}
+
+/**
+ * One environment's part of a combined group order: its sections (as section
+ * ids) and General, in that order. Null when it lists none of its sections,
+ * so there is nothing of its own to reorder. Order between environments is
+ * not stored anywhere; `combinedSectionLayoutOrder` derives it.
+ */
+export function environmentGroupOrder(
+  environmentId: string,
+  combinedOrder: readonly string[],
+): string[] | null {
+  const ids: string[] = [];
+  let listsSections = false;
+  for (const groupId of combinedOrder) {
+    if (groupId === GENERAL_SECTION_GROUP_ID) {
+      ids.push(groupId);
+      continue;
+    }
+    const ref = sectionRefFromGroupId(groupId);
+    if (ref?.environmentId !== environmentId) continue;
+    ids.push(ref.sectionId);
+    listsSections = true;
+  }
+  return listsSections ? ids : null;
+}
+
 // ── Grouping ───────────────────────────────────────────────────────────
 
 export interface SectionGroup<T> {
-  /** Section id, or GENERAL_SECTION_GROUP_ID. */
+  /** `sectionGroupId` of the section, or GENERAL_SECTION_GROUP_ID. */
   readonly id: string;
+  /** The section's environment; null for General, which holds every environment's threads. */
+  readonly environmentId: string | null;
   readonly section: ThreadSection | null;
   readonly threads: readonly T[];
 }
 
-/** The group a thread renders in. Unknown ids (a removed section) read as General. */
+type SectionMember = {
+  readonly environmentId: string;
+  readonly sectionId?: string | null | undefined;
+};
+
+/** Section ids per environment, for resolving membership. */
+function knownSectionIds(
+  layouts: readonly EnvironmentSectionLayout[],
+): ReadonlyMap<string, ReadonlySet<string>> {
+  return new Map(
+    layouts.map((layout) => [
+      layout.environmentId,
+      new Set<string>(layout.sections.map((section) => section.id)),
+    ]),
+  );
+}
+
+/**
+ * The group a thread renders in: its section in its own environment's
+ * catalog. An id that catalog doesn't hold (a removed section, or one filed
+ * by a client that resolved it elsewhere) reads as General.
+ */
 function sectionGroupIdOf(
-  thread: { readonly sectionId?: string | null | undefined },
-  knownSectionIds: ReadonlySet<string>,
+  thread: SectionMember,
+  known: ReadonlyMap<string, ReadonlySet<string>>,
 ): string {
-  return thread.sectionId != null && knownSectionIds.has(thread.sectionId)
-    ? thread.sectionId
+  return thread.sectionId != null && known.get(thread.environmentId)?.has(thread.sectionId)
+    ? sectionGroupId({ environmentId: thread.environmentId, sectionId: thread.sectionId })
     : GENERAL_SECTION_GROUP_ID;
 }
 
 /**
- * Which sections a sidebar scoped to one project lists (null: every section,
- * for All projects). A section is listed where it has threads: any
- * unarchived thread of the scope, on any shelf. A section with no threads
- * anywhere is listed in the projects it was created for, so a new section
- * stays in view to be filled; one without that record lists only under All
- * projects. "No threads anywhere" is only concluded when every environment
- * that has held its threads is loaded here; otherwise its threads may simply
- * not be visible yet.
+ * Which section groups a sidebar scoped to one project lists (null: every
+ * section, for All projects). A section is listed where it has threads: any
+ * unarchived thread of the scope, on any shelf. A section with no threads is
+ * listed in the projects it was created for, so a new section stays in view
+ * to be filled; one without that record lists only under All projects. "No
+ * threads" is only concluded once this client holds the section's
+ * environment's thread list; until then its threads may simply not be visible yet.
  */
-export function sectionIdsInProjectScope(input: {
-  readonly sections: readonly ThreadSection[];
+export function sectionGroupIdsInProjectScope(input: {
+  readonly layouts: readonly EnvironmentSectionLayout[];
   /** The scope's `${environmentId}:${projectId}` keys; null for All projects. */
   readonly scopeProjectKeys: ReadonlySet<string> | null;
   /** Environments whose threads this client currently holds. */
   readonly loadedEnvironmentIds: ReadonlySet<string>;
   /** Every thread this client knows, across projects and shelves. */
-  readonly threads: ReadonlyArray<{
-    readonly environmentId: string;
-    readonly projectId: string | null;
-    readonly sectionId?: string | null | undefined;
-    readonly archivedAt?: string | null | undefined;
-  }>;
+  readonly threads: ReadonlyArray<
+    SectionMember & {
+      readonly projectId: string | null;
+      readonly archivedAt?: string | null | undefined;
+    }
+  >;
 }): ReadonlySet<string> | null {
   const scope = input.scopeProjectKeys;
   if (scope === null) return null;
+  const known = knownSectionIds(input.layouts);
   const inScope = new Set<string>();
   const occupied = new Set<string>();
   for (const thread of input.threads) {
-    if (thread.sectionId == null || thread.archivedAt != null) continue;
-    occupied.add(thread.sectionId);
-    if (scope.has(`${thread.environmentId}:${thread.projectId}`)) inScope.add(thread.sectionId);
+    if (thread.archivedAt != null) continue;
+    const groupId = sectionGroupIdOf(thread, known);
+    if (groupId === GENERAL_SECTION_GROUP_ID) continue;
+    occupied.add(groupId);
+    if (scope.has(`${thread.environmentId}:${thread.projectId}`)) inScope.add(groupId);
   }
-  for (const section of input.sections) {
-    if (occupied.has(section.id)) continue;
-    const allLoaded = (section.environmentIds ?? []).every((id) =>
-      input.loadedEnvironmentIds.has(id),
-    );
-    if (!allLoaded) continue;
-    if ((section.createdInProjects ?? []).some((ref) => scope.has(projectRefKey(ref)))) {
-      inScope.add(section.id);
+  for (const layout of input.layouts) {
+    if (!input.loadedEnvironmentIds.has(layout.environmentId)) continue;
+    for (const section of layout.sections) {
+      const groupId = sectionGroupId({
+        environmentId: layout.environmentId,
+        sectionId: section.id,
+      });
+      if (occupied.has(groupId)) continue;
+      if ((section.createdInProjects ?? []).some((ref) => scope.has(projectRefKey(ref)))) {
+        inScope.add(groupId);
+      }
     }
   }
   return inScope;
@@ -455,23 +567,21 @@ export function mergeListedGroupOrder(
 }
 
 /**
- * Pinned and active threads grouped by section, with General (threads without
- * a section, including new ones) at its stored position. Every listed section
- * shows, even empty, since each is a drop target; `listedSectionIds` (null:
- * all) hides the rest, see `sectionIdsInProjectScope`. Each group keeps the
- * Status view's order: pinned first, then active. Snoozed and settled threads
- * stay on their own shelves.
+ * Pinned and active threads grouped by section, with one General (threads
+ * without a known section, including new ones) placed as
+ * `combinedSectionLayoutOrder` describes. Every listed section shows, even
+ * empty, since each is a drop target; `listedGroupIds` (null: all) hides the
+ * rest, see `sectionGroupIdsInProjectScope`. Each group keeps the Status
+ * view's order: pinned first, then active. Snoozed and settled threads stay
+ * on their own shelves.
  */
-export function groupThreadsBySection<
-  T extends { readonly sectionId?: string | null | undefined },
->(input: {
-  readonly sections: readonly ThreadSection[];
-  readonly generalIndex: number;
+export function groupThreadsBySection<T extends SectionMember>(input: {
+  readonly layouts: readonly EnvironmentSectionLayout[];
   readonly pinned: readonly T[];
   readonly active: readonly T[];
-  readonly listedSectionIds?: ReadonlySet<string> | null;
+  readonly listedGroupIds?: ReadonlySet<string> | null;
 }): SectionGroup<T>[] {
-  const known = new Set<string>(input.sections.map((section) => section.id));
+  const known = knownSectionIds(input.layouts);
   const members = new Map<string, T[]>();
   for (const thread of [...input.pinned, ...input.active]) {
     const groupId = sectionGroupIdOf(thread, known);
@@ -479,9 +589,19 @@ export function groupThreadsBySection<
     if (list) list.push(thread);
     else members.set(groupId, [thread]);
   }
-  const bySection = new Map(input.sections.map((section) => [section.id as string, section]));
-  const listed = input.listedSectionIds ?? null;
-  return sectionLayoutOrder(input.sections, input.generalIndex)
+  const byGroupId = new Map(
+    input.layouts.flatMap((layout) =>
+      layout.sections.map(
+        (section) =>
+          [
+            sectionGroupId({ environmentId: layout.environmentId, sectionId: section.id }),
+            { environmentId: layout.environmentId, section },
+          ] as const,
+      ),
+    ),
+  );
+  const listed = input.listedGroupIds ?? null;
+  return combinedSectionLayoutOrder(input.layouts)
     .filter(
       (id) =>
         id === GENERAL_SECTION_GROUP_ID ||
@@ -492,7 +612,8 @@ export function groupThreadsBySection<
     )
     .map((id) => ({
       id,
-      section: bySection.get(id) ?? null,
+      environmentId: byGroupId.get(id)?.environmentId ?? null,
+      section: byGroupId.get(id)?.section ?? null,
       threads: members.get(id) ?? [],
     }));
 }

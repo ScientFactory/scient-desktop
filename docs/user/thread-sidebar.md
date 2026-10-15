@@ -224,20 +224,46 @@ Sections view:
   on purpose, such as _mRNA_ or _iOS_, is kept as written: paste it, or type it and then change the
   first letter back.
 
+### Sections on several machines
+
+Sections are stored on the machine that runs their threads, so every window and connected client
+shows the same sections: the desktop app on that machine, the web app opened remotely, or Scient on
+another computer connected to it. With one machine, as most people have, this is all you notice.
+
+With more than one connected environment, such as your computer and an SSH server, each machine
+has its own sections:
+
+- A thread can join only sections of its own machine. The **Section** menu lists that machine's
+  sections, and dragging a thread onto another machine's section does nothing.
+- While sections from more than one machine are listed, each header shows its machine's name. Two
+  machines' sections with the same name stay separate.
+- **New section…** for threads on several machines creates a section of that name on each. A
+  section started from **New section** goes to the machine of the selected project; when more than
+  one machine can hold it, the form lets you choose.
+- **General** holds every machine's threads without a section. Each machine keeps its own order of
+  sections and General's place among them. **Move up** and **Move down** step over that machine's
+  sections, and a section dragged among another machine's sections returns to its own machine's
+  group.
+
+Before this, one section list served every environment. A thread on another environment that was
+filed into that list now shows in **General**; file it again into a section of its own machine.
+Update Scient everywhere you use it, since older versions still file every thread into one list.
+
+### Removing empty sections
+
 To remove sections you no longer use, turn on **Settings → General → Delete empty sections** and
-choose how many days a section may stay empty (7 by default). It is off unless you turn it on. A
-section counts as empty when no active, pinned, snoozed, or settled thread belongs to it; archived
-threads do not keep a section. Adding a thread restarts the count, and **General** is never
-removed. Cleanup runs only while Scient is open and every environment is connected, and a device
-only removes a section when it is connected to every environment whose threads have been in it.
-It shows **Undo** when it removes a section. The setting is stored with the section list on your
-primary environment.
+choose how many days a section may stay empty (7 by default). It is off unless you turn it on. Each
+environment has its own setting: choose an environment at the top of Settings to change only its
+cleanup, or **All environments** to change every connected environment together. A section counts as
+empty when no active, pinned, snoozed, or settled thread belongs to it; archived threads do not keep
+a section. Adding a thread restarts the count, and **General** is never removed. Cleanup runs only
+while Scient is open, and a device only judges a machine's sections after it has held that
+machine's full thread list for a minute. It shows **Undo** when it removes a section.
 
 Deleting a section never deletes conversations: its threads move to **General**, and **Undo** on the
-confirmation brings the section and its threads back. The section list is stored on the server of
-your primary environment, so every window and connected client shows the same sections. If
-**Section** is missing from a thread's menu, update the Scient server running that thread's
-environment. The mobile app does not show sections yet; it keeps its usual layout.
+confirmation brings the section and its threads back. If **Section** is missing from a thread's
+menu, update the Scient server running that thread's environment. The mobile app does not show
+sections yet; it keeps its usual layout.
 
 ## Fold working threads (beta)
 

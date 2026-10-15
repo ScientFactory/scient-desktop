@@ -189,4 +189,4 @@ Follow their linked successors for current behavior.
 
 ## Manuscript integration foundation
 
-- [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — unmounted foundation and local application invariants.
+- [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — unmounted foundation: local application and connection-state invariants.

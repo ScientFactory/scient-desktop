@@ -13,6 +13,7 @@ import {
   WS_METHODS,
   WsServerManagementRpcGroup,
 } from "@t3tools/contracts";
+import { MANAGED_RUNTIME_CATALOG_PROVIDERS } from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
 
 import type * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -98,15 +99,11 @@ export const refreshManagedRuntimes = (
       (instance) => providerRuntimeManager.reselect(instance.instanceId).pipe(Effect.forkDetach),
       { discard: true },
     );
-    const before = yield* managedRuntimeCatalog.current;
-    const after = yield* managedRuntimeCatalog.refreshNow;
-    const changedProviders = ManagedRuntimeCatalog.changedManagedRuntimeProviders(before, after);
-    if (changedProviders.length > 0) {
-      // Refresh publishes an async event for the process
-      // reconciler. Reconcile here too so this explicit RPC
-      // returns new actions without a UI race.
-      yield* reconcileManagedRuntimeProviders(changedProviders);
-    }
+    yield* managedRuntimeCatalog.refreshNow;
+    // Refresh publishes an async event for the process reconciler. Reconcile
+    // here too so this explicit RPC returns new actions and the check's
+    // freshness without a UI race.
+    yield* reconcileManagedRuntimeProviders(MANAGED_RUNTIME_CATALOG_PROVIDERS);
   });
 
 export const makeProviderConnectionRpcHandlers = ({

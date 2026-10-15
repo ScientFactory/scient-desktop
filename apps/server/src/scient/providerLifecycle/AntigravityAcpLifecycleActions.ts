@@ -23,6 +23,7 @@ import type { AntigravityInstallation } from "../../provider/AntigravityInstalla
 import { resolveAntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
 import type { AntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
 import { ANTIGRAVITY_ACP_REGISTRY_VERSION } from "./antigravityAcpCatalog.ts";
+import { ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 import { antigravityAuthUsesBrowser } from "../../provider/antigravityAuthSupport.ts";
 import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";
 
@@ -204,6 +205,7 @@ export function makeAntigravityManagedRuntimeActions(input: {
     .pipe(Effect.option);
 
   const getSummary: ProviderManagedRuntimeActions["getSummary"] = Effect.gen(function* () {
+    const catalog = yield* (yield* ManagedRuntimeCatalog).freshness;
     const asset = yield* input.installation.latestRelease;
     const state = yield* input.installation.state;
     const resolution = yield* readResolution;
@@ -270,6 +272,9 @@ export function makeAntigravityManagedRuntimeActions(input: {
       managedVersion: state.installedVersion,
       availableManagedVersion: updateAvailable ? (asset?.registryVersion ?? null) : null,
       previousManagedVersion: null,
+      // No `qualifiedVersion`: the installed executable and its registry
+      // release are numbered differently, so "Up to date" is never claimed.
+      catalog,
       operation: null,
       message,
       diagnostics: {

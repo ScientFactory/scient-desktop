@@ -36,6 +36,8 @@ import {
 } from "./optimisticProviderValue";
 import { isRuntimePlanStale } from "./isRuntimePlanStale";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { describeProviderRuntimeCatalog } from "./providerRuntimeCatalogFreshness";
 import {
   cancelRuntimeActionLabel,
   isActiveProviderRuntimeOperation,
@@ -121,6 +123,23 @@ export function resolveProviderRuntimeForPresentation(
     return serverRuntime;
   }
   return localRuntime;
+}
+
+/** The qualified-release line, re-rendered each minute so "checked … ago" stays true. */
+function ProviderRuntimeCatalogLine({ runtime }: { readonly runtime: ProviderRuntimeSummary }) {
+  useNowMinute();
+  const line = describeProviderRuntimeCatalog(runtime);
+  if (!line) return null;
+  return (
+    <p
+      className={cn(
+        "mt-0.5 text-xs leading-relaxed",
+        line.failed ? "text-warning-foreground" : "text-muted-foreground",
+      )}
+    >
+      {line.text}
+    </p>
+  );
 }
 
 function runtimeSourceLabel(
@@ -651,6 +670,7 @@ export function ProviderRuntimeSection(props: {
                 {statusMessage}
               </p>
             ) : null}
+            <ProviderRuntimeCatalogLine runtime={runtime} />
           </div>
         </div>
         {trailingActions.length > 0 ? (

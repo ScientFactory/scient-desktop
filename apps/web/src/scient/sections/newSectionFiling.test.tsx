@@ -1,80 +1,89 @@
-import { EnvironmentId, ThreadId, type ThreadSection } from "@t3tools/contracts";
-import { threadSectionCatalogsEqual } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  type ThreadSection,
+  threadSectionCatalogsEqual,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-// DF-042 end to end: the real catalog and membership actions, with only the
+// DF-042 end to end: the real catalogs and membership actions, with only the
 // server boundary faked. The local settings copy never catches up during the
 // test, like a settings stream that lands after the write resolves.
-const mocks = vi.hoisted(() => {
-  const serverSettingsAtom = { atom: "primary-settings" };
-  const serverConfigsAtom = { atom: "server-configs" };
-  const updateSettingsCommand = { command: "update-settings" };
-  const setSectionCommand = { command: "set-section" };
-  return {
-    serverSettingsAtom,
-    serverConfigsAtom,
-    updateSettingsCommand,
-    setSectionCommand,
-    localCopy: { threadSections: [] as ThreadSection[], threadSectionsGeneralIndex: 0 },
-    server: { threadSections: [] as ThreadSection[], threadSectionsGeneralIndex: 0 },
-    membership: new Map<string, string | null>(),
-    configs: new Map([
-      ["primary", { environment: { capabilities: { threadSections: true } } }],
-      ["remote", { environment: { capabilities: { threadSections: true } } }],
+type Stored = { threadSections: ThreadSection[]; threadSectionsGeneralIndex: number };
+const mocks = vi.hoisted(() => ({
+  updateSettingsCommand: { command: "update-settings" },
+  setSectionCommand: { command: "set-section" },
+  servers: new Map<string, Stored>(),
+  membership: new Map<string, { environmentId: string; sectionId: string | null }>(),
+}));
+vi.mock("../../rpc/atomRegistry", async () => {
+  const { AtomRegistry } = await import("effect/reactivity");
+  return { appAtomRegistry: AtomRegistry.make() };
+});
+vi.mock("@effect/atom-react", async () => {
+  const { appAtomRegistry } = await import("../../rpc/atomRegistry");
+  return { useAtomValue: (atom: never) => appAtomRegistry.get(atom) };
+});
+vi.mock("../../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const empty = { threadSections: [], threadSectionsGeneralIndex: 0 };
+  const config = { environment: { capabilities: { threadSections: true } }, settings: empty };
+  const environmentServerConfigsAtom = Atom.make(
+    new Map([
+      ["primary", config],
+      ["remote", config],
     ]),
+  );
+  return {
+    environmentServerConfigsAtom,
+    serverEnvironment: {
+      updateSettings: mocks.updateSettingsCommand,
+      settingsValueAtom: () => Atom.make(() => empty),
+    },
   };
 });
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.configs }));
-vi.mock("../../hooks/useSettings", () => ({
-  usePrimarySettings: (select: (settings: typeof mocks.localCopy) => unknown) =>
-    select(mocks.localCopy),
-}));
-vi.mock("../../rpc/atomRegistry", () => ({
-  appAtomRegistry: {
-    get: (atom: unknown) => (atom === mocks.serverSettingsAtom ? mocks.localCopy : mocks.configs),
-  },
-}));
-vi.mock("../../state/server", () => ({
-  environmentServerConfigsAtom: mocks.serverConfigsAtom,
-  primaryServerSettingsAtom: mocks.serverSettingsAtom,
-  serverEnvironment: { updateSettings: mocks.updateSettingsCommand },
-}));
-vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
+vi.mock("../../state/primaryEnvironment", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { primaryEnvironmentIdAtom: Atom.make(() => "primary") };
+});
 vi.mock("../../state/threads", () => ({
   threadEnvironment: { setSection: mocks.setSectionCommand },
 }));
 vi.mock("../../state/entities", () => ({
   readThreadShell: (ref: { threadId: string }) => ({
     projectId: "project-a",
-    sectionId: mocks.membership.get(ref.threadId) ?? null,
+    sectionId: mocks.membership.get(ref.threadId)?.sectionId ?? null,
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) =>
     command === mocks.updateSettingsCommand
-      ? async ({ input }: { input: { patch: Record<string, never> } }) => {
-          const patch = input.patch as unknown as {
-            threadSections: ThreadSection[];
-            threadSectionsGeneralIndex: number;
-            threadSectionsExpected: typeof mocks.server;
-          };
+      ? async ({ environmentId, input }: { environmentId: string; input: { patch: never } }) => {
+          const patch = input.patch as Stored & { threadSectionsExpected: Stored };
+          const stored = mocks.servers.get(environmentId)!;
           const expected = patch.threadSectionsExpected;
           if (
-            expected.threadSectionsGeneralIndex === mocks.server.threadSectionsGeneralIndex &&
-            threadSectionCatalogsEqual(expected.threadSections, mocks.server.threadSections)
+            expected.threadSectionsGeneralIndex === stored.threadSectionsGeneralIndex &&
+            threadSectionCatalogsEqual(expected.threadSections, stored.threadSections)
           ) {
-            mocks.server = {
+            mocks.servers.set(environmentId, {
               threadSections: patch.threadSections,
               threadSectionsGeneralIndex: patch.threadSectionsGeneralIndex,
-            };
+            });
           }
-          return AsyncResult.success(mocks.server);
+          return AsyncResult.success(mocks.servers.get(environmentId)!);
         }
-      : async ({ input }: { input: { threadId: string; sectionId: string | null } }) => {
-          mocks.membership.set(input.threadId, input.sectionId);
+      : async ({
+          environmentId,
+          input,
+        }: {
+          environmentId: string;
+          input: { threadId: string; sectionId: string | null };
+        }) => {
+          mocks.membership.set(input.threadId, { environmentId, sectionId: input.sectionId });
           return AsyncResult.success(undefined);
         },
 }));
@@ -86,27 +95,27 @@ vi.mock("../../hooks/showThreadUndoNotice", () => ({ showThreadUndoNotice: vi.fn
 
 import { toastManager } from "../../components/ui/toast";
 import { useThreadSectionActions } from "./actions";
-import { useThreadSectionCatalog } from "./catalog";
+import { useThreadSectionCatalogs } from "./catalog";
 import { createSectionAndFile } from "./useNewSectionForThreads";
 
 let hooks: {
-  readonly catalog: ReturnType<typeof useThreadSectionCatalog>;
+  readonly catalogs: ReturnType<typeof useThreadSectionCatalogs>;
   readonly actions: ReturnType<typeof useThreadSectionActions>;
 };
 let renderer: ReactTestRenderer;
 function Probe() {
-  const catalog = useThreadSectionCatalog();
+  const catalogs = useThreadSectionCatalogs();
   const actions = useThreadSectionActions();
   useLayoutEffect(() => {
-    hooks = { catalog, actions };
+    hooks = { catalogs, actions };
   });
   return null;
 }
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  mocks.localCopy = { threadSections: [], threadSectionsGeneralIndex: 0 };
-  mocks.server = { threadSections: [], threadSectionsGeneralIndex: 0 };
+  mocks.servers.set("primary", { threadSections: [], threadSectionsGeneralIndex: 0 });
+  mocks.servers.set("remote", { threadSections: [], threadSectionsGeneralIndex: 0 });
   mocks.membership.clear();
   vi.mocked(toastManager.add).mockClear();
   act(() => {
@@ -123,32 +132,72 @@ const ref = (environmentId: string, threadId: string) => ({
   threadId: ThreadId.make(threadId),
 });
 
-it.each([
-  ["one thread", [ref("primary", "t1")]],
-  ["threads on two environments", [ref("primary", "t1"), ref("remote", "t2")]],
-])("files %s into a section created a moment earlier", async (_label, threadRefs) => {
-  const section = await createSectionAndFile({
+it("files a thread into a section created a moment earlier on its own environment", async () => {
+  const thread = ref("remote", "t1");
+  const result = await createSectionAndFile({
     name: "Design",
-    threadRefs,
+    threadRefs: [thread],
     scopeProjectRefs: [{ environmentId: "primary", projectId: "project-a" }],
-    create: hooks.catalog.create,
+    environmentId: null,
+    create: hooks.catalogs.create,
     moveThreadsToSection: hooks.actions.moveThreadsToSection,
   });
-  expect(section).not.toBeNull();
-  // The local copy still lacks the section; filing must not depend on it.
-  expect(mocks.localCopy.threadSections).toEqual([]);
-  for (const threadRef of threadRefs) {
-    expect(mocks.membership.get(threadRef.threadId)).toBe(section!.id);
-  }
-  expect(mocks.server.threadSections).toEqual([
+  expect(result.failedEnvironmentIds).toEqual([]);
+  const [created] = result.created;
+  expect(created?.environmentId).toBe("remote");
+  expect(mocks.membership.get("t1")).toEqual({
+    environmentId: "remote",
+    sectionId: created!.section.id,
+  });
+  // The section lives on the thread's environment; the primary is untouched.
+  expect(mocks.servers.get("primary")!.threadSections).toEqual([]);
+  expect(mocks.servers.get("remote")!.threadSections).toEqual([
     expect.objectContaining({
-      id: section!.id,
-      environmentIds: [...new Set(threadRefs.map((threadRef) => threadRef.environmentId))],
-      // The selected project, then each filed thread's own project.
-      createdInProjects: [
-        ...new Set(["primary", ...threadRefs.map((threadRef) => threadRef.environmentId)]),
-      ].map((environmentId) => ({ environmentId, projectId: "project-a" })),
+      id: created!.section.id,
+      environmentIds: ["remote"],
+      // Only this environment's projects: the selected project is on the primary.
+      createdInProjects: [{ environmentId: "remote", projectId: "project-a" }],
     }),
   ]);
   expect(toastManager.add).not.toHaveBeenCalled();
+});
+
+it("gives threads on two environments a section of that name on each", async () => {
+  const result = await createSectionAndFile({
+    name: "Design",
+    threadRefs: [ref("primary", "t1"), ref("remote", "t2")],
+    scopeProjectRefs: null,
+    environmentId: null,
+    create: hooks.catalogs.create,
+    moveThreadsToSection: hooks.actions.moveThreadsToSection,
+  });
+  expect(result.created.map((entry) => entry.environmentId).toSorted()).toEqual([
+    "primary",
+    "remote",
+  ]);
+  for (const [threadId, environmentId] of [
+    ["t1", "primary"],
+    ["t2", "remote"],
+  ] as const) {
+    const stored = mocks.servers.get(environmentId)!.threadSections;
+    expect(stored.map((section) => section.name)).toEqual(["Design"]);
+    expect(mocks.membership.get(threadId)).toEqual({ environmentId, sectionId: stored[0]!.id });
+  }
+});
+
+it("creates an empty section on the chosen environment", async () => {
+  const result = await createSectionAndFile({
+    name: "Later",
+    threadRefs: [],
+    scopeProjectRefs: null,
+    environmentId: EnvironmentId.make("remote"),
+    create: hooks.catalogs.create,
+    moveThreadsToSection: hooks.actions.moveThreadsToSection,
+  });
+  expect(result.created.map((entry) => entry.environmentId)).toEqual(["remote"]);
+  const [later] = mocks.servers.get("remote")!.threadSections;
+  expect(later?.name).toBe("Later");
+  // Nothing holds it yet, so no environment is recorded.
+  expect(later?.environmentIds).toBeUndefined();
+  expect(mocks.servers.get("primary")!.threadSections).toEqual([]);
 });

@@ -980,11 +980,14 @@ replaces the header's New thread icon. Section membership is an optional
 `sectionId` written by the Scient `thread.section.set` command (advertised by the
 `threadSections` capability); like `thread.active.reorder`, it emits
 `thread.meta-updated` with an unchanged `updatedAt`, so organizing never reads as
-activity. Migration 058 adds `projection_threads.section_id`. The catalog, the
-built-in General group's position and the opt-in empty-section cleanup live in the
-primary environment's server settings; catalog writes carry the catalog they were
-based on, and `updateSettings` applies them only while it still matches, so
-concurrent clients never overwrite each other. Scient code lives under
+activity. Migration 058 adds `projection_threads.section_id`. Each environment's
+server settings hold the catalog of its own sections, the built-in General group's
+position and the opt-in empty-section cleanup; a thread's `sectionId` resolves only
+against its own environment's catalog, so no client needs a primary environment to
+show sections. Catalog writes carry the catalog they were based on, and
+`updateSettings` applies them only while it still matches, so concurrent clients
+never overwrite each other. Environment-local resolution lives entirely in
+`apps/web/src/scient/sections` and added no upstream seams. Scient code lives under
 `apps/web/src/scient/sections`, `apps/web/src/scient/sidebar` and
 `apps/server/src/scient/threadSections`; upstream files carry `SCIENT-FORK`-marked
 mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's class
