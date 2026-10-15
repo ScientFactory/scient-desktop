@@ -1375,6 +1375,54 @@ describe("Oh My Pi session runtime outcomes", () => {
     }),
   );
 
+  it.effect("a failed call's late cleanup stays out of later turns that lack the call", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("first");
+      yield* h.runtime.accepted("prompt-1", true);
+      // An aborted foreground bash call returns before its cleanup's last frame.
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash" },
+        {
+          type: "tool_execution_end",
+          toolCallId: "call-1",
+          toolName: "bash",
+          isError: true,
+          result: { content: [{ type: "text", text: "Command aborted" }], details: {} },
+        },
+        assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "aborted" }] }),
+        { type: "agent_end", messages: [], isTerminal: true },
+        { type: "session_settled" },
+      );
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed" });
+      yield* h.settleFrames;
+      yield* h.runtime.begin("second");
+      yield* h.runtime.accepted("prompt-2", true);
+      const cleanup = {
+        type: "tool_execution_update",
+        toolCallId: "call-1",
+        toolName: "bash",
+        partialResult: { content: [{ type: "text", text: "[Command cancelled]" }], details: {} },
+      };
+      yield* h.wire.send(
+        { type: "agent_start" },
+        cleanup,
+        { type: "tool_execution_update", toolCallId: "fresh-tool", toolName: "read" },
+        // A call of this turn under the same id has its own updates shown.
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "read" },
+        { type: "tool_execution_update", toolCallId: "call-1", toolName: "read" },
+      );
+      const produced = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(toolFrames(produced)).toEqual([
+        { toolCallId: "fresh-tool", phase: "updated" },
+        { toolCallId: "call-1", phase: "started" },
+        { toolCallId: "call-1", phase: "updated" },
+      ]);
+    }),
+  );
+
   it.effect("R1-F3 tool frames outside a turn are dropped; a background subagent's are not", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();

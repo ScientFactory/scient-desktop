@@ -45,6 +45,8 @@ const OMP_SETTLED_PROMPT_MEMORY = 16;
 const OMP_PENDING_OUTCOME_MEMORY = 16;
 /** Background jobs kept after the session settled, for a cancelled job's stray frames. */
 const OMP_SETTLED_JOB_MEMORY = 256;
+/** Calls that ended with an error, kept across turns for their cleanup's late updates. */
+const OMP_FAILED_CALL_MEMORY = 256;
 
 const ompDrainRetry = (attempt: number, busy: boolean): "confirm" | "retry" | "give-up" => {
   if (!busy) return "confirm";
@@ -435,10 +437,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
    *   job, but not its own frames: a cancelled job can still report, and some
    *   cancelled jobs never send a last frame.
    *
-   * Not covered: a call that never went to the background but reports after it
-   * returned, without a job id, as a call aborted inside OMP can. Its update
-   * shows in the open turn. Scient's Stop closes the process, so this takes an
-   * abort from elsewhere.
+   * A call that never went to the background can still report after it
+   * returned, without a job id: an aborted foreground bash call returns before
+   * its cleanup's last frame (`failedToolCallIds`).
    */
   const backgroundJobs = new Map<
     string,
@@ -446,6 +447,20 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   >();
   /** Jobs whose last frame came before their call returned, so its end does not revive them. */
   const settledJobIds = new Set<string>();
+  /**
+   * Calls that ended with an error, oldest first. Their updates without a job
+   * id show only in a turn that has the call itself; settlement does not end
+   * this, since nothing tells when such a call's cleanup is done.
+   */
+  const failedToolCallIds = new Set<string>();
+  const rememberFailedCall = (toolCallId: string) => {
+    failedToolCallIds.delete(toolCallId);
+    failedToolCallIds.add(toolCallId);
+    for (const id of failedToolCallIds) {
+      if (failedToolCallIds.size <= OMP_FAILED_CALL_MEMORY) break;
+      failedToolCallIds.delete(id);
+    }
+  };
   /**
    * A settled session runs nothing: no job is running and no call awaits its
    * end. The most recent settled jobs are kept for their stray frames.
@@ -1186,7 +1201,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
             ? job.turnId === activeTurnId
             : jobId !== undefined
               ? turnToolCallIds.has(toolCallId)
-              : ![...backgroundJobs.values()].some(
+              : (!failedToolCallIds.has(toolCallId) || turnToolCallIds.has(toolCallId)) &&
+                ![...backgroundJobs.values()].some(
                   (other) =>
                     other.running &&
                     other.toolCallId === toolCallId &&
@@ -1194,6 +1210,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
                 );
           if (!ownCall) return;
         } else if (event.type === "tool_execution_end") {
+          if (toolFailed(event)) rememberFailedCall(toolCallId);
           const jobId = backgroundJobId(event.result);
           // The end consumes its job's early last frame, whatever state it reports.
           const settledEarly = jobId !== undefined && settledJobIds.delete(jobId);
