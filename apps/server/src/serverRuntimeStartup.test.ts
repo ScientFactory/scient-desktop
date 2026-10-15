@@ -526,7 +526,10 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
           }),
           Layer.mock(ThreadManagement.ThreadManagementService)({}),
           Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
-          Layer.succeed(Crypto.Crypto, { ...crypto, randomUUIDv4: Effect.fail(uuidError) }),
+          Layer.succeed(Crypto.Crypto, {
+            ...crypto,
+            randomUUIDv4: (() => Effect.fail(uuidError)) as Crypto.Crypto["randomUUIDv4"],
+          }),
           ServerSettings.layerTest(),
         ).pipe(Layer.provideMerge(bootstrapConfigLayer)),
       ),

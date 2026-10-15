@@ -471,6 +471,13 @@ function makeReplayQueryRunner(
               model,
             });
           }),
+        applyFlagSettings: (settings) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({
+              type: "query.apply_flag_settings",
+              settings,
+            });
+          }),
         stopTask: (taskId) =>
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.stop_task", taskId });

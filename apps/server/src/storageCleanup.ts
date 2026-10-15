@@ -28,6 +28,7 @@ import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import type { PlatformError } from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -51,6 +52,7 @@ import { withoutComputeWorkspaceOwners } from "./scient/compute/ComputeWorkspace
 import { presentQueuedRunsAsBusy } from "./scient/storage/QueuedRunWorktreeRetention.ts";
 // SCIENT-FORK:END worktree-lifetime-retention
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -255,14 +257,18 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
+  // The snapshot takes seconds on large databases, so it runs on the reader
+  // worker instead of the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
-    const active = yield* projections.getShellSnapshot();
-    const archived = yield* projections.getShellSnapshot({ location: "archive" });
+    // SCIENT-FORK:START archived-worktree-retention — archived threads are candidates
+    // and still count as sharing a worktree; the unscoped snapshot returns both.
+    const snapshot = yield* projections.getShellSnapshot().pipe(NodeSqliteClient.readOnly);
+    // SCIENT-FORK:END archived-worktree-retention
     const projects = yield* projectStore.listShells();
     // SCIENT-FORK:START queued-run-worktree-retention
     const threads = yield* presentQueuedRunsAsBusy(sql, [
-      ...active.threads,
-      ...archived.archivedThreads,
+      ...snapshot.threads,
+      ...snapshot.archivedThreads,
     ]);
     // SCIENT-FORK:END queued-run-worktree-retention
     return { projects, threads };
@@ -637,6 +643,8 @@ const make = Effect.gen(function* () {
         // queued turn, resumed session or new thread sharing this path cancels
         // the removal.
         const blockedSinceCheck = Effect.fnUntraced(function* () {
+          // SCIENT-FORK:START archived-worktree-retention — recheck the same archived and
+          // queued-run view as the sweep; getThreadWorktreePaths omits archived threads.
           const latestSnapshot = yield* readThreads();
           if (yield* containsProjectRoot(worktreePath, [project, ...latestSnapshot.projects]))
             return "contains a project checkout";
@@ -644,6 +652,7 @@ const make = Effect.gen(function* () {
             (entry) =>
               entry.worktreePath !== null && path.resolve(entry.worktreePath) === worktreePath,
           );
+          // SCIENT-FORK:END archived-worktree-retention
           if (hasTerminal(worktreePath)) return "open terminal";
           if (deleted) {
             if (
@@ -660,10 +669,12 @@ const make = Effect.gen(function* () {
             `;
             if (pendingCleanup.length > 0) return "thread deletion is still pending";
           } else if (
+            // SCIENT-FORK:START archived-worktree-retention
             latest.length !== 1 ||
             latest[0]!.id !== thread.id ||
             !storageCleanupThreadIdle(latest[0]!, now) ||
             storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread)
+            // SCIENT-FORK:END archived-worktree-retention
           )
             return "thread activity or shared worktree changed since check";
           // Sessions can outlive their run and can be shared across app threads.
@@ -891,9 +902,14 @@ const make = Effect.gen(function* () {
     yield* SubscriptionRef.set(reportRef, latestReport);
     return latestReport;
   });
+  // At most one automatic sweep waits at a time. An automatic request made
+  // while one is waiting joins it, since that sweep has not read any state yet.
+  // Each manual run still gets its own sweep and report.
+  const automaticSweepQueued = yield* Ref.make(false);
   const worker = yield* makeDrainableWorker(
     (completion: Deferred.Deferred<StorageCleanupReport, ServerSettingsError> | undefined) =>
-      sweep(completion === undefined ? "automatic" : "manual").pipe(
+      (completion === undefined ? Ref.set(automaticSweepQueued, false) : Effect.void).pipe(
+        Effect.andThen(sweep(completion === undefined ? "automatic" : "manual")),
         Effect.exit,
         Effect.flatMap((exit) =>
           completion === undefined
@@ -906,6 +922,9 @@ const make = Effect.gen(function* () {
             : Deferred.done(completion, exit).pipe(Effect.asVoid),
         ),
       ),
+  );
+  const requestSweep = Ref.getAndSet(automaticSweepQueued, true).pipe(
+    Effect.flatMap((queued) => (queued ? Effect.void : worker.enqueue(undefined))),
   );
   const runNow = Effect.gen(function* () {
     const completion = yield* Deferred.make<StorageCleanupReport, ServerSettingsError>();
@@ -936,15 +955,13 @@ const make = Effect.gen(function* () {
     const events = engine.streamDomainEvents;
     let lastSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
     yield* forkParked(
-      worker
-        .enqueue(undefined)
-        .pipe(
-          Effect.andThen(worker.drain),
-          Effect.repeat(Schedule.spaced("1 hour")),
-          Effect.asVoid,
-        ),
+      requestSweep.pipe(
+        Effect.andThen(worker.drain),
+        Effect.repeat(Schedule.spaced("1 hour")),
+        Effect.asVoid,
+      ),
     );
-    yield* forkParked(Stream.runForEach(completions, () => worker.enqueue(undefined)));
+    yield* forkParked(Stream.runForEach(completions, () => requestSweep));
     yield* forkParked(
       Stream.runForEach(changes, (settings) => {
         if (
@@ -954,14 +971,18 @@ const make = Effect.gen(function* () {
         )
           return Effect.void;
         lastSettings = settings;
-        return worker.enqueue(undefined);
+        return requestSweep;
       }),
     );
     yield* forkParked(
+      // A deleted thread's worktree waits for its sessions to end. Moving
+      // between live statuses, such as running to ready, cannot free one.
       Stream.runForEach(events, (event) =>
-        (event.type === "thread.deleted" || event.type === "provider-session.updated") &&
+        (event.type === "thread.deleted" ||
+          (event.type === "provider-session.updated" &&
+            (event.payload.status === "stopped" || event.payload.status === "error"))) &&
         anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)
-          ? worker.enqueue(undefined)
+          ? requestSweep
           : Effect.void,
       ).pipe(
         Effect.catchCause((cause) =>

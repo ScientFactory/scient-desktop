@@ -98,7 +98,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           sessions.clear(threadId).pipe(Effect.andThen(sessions.clear(targetThreadId))),
         );
         const sourceConfig = {
-          "tools.update_plan.enabled": true,
+          ...CodexAdapterV2.CODEX_THREAD_CONFIG,
           mcp_servers: {
             scient: {
               url: endpoint,
@@ -107,7 +107,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         };
         const targetConfig = {
-          "tools.update_plan.enabled": true,
+          ...CodexAdapterV2.CODEX_THREAD_CONFIG,
           mcp_servers: {
             scient: {
               url: endpoint,

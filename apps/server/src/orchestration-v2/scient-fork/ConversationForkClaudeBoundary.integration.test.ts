@@ -158,6 +158,7 @@ it.live(
                       ]);
                     }),
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(messages),
                 };

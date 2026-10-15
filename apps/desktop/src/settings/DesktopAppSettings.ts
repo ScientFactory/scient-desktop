@@ -566,7 +566,7 @@ export const make = Effect.gen(function* () {
   const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
 
   const writeSettingsAtomically = (settings: DesktopSettings) =>
-    crypto.randomUUIDv4.pipe(
+    crypto.randomUUIDv4().pipe(
       Effect.map((uuid) => uuid.replace(/-/g, "")),
       Effect.mapError(
         (cause) =>

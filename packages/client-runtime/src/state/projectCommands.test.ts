@@ -423,7 +423,7 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (meth
     ),
     networkStatus: yield* SubscriptionRef.make<NetworkStatus>("online"),
     start: Effect.void,
-    register: () => Effect.void,
+    register: () => Effect.succeed(true),
     registerPlatform: () => Effect.void,
     reconcilePlatform: () => Effect.void,
     remove: () => Effect.void,

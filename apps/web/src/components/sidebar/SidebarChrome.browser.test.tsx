@@ -11,6 +11,7 @@ import { SidebarNewThreadRow } from "../../scient/sidebar/SidebarNewThreadRow";
 import { SidebarFooter, SidebarProvider } from "../ui/sidebar";
 import { TooltipProvider } from "../ui/tooltip";
 import { SidebarUtilityMenu } from "./SidebarChrome";
+import { setUpdateEverythingRun } from "./updateEverythingRun";
 import type { useUpdateEverything } from "./useUpdateEverything";
 
 const fixture = vi.hoisted(() => ({
@@ -78,6 +79,7 @@ afterEach(() => {
   root?.unmount();
   host?.remove();
   fixture.everything = null;
+  setUpdateEverythingRun(() => null);
   vi.clearAllMocks();
 });
 
@@ -215,8 +217,13 @@ it.each(["Update", "Updating"] as const)(
       summary: "Update 1 server and 2 providers",
       lines: ["alvin: server to 0.6.21, Codex, Claude"],
       restarts: [],
-      // The run stays in progress so the button keeps its running label.
-      run: () => new Promise<void>(() => {}),
+      skipped: [],
+      // The run stays in progress so the button keeps its running label, which
+      // the shared run state drives.
+      run: () => {
+        setUpdateEverythingRun(() => ({ localVersion: null, phase: "providers", machines: [] }));
+        return new Promise<void>(() => {});
+      },
     };
     await mountFooter(216, {
       ...updateState,

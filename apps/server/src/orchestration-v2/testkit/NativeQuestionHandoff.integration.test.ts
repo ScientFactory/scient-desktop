@@ -102,6 +102,7 @@ it.live(
                       Effect.asVoid,
                     ),
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(frames),
                 };

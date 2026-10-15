@@ -130,7 +130,7 @@ const harness = Effect.fnUntraced(function* (
   let model = { provider: "test", id: "initial" };
   const instanceId = ProviderInstanceId.make(scientific ? "scient-v2-test" : "omp-v2-test");
   const threadId =
-    behavior?.threadId ?? ThreadId.make(`omp-v2-${yield* (yield* Crypto.Crypto).randomUUIDv4}`);
+    behavior?.threadId ?? ThreadId.make(`omp-v2-${yield* (yield* Crypto.Crypto).randomUUIDv4()}`);
   const modelSelection = { instanceId, model: behavior?.model ?? "test/selected" };
   const runtimePolicy = {
     cwd: behavior?.cwd ?? config.stateDir,

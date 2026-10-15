@@ -117,15 +117,15 @@ const harness = Effect.fnUntraced(function* (
     yield* fs.remove(NodePath.join(config.stateDir, "watchdog-signal"), { force: true });
   const requestsPath = NodePath.join(
     config.stateDir,
-    `requests-${yield* crypto.randomUUIDv4}.jsonl`,
+    `requests-${yield* crypto.randomUUIDv4()}.jsonl`,
   );
-  const argvLogPath = NodePath.join(config.stateDir, `argv-${yield* crypto.randomUUIDv4}.txt`);
+  const argvLogPath = NodePath.join(config.stateDir, `argv-${yield* crypto.randomUUIDv4()}.txt`);
   const binary = writeFakeCli({
     directory: config.stateDir,
     name: "droid",
     source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
   });
-  const scenarioId = yield* crypto.randomUUIDv4;
+  const scenarioId = yield* crypto.randomUUIDv4();
   const controlPath = NodePath.join(config.stateDir, `activity-control-${scenarioId}`);
   const pidsPath = NodePath.join(config.stateDir, `owned-pids-${scenarioId}`);
   const scripted = scenario

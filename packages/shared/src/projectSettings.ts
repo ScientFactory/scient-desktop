@@ -201,6 +201,7 @@ function resolveProjectOverrides(
     const fallback = fallbackScientTextGenerationModelSelection(
       settings.providerInstances,
       (instanceId) => resolveProjectProviderInstanceEnabled(settings, projectId, instanceId),
+      { defaultModelSelection: effective.defaultModelSelection as ModelSelection | null },
     );
     if (fallback !== null) effective.textGenerationModelSelection = fallback;
   }

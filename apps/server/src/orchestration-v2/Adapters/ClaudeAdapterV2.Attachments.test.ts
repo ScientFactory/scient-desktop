@@ -62,6 +62,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                     offeredMessages.push(message);
                   }),
                 setModel: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
               }),
@@ -208,6 +209,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                   messages: Stream.never,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
                 };

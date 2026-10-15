@@ -88,6 +88,7 @@ export const makeSessionRetirement = <
     readonly detail?: string;
     readonly onFirstRecordsAttempt?: (exit: Exit.Exit<void, E>) => Effect.Effect<void>;
   },
+  Released,
 >(steps: {
   readonly closeTimeoutMs: number;
   readonly reclaimCredential: (threadId: ThreadId, credentialId: string) => Effect.Effect<void, E>;
@@ -99,6 +100,9 @@ export const makeSessionRetirement = <
   readonly releaseConsumer: (entry: Entry) => Effect.Effect<void, E>;
   readonly writeSession: (entry: Entry, input: Input) => Effect.Effect<void, E>;
   readonly writeRequests: (entry: Entry, input: Input) => Effect.Effect<void, E>;
+  /** Background work the released process left on its threads; it cannot fail. */
+  readonly readReleasedWork: (entry: Entry, input: Input) => Effect.Effect<Released>;
+  readonly writeReleasedWork: (released: Released) => Effect.Effect<void, E>;
 }) =>
   Effect.fnUntraced(function* (entry: Entry, input: Input) {
     const retireCredentials = Effect.forEach(
@@ -106,6 +110,9 @@ export const makeSessionRetirement = <
       ([threadId, credentialId]) => steps.reclaimCredential(threadId, credentialId),
       { discard: true },
     );
+    // Read as soon as the session left the live map, before its process
+    // closes: a replacement with the same id may report work of its own later.
+    const releasedWork = yield* steps.readReleasedWork(entry, input);
     // Physical cleanup starts before any idle/subscriber join can park it.
     const physicalClose = yield* steps
       .closeScope(entry.scope)
@@ -140,6 +147,7 @@ export const makeSessionRetirement = <
               Effect.exit(
                 steps.writeRequests(entry, input).pipe(entry.requestEventPermit.withPermits(1)),
               ),
+              Effect.exit(steps.writeReleasedWork(releasedWork)),
             ],
             { concurrency: 1 },
           ).pipe(

@@ -78,6 +78,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };
@@ -320,6 +321,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };
@@ -516,6 +518,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   messages: Stream.fromQueue(sdkMessages),
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
                 };
@@ -633,15 +636,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* awaitUntil(() => terminals().length === 2, "switched turn terminal");
+        // Model and effort now change on the live process, so turn thinking
+        // off: that launch flag still needs another process.
         yield* runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId,
             providerThread: { ...providerThread, status: "active" },
             now,
             attemptId: RunAttemptId.make("attempt-claude-model-change-running-subagent-d"),
-            text: "Switch back.",
+            text: "Stop thinking.",
             attachments: [],
             providerTurnOrdinal: 3,
+            modelSelection: { ...alternateModel, options: [{ id: "thinking", value: false }] },
           }),
         );
         assert.lengthOf(processQueues, 3);
@@ -700,6 +706,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
                     setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
                   };

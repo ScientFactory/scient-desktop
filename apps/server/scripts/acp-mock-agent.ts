@@ -164,6 +164,7 @@ const droidAutonomyLocked = process.env.T3_ACP_DROID_AUTONOMY_LOCKED === "1";
 // Droid keeps its own ladder for a model id it knows: `minimal=low` applies Low to a Minimal write.
 const droidEffortReplacement = process.env.T3_ACP_DROID_EFFORT_REPLACEMENT?.split("=");
 const omitModelConfigOption = process.env.T3_ACP_OMIT_MODEL_CONFIG_OPTION === "1";
+const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const initialGrokReasoningEffort =
   process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
@@ -198,6 +199,7 @@ let currentReasoning = "medium";
 let currentAutonomy = droidInitialAutonomy;
 let currentContext = "272k";
 let currentFast = false;
+let currentAgent = "";
 let authenticated = !requiresAuthentication;
 let promptCount = 0;
 let overlappingFirstPromptId: string | undefined;
@@ -392,6 +394,22 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
     }
   }
 
+  // Mirrors GitHub Copilot, whose default agent is the empty-valued choice.
+  const agentOptions: Array<AcpSchema.SessionConfigOption> = emitEmptyDefaultAgentOption
+    ? [
+        {
+          configId: "agent",
+          name: "Agent",
+          category: "_agent",
+          type: "select" as const,
+          currentValue: currentAgent,
+          options: [
+            { value: "", name: "Copilot" },
+            { value: "example", name: "example" },
+          ],
+        },
+      ]
+    : [];
   const modeOption: AcpSchema.SessionConfigOption = {
     configId: "mode",
     name: "Mode",
@@ -436,6 +454,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         ];
   return currentModelId === "custom:Ox-Alpha-0"
     ? [
+        ...agentOptions,
         ...autonomyOptions,
         modelOption,
         {
@@ -453,7 +472,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
           ],
         },
       ]
-    : [modeOption, ...autonomyOptions, modelOption];
+    : [...agentOptions, modeOption, ...autonomyOptions, modelOption];
 }
 
 function modelConfigOptionsFor(modelId: string): ReadonlyArray<AcpSchema.SessionConfigOption> {
@@ -952,6 +971,9 @@ const program = Effect.gen(function* () {
         if (currentModelId === "custom:Ox-Alpha-0") {
           currentReasoning = "none";
         }
+      }
+      if (request.configId === "agent" && typeof request.value === "string") {
+        currentAgent = request.value;
       }
       if (
         (request.configId === "reasoning" || request.configId === "reasoning_effort") &&
