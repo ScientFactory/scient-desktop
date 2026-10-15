@@ -11,6 +11,7 @@ import {
   appProviderSnapshots,
   hasActiveManagedOperation,
   watchManagedRuntimeUpdate,
+  withDeadline,
   type ReadServerRuntimeActivity,
 } from "./managedRuntimeUpdateWatch";
 import {
@@ -21,6 +22,9 @@ import {
   type ProviderUpdateEnvironment,
   type ProviderUpdateOutcome,
 } from "./providerUpdateInventory";
+
+const UNANSWERED_START_MESSAGE =
+  "Scient could not confirm the update started within 30 minutes. Review the provider in Settings.";
 
 const UNSTARTED_MANAGED_UPDATE: ProviderUpdateOutcome = {
   status: "failed",
@@ -81,11 +85,21 @@ export function useProviderUpdateInventory() {
           }),
         ),
       startManaged: async (item) => {
-        const provider = await startRuntimeAction({
+        const starting = startRuntimeAction({
           environmentId: item.environmentId,
           instanceId: item.instanceId,
           action: "update",
         });
+        // Within the pass deadline too: a start that never answers fails
+        // here, and the restart checks still ask the server what it accepted.
+        const provider =
+          options.deadlineAt === undefined
+            ? await starting
+            : await withDeadline(
+                starting,
+                options.deadlineAt - Date.now(),
+                UNANSWERED_START_MESSAGE,
+              );
         const operationId = provider.connection?.runtime?.operation?.operationId ?? null;
         return {
           finished:

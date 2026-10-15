@@ -1245,6 +1245,51 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
+  it.effect(
+    "settles an operation cancelled before its first publication, and still shuts down",
+    () =>
+      Effect.gen(function* () {
+        const publicationStarted = yield* Deferred.make<void>();
+        const releasePublication = yield* Deferred.make<void>();
+        const actions: ProviderManagedRuntimeActions = {
+          getSummary: Effect.succeed(systemRuntime),
+          plan: () => Effect.succeed(installPlan()),
+          run: () => Effect.never,
+        };
+        const { manager, coordinator, closeManager } = yield* makeHarness(
+          actions,
+          [systemProvider],
+          () => Effect.void,
+          undefined,
+          Effect.void,
+          {
+            beforeSetRuntime: (runtime) =>
+              runtime?.operation?.status === "preparing"
+                ? Deferred.succeed(publicationStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releasePublication)),
+                  )
+                : Effect.void,
+          },
+        );
+        const startFiber = yield* manager
+          .start({ instanceId: INSTANCE, action: "install", catalogRevision: "reviewed:1" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(publicationStarted);
+
+        // Registered but not yet published: a cancellation that finds it now
+        // settles it, and its record goes with it.
+        const [listed] = (yield* manager.activeOperations).operations;
+        assert.ok(listed);
+        yield* manager.cancel({ instanceId: INSTANCE, operationId: listed.operationId });
+        assert.deepStrictEqual(yield* manager.activeOperations, { operations: [] });
+
+        yield* Deferred.succeed(releasePublication, undefined);
+        yield* Fiber.await(startFiber);
+        yield* closeManager;
+        assert.deepStrictEqual(yield* manager.activeOperations, { operations: [] });
+        assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+      }),
+  );
   it.effect("refuses a start that would register after shutdown began", () =>
     Effect.gen(function* () {
       const summaryStarted = yield* Deferred.make<void>();

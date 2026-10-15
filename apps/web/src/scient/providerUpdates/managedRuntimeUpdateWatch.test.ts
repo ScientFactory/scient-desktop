@@ -13,6 +13,7 @@ import {
   hasActiveManagedOperation,
   liveConnection,
   waitForManagedRuntimesIdle,
+  withDeadline,
   watchManagedRuntimeUpdate,
   type LiveProviderEnvironment,
   type ProviderSnapshotSource,
@@ -402,6 +403,20 @@ describe("waitForManagedRuntimesIdle", () => {
     expect(events).toEqual(["providers failed", "servers", "install app"]);
   });
 
+  it("fails a managed start that never answers by the pass deadline", async () => {
+    const results = await runProviderUpdates(
+      [{ environmentId: alvin, label: "alvin", items: [item] }],
+      {
+        updateSystem: async () => ({ status: "succeeded", version: null }),
+        startManaged: async () => {
+          // As the inventory hook bounds `startRuntimeAction`.
+          await withDeadline(new Promise<never>(() => {}), 20, "Not confirmed in time.");
+          return { finished: Promise.resolve({ status: "succeeded", version: null }) };
+        },
+      },
+    );
+    expect(results[0]!.outcome).toEqual({ status: "failed", message: "Not confirmed in time." });
+  });
   it("ends a pass whose managed update never finishes, without installing this app", async () => {
     const live = snapshots(
       environment(codex({ version: "0.48.0", operation: operation("activating") })),

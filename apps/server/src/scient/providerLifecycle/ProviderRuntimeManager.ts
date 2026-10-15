@@ -538,17 +538,13 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           const registration = yield* registrationLock.withPermits(1)(
             Effect.gen(function* () {
               if (yield* Ref.get(closedRef)) return "closed" as const;
-              const runtimeReserved = yield* Ref.modify(activeRef, (current) => {
-                if (
-                  [...current.values()].some((candidate) => candidate.provider === target.provider)
-                ) {
-                  return [false, current] as const;
-                }
-                const next = new Map(current);
-                next.set(input.instanceId, active);
-                return [true, next] as const;
-              });
-              if (!runtimeReserved) return "busy" as const;
+              // Entries are only added under this lock, so the check holds.
+              const held = yield* Ref.get(activeRef);
+              if ([...held.values()].some((candidate) => candidate.provider === target.provider)) {
+                return "busy" as const;
+              }
+              // The in-progress record first: anything that can find the
+              // operation, to cancel or settle it, then finds its record.
               yield* Ref.update(inProgressRef, (current) =>
                 new Map(current).set(operationId, {
                   operation: {
@@ -559,6 +555,9 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                   },
                   settled,
                 }),
+              );
+              yield* Ref.update(activeRef, (current) =>
+                new Map(current).set(input.instanceId, active),
               );
               return "registered" as const;
             }),
@@ -923,28 +922,14 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     );
   }).pipe(Effect.delay(RESELECT_INTERVAL), Effect.forever, Effect.forkScoped);
 
-  const activeOperations: ProviderRuntimeManagerShape["activeOperations"] = Effect.gen(
-    function* () {
-      const operations = new Map(
-        Array.from(
-          yield* Ref.get(inProgressRef),
-          ([id, { operation }]) => [id, operation] as const,
-        ),
-      );
-      // Held but not yet recorded above: only for the instant after `start` holds it.
-      for (const [instanceId, active] of yield* Ref.get(activeRef)) {
-        if (operations.has(active.operationId)) continue;
-        operations.set(active.operationId, {
-          instanceId,
-          operationId: active.operationId,
-          action: active.action,
-          startedAt: active.startedAt,
-        });
-      }
-      return { operations: [...operations.values()] };
-    },
+  // Every held operation is recorded here before anything else can see it.
+  const activeOperations: ProviderRuntimeManagerShape["activeOperations"] = Ref.get(
+    inProgressRef,
+  ).pipe(
+    Effect.map((inProgress) => ({
+      operations: Array.from(inProgress.values(), ({ operation }) => operation),
+    })),
   );
-
   return ProviderRuntimeManager.of({ plan, start, cancel, reselect, activeOperations });
 });
 

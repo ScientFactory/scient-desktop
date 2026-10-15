@@ -191,13 +191,17 @@ export const hasActiveManagedOperation = (providers: ReadonlyArray<ServerProvide
     isManagedRuntimeOperationActive(provider.connection?.runtime?.operation),
   );
 
-/** Settles like `promise`, or rejects once `ms` have passed. */
-function withDeadline<A>(promise: Promise<A>, ms: number): Promise<A> {
+/** Settles like `promise`, or rejects with `message` once `ms` have passed. */
+export function withDeadline<A>(
+  promise: Promise<A>,
+  ms: number,
+  message = "No answer in time.",
+): Promise<A> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     promise,
     new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("No answer in time.")), Math.max(0, ms));
+      timer = setTimeout(() => reject(new Error(message)), Math.max(0, ms));
     }),
   ]).finally(() => clearTimeout(timer));
 }
