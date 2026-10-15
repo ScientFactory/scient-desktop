@@ -17,6 +17,7 @@ import {
 } from "~/components/ProviderUpdateLaunchNotification.logic";
 import {
   collectManagedRuntimeUpdateCandidates,
+  isManagedRuntimeOperationActive,
   managedRuntimeUpdateTargets,
   type ManagedRuntimeUpdateOutcome,
 } from "../providerConnection/ManagedRuntimeUpdateNotification.logic";
@@ -71,8 +72,16 @@ export function collectProviderUpdateMachines(
         offeredVersion: target.availableVersion,
       }),
     );
-    // A runtime Scient updates is never also sent to its system update command.
-    const managedDrivers = new Set(managed.map((item) => item.driver));
+    // A runtime Scient updates, or is already updating, is never also sent to
+    // its system update command.
+    const managedDrivers = new Set([
+      ...managed.map((item) => item.driver),
+      ...environment.providers
+        .filter((provider) =>
+          isManagedRuntimeOperationActive(provider.connection?.runtime?.operation),
+        )
+        .map((provider) => provider.driver),
+    ]);
     const system = collectProviderUpdateCandidates(environment.providers)
       .filter(
         (candidate) =>
@@ -106,6 +115,10 @@ export function describeProviderUpdateItem(item: ProviderUpdateItem): string {
         : "";
   return `${name}${versions} · ${item.kind === "managed" ? "managed by Scient" : "system install"}`;
 }
+
+/** Shown while a managed update's new runtime waits for the provider's running work. */
+export const WAITING_FOR_RUNNING_WORK =
+  "Waiting for running work to finish before switching to the new runtime.";
 
 export type ProviderUpdateOutcome =
   | Exclude<ManagedRuntimeUpdateOutcome, { readonly status: "pending" }>

@@ -129,6 +129,31 @@ describe("collectProviderUpdateMachines", () => {
       "Claude 2.1.3 → 2.2.0 · system install",
     ]);
   });
+
+  it("does not offer a system stand-in's own update while Scient is updating its runtime", () => {
+    const standIn = provider({
+      driver: "droid",
+      managed: { source: "system", installed: "0.235.0", available: "0.241.1" },
+    });
+    const updating: ServerProvider = {
+      ...standIn,
+      connection: {
+        ...standIn.connection!,
+        runtime: {
+          ...standIn.connection!.runtime!,
+          operation: {
+            operationId: "op-1",
+            action: "update",
+            status: "downloading",
+            startedAt: checkedAt,
+            finishedAt: null,
+            message: "Downloading.",
+          },
+        },
+      },
+    };
+    expect(collectProviderUpdateMachines([machine("alvin", [updating])])).toEqual([]);
+  });
 });
 
 const item = (driver: string, kind: ProviderUpdateItem["kind"], label = "alvin") => ({

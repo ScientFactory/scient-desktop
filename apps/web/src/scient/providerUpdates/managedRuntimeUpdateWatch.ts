@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -14,9 +15,34 @@ import type { ProviderUpdateItem, ProviderUpdateOutcome } from "./providerUpdate
 /** One environment's live provider snapshot and how far it can be trusted. */
 export interface LiveProviderEnvironment {
   readonly environmentId: EnvironmentId;
-  /** `reconnecting` keeps a cached snapshot that must not settle anything. */
+  /**
+   * `reconnecting` keeps a cached snapshot that must not settle anything;
+   * `lost` will not come back without the user.
+   */
   readonly connection: "connected" | "reconnecting" | "lost";
   readonly providers: ReadonlyArray<ServerProvider>;
+}
+
+/**
+ * How far an environment's snapshot can be trusted. Offline reconnects once
+ * the network returns, so it waits like a reconnect; its server may still be
+ * running an update.
+ */
+export function liveConnection(
+  phase: EnvironmentConnectionPhase,
+): LiveProviderEnvironment["connection"] {
+  switch (phase) {
+    case "connected":
+      return "connected";
+    case "offline":
+    case "connecting":
+    case "reconnecting":
+      return "reconnecting";
+    case "available":
+    case "error":
+    case "unsupported":
+      return "lost";
+  }
 }
 
 export interface ProviderSnapshotSource {
@@ -32,13 +58,7 @@ export const appProviderSnapshots: ProviderSnapshotSource = {
       appAtomRegistry.get(environmentPresentations.presentationsAtom),
       ([environmentId, presentation]) => ({
         environmentId,
-        connection:
-          presentation.connection.phase === "connected"
-            ? "connected"
-            : presentation.connection.phase === "connecting" ||
-                presentation.connection.phase === "reconnecting"
-              ? "reconnecting"
-              : "lost",
+        connection: liveConnection(presentation.connection.phase),
         providers: presentation.serverConfig?.providers ?? [],
       }),
     ),
@@ -82,15 +102,26 @@ const RECONNECT_GRACE_MS = 2 * 60_000;
 /**
  * The final result of a started managed update: its new runtime active, or
  * why not. Waits through a short reconnect; losing the environment, or a
- * reconnect longer than the grace period, fails it.
+ * reconnect longer than the grace period, fails it. `onWaitingChange` hears
+ * whether the staged runtime is waiting for the provider's running work.
  */
 export function watchManagedRuntimeUpdate(
   source: ProviderSnapshotSource,
   item: ProviderUpdateItem,
   operationId: string,
-  reconnectGraceMs = RECONNECT_GRACE_MS,
+  options: {
+    readonly reconnectGraceMs?: number;
+    readonly onWaitingChange?: (waiting: boolean) => void;
+  } = {},
 ): Promise<ProviderUpdateOutcome> {
+  const reconnectGraceMs = options.reconnectGraceMs ?? RECONNECT_GRACE_MS;
   let reconnectingSince: number | null = null;
+  let waiting = false;
+  const setWaiting = (next: boolean) => {
+    if (next === waiting) return;
+    waiting = next;
+    options.onWaitingChange?.(next);
+  };
   let run: ManagedRuntimeUpdateRun = {
     target: {
       environmentId: item.environmentId,
@@ -121,33 +152,52 @@ export function watchManagedRuntimeUpdate(
       }
       reconnectingSince = null;
       run = settleManagedRuntimeUpdateRuns([run], [environment])[0] ?? run;
+      setWaiting(run.outcome.status === "pending" && run.waitingMessage !== null);
       return run.outcome.status === "pending" ? undefined : run.outcome;
     },
     Math.min(10_000, reconnectGraceMs),
-  );
+  ).finally(() => setWaiting(false));
 }
 
 /**
- * Resolves when none of the given environments has a managed runtime
- * operation in progress, whoever started it, so restarting them cannot cut
- * one off. A reconnecting environment still counts its last known operation;
- * a lost one has nothing left to protect.
+ * Resolves once each given environment is either confirmed idle, connected
+ * with no managed runtime operation in progress whoever started it, or cannot
+ * be: missing, lost, or reconnecting for longer than the grace period. A
+ * reconnecting environment's cached snapshot confirms nothing, since an update
+ * may have started after it. Resolves with the environments it could not
+ * confirm; restarting one could cut an update off.
  */
 export function waitForManagedRuntimesIdle(
   source: ProviderSnapshotSource,
   environmentIds: ReadonlyArray<EnvironmentId>,
-): Promise<void> {
-  const watched = new Set(environmentIds);
-  return whenSettled(source, (environments) =>
-    environments.some(
-      (environment) =>
-        watched.has(environment.environmentId) &&
-        environment.connection !== "lost" &&
-        environment.providers.some((provider) =>
-          isManagedRuntimeOperationActive(provider.connection?.runtime?.operation),
-        ),
-    )
-      ? undefined
-      : true,
-  ).then(() => undefined);
+  reconnectGraceMs = RECONNECT_GRACE_MS,
+): Promise<ReadonlySet<EnvironmentId>> {
+  const reconnectingSince = new Map<EnvironmentId, number>();
+  return whenSettled(
+    source,
+    (environments) => {
+      const unconfirmed = new Set<EnvironmentId>();
+      let busy = false;
+      for (const environmentId of new Set(environmentIds)) {
+        const environment = environments.find(
+          (candidate) => candidate.environmentId === environmentId,
+        );
+        if (!environment || environment.connection === "lost") {
+          unconfirmed.add(environmentId);
+        } else if (environment.connection === "reconnecting") {
+          const since = reconnectingSince.get(environmentId) ?? Date.now();
+          reconnectingSince.set(environmentId, since);
+          if (Date.now() - since < reconnectGraceMs) busy = true;
+          else unconfirmed.add(environmentId);
+        } else {
+          reconnectingSince.delete(environmentId);
+          busy ||= environment.providers.some((provider) =>
+            isManagedRuntimeOperationActive(provider.connection?.runtime?.operation),
+          );
+        }
+      }
+      return busy ? undefined : unconfirmed;
+    },
+    Math.min(10_000, reconnectGraceMs),
+  );
 }

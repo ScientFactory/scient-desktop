@@ -137,10 +137,18 @@ instances share is updated once.
 Scient-managed runtimes take their qualified release through Scient's own
 update: it downloads and verifies the release, then switches over once the
 provider's running work has finished. **Update all** waits for that, even if
-you leave Settings. **Update everything** restarts a server, or installs this
-desktop app, only once no managed runtime on that machine is still updating,
-including updates you started elsewhere. Providers that only offer a manual update command, and custom
-paths, are left out. One notice reports how many updated and names each one
-that failed or was cancelled; a failure on one machine does not stop the
-others. If Scient loses contact with a machine for more than two minutes during
-a managed update, that update is reported as unconfirmed.
+you leave Settings, and shows **Waiting…** while running work holds the switch.
+Providers that only offer a manual update command, and custom paths, are left
+out. One notice reports how many updated and names each one that failed or was
+cancelled; a failure on one machine does not stop the others.
+
+If a machine goes offline or starts reconnecting during a managed update,
+Scient waits up to two minutes for it to come back. If it does not, or its
+connection is closed or fails, that update is reported as failed because Scient
+lost contact; review the provider in Settings once the machine is back.
+
+**Update everything** restarts a server, or installs this desktop app, only
+once that machine is connected and no managed runtime on it is still updating,
+including updates you started elsewhere. If Scient cannot confirm that, because
+it lost contact with the machine, it leaves that server or this app as it is
+and says so; update it once the machine reconnects.

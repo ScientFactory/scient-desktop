@@ -26,7 +26,8 @@ const UNSTARTED_MANAGED_UPDATE: ProviderUpdateOutcome = {
  * managed copies included, and a function that updates them all and reports
  * every result in one notice. The returned promise settles when each update
  * has finished: a managed one once its new runtime is active. The run does not
- * depend on the calling component staying mounted.
+ * depend on the calling component staying mounted. `onWaitingChange` hears
+ * whether any managed update is waiting for its provider's running work.
  */
 export function useProviderUpdateInventory() {
   const { environments } = useEnvironments();
@@ -46,7 +47,14 @@ export function useProviderUpdateInventory() {
   );
   const machines = useMemo(() => collectProviderUpdateMachines(snapshots), [snapshots]);
 
-  const updateAll = async () => {
+  const updateAll = async (
+    options: { readonly onWaitingChange?: (waiting: boolean) => void } = {},
+  ) => {
+    let waitingCount = 0;
+    const onWaitingChange = (waiting: boolean) => {
+      waitingCount += waiting ? 1 : -1;
+      if (waitingCount === (waiting ? 1 : 0)) options.onWaitingChange?.(waiting);
+    };
     const results = await runProviderUpdates(machines, {
       updateSystem: async (item) =>
         systemProviderUpdateOutcome(
@@ -67,7 +75,9 @@ export function useProviderUpdateInventory() {
           finished:
             operationId === null
               ? Promise.resolve(UNSTARTED_MANAGED_UPDATE)
-              : watchManagedRuntimeUpdate(appProviderSnapshots, item, operationId),
+              : watchManagedRuntimeUpdate(appProviderSnapshots, item, operationId, {
+                  onWaitingChange,
+                }),
         };
       },
     });

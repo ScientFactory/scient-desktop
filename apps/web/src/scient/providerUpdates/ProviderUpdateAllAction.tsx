@@ -3,7 +3,11 @@ import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
-import { describeProviderUpdateItem, type ProviderUpdateMachine } from "./providerUpdateInventory";
+import {
+  describeProviderUpdateItem,
+  WAITING_FOR_RUNNING_WORK,
+  type ProviderUpdateMachine,
+} from "./providerUpdateInventory";
 import { useProviderUpdateInventory } from "./useProviderUpdateInventory";
 
 /** Each machine, then one line per runtime it updates, with versions and owner. */
@@ -35,6 +39,7 @@ export function ProviderUpdateAllAction() {
   const { machines, updateAll } = useProviderUpdateInventory();
   const pending = useRef(false);
   const [isPending, setIsPending] = useState(false);
+  const [isWaiting, setIsWaiting] = useState(false);
   if (machines.length === 0 && !isPending) return null;
 
   const handleUpdate = async () => {
@@ -42,12 +47,14 @@ export function ProviderUpdateAllAction() {
     pending.current = true;
     setIsPending(true);
     try {
-      await updateAll();
+      await updateAll({ onWaitingChange: setIsWaiting });
     } finally {
       pending.current = false;
       setIsPending(false);
+      setIsWaiting(false);
     }
   };
+  const waiting = isPending && isWaiting;
 
   return (
     <Tooltip>
@@ -59,11 +66,15 @@ export function ProviderUpdateAllAction() {
             disabled={isPending}
             onClick={() => void handleUpdate()}
           >
-            {isPending ? "Updating…" : "Update all"}
+            {waiting ? "Waiting…" : isPending ? "Updating…" : "Update all"}
           </Button>
         }
       />
-      {machines.length > 0 ? (
+      {waiting ? (
+        <TooltipPopup className="max-w-80" side="top">
+          {WAITING_FOR_RUNNING_WORK}
+        </TooltipPopup>
+      ) : machines.length > 0 ? (
         <TooltipPopup className="max-w-80" side="top">
           <ProviderUpdateLines machines={machines} />
         </TooltipPopup>

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { runUpdateEverything } from "~/components/sidebar/updateEverything.logic";
 
 import {
+  liveConnection,
   waitForManagedRuntimesIdle,
   watchManagedRuntimeUpdate,
   type LiveProviderEnvironment,
@@ -134,10 +135,31 @@ describe("watchManagedRuntimeUpdate", () => {
     const live = snapshots(
       environment(codex({ version: "0.48.0", operation: operation("activating") }), "reconnecting"),
     );
-    expect(await watchManagedRuntimeUpdate(live.source, item, "op-1", 20)).toMatchObject({
-      status: "failed",
-    });
+    expect(
+      await watchManagedRuntimeUpdate(live.source, item, "op-1", { reconnectGraceMs: 20 }),
+    ).toMatchObject({ status: "failed" });
     expect(live.listeners.size).toBe(0);
+  });
+
+  it("reports while the new runtime waits for running work", async () => {
+    const waitingFor = (waitingForIdle: boolean) =>
+      environment(
+        codex({
+          version: "0.48.0",
+          operation: { ...operation("activating"), waitingForIdle },
+        }),
+      );
+    const live = snapshots(waitingFor(false));
+    const changes: Array<boolean> = [];
+    const result = watchManagedRuntimeUpdate(live.source, item, "op-1", {
+      onWaitingChange: (waiting) => changes.push(waiting),
+    });
+    live.publish(waitingFor(true));
+    live.publish(waitingFor(true));
+    expect(changes).toEqual([true]);
+    live.publish(environment(codex({ version: "0.50.1", operation: operation("succeeded") })));
+    await result;
+    expect(changes).toEqual([true, false]);
   });
 
   it("fails when the environment is lost", async () => {
@@ -160,6 +182,18 @@ describe("watchManagedRuntimeUpdate", () => {
   });
 });
 
+describe("liveConnection", () => {
+  it("waits through offline and reconnects, and gives up only on a closed or failed connection", () => {
+    expect(liveConnection("connected")).toBe("connected");
+    expect(liveConnection("offline")).toBe("reconnecting");
+    expect(liveConnection("connecting")).toBe("reconnecting");
+    expect(liveConnection("reconnecting")).toBe("reconnecting");
+    expect(liveConnection("available")).toBe("lost");
+    expect(liveConnection("error")).toBe("lost");
+    expect(liveConnection("unsupported")).toBe("lost");
+  });
+});
+
 describe("waitForManagedRuntimesIdle", () => {
   it("treats a reconnecting machine's last known update as still running", async () => {
     const live = snapshots(
@@ -168,14 +202,41 @@ describe("waitForManagedRuntimesIdle", () => {
     const idle = waitForManagedRuntimesIdle(live.source, [alvin]);
     expect(await settledSoon(idle)).toBe("pending");
     live.publish(environment(codex({ version: "0.50.1", operation: operation("succeeded") })));
-    await idle;
+    expect(await idle).toEqual(new Set());
+  });
+
+  it("does not take a reconnecting machine's cached idle snapshot as confirmation", async () => {
+    // The server may have started an update after this snapshot was cached.
+    const live = snapshots(environment(codex({ version: "0.48.0", operation: null }), "reconnecting"));
+    const idle = waitForManagedRuntimesIdle(live.source, [alvin]);
+    expect(await settledSoon(idle)).toBe("pending");
+    live.publish(environment(codex({ version: "0.48.0", operation: operation("activating") })));
+    expect(await settledSoon(idle)).toBe("pending");
+    live.publish(environment(codex({ version: "0.50.1", operation: operation("succeeded") })));
+    expect(await idle).toEqual(new Set());
+  });
+
+  it("reports a lost or missing machine as unconfirmed rather than idle", async () => {
+    const live = snapshots(environment(codex({ version: "0.48.0", operation: null }), "lost"));
+    const elsewhere = EnvironmentId.make("elsewhere");
+    expect(await waitForManagedRuntimesIdle(live.source, [alvin, elsewhere])).toEqual(
+      new Set([alvin, elsewhere]),
+    );
+  });
+
+  it("reports a reconnect that outlasts its grace period as unconfirmed", async () => {
+    const live = snapshots(environment(codex({ version: "0.48.0", operation: null }), "reconnecting"));
+    expect(await waitForManagedRuntimesIdle(live.source, [alvin], 20)).toEqual(new Set([alvin]));
+    expect(live.listeners.size).toBe(0);
   });
 
   it("ignores machines it was not asked about", async () => {
     const live = snapshots(
       environment(codex({ version: "0.48.0", operation: operation("activating") })),
     );
-    await waitForManagedRuntimesIdle(live.source, [EnvironmentId.make("elsewhere")]);
+    const elsewhere = EnvironmentId.make("elsewhere");
+    live.publish({ environmentId: elsewhere, connection: "connected", providers: [] });
+    expect(await waitForManagedRuntimesIdle(live.source, [elsewhere])).toEqual(new Set());
   });
 
   it("installs this app only after every managed operation ends, even one this pass did not start", async () => {
@@ -210,5 +271,41 @@ describe("waitForManagedRuntimesIdle", () => {
     live.publish(environment(codex({ version: "0.50.1", operation: operation("succeeded") })));
     await pass;
     expect(events).toEqual(["providers failed", "servers", "install app"]);
+  });
+
+  it("does not install this app when the server accepted an update but its answer was lost", async () => {
+    // The connection drops after the server starts the update: the start fails
+    // here, and the cached snapshot still shows no update.
+    const live = snapshots(environment(codex({ version: "0.48.0", operation: null })));
+    const events: Array<string> = [];
+    const pass = runUpdateEverything({
+      updateProviders: async () => {
+        const results = await runProviderUpdates(
+          [{ environmentId: alvin, label: "alvin", items: [item] }],
+          {
+            updateSystem: async () => ({ status: "succeeded", version: null }),
+            startManaged: async () => {
+              live.publish(environment(codex({ version: "0.48.0", operation: null }), "reconnecting"));
+              throw new Error("The connection closed.");
+            },
+          },
+        );
+        events.push(`providers ${results[0]!.outcome.status}`);
+      },
+      updateServers: async () => {},
+      installLocal: async () => {
+        const unconfirmed = await waitForManagedRuntimesIdle(live.source, [alvin]);
+        events.push(unconfirmed.size === 0 ? "install app" : "skip install");
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual(["providers failed"]);
+    // Reconnected: the server reports the update it kept running.
+    live.publish(environment(codex({ version: "0.48.0", operation: operation("activating") })));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual(["providers failed"]);
+    live.publish(environment(codex({ version: "0.50.1", operation: operation("succeeded") })));
+    await pass;
+    expect(events).toEqual(["providers failed", "install app"]);
   });
 });

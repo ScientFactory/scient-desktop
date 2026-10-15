@@ -28,6 +28,7 @@ import {
   currentConfirmedServerTargets,
   supportedBulkServerTargets,
 } from "./updateEverything.logic";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 // SCIENT-FORK:END
 
 /**
@@ -103,35 +104,69 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     lines,
     /** The servers this run restarts, which stops their running threads. */
     restarts,
-    run: (local: { downloadLocal?: () => Promise<boolean>; installLocal?: () => Promise<void> }) =>
+    run: (local: {
+      downloadLocal?: () => Promise<boolean>;
+      installLocal?: () => Promise<void>;
+      // SCIENT-FORK: whether a managed update is waiting for running work.
+      onWaitingChange?: (waiting: boolean) => void;
+    }) =>
       runUpdateEverything({
         ...local,
         // SCIENT-FORK:START — a server restarts, and this app installs, only once no
-        // managed runtime on that machine is mid-update, whoever started it.
+        // managed runtime on that machine is mid-update, whoever started it, and
+        // not at all while that cannot be confirmed.
         ...(local.installLocal
           ? {
               installLocal: async () => {
-                await waitForManagedRuntimesIdle(
+                const unconfirmed = await waitForManagedRuntimesIdle(
                   appProviderSnapshots,
                   machines
                     .filter((machine) => machine.hostedByThisApp)
                     .map((machine) => machine.environmentId),
                 );
+                if (unconfirmed.size > 0) {
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "warning",
+                      title: "This app did not restart",
+                      description:
+                        "Scient lost contact with this computer's server, so it could not confirm that no Scient-managed provider update is still running. Restart to install the update once it reconnects.",
+                    }),
+                  );
+                  return;
+                }
                 await local.installLocal!();
               },
             }
           : {}),
+        updateProviders: () =>
+          providers.updateAll(
+            local.onWaitingChange ? { onWaitingChange: local.onWaitingChange } : {},
+          ),
         // SCIENT-FORK:END
-        updateProviders: providers.updateAll,
         updateServers: async () => {
           // SCIENT-FORK:START — see installLocal above. The wait can be long, so
           // eligibility is confirmed again after it, and can only narrow.
           const gated = currentConfirmedServerTargets(servers, committedServersRef.current);
-          await waitForManagedRuntimesIdle(
+          const unconfirmed = await waitForManagedRuntimesIdle(
             appProviderSnapshots,
             gated.map((server) => server.environmentId),
           );
-          const current = currentConfirmedServerTargets(gated, committedServersRef.current);
+          const skipped = gated.filter((server) => unconfirmed.has(server.environmentId));
+          if (skipped.length > 0) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "warning",
+                title: `Did not update ${skipped.map((server) => server.serverLabel).join(", ")}`,
+                description:
+                  "Scient lost contact, so it could not confirm that no Scient-managed provider update is still running there. Update once it reconnects.",
+              }),
+            );
+          }
+          const current = currentConfirmedServerTargets(
+            gated.filter((server) => !unconfirmed.has(server.environmentId)),
+            committedServersRef.current,
+          );
           // SCIENT-FORK:END
           await Promise.all(current.map((server) => updateServer(server)));
         },
