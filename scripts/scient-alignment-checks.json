@@ -271,7 +271,30 @@
       "limits": [
         "Tests pin identity/order and compatibility fixtures, not migration SQL-content checksums: independently review immutable shipped migration diffs.",
         "Never run these checks against live profiles. Full legacy importer/recovery and frozen history reader coverage remains applicable when those implementations change.",
-        "Changes to frozen fork history/source reconciliation require ConversationForkBufferedText.native.integration.test.ts and LegacyV1ThreadImporter.test.ts; they are outside this bounded early bundle, whose Stop fixtures only establish frozen-owner protection."
+        "Native fork capture is the fork boundary. Changes to frozen fork history/source reconciliation also require LegacyV1ThreadImporter.test.ts, which is outside this bounded early bundle; its Stop fixtures only establish frozen-owner protection."
+      ]
+    },
+    {
+      "id": "fork",
+      "triggers": [
+        "apps/server/src/orchestration-v2/scient-fork/",
+        "apps/server/src/orchestration-v2/Adapters/",
+        "apps/server/src/persistence/",
+        "packages/effect-codex-app-server/"
+      ],
+      "consumers": [
+        "ConversationForkService -> native buffered-text capture through the real Codex adapter replay -> guarded SQL acknowledgement -> forked thread history"
+      ],
+      "decidingAssertions": [
+        "A fork of a running thread freezes received and coalescer-held native text through the guarded SQL owner, rolls back on SQL failure, survives cancellation and stalled consumers without stopping the source, and forks saved history rather than newer unacknowledged text."
+      ],
+      "checks": {
+        "server": [
+          "src/orchestration-v2/scient-fork/ConversationForkBufferedText.native.integration.test.ts"
+        ]
+      },
+      "limits": [
+        "Controlled Codex app-server replay, not an authenticated Codex session; other providers' native capture is not exercised."
       ]
     },
     {

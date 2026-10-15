@@ -75,8 +75,9 @@ authenticated.
 The maintained [boundary map](../../scripts/scient-alignment-checks.json) records affected
 owners and untouched consumers, deciding assertions, commands, prerequisites and limits
 for provider guidance/skills/MCP/native input, Stop/Resume ownership, queue admission and
-restart, settings precedence and instance identity, immutable persistence, one server
-owner per state directory, and chat reader interaction. Maintain the assertions and consumer triggers together when those contracts move.
+restart, settings precedence and instance identity, immutable persistence, native
+conversation-fork capture, one server owner per state directory, and chat reader
+interaction. Maintain the assertions and consumer triggers together when those contracts move.
 This is a bounded impact map, not an exhaustive dependency graph or a qualification policy.
 
 Print a plan before executing it:

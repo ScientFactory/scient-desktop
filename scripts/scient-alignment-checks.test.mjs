@@ -9,7 +9,7 @@ import { checkEnvironment, selectBoundaries } from "./scient-alignment-checks.mj
 
 const cli = NodeURL.fileURLToPath(new URL("./scient-alignment-checks.mjs", import.meta.url));
 const ids = (paths) => selectBoundaries(paths).boundaries.map((row) => row.id);
-const all = ["provider", "stop", "queue", "settings", "persistence", "ownership", "reader"];
+const all = ["provider", "stop", "queue", "settings", "persistence", "fork", "ownership", "reader"];
 const directories = [];
 afterEach(() => {
   for (const directory of directories.splice(0))
