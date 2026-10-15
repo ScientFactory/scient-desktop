@@ -206,9 +206,7 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: commandMissing
-          ? `${target.name} is not installed or its executable could not be found.`
-          : discoveryMessage(target, error),
+        message: discoveryMessage(target, error),
       },
     });
   }

@@ -18,7 +18,10 @@ import type { OmpRpcModel } from "effect-omp-rpc/schema";
 import { makeOmpRpcClient, type OmpRpcClient, type OmpRpcFrameTrace } from "effect-omp-rpc/client";
 import { OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
 
-import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  isCommandMissingCause,
+  spawnAndCollect,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import type { OmpModelRefreshError } from "./OmpModel.ts";
 import {
   canonicalOmpExecutablePath,
@@ -495,7 +498,10 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         isProtocolError(cause)
           ? cause
           : new OmpRpcProtocolError({
-              detail: `${target.name} version verification failed.`,
+              // A missing executable was never verified, so it did not fail verification.
+              detail: isCommandMissingCause(cause)
+                ? `${target.name} is not installed or its executable could not be found.`
+                : `${target.name} version verification failed.`,
               cause,
             }),
       ),
