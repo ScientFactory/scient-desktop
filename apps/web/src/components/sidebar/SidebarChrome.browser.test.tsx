@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { SidebarNewThreadRow } from "../../scient/sidebar/SidebarNewThreadRow";
 import { SidebarFooter, SidebarProvider } from "../ui/sidebar";
 import { TooltipProvider } from "../ui/tooltip";
@@ -137,14 +138,17 @@ async function mountFooter(width: number, state: DesktopUpdateState) {
   Object.assign(host.style, { width: `${width}px`, margin: "20px", background: "white" });
   document.body.append(host);
   root = createRoot(host);
+  // The app root's registry carries the shared update-run state the pill reads.
   root.render(
-    <SidebarProvider className="min-h-0">
-      <TooltipProvider>
-        <SidebarFooter className="w-full">
-          <SidebarUtilityMenu />
-        </SidebarFooter>
-      </TooltipProvider>
-    </SidebarProvider>,
+    <AppAtomRegistryProvider>
+      <SidebarProvider className="min-h-0">
+        <TooltipProvider>
+          <SidebarFooter className="w-full">
+            <SidebarUtilityMenu />
+          </SidebarFooter>
+        </TooltipProvider>
+      </SidebarProvider>
+    </AppAtomRegistryProvider>,
   );
   await expect.poll(() => host!.querySelectorAll("button").length).toBeGreaterThan(3);
 }
