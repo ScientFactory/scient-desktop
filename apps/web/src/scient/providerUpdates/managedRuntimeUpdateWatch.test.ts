@@ -236,9 +236,9 @@ describe("waitForManagedRuntimesIdle", () => {
     const live = snapshots(
       environment(codex({ version: "0.48.0", operation: null }), "reconnecting"),
     );
-    expect(await waitForManagedRuntimesIdle(live.source, [alvin], live.answer, 20)).toEqual(
-      new Set([alvin]),
-    );
+    expect(
+      await waitForManagedRuntimesIdle(live.source, [alvin], live.answer, { reconnectGraceMs: 20 }),
+    ).toEqual(new Set([alvin]));
     expect(live.listeners.size).toBe(0);
   });
 
@@ -251,7 +251,7 @@ describe("waitForManagedRuntimesIdle", () => {
       live.source,
       [alvin],
       async () => hasActiveManagedOperation(server),
-      20,
+      { reconnectGraceMs: 20 },
     );
     expect(await settledSoon(idle)).toBe("pending");
     server = [codex({ version: "0.50.1", operation: operation("succeeded") })];
@@ -271,7 +271,7 @@ describe("waitForManagedRuntimesIdle", () => {
         if (answers === 1) throw new Error("The connection closed.");
         return false;
       },
-      20,
+      { reconnectGraceMs: 500, pollMs: 10 },
     );
     // Reconnected with the old snapshot; the first question goes unanswered.
     live.publish(environment(codex({ version: "0.48.0", operation: null })));
@@ -288,7 +288,7 @@ describe("waitForManagedRuntimesIdle", () => {
         async () => {
           throw new Error("No answer.");
         },
-        20,
+        { reconnectGraceMs: 20 },
       ),
     ).toEqual(new Set([alvin]));
   });
@@ -296,12 +296,9 @@ describe("waitForManagedRuntimesIdle", () => {
   it("does not let a server question that never settles hold the pass", async () => {
     const live = snapshots(environment(codex({ version: "0.48.0", operation: null })));
     expect(
-      await waitForManagedRuntimesIdle(
-        live.source,
-        [alvin],
-        () => new Promise<boolean>(() => {}),
-        20,
-      ),
+      await waitForManagedRuntimesIdle(live.source, [alvin], () => new Promise<boolean>(() => {}), {
+        reconnectGraceMs: 20,
+      }),
     ).toEqual(new Set([alvin]));
   });
 

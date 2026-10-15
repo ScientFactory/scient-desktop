@@ -196,8 +196,8 @@ async function confirmManagedRuntimesIdle(
   environmentId: EnvironmentId,
   readServerRuntimeActivity: ReadServerRuntimeActivity,
   reconnectGraceMs: number,
+  pollMs: number,
 ): Promise<boolean> {
-  const pollMs = Math.min(10_000, reconnectGraceMs);
   let reconnectingSince: number | null = null;
   let unansweredSince: number | null = null;
   for (;;) {
@@ -221,6 +221,7 @@ async function confirmManagedRuntimesIdle(
     // The deadline runs from before the question, so a request that never
     // settles cannot hold the pass.
     unansweredSince ??= Date.now();
+    if (Date.now() - unansweredSince >= reconnectGraceMs) return false;
     const active = await withDeadline(
       readServerRuntimeActivity(environmentId),
       reconnectGraceMs - (Date.now() - unansweredSince),
@@ -228,14 +229,17 @@ async function confirmManagedRuntimesIdle(
       (answer) => answer,
       () => null,
     );
+    let waitMs = pollMs;
     if (active === null) {
-      if (Date.now() - unansweredSince >= reconnectGraceMs) return false;
+      const remainingMs = reconnectGraceMs - (Date.now() - unansweredSince);
+      if (remainingMs <= 0) return false;
+      waitMs = Math.min(pollMs, remainingMs);
     } else {
       unansweredSince = null;
       if (!active) return true;
     }
     // Not yet: let the snapshot catch up before asking again.
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 }
 
@@ -244,8 +248,10 @@ export async function waitForManagedRuntimesIdle(
   source: ProviderSnapshotSource,
   environmentIds: ReadonlyArray<EnvironmentId>,
   readServerRuntimeActivity: ReadServerRuntimeActivity,
-  reconnectGraceMs = RECONNECT_GRACE_MS,
+  timing: { readonly reconnectGraceMs?: number; readonly pollMs?: number } = {},
 ): Promise<ReadonlySet<EnvironmentId>> {
+  const reconnectGraceMs = timing.reconnectGraceMs ?? RECONNECT_GRACE_MS;
+  const pollMs = timing.pollMs ?? Math.min(10_000, reconnectGraceMs);
   const ids = [...new Set(environmentIds)];
   const confirmed = await Promise.all(
     ids.map((environmentId) =>
@@ -254,6 +260,7 @@ export async function waitForManagedRuntimesIdle(
         environmentId,
         readServerRuntimeActivity,
         reconnectGraceMs,
+        pollMs,
       ),
     ),
   );

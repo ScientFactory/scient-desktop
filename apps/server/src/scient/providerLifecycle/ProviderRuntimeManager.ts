@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderManagedRuntimeAction,
+  type ProviderRuntimeActiveOperation,
   type ProviderRuntimeActiveOperations,
   type ProviderRuntimeCancelInput,
   type ProviderRuntimeOperation,
@@ -167,6 +168,13 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const activeRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ActiveRuntimeOperation>>(
     new Map(),
   );
+  // Every operation from the moment it is held until it has fully settled. An
+  // operation leaves `activeRef` when it is claimed for cancellation or
+  // completion, before its worker has stopped and its result is published; it
+  // stays here until then, so a restart cannot cut that cleanup off.
+  const inProgressRef = yield* Ref.make<ReadonlyMap<string, ProviderRuntimeActiveOperation>>(
+    new Map(),
+  );
 
   const readTarget = Effect.fn("ProviderRuntimeManager.readTarget")(function* (
     instanceId: ProviderInstanceId,
@@ -216,7 +224,15 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     cleanupOwnedResources(active, mode).pipe(
       Effect.andThen(terminalPublication),
       Effect.ensuring(
-        lifecycleCoordinator.release({ operationId: active.operationId }).pipe(Effect.asVoid),
+        lifecycleCoordinator.release({ operationId: active.operationId }).pipe(
+          Effect.andThen(
+            Ref.update(inProgressRef, (current) => {
+              const next = new Map(current);
+              next.delete(active.operationId);
+              return next;
+            }),
+          ),
+        ),
       ),
     );
 
@@ -476,14 +492,29 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         fiberRef,
         transitionLock,
       };
-      const runtimeReserved = yield* Ref.modify(activeRef, (current) => {
-        if ([...current.values()].some((candidate) => candidate.provider === target.provider)) {
-          return [false, current] as const;
-        }
-        const next = new Map(current);
-        next.set(input.instanceId, active);
-        return [true, next] as const;
-      });
+      const runtimeReserved = yield* Effect.uninterruptible(
+        Ref.modify(activeRef, (current) => {
+          if ([...current.values()].some((candidate) => candidate.provider === target.provider)) {
+            return [false, current] as const;
+          }
+          const next = new Map(current);
+          next.set(input.instanceId, active);
+          return [true, next] as const;
+        }).pipe(
+          Effect.tap((reserved) =>
+            reserved
+              ? Ref.update(inProgressRef, (current) =>
+                  new Map(current).set(operationId, {
+                    instanceId: input.instanceId,
+                    operationId,
+                    action: input.action,
+                    startedAt,
+                  }),
+                )
+              : Effect.void,
+          ),
+        ),
+      );
       if (!runtimeReserved) {
         yield* lifecycleCoordinator.release({ operationId });
         return yield* makeError({
@@ -828,15 +859,21 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     );
   }).pipe(Effect.delay(RESELECT_INTERVAL), Effect.forever, Effect.forkScoped);
 
-  const activeOperations: ProviderRuntimeManagerShape["activeOperations"] = Ref.get(activeRef).pipe(
-    Effect.map((active) => ({
-      operations: Array.from(active, ([instanceId, operation]) => ({
-        instanceId,
-        operationId: operation.operationId,
-        action: operation.action,
-        startedAt: operation.startedAt,
-      })),
-    })),
+  const activeOperations: ProviderRuntimeManagerShape["activeOperations"] = Effect.gen(
+    function* () {
+      const operations = new Map(yield* Ref.get(inProgressRef));
+      // Held but not yet recorded above: only for the instant after `start` holds it.
+      for (const [instanceId, active] of yield* Ref.get(activeRef)) {
+        if (operations.has(active.operationId)) continue;
+        operations.set(active.operationId, {
+          instanceId,
+          operationId: active.operationId,
+          action: active.action,
+          startedAt: active.startedAt,
+        });
+      }
+      return { operations: [...operations.values()] };
+    },
   );
 
   return ProviderRuntimeManager.of({ plan, start, cancel, reselect, activeOperations });
