@@ -316,6 +316,24 @@ export const ProviderRuntimeCancelInput = Schema.Struct({
 });
 export type ProviderRuntimeCancelInput = typeof ProviderRuntimeCancelInput.Type;
 
+/** A managed runtime operation still in progress, as the server's runtime manager holds it. */
+export const ProviderRuntimeActiveOperation = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  operationId: TrimmedNonEmptyString,
+  action: ProviderManagedRuntimeAction,
+  startedAt: IsoDateTime,
+});
+export type ProviderRuntimeActiveOperation = typeof ProviderRuntimeActiveOperation.Type;
+
+/**
+ * Every managed runtime operation in progress on the server, read from the
+ * runtime manager rather than from a provider snapshot, which can lag it.
+ */
+export const ProviderRuntimeActiveOperations = Schema.Struct({
+  operations: Schema.Array(ProviderRuntimeActiveOperation),
+});
+export type ProviderRuntimeActiveOperations = typeof ProviderRuntimeActiveOperations.Type;
+
 export class ProviderConnectionError extends Schema.TaggedError<ProviderConnectionError>()(
   "ProviderConnectionError",
   {

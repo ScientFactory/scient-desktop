@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderManagedRuntimeAction,
+  type ProviderRuntimeActiveOperations,
   type ProviderRuntimeCancelInput,
   type ProviderRuntimeOperation,
   type ProviderRuntimePlan,
@@ -56,6 +57,11 @@ export interface ProviderRuntimeManagerShape {
    * provider is idle. True when it reloaded.
    */
   readonly reselect: (instanceId: ProviderInstanceId) => Effect.Effect<boolean>;
+  /**
+   * Every operation this manager holds as in progress, from its own state: a
+   * provider snapshot can briefly lag it.
+   */
+  readonly activeOperations: Effect.Effect<ProviderRuntimeActiveOperations>;
 }
 
 export class ProviderRuntimeManager extends Context.Service<
@@ -822,7 +828,18 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     );
   }).pipe(Effect.delay(RESELECT_INTERVAL), Effect.forever, Effect.forkScoped);
 
-  return ProviderRuntimeManager.of({ plan, start, cancel, reselect });
+  const activeOperations: ProviderRuntimeManagerShape["activeOperations"] = Ref.get(activeRef).pipe(
+    Effect.map((active) => ({
+      operations: Array.from(active, ([instanceId, operation]) => ({
+        instanceId,
+        operationId: operation.operationId,
+        action: operation.action,
+        startedAt: operation.startedAt,
+      })),
+    })),
+  );
+
+  return ProviderRuntimeManager.of({ plan, start, cancel, reselect, activeOperations });
 });
 
 export const layer = Layer.effect(ProviderRuntimeManager, make());

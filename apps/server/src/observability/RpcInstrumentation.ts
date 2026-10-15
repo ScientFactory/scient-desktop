@@ -269,6 +269,9 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverPlanProviderRuntime]: "server",
   [WS_METHODS.serverStartProviderRuntime]: "server",
   [WS_METHODS.serverCancelProviderRuntime]: "server",
+  // SCIENT-FORK:START
+  [WS_METHODS.serverGetProviderRuntimeOperations]: "server",
+  // SCIENT-FORK:END
   [WS_METHODS.serverSaveCustomModel]: "server",
   [WS_METHODS.serverRemoveCustomModel]: "server",
   [WS_METHODS.serverTestCustomModel]: "server",

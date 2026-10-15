@@ -673,6 +673,47 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
+  it.effect("reports an operation as active from start until it finishes", () =>
+    Effect.gen(function* () {
+      const busy = yield* Ref.make(true);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: (_action, _revision, _report, awaitActivationWindow = Effect.void) =>
+          awaitActivationWindow,
+      };
+      const { manager, providersRef } = yield* makeHarness(
+        actions,
+        [systemProvider],
+        undefined,
+        undefined,
+        undefined,
+        { isBusy: () => Ref.get(busy) },
+      );
+      assert.deepStrictEqual(yield* manager.activeOperations, { operations: [] });
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      // Known to the manager as soon as start returns, before any snapshot is read.
+      const { operations } = yield* manager.activeOperations;
+      assert.strictEqual(operations.length, 1);
+      assert.strictEqual(operations[0]?.instanceId, INSTANCE);
+      assert.strictEqual(operations[0]?.action, "install");
+
+      yield* yieldUntil(
+        Ref.get(providersRef),
+        (providers) => providers[0]?.connection?.runtime?.operation?.waitingForIdle === true,
+      );
+      assert.strictEqual((yield* manager.activeOperations).operations.length, 1);
+      yield* Ref.set(busy, false);
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("1 second");
+      yield* yieldUntil(manager.activeOperations, ({ operations }) => operations.length === 0);
+    }),
+  );
+
   it.effect("cancels a staged runtime that is still waiting for idle", () =>
     Effect.gen(function* () {
       const installed = yield* Ref.make(false);

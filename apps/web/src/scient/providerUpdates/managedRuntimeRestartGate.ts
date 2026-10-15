@@ -7,7 +7,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import {
   appProviderSnapshots,
   waitForManagedRuntimesIdle,
-  type ReadServerProviders,
+  type ReadServerRuntimeActivity,
 } from "./managedRuntimeUpdateWatch";
 
 /**
@@ -21,7 +21,7 @@ export function managedRuntimeGatedSteps(input: {
     readonly onWaitingChange?: (waiting: boolean) => void;
   }) => Promise<void>;
   readonly onWaitingChange: ((waiting: boolean) => void) | undefined;
-  readonly readServerProviders: ReadServerProviders;
+  readonly readServerRuntimeActivity: ReadServerRuntimeActivity;
   /** The servers this pass confirmed. */
   readonly servers: ReadonlyArray<ServerUpdateTarget>;
   /** The servers eligible now; a pass can lose targets during its waits, never gain them. */
@@ -32,7 +32,11 @@ export function managedRuntimeGatedSteps(input: {
   readonly installLocal: (() => Promise<void>) | undefined;
 }) {
   const unconfirmed = (environmentIds: ReadonlyArray<EnvironmentId>) =>
-    waitForManagedRuntimesIdle(appProviderSnapshots, environmentIds, input.readServerProviders);
+    waitForManagedRuntimesIdle(
+      appProviderSnapshots,
+      environmentIds,
+      input.readServerRuntimeActivity,
+    );
   const installLocal = input.installLocal;
   return {
     updateProviders: () =>
@@ -40,15 +44,16 @@ export function managedRuntimeGatedSteps(input: {
     updateServers: async () => {
       const gated = currentConfirmedServerTargets(input.servers, input.currentServers());
       // A server that dropped out because it disconnected is reported with the rest.
-      const connected = new Set(
+      const isConnected = (environmentId: EnvironmentId) =>
         appProviderSnapshots
           .read()
-          .filter((environment) => environment.connection === "connected")
-          .map((environment) => environment.environmentId),
-      );
+          .some(
+            (environment) =>
+              environment.environmentId === environmentId && environment.connection === "connected",
+          );
       const skipped = input.servers.filter(
         (server) =>
-          !connected.has(server.environmentId) &&
+          !isConnected(server.environmentId) &&
           !gated.some((target) => target.environmentId === server.environmentId),
       );
       // Each server is checked just before its own restart, so a long wait on
@@ -61,6 +66,7 @@ export function managedRuntimeGatedSteps(input: {
           }
           const [current] = currentConfirmedServerTargets([server], input.currentServers());
           if (current) await input.updateServer(current);
+          else if (!isConnected(server.environmentId)) skipped.push(server);
         }),
       );
       if (skipped.length > 0) {

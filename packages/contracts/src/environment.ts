@@ -172,6 +172,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   // SCIENT-FORK:START — server accepts thread.section.set and projects sectionId.
   threadSections: Schema.optionalKey(Schema.Boolean),
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — server answers server.getProviderRuntimeOperations from its
+  // runtime manager, so a client can confirm no managed runtime update runs
+  // before it restarts the server.
+  providerRuntimeOperations: Schema.optionalKey(Schema.Boolean),
+  // SCIENT-FORK:END
   /** Server understands thread.auto-settle.set (per-thread auto-settle off).
       Same version-skew contract as threadSettlement. */
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),

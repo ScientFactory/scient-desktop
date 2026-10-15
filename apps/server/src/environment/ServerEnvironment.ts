@@ -253,6 +253,9 @@ export const make = Effect.gen(function* () {
       threadActiveReorder: true,
       threadAutoSettleOptOut: true,
       threadSections: true, // SCIENT-FORK: thread sections
+      // SCIENT-FORK:START — see server.getProviderRuntimeOperations.
+      providerRuntimeOperations: true,
+      // SCIENT-FORK:END
       threadTitleRegeneration: true,
       threadForkTitleOverride: true,
       threadForkRecovery: true,

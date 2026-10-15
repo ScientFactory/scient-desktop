@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { runUpdateEverything } from "~/components/sidebar/updateEverything.logic";
 
 import {
+  hasActiveManagedOperation,
   liveConnection,
   waitForManagedRuntimesIdle,
   watchManagedRuntimeUpdate,
@@ -80,7 +81,9 @@ function snapshots(initial: LiveProviderEnvironment) {
     listeners,
     /** The server answering with what the snapshot shows. */
     answer: async (environmentId: EnvironmentId) =>
-      current.find((environment) => environment.environmentId === environmentId)?.providers ?? [],
+      hasActiveManagedOperation(
+        current.find((environment) => environment.environmentId === environmentId)?.providers ?? [],
+      ),
     publish: (next: LiveProviderEnvironment) => {
       current = [next];
       for (const listener of [...listeners]) listener();
@@ -210,7 +213,9 @@ describe("waitForManagedRuntimesIdle", () => {
 
   it("does not take a reconnecting machine's cached idle snapshot as confirmation", async () => {
     // The server may have started an update after this snapshot was cached.
-    const live = snapshots(environment(codex({ version: "0.48.0", operation: null }), "reconnecting"));
+    const live = snapshots(
+      environment(codex({ version: "0.48.0", operation: null }), "reconnecting"),
+    );
     const idle = waitForManagedRuntimesIdle(live.source, [alvin], live.answer);
     expect(await settledSoon(idle)).toBe("pending");
     live.publish(environment(codex({ version: "0.48.0", operation: operation("activating") })));
@@ -228,8 +233,12 @@ describe("waitForManagedRuntimesIdle", () => {
   });
 
   it("reports a reconnect that outlasts its grace period as unconfirmed", async () => {
-    const live = snapshots(environment(codex({ version: "0.48.0", operation: null }), "reconnecting"));
-    expect(await waitForManagedRuntimesIdle(live.source, [alvin], live.answer, 20)).toEqual(new Set([alvin]));
+    const live = snapshots(
+      environment(codex({ version: "0.48.0", operation: null }), "reconnecting"),
+    );
+    expect(await waitForManagedRuntimesIdle(live.source, [alvin], live.answer, 20)).toEqual(
+      new Set([alvin]),
+    );
     expect(live.listeners.size).toBe(0);
   });
 
@@ -238,14 +247,21 @@ describe("waitForManagedRuntimesIdle", () => {
     // accepted an update this snapshot has not caught up with.
     const live = snapshots(environment(codex({ version: "0.48.0", operation: null })));
     let server = [codex({ version: "0.48.0", operation: operation("activating") })];
-    const idle = waitForManagedRuntimesIdle(live.source, [alvin], async () => server, 20);
+    const idle = waitForManagedRuntimesIdle(
+      live.source,
+      [alvin],
+      async () => hasActiveManagedOperation(server),
+      20,
+    );
     expect(await settledSoon(idle)).toBe("pending");
     server = [codex({ version: "0.50.1", operation: operation("succeeded") })];
     expect(await idle).toEqual(new Set());
   });
 
   it("does not confirm a reconnected machine until its server answers", async () => {
-    const live = snapshots(environment(codex({ version: "0.48.0", operation: null }), "reconnecting"));
+    const live = snapshots(
+      environment(codex({ version: "0.48.0", operation: null }), "reconnecting"),
+    );
     let answers = 0;
     const idle = waitForManagedRuntimesIdle(
       live.source,
@@ -253,7 +269,7 @@ describe("waitForManagedRuntimesIdle", () => {
       async () => {
         answers += 1;
         if (answers === 1) throw new Error("The connection closed.");
-        return [codex({ version: "0.48.0", operation: null })];
+        return false;
       },
       20,
     );
@@ -277,13 +293,27 @@ describe("waitForManagedRuntimesIdle", () => {
     ).toEqual(new Set([alvin]));
   });
 
+  it("does not let a server question that never settles hold the pass", async () => {
+    const live = snapshots(environment(codex({ version: "0.48.0", operation: null })));
+    expect(
+      await waitForManagedRuntimesIdle(
+        live.source,
+        [alvin],
+        () => new Promise<boolean>(() => {}),
+        20,
+      ),
+    ).toEqual(new Set([alvin]));
+  });
+
   it("ignores machines it was not asked about", async () => {
     const live = snapshots(
       environment(codex({ version: "0.48.0", operation: operation("activating") })),
     );
     const elsewhere = EnvironmentId.make("elsewhere");
     live.publish({ environmentId: elsewhere, connection: "connected", providers: [] });
-    expect(await waitForManagedRuntimesIdle(live.source, [elsewhere], live.answer)).toEqual(new Set());
+    expect(await waitForManagedRuntimesIdle(live.source, [elsewhere], live.answer)).toEqual(
+      new Set(),
+    );
   });
 
   it("installs this app only after every managed operation ends, even one this pass did not start", async () => {
@@ -332,7 +362,9 @@ describe("waitForManagedRuntimesIdle", () => {
           {
             updateSystem: async () => ({ status: "succeeded", version: null }),
             startManaged: async () => {
-              live.publish(environment(codex({ version: "0.48.0", operation: null }), "reconnecting"));
+              live.publish(
+                environment(codex({ version: "0.48.0", operation: null }), "reconnecting"),
+              );
               throw new Error("The connection closed.");
             },
           },

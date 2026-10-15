@@ -160,17 +160,27 @@ export function watchManagedRuntimeUpdate(
 }
 
 /**
- * The environment server's own provider list, asked over its current
- * connection; rejects when the server does not answer.
+ * Whether the environment's server reports a managed runtime operation in
+ * progress, asked anew over its current connection; rejects when the server
+ * does not answer.
  */
-export type ReadServerProviders = (
-  environmentId: EnvironmentId,
-) => Promise<ReadonlyArray<ServerProvider>>;
+export type ReadServerRuntimeActivity = (environmentId: EnvironmentId) => Promise<boolean>;
 
-const hasActiveManagedOperation = (providers: ReadonlyArray<ServerProvider>) =>
+export const hasActiveManagedOperation = (providers: ReadonlyArray<ServerProvider>) =>
   providers.some((provider) =>
     isManagedRuntimeOperationActive(provider.connection?.runtime?.operation),
   );
+
+/** Settles like `promise`, or rejects once `ms` have passed. */
+function withDeadline<A>(promise: Promise<A>, ms: number): Promise<A> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("No answer in time.")), Math.max(0, ms));
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 /**
  * Whether an environment can restart without cutting off a managed runtime
@@ -179,13 +189,13 @@ const hasActiveManagedOperation = (providers: ReadonlyArray<ServerProvider>) =>
  * connected and idle: a cached snapshot can predate an update whose answer
  * was lost, even one that still reads connected. False when it cannot be
  * confirmed: the environment is missing or lost, or reconnects, or its server
- * does not answer, for longer than the grace period.
+ * goes unanswered, for longer than the grace period.
  */
 async function confirmManagedRuntimesIdle(
   source: ProviderSnapshotSource,
   environmentId: EnvironmentId,
-  readServerProviders: ReadServerProviders,
-  reconnectGraceMs = RECONNECT_GRACE_MS,
+  readServerRuntimeActivity: ReadServerRuntimeActivity,
+  reconnectGraceMs: number,
 ): Promise<boolean> {
   const pollMs = Math.min(10_000, reconnectGraceMs);
   let reconnectingSince: number | null = null;
@@ -208,16 +218,21 @@ async function confirmManagedRuntimesIdle(
       pollMs,
     );
     if (cached === "lost") return false;
-    const answer = await readServerProviders(environmentId).then(
-      (providers) => providers,
+    // The deadline runs from before the question, so a request that never
+    // settles cannot hold the pass.
+    unansweredSince ??= Date.now();
+    const active = await withDeadline(
+      readServerRuntimeActivity(environmentId),
+      reconnectGraceMs - (Date.now() - unansweredSince),
+    ).then(
+      (answer) => answer,
       () => null,
     );
-    if (answer === null) {
-      unansweredSince ??= Date.now();
+    if (active === null) {
       if (Date.now() - unansweredSince >= reconnectGraceMs) return false;
     } else {
       unansweredSince = null;
-      if (!hasActiveManagedOperation(answer)) return true;
+      if (!active) return true;
     }
     // Not yet: let the snapshot catch up before asking again.
     await new Promise((resolve) => setTimeout(resolve, pollMs));
@@ -228,13 +243,18 @@ async function confirmManagedRuntimesIdle(
 export async function waitForManagedRuntimesIdle(
   source: ProviderSnapshotSource,
   environmentIds: ReadonlyArray<EnvironmentId>,
-  readServerProviders: ReadServerProviders,
+  readServerRuntimeActivity: ReadServerRuntimeActivity,
   reconnectGraceMs = RECONNECT_GRACE_MS,
 ): Promise<ReadonlySet<EnvironmentId>> {
   const ids = [...new Set(environmentIds)];
   const confirmed = await Promise.all(
     ids.map((environmentId) =>
-      confirmManagedRuntimesIdle(source, environmentId, readServerProviders, reconnectGraceMs),
+      confirmManagedRuntimesIdle(
+        source,
+        environmentId,
+        readServerRuntimeActivity,
+        reconnectGraceMs,
+      ),
     ),
   );
   return new Set(ids.filter((_, index) => !confirmed[index]));

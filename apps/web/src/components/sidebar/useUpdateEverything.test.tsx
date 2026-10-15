@@ -82,7 +82,7 @@ vi.mock("~/scient/providerUpdates/useProviderUpdateInventory", () => ({
   useProviderUpdateInventory: () => ({
     machines: [],
     updateAll: testState.updateProviders,
-    readServerProviders: async () => [],
+    readServerRuntimeActivity: async () => false,
   }),
 }));
 vi.mock("~/scient/desktopUpdate/serverReleaseAvailability", async (importOriginal) => {
@@ -137,6 +137,12 @@ function environment(id: string, selfUpdate: ServerSelfUpdateCapability): TestEn
     entry: { target: { _tag: "SshConnectionTarget" } },
   };
 }
+
+/** The notices for restarts this pass held back, apart from the servers' own update results. */
+const skipNotices = () =>
+  testState.toast.mock.calls
+    .map(([toast]) => toast.title)
+    .filter((title) => title.startsWith("Did not update") || title === "This app did not restart");
 
 let renderer: ReactTestRenderer | undefined;
 let current: ReturnType<typeof useUpdateEverything> | undefined;
@@ -355,9 +361,7 @@ it("does not restart a server it could not confirm free of managed runtime updat
   expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
     "desktop",
   ]);
-  expect(testState.toast.mock.calls.map(([toast]) => toast.title)).toEqual([
-    "Did not update service",
-  ]);
+  expect(skipNotices()).toEqual(["Did not update service"]);
 });
 
 it("reports a confirmed server that disconnected before its restart", async () => {
@@ -372,9 +376,7 @@ it("reports a confirmed server that disconnected before its restart", async () =
   expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
     "desktop",
   ]);
-  expect(testState.toast.mock.calls.map(([toast]) => toast.title)).toEqual([
-    "Did not update service",
-  ]);
+  expect(skipNotices()).toEqual(["Did not update service"]);
 });
 
 it("does not install this app while its own server's managed runtimes cannot be confirmed idle", async () => {
@@ -400,9 +402,7 @@ it("does not install this app while its own server's managed runtimes cannot be 
   });
   expect(testState.managedRuntimesIdle.mock.calls.at(-1)?.[0]).toEqual(["local"]);
   expect(installLocal).not.toHaveBeenCalled();
-  expect(testState.toast.mock.calls.map(([toast]) => toast.title)).toEqual([
-    "This app did not restart",
-  ]);
+  expect(skipNotices()).toEqual(["This app did not restart"]);
 });
 
 it("retires an unmounted held pass without disabling a newly confirmed pass", async () => {

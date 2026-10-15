@@ -9,8 +9,9 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useStartProviderRuntimeAction } from "../providerConnection/useProviderLifecycleController";
 import {
   appProviderSnapshots,
+  hasActiveManagedOperation,
   watchManagedRuntimeUpdate,
-  type ReadServerProviders,
+  type ReadServerRuntimeActivity,
 } from "./managedRuntimeUpdateWatch";
 import {
   collectProviderUpdateMachines,
@@ -37,6 +38,9 @@ const UNSTARTED_MANAGED_UPDATE: ProviderUpdateOutcome = {
 export function useProviderUpdateInventory() {
   const { environments } = useEnvironments();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
+    reportFailure: false,
+  });
+  const getRuntimeOperations = useAtomCommand(serverEnvironment.getProviderRuntimeOperations, {
     reportFailure: false,
   });
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -100,12 +104,21 @@ export function useProviderUpdateInventory() {
     }
   };
 
-  /** A machine's current provider list, from its server rather than the cached snapshot. */
-  const readServerProviders: ReadServerProviders = async (environmentId) => {
+  /** Whether a machine's server, rather than the cached snapshot, reports a managed operation running. */
+  const readServerRuntimeActivity: ReadServerRuntimeActivity = async (environmentId) => {
+    const capabilities = environments.find(
+      (environment) => environment.environmentId === environmentId,
+    )?.serverConfig?.environment.capabilities;
+    if (capabilities?.providerRuntimeOperations === true) {
+      const result = await getRuntimeOperations({ environmentId, input: {} });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      return result.value.operations.length > 0;
+    }
+    // An older server: its provider list, which can briefly lag its runtime manager.
     const result = await refreshProviders({ environmentId, input: {} });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    return result.value.providers;
+    return hasActiveManagedOperation(result.value.providers);
   };
 
-  return { machines, updateAll, readServerProviders };
+  return { machines, updateAll, readServerRuntimeActivity };
 }

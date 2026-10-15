@@ -87,6 +87,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverPlanProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverStartProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverCancelProviderRuntime]: AuthProvidersManageScope,
+  // SCIENT-FORK:START — read-only: operation ids and actions, no provider data.
+  [WS_METHODS.serverGetProviderRuntimeOperations]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:END
   [WS_METHODS.providerInstallSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallRemove]: AuthProvidersManageScope,
   [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,

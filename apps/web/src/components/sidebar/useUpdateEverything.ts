@@ -114,7 +114,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
         ...managedRuntimeGatedSteps({
           updateAll: providers.updateAll,
           onWaitingChange: local.onWaitingChange,
-          readServerProviders: providers.readServerProviders,
+          readServerRuntimeActivity: providers.readServerRuntimeActivity,
           servers,
           currentServers: () => committedServersRef.current,
           updateServer: (server) => updateServer(server),
