@@ -1615,6 +1615,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     );
     if (!target) return;
     const { node, pos } = target;
+    // SCIENT-FORK:START — file and assistant quotes share the ComposerCitation helpers.
     const citation = node.attrs.citation as ComposerCitation;
     const dismissal = resolveAssistantCitationCommentDismissal({
       reason: "none",
@@ -1632,6 +1633,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         })
         .setMeta("addToHistory", false),
     );
+    // SCIENT-FORK:END
     onCitationDraftSave(replacedValue, serializeEditorDoc(current.state.doc).value);
   });
 
