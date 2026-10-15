@@ -85,6 +85,14 @@ describe("alignment workflow", () => {
     f.git("switch", "-q", "codex/facts");
     f.git("merge", "-q", "--no-ff", "-m", "catch up", ownedMain);
     const catchUp = f.git("rev-parse", "HEAD");
+    f.git("switch", "-q", "official");
+    NodeFS.writeFileSync(NodePath.join(f.root, "official-later.txt"), "later upstream work\n");
+    f.git("add", "official-later.txt");
+    f.git("commit", "-qm", "later upstream behavior");
+    const laterTarget = f.git("rev-parse", "HEAD");
+    f.git("switch", "-q", "codex/facts");
+    f.git("merge", "-q", "--no-ff", "-m", "extend", laterTarget);
+    const extension = f.git("rev-parse", "HEAD");
 
     const facts = alignmentFacts(merge, { cwd: f.root });
     expect(facts).toMatchObject({
@@ -98,7 +106,10 @@ describe("alignment workflow", () => {
       initiallyUnmerged: ["shared.txt"],
       merge,
       tree: f.git("rev-parse", `${merge}^{tree}`),
-      catchUps: [{ merge: catchUp, ownedMain }],
+      laterMerges: [
+        { merge: catchUp, merged: ownedMain, kind: "owned-main-catch-up" },
+        { merge: extension, merged: laterTarget, kind: "official-extension" },
+      ],
     });
     expect(() => alignmentFacts(f.base, { cwd: f.root })).toThrow(/exactly two parents/u);
   });

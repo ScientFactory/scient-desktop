@@ -143,7 +143,8 @@ qualification of the pushed candidate remains pending. `--tests` runs it anyway.
 `pnpm alignment:facts --merge <upstream-merge>` prints the receipt's boundary facts for
 a committed upstream merge: owned base, previous boundary, target and its exact tags,
 commit and path counts, initially unmerged paths reconstructed with the same merge
-simulation as `plan`, the merge tree and later owned-main catch-ups on the branch.
+simulation as `plan`, the merge tree, and later merges on the branch, each labelled as an
+owned-main catch-up or an official extension.
 Shared model curation and project/settings reducers run before server integration checks.
 Affected compilation and static checks remain separate required composition checks.
 For older target revisions, review the actual assertion bodies too: an existing suite

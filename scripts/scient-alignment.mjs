@@ -361,7 +361,8 @@ export function alignmentFacts(merge, { cwd = process.cwd() } = {}) {
   } catch (error) {
     if (!/No names found|No tags can describe/u.test(error.message)) throw error;
   }
-  const catchUps = output(root, [
+  // A later merge of official history extends the alignment; any other merge catches up owned main.
+  const laterMerges = output(root, [
     "rev-list",
     "--reverse",
     "--first-parent",
@@ -372,8 +373,12 @@ export function alignmentFacts(merge, { cwd = process.cwd() } = {}) {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [catchUp, , ownedMain] = line.split(" ");
-      return { merge: catchUp, ownedMain };
+      const [later, , merged] = line.split(" ");
+      return {
+        merge: later,
+        merged,
+        kind: isAncestor(root, target, merged) ? "official-extension" : "owned-main-catch-up",
+      };
     });
   return {
     base,
@@ -387,7 +392,7 @@ export function alignmentFacts(merge, { cwd = process.cwd() } = {}) {
     initiallyUnmerged: simulatedConflicts(root, base, target).paths,
     merge: commit,
     tree: output(root, ["rev-parse", `${commit}^{tree}`]),
-    catchUps,
+    laterMerges,
   };
 }
 
@@ -405,9 +410,10 @@ function printFacts(facts) {
       `${facts.initiallyUnmerged.length} initially unmerged paths.`,
     `- Literal integration merge: \`${facts.merge}\`, tree \`${facts.tree}\`; parents are the ` +
       "owned base and the frozen official target.",
-    ...facts.catchUps.map(
-      (catchUp) =>
-        `- Owned-main catch-up: merge \`${catchUp.merge}\` of owned main \`${catchUp.ownedMain}\`.`,
+    ...facts.laterMerges.map((later) =>
+      later.kind === "official-extension"
+        ? `- Official extension: merge \`${later.merge}\` of official \`${later.merged}\`.`
+        : `- Owned-main catch-up: merge \`${later.merge}\` of owned main \`${later.merged}\`.`,
     ),
   ];
   process.stdout.write(`${lines.join("\n")}\n`);
