@@ -430,6 +430,42 @@ describe("Oh My Pi provider executable checks", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
   );
 
+  it.effect(
+    "reports a failed version check when the executable exists but what it runs is missing",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-omp-shim-" });
+        // A launcher shim whose runtime is not installed: spawning it reports "not found".
+        const shim = path.join(root, "omp.cmd");
+        yield* fs.writeFileString(shim, "@node %~dp0omp.js %*\r\n");
+        const result = yield* checkOmpProviderStatus(
+          ompTarget,
+          { enabled: true, binaryPath: shim },
+          { PATH: root },
+          yield* realProcess,
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  description: "ENOENT",
+                }),
+              ),
+            ),
+          ),
+        );
+        expect(result.status).toBe("error");
+        expect(result.installed).toBe(true);
+        expect(result.message).toBe("Oh My Pi version verification failed.");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+  );
+
   it.effect("still reports a failed version check for an executable that will not run", () =>
     Effect.gen(function* () {
       const result = yield* checkOmpProviderStatus(

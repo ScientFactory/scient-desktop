@@ -35,6 +35,9 @@ const isProtocolError = Schema.is(OmpRpcProtocolError);
 /** RPC package errors stay product-neutral. User-facing text names the product once. */
 export const ompUserDetail = (target: OmpTarget, detail: string): string =>
   detail.includes(target.name) ? detail : `${target.name}: ${detail}`;
+/** What the version probe reports when the executable itself is absent. */
+export const ompNotInstalledDetail = (target: OmpTarget): string =>
+  `${target.name} is not installed or its executable could not be found.`;
 export const OMP_RPC_ARGS = ["--mode", "rpc", "--approval-mode", "yolo"] as const;
 
 export const ompRpcArgs = (
@@ -451,20 +454,16 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         (cause) => new OmpRpcProtocolError({ detail: ompUserDetail(target, cause.detail), cause }),
       ),
     );
-  const binaryMetadata = yield* fs.stat(executableIdentity).pipe(
-    Effect.option,
-    Effect.map((info) =>
-      Option.match(info, {
-        onNone: () => "",
-        onSome: (stat) =>
-          [
-            Option.match(stat.mtime, { onNone: () => "", onSome: (value) => value.toISOString() }),
-            ByteSize.toBigInt(stat.size).toString(),
-            Option.match(stat.ino, { onNone: () => "", onSome: (value) => String(value) }),
-          ].join(":"),
-      }),
-    ),
-  );
+  const binaryInfo = yield* fs.stat(executableIdentity).pipe(Effect.option);
+  const binaryMetadata = Option.match(binaryInfo, {
+    onNone: () => "",
+    onSome: (stat) =>
+      [
+        Option.match(stat.mtime, { onNone: () => "", onSome: (value) => value.toISOString() }),
+        ByteSize.toBigInt(stat.size).toString(),
+        Option.match(stat.ino, { onNone: () => "", onSome: (value) => String(value) }),
+      ].join(":"),
+  });
   const { version, runtimeVersion } = yield* gate
     .verifiedVersion(
       versionCacheKey(target, executableIdentity, env, binaryMetadata),
@@ -499,9 +498,11 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
           ? cause
           : new OmpRpcProtocolError({
               // A missing executable was never verified, so it did not fail verification.
-              detail: isCommandMissingCause(cause)
-                ? `${target.name} is not installed or its executable could not be found.`
-                : `${target.name} version verification failed.`,
+              // One that exists but cannot find what it runs (a shim's runtime) did.
+              detail:
+                Option.isNone(binaryInfo) && isCommandMissingCause(cause)
+                  ? ompNotInstalledDetail(target)
+                  : `${target.name} version verification failed.`,
               cause,
             }),
       ),
