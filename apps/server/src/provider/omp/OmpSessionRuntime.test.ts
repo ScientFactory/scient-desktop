@@ -1077,6 +1077,8 @@ describe("Oh My Pi session runtime outcomes", () => {
       yield* h.wire.send(
         { type: "agent_start" },
         jobUpdate("bg-tool", "running", "still running"),
+        // Without its job id, too: the call's job still runs.
+        { type: "tool_execution_update", toolCallId: "bg-tool", toolName: "bash" },
         jobUpdate("bg-tool", "completed", "done"),
         // A new call's argument stream may precede its start.
         {
@@ -1095,6 +1097,20 @@ describe("Oh My Pi session runtime outcomes", () => {
         { toolCallId: "own-tool", phase: "started" },
         { toolCallId: "own-tool", phase: "updated" },
       ]);
+    }),
+  );
+
+  it.effect("an update without a job id is the open run's when no earlier job holds its call", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* backgroundTurn(h, "bg-tool");
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "tool_execution_update", toolCallId: "other-tool", toolName: "read" },
+      );
+      const produced = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(toolFrames(produced)).toEqual([{ toolCallId: "other-tool", phase: "updated" }]);
     }),
   );
 

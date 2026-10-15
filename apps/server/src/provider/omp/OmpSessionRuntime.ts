@@ -414,31 +414,31 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       }
     | undefined;
   const completedAssistantIds = new Set<string>();
-  /**
-   * Tool calls the open turn reported. OMP ends a run only once its calls
-   * returned, and its start, end and argument frames ride the run, but since
-   * 18.10.2 a call that returned with a background job running
-   * (`details.async.state` "running") keeps sending `tool_execution_update`
-   * frames until the job's last one, even after its run and turn ended. An
-   * update is the open turn's only for a call the turn reported.
-   */
+  /** Tool calls the open turn reported, in a published start, end or argument stream. */
   const turnToolCallIds = new Set<string>();
   /**
-   * Background jobs that may still report, by job id
-   * (`details.async.jobId`): the call that started each and the turn it
-   * belongs to (none when its frames were not the open turn's). A model can
-   * give a later call an earlier call's id. A job's frames carry its job id,
-   * so they never reach the later call; an update without one, under an id an
-   * earlier turn's running job holds, could be either call's and is not shown.
-   * A job is forgotten at its last frame (completed, failed or cancelled). A
-   * settled session ends that doubt, since OMP then runs no job, but not the
-   * job's own frames: a cancelled job can still report, and some cancelled
-   * jobs never send a last frame.
+   * Background jobs that may still report, by job id (`details.async.jobId`):
+   * the call that started each and the turn it belongs to (none when its frames
+   * were not the open turn's). OMP ends a run only once its calls returned, but
+   * since 18.10.2 a call that returned with a background job running
+   * (`details.async.state` "running") keeps sending `tool_execution_update`
+   * frames, carrying the job id, until the job's last one, even after its run
+   * and turn ended. So:
    *
-   * Not covered: a call aborted inside OMP whose job never went to the
-   * background can report afterwards without a job id. If a later turn reuses
-   * its id, that update shows on the later call. Scient's Stop closes the
-   * process, so this takes an abort from elsewhere.
+   * - A job's frame is shown only in the turn its job belongs to. A frame of a
+   *   job not seen yet is the open run's own call reporting before it returned.
+   * - An update without a job id is the open run's, unless an earlier turn's
+   *   running job holds its call id: a model can give a later call an earlier
+   *   call's id, and the two cannot be told apart.
+   * - A job is forgotten at its last frame (completed, failed or cancelled). A
+   *   settled session ends the doubt over its call id, since OMP then runs no
+   *   job, but not its own frames: a cancelled job can still report, and some
+   *   cancelled jobs never send a last frame.
+   *
+   * Not covered: a call that never went to the background but reports after it
+   * returned, without a job id, as a call aborted inside OMP can. Its update
+   * shows in the open turn. Scient's Stop closes the process, so this takes an
+   * abort from elsewhere.
    */
   const backgroundJobs = new Map<
     string,
@@ -1182,17 +1182,16 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
             if (job) backgroundJobs.delete(jobId);
             else settledJobIds.add(jobId);
           }
-          const ownCall =
-            turnToolCallIds.has(toolCallId) &&
-            (job
-              ? job.turnId === activeTurnId
-              : jobId !== undefined ||
-                ![...backgroundJobs.values()].some(
+          const ownCall = job
+            ? job.turnId === activeTurnId
+            : jobId !== undefined
+              ? turnToolCallIds.has(toolCallId)
+              : ![...backgroundJobs.values()].some(
                   (other) =>
                     other.running &&
                     other.toolCallId === toolCallId &&
                     other.turnId !== activeTurnId,
-                ));
+                );
           if (!ownCall) return;
         } else if (event.type === "tool_execution_end") {
           const jobId = backgroundJobId(event.result);
