@@ -1,0 +1,113 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+
+import type { ServerUpdateTarget } from "~/components/ServerUpdateAction";
+import { currentConfirmedServerTargets } from "~/components/sidebar/updateEverything.logic";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+
+import {
+  appProviderSnapshots,
+  UPDATE_PASS_LIMIT_MS,
+  waitForManagedRuntimesIdle,
+  type ReadServerRuntimeActivity,
+} from "./managedRuntimeUpdateWatch";
+
+/**
+ * The provider, server and install steps of an "update everything" pass, with
+ * each restart held until no Scient-managed runtime update is running on that
+ * machine, whoever started it. A machine Scient cannot confirm, because it
+ * lost contact or an update ran past the busy limit, is not restarted, and a
+ * notice says so. One deadline covers the whole pass: the managed updates it
+ * starts and every wait before a restart.
+ */
+export function managedRuntimeGatedSteps(input: {
+  readonly updateAll: (options: {
+    readonly onWaitingChange?: (waiting: boolean) => void;
+    readonly deadlineAt?: number;
+  }) => Promise<void>;
+  readonly onWaitingChange: ((waiting: boolean) => void) | undefined;
+  readonly readServerRuntimeActivity: ReadServerRuntimeActivity;
+  /** The servers this pass confirmed. */
+  readonly servers: ReadonlyArray<ServerUpdateTarget>;
+  /** The servers eligible now; a pass can lose targets during its waits, never gain them. */
+  readonly currentServers: () => ReadonlyArray<ServerUpdateTarget>;
+  readonly updateServer: (server: ServerUpdateTarget) => Promise<unknown>;
+  /** The environments this app hosts, which its install restarts. */
+  readonly hostedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+  readonly installLocal: (() => Promise<void>) | undefined;
+}) {
+  const deadlineAt = Date.now() + UPDATE_PASS_LIMIT_MS;
+  const unconfirmed = (environmentIds: ReadonlyArray<EnvironmentId>) =>
+    waitForManagedRuntimesIdle(
+      appProviderSnapshots,
+      environmentIds,
+      input.readServerRuntimeActivity,
+      {
+        busyLimitMs: Math.max(0, deadlineAt - Date.now()),
+      },
+    );
+  const installLocal = input.installLocal;
+  return {
+    updateProviders: () =>
+      input.updateAll({
+        deadlineAt,
+        ...(input.onWaitingChange ? { onWaitingChange: input.onWaitingChange } : {}),
+      }),
+    updateServers: async () => {
+      const gated = currentConfirmedServerTargets(input.servers, input.currentServers());
+      // A server that dropped out because it disconnected is reported with the rest.
+      const isConnected = (environmentId: EnvironmentId) =>
+        appProviderSnapshots
+          .read()
+          .some(
+            (environment) =>
+              environment.environmentId === environmentId && environment.connection === "connected",
+          );
+      const skipped = input.servers.filter(
+        (server) =>
+          !isConnected(server.environmentId) &&
+          !gated.some((target) => target.environmentId === server.environmentId),
+      );
+      // Each server is checked just before its own restart, so a long wait on
+      // one machine leaves no gap on another.
+      await Promise.all(
+        gated.map(async (server) => {
+          if ((await unconfirmed([server.environmentId])).size > 0) {
+            skipped.push(server);
+            return;
+          }
+          const [current] = currentConfirmedServerTargets([server], input.currentServers());
+          if (current) await input.updateServer(current);
+          else if (!isConnected(server.environmentId)) skipped.push(server);
+        }),
+      );
+      if (skipped.length > 0) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: `Did not update ${skipped.map((server) => server.serverLabel).join(", ")}`,
+            description:
+              "Scient could not confirm that no Scient-managed provider update is still running there: it lost contact, or an update was still running after 30 minutes. Update it once it reconnects or the update finishes.",
+          }),
+        );
+      }
+    },
+    ...(installLocal
+      ? {
+          installLocal: async () => {
+            if ((await unconfirmed(input.hostedEnvironmentIds)).size > 0) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "warning",
+                  title: "This app did not restart",
+                  description:
+                    "Scient could not confirm that no Scient-managed provider update is still running on this computer: it lost contact with its server, or an update was still running after 30 minutes. Restart to install the update once it reconnects or the update finishes.",
+                }),
+              );
+              return;
+            }
+            await installLocal();
+          },
+        }
+      : {}),
+  };
+}

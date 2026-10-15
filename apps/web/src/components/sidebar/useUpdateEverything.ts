@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useLayoutEffect, useMemo, useRef } from "react";
 
@@ -9,7 +8,6 @@ import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
 import { environmentSession } from "~/state/session";
-import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, useServerUpdate } from "../ServerUpdateAction";
 import {
   collectRestartingMachines,
@@ -19,10 +17,11 @@ import {
 } from "./updateEverything.logic";
 // SCIENT-FORK:START — T3 npm publication does not qualify a Scient server artifact.
 import { useScientServerReleasePublished } from "~/scient/desktopUpdate/serverReleaseAvailability";
-import {
-  currentConfirmedServerTargets,
-  supportedBulkServerTargets,
-} from "./updateEverything.logic";
+// Provider updates include Scient-managed runtimes, each line with its versions.
+import { describeProviderUpdateItem } from "~/scient/providerUpdates/providerUpdateInventory";
+import { useProviderUpdateInventory } from "~/scient/providerUpdates/useProviderUpdateInventory";
+import { managedRuntimeGatedSteps } from "~/scient/providerUpdates/managedRuntimeRestartGate";
+import { supportedBulkServerTargets } from "./updateEverything.logic";
 // SCIENT-FORK:END
 
 /**
@@ -75,7 +74,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   }, [servers]);
   // SCIENT-FORK:END
   const restarts = collectRestartingMachines(machines, servers, localUpdateVersion !== null);
-  const providers = useProviderUpdates();
+  // SCIENT-FORK:START — managed runtimes included; see useProviderUpdateInventory.
+  const providers = useProviderUpdateInventory();
+  // SCIENT-FORK:END
   const updateServer = useServerUpdate();
 
   const { summary, lines } = describeUpdateEverything({
@@ -84,9 +85,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     providerMachines: providers.machines.map((machine) => ({
       environmentId: machine.environmentId,
       label: machine.label,
-      providers: machine.candidates.map(
-        (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-      ),
+      // SCIENT-FORK:START — one line per runtime, with versions and owner.
+      providers: machine.items.map(describeProviderUpdateItem),
+      // SCIENT-FORK:END
     })),
   });
 
@@ -98,14 +99,31 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     lines,
     /** The servers this run restarts, which stops their running threads. */
     restarts,
-    run: (local: { downloadLocal?: () => Promise<boolean>; installLocal?: () => Promise<void> }) =>
+    run: (local: {
+      downloadLocal?: () => Promise<boolean>;
+      installLocal?: () => Promise<void>;
+      // SCIENT-FORK:START — whether a managed update is waiting for running work.
+      onWaitingChange?: (waiting: boolean) => void;
+      // SCIENT-FORK:END
+    }) =>
       runUpdateEverything({
         ...local,
-        updateProviders: providers.updateAll,
-        updateServers: async () => {
-          const current = currentConfirmedServerTargets(servers, committedServersRef.current);
-          await Promise.all(current.map((server) => updateServer(server)));
-        },
+        // SCIENT-FORK:START — a server restarts, and this app installs, only once no
+        // managed runtime on that machine is mid-update, whoever started it, and
+        // not at all while that cannot be confirmed.
+        ...managedRuntimeGatedSteps({
+          updateAll: providers.updateAll,
+          onWaitingChange: local.onWaitingChange,
+          readServerRuntimeActivity: providers.readServerRuntimeActivity,
+          servers,
+          currentServers: () => committedServersRef.current,
+          updateServer: (server) => updateServer(server),
+          hostedEnvironmentIds: machines
+            .filter((machine) => machine.hostedByThisApp)
+            .map((machine) => machine.environmentId),
+          installLocal: local.installLocal,
+        }),
+        // SCIENT-FORK:END
       }),
   };
 }

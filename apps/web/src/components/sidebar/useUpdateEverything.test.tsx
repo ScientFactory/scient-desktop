@@ -17,7 +17,7 @@ type TestEnvironment = {
   label: string;
   serverConfig: NonNullable<UpdateEverythingMachine["serverConfig"]>;
   connection: { phase: "connected" | "offline" };
-  entry: { target: { _tag: "SshConnectionTarget" } };
+  entry: { target: { _tag: "SshConnectionTarget" | "PrimaryConnectionTarget" } };
 };
 
 const testState = vi.hoisted(() => ({
@@ -27,6 +27,10 @@ const testState = vi.hoisted(() => ({
   updateStateAtom: undefined as Atom.Atom<{ status: "idle" }> | undefined,
   availability: undefined as AsyncResult.AsyncResult<boolean, string> | undefined,
   updateProviders: vi.fn<() => Promise<void>>(),
+  managedRuntimesIdle:
+    vi.fn<(environmentIds: ReadonlyArray<EnvironmentId>) => Promise<ReadonlySet<EnvironmentId>>>(),
+  unconfirmed: new Set<string>(),
+  toast: vi.fn<(toast: { title: string }) => void>(),
   updateServer:
     vi.fn<
       (request: {
@@ -62,8 +66,25 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 vi.mock("~/hooks/useSettings", () => ({ useEnvironmentSettings: () => false }));
 vi.mock("~/hooks/useCopyToClipboard", () => ({ useCopyToClipboard: () => ({}) }));
-vi.mock("../ProviderUpdatesAction", () => ({
-  useProviderUpdates: () => ({ machines: [], updateAll: testState.updateProviders }),
+vi.mock("~/scient/providerUpdates/managedRuntimeUpdateWatch", () => ({
+  UPDATE_PASS_LIMIT_MS: 30 * 60_000,
+  appProviderSnapshots: {
+    read: () =>
+      testState.environments.map((environment) => ({
+        environmentId: environment.environmentId,
+        connection: environment.connection.phase === "connected" ? "connected" : "reconnecting",
+        providers: [],
+      })),
+  },
+  waitForManagedRuntimesIdle: (_source: unknown, environmentIds: ReadonlyArray<EnvironmentId>) =>
+    testState.managedRuntimesIdle(environmentIds),
+}));
+vi.mock("~/scient/providerUpdates/useProviderUpdateInventory", () => ({
+  useProviderUpdateInventory: () => ({
+    machines: [],
+    updateAll: testState.updateProviders,
+    readServerRuntimeActivity: async () => false,
+  }),
 }));
 vi.mock("~/scient/desktopUpdate/serverReleaseAvailability", async (importOriginal) => {
   const original =
@@ -74,7 +95,10 @@ vi.mock("~/scient/desktopUpdate/serverReleaseAvailability", async (importOrigina
       original.isCurrentScientServerReleasePublished(testState.availability!),
   };
 });
-vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+vi.mock("../ui/toast", () => ({
+  toastManager: { add: (toast: { title: string }) => testState.toast(toast) },
+  stackedThreadToast: <A,>(toast: A) => toast,
+}));
 
 import { useUpdateEverything } from "./useUpdateEverything";
 
@@ -115,6 +139,12 @@ function environment(id: string, selfUpdate: ServerSelfUpdateCapability): TestEn
   };
 }
 
+/** The notices for restarts this pass held back, apart from the servers' own update results. */
+const skipNotices = () =>
+  testState.toast.mock.calls
+    .map(([toast]) => toast.title)
+    .filter((title) => title.startsWith("Did not update") || title === "This app did not restart");
+
 let renderer: ReactTestRenderer | undefined;
 let current: ReturnType<typeof useUpdateEverything> | undefined;
 function Probe({ version = null }: { version?: string | null }) {
@@ -132,7 +162,7 @@ beforeEach(() => {
     environment("desktop", "desktop-managed"),
   ];
   testState.sessions = new Map(
-    ["service", "desktop", "new-machine"].map(
+    ["service", "desktop", "new-machine", "local"].map(
       (id) =>
         [
           id,
@@ -143,6 +173,14 @@ beforeEach(() => {
   testState.updateStateAtom = Atom.make({ status: "idle" as const });
   testState.availability = AsyncResult.success(true);
   testState.updateProviders.mockReset().mockResolvedValue(undefined);
+  testState.unconfirmed = new Set();
+  testState.managedRuntimesIdle
+    .mockReset()
+    .mockImplementation(
+      async (environmentIds) =>
+        new Set(environmentIds.filter((environmentId) => testState.unconfirmed.has(environmentId))),
+    );
+  testState.toast.mockReset();
   testState.updateServer
     .mockReset()
     .mockImplementation(async ({ input }) =>
@@ -277,6 +315,95 @@ it("does not change the confirmed version during a held provider step", async ()
   await act(() => renderer!.update(<Probe version="0.6.3" />));
   await pass.finish();
   expect(testState.updateServer).not.toHaveBeenCalled();
+});
+
+it("withdraws a server target that stops being eligible while managed runtimes finish", async () => {
+  let idle = () => {};
+  testState.managedRuntimesIdle.mockImplementationOnce(
+    () =>
+      new Promise<ReadonlySet<EnvironmentId>>((resolve) => {
+        idle = () => resolve(new Set());
+      }),
+  );
+  await act(() => {
+    renderer = create(<Probe />);
+  });
+  let run: Promise<void> | undefined;
+  await act(async () => {
+    run = current!.run({});
+    await Promise.resolve();
+  });
+  expect(testState.managedRuntimesIdle).toHaveBeenCalled();
+  testState.availability = AsyncResult.failureWithPrevious(Cause.fail("403"), {
+    previous: Option.some(AsyncResult.success(true)),
+  });
+  await act(() => renderer!.update(<Probe />));
+  await act(async () => {
+    idle();
+    await run;
+  });
+  expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
+    "desktop",
+  ]);
+});
+
+it("does not restart a server it could not confirm free of managed runtime updates", async () => {
+  testState.unconfirmed = new Set(["service"]);
+  await act(() => {
+    renderer = create(<Probe />);
+  });
+  await act(async () => {
+    await current!.run({});
+  });
+  expect(testState.managedRuntimesIdle.mock.calls.map(([ids]) => ids)).toEqual([
+    ["service"],
+    ["desktop"],
+  ]);
+  expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
+    "desktop",
+  ]);
+  expect(skipNotices()).toEqual(["Did not update service"]);
+});
+
+it("reports a confirmed server that disconnected before its restart", async () => {
+  const pass = await holdPass();
+  testState.environments = testState.environments.map((entry) =>
+    entry.environmentId === "service"
+      ? { ...entry, connection: { phase: "offline" as const } }
+      : entry,
+  );
+  await act(() => renderer!.update(<Probe />));
+  await pass.finish();
+  expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
+    "desktop",
+  ]);
+  expect(skipNotices()).toEqual(["Did not update service"]);
+});
+
+it("does not install this app while its own server's managed runtimes cannot be confirmed idle", async () => {
+  const local = environment("local", "desktop-managed");
+  testState.environments = [
+    ...testState.environments,
+    {
+      ...local,
+      serverConfig: {
+        ...local.serverConfig,
+        environment: { ...local.serverConfig.environment, serverVersion: "0.6.2" },
+      },
+      entry: { target: { _tag: "PrimaryConnectionTarget" } },
+    },
+  ];
+  testState.unconfirmed = new Set(["local"]);
+  const installLocal = vi.fn(async () => {});
+  await act(() => {
+    renderer = create(<Probe version="0.6.2" />);
+  });
+  await act(async () => {
+    await current!.run({ installLocal });
+  });
+  expect(testState.managedRuntimesIdle.mock.calls.at(-1)?.[0]).toEqual(["local"]);
+  expect(installLocal).not.toHaveBeenCalled();
+  expect(skipNotices()).toEqual(["This app did not restart"]);
 });
 
 it("retires an unmounted held pass without disabling a newly confirmed pass", async () => {

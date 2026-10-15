@@ -153,6 +153,12 @@ export const makeProviderConnectionRpcHandlers = ({
         providerRuntimeManager.cancel(input),
         { "rpc.aggregate": "server" },
       ),
+    [WS_METHODS.serverGetProviderRuntimeOperations]: () =>
+      observeRpcEffect(
+        WS_METHODS.serverGetProviderRuntimeOperations,
+        providerRuntimeManager.activeOperations,
+        { "rpc.aggregate": "server" },
+      ),
   }) satisfies ScientRpcHandlerSubset<
     typeof WsServerManagementRpcGroup,
     | typeof WS_METHODS.serverStartProviderConnection
@@ -162,4 +168,5 @@ export const makeProviderConnectionRpcHandlers = ({
     | typeof WS_METHODS.serverPlanProviderRuntime
     | typeof WS_METHODS.serverStartProviderRuntime
     | typeof WS_METHODS.serverCancelProviderRuntime
+    | typeof WS_METHODS.serverGetProviderRuntimeOperations
   >;

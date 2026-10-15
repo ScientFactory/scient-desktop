@@ -8,6 +8,7 @@ import {
   ProviderConnectionError,
   ProviderConnectionStartInput,
   ProviderConnectionSubmitAuthorizationCodeInput,
+  ProviderRuntimeActiveOperations,
   ProviderRuntimeCancelInput,
   ProviderRuntimePlan,
   ProviderRuntimePlanInput,
@@ -24,6 +25,7 @@ export const SCIENT_PROVIDER_CONNECTION_WS_METHODS = {
   serverPlanProviderRuntime: "server.planProviderRuntime",
   serverStartProviderRuntime: "server.startProviderRuntime",
   serverCancelProviderRuntime: "server.cancelProviderRuntime",
+  serverGetProviderRuntimeOperations: "server.getProviderRuntimeOperations",
 } as const;
 
 export const WsServerStartProviderConnectionRpc = Rpc.make(
@@ -86,5 +88,19 @@ export const WsServerCancelProviderRuntimeRpc = Rpc.make(
     payload: ProviderRuntimeCancelInput,
     success: ServerProviderUpdatedPayload,
     error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
+  },
+);
+
+/**
+ * The managed runtime operations in progress, so a client can confirm none is
+ * running before it restarts the server. Servers that offer it advertise the
+ * `providerRuntimeOperations` capability.
+ */
+export const WsServerGetProviderRuntimeOperationsRpc = Rpc.make(
+  SCIENT_PROVIDER_CONNECTION_WS_METHODS.serverGetProviderRuntimeOperations,
+  {
+    payload: Schema.Struct({}),
+    success: ProviderRuntimeActiveOperations,
+    error: EnvironmentAuthorizationError,
   },
 );

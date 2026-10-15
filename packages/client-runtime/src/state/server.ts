@@ -1263,6 +1263,13 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
       },
     }),
+    // SCIENT-FORK:START — every call asks the server anew: an answer shared with
+    // an earlier request could predate the operation the caller must see.
+    getProviderRuntimeOperations: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-provider-runtime-operations",
+      tag: WS_METHODS.serverGetProviderRuntimeOperations,
+    }),
+    // SCIENT-FORK:END
     updateServer,
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",

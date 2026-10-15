@@ -129,8 +129,27 @@ resume interrupted threads. Continuation still requires that server's supported
 capability and enabled setting; it does not revive stopped or settled work.
 
 **Settings → Providers** shows provider updates for the selected environment.
-**Update all** updates every outdated provider on every connected environment
-at once. Hover it to see which providers it will update. Two kinds are left
-out on purpose: providers that only offer a manual update command, and
-Scient-managed runtimes, which keep their own qualified update and repair
-actions rather than a bulk path.
+**Update all** updates every outdated provider on every connected environment.
+Hover it to see each one with its installed and new version, and whether
+Scient manages it or it is a system installation. A runtime several provider
+instances share is updated once.
+
+Scient-managed runtimes take their qualified release through Scient's own
+update: it downloads and verifies the release, then switches over once the
+provider's running work has finished. **Update all** waits for that, even if
+you leave Settings, and shows **Waiting…** while running work holds the switch.
+Providers that only offer a manual update command, and custom paths, are left
+out. One notice reports how many updated and names each one that failed or was
+cancelled; a failure on one machine does not stop the others.
+
+If a machine goes offline or starts reconnecting during a managed update,
+Scient waits up to two minutes for it to come back. If it does not, or its
+connection is closed or fails, that update is reported as failed because Scient
+lost contact; review the provider in Settings once the machine is back.
+
+**Update everything** restarts a server, or installs this desktop app, only
+once that machine's server confirms that no managed runtime on it is still
+updating, including updates you started elsewhere. If Scient cannot confirm
+that, because it lost contact with the machine or an update there was still
+running after 30 minutes, it leaves that server or this app as it is and says
+so; update it once the machine reconnects or the update finishes.

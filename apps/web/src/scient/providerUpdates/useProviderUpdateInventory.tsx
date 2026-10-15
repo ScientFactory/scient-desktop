@@ -1,0 +1,143 @@
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useMemo } from "react";
+
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { useEnvironments } from "~/state/environments";
+import { serverEnvironment } from "~/state/server";
+import { useAtomCommand } from "~/state/use-atom-command";
+
+import { useStartProviderRuntimeAction } from "../providerConnection/useProviderLifecycleController";
+import {
+  appProviderSnapshots,
+  hasActiveManagedOperation,
+  watchManagedRuntimeUpdate,
+  withDeadline,
+  type ReadServerRuntimeActivity,
+} from "./managedRuntimeUpdateWatch";
+import {
+  collectProviderUpdateMachines,
+  getProviderUpdateResultsToastView,
+  runProviderUpdates,
+  systemProviderUpdateOutcome,
+  type ProviderUpdateEnvironment,
+  type ProviderUpdateOutcome,
+} from "./providerUpdateInventory";
+
+const UNANSWERED_START_MESSAGE =
+  "Scient could not confirm the update started within 30 minutes. Review the provider in Settings.";
+
+const UNSTARTED_MANAGED_UPDATE: ProviderUpdateOutcome = {
+  status: "failed",
+  message: "Scient could not start the update. Review the provider in Settings.",
+};
+
+/**
+ * Every runtime with a one-click update on every connected machine, Scient's
+ * managed copies included, and a function that updates them all and reports
+ * every result in one notice. The returned promise settles when each update
+ * has finished: a managed one once its new runtime is active. The run does not
+ * depend on the calling component staying mounted. `onWaitingChange` hears
+ * whether any managed update is waiting for its provider's running work.
+ */
+export function useProviderUpdateInventory() {
+  const { environments } = useEnvironments();
+  const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
+    reportFailure: false,
+  });
+  const getRuntimeOperations = useAtomCommand(serverEnvironment.getProviderRuntimeOperations, {
+    reportFailure: false,
+  });
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const startRuntimeAction = useStartProviderRuntimeAction();
+  const snapshots = useMemo(
+    (): ProviderUpdateEnvironment[] =>
+      environments.map((environment) => ({
+        environmentId: environment.environmentId,
+        label: environment.label,
+        connected: environment.connection.phase === "connected",
+        providers: environment.serverConfig?.providers ?? [],
+      })),
+    [environments],
+  );
+  const machines = useMemo(() => collectProviderUpdateMachines(snapshots), [snapshots]);
+
+  const updateAll = async (
+    options: {
+      readonly onWaitingChange?: (waiting: boolean) => void;
+      /** When, as `Date.now()`, a managed update still running stops being waited for. */
+      readonly deadlineAt?: number;
+    } = {},
+  ) => {
+    let waitingCount = 0;
+    const onWaitingChange = (waiting: boolean) => {
+      waitingCount += waiting ? 1 : -1;
+      if (waitingCount === (waiting ? 1 : 0)) options.onWaitingChange?.(waiting);
+    };
+    const results = await runProviderUpdates(machines, {
+      updateSystem: async (item) =>
+        systemProviderUpdateOutcome(
+          item,
+          await updateProvider({
+            environmentId: item.environmentId,
+            input: { provider: item.driver, instanceId: item.instanceId },
+          }),
+        ),
+      startManaged: async (item) => {
+        const starting = startRuntimeAction({
+          environmentId: item.environmentId,
+          instanceId: item.instanceId,
+          action: "update",
+        });
+        // Within the pass deadline too: a start that never answers fails
+        // here, and the restart checks still ask the server what it accepted.
+        const provider =
+          options.deadlineAt === undefined
+            ? await starting
+            : await withDeadline(
+                starting,
+                options.deadlineAt - Date.now(),
+                UNANSWERED_START_MESSAGE,
+              );
+        const operationId = provider.connection?.runtime?.operation?.operationId ?? null;
+        return {
+          finished:
+            operationId === null
+              ? Promise.resolve(UNSTARTED_MANAGED_UPDATE)
+              : watchManagedRuntimeUpdate(appProviderSnapshots, item, operationId, {
+                  onWaitingChange,
+                  ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt }),
+                }),
+        };
+      },
+    });
+    const view = getProviderUpdateResultsToastView(results);
+    if (view) {
+      toastManager.add(
+        stackedThreadToast({
+          ...view,
+          description: <span className="whitespace-pre-line">{view.description}</span>,
+        }),
+      );
+    }
+  };
+
+  /** Whether a machine's server, rather than the cached snapshot, reports a managed operation running. */
+  const readServerRuntimeActivity: ReadServerRuntimeActivity = async (environmentId) => {
+    const capabilities = environments.find(
+      (environment) => environment.environmentId === environmentId,
+    )?.serverConfig?.environment.capabilities;
+    if (capabilities?.providerRuntimeOperations === true) {
+      const result = await getRuntimeOperations({ environmentId, input: {} });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      return result.value.operations.length > 0;
+    }
+    // An older server: its provider list, which can briefly lag its runtime manager.
+    const result = await refreshProviders({ environmentId, input: {} });
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    return hasActiveManagedOperation(result.value.providers);
+  };
+
+  return { machines, updateAll, readServerRuntimeActivity };
+}

@@ -424,6 +424,7 @@ import {
   WsServerPlanProviderRuntimeRpc,
   WsServerStartProviderRuntimeRpc,
   WsServerCancelProviderRuntimeRpc,
+  WsServerGetProviderRuntimeOperationsRpc,
 } from "./scient/providerConnectionRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient custom model RPCs.
@@ -2093,6 +2094,9 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerPlanProviderRuntimeRpc,
   WsServerStartProviderRuntimeRpc,
   WsServerCancelProviderRuntimeRpc,
+  // SCIENT-FORK:START — confirms no managed runtime operation runs before a restart.
+  WsServerGetProviderRuntimeOperationsRpc,
+  // SCIENT-FORK:END
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthRespondRpc,

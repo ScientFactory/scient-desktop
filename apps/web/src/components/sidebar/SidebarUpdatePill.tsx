@@ -42,6 +42,7 @@ import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
 import { useUpdateEverything } from "./useUpdateEverything";
 // SCIENT-FORK:START — explicit Restart does not acquire another confirmation.
 import { shouldRunUpdateEverything } from "./updateEverything.logic";
+import { WAITING_FOR_RUNNING_WORK } from "../../scient/providerUpdates/providerUpdateInventory";
 // SCIENT-FORK:END
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
@@ -182,6 +183,9 @@ function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
   const [isUpdatingEverything, setIsUpdatingEverything] = useState(false);
+  // SCIENT-FORK:START — a managed provider update can wait for running work.
+  const [isWaitingForRunningWork, setIsWaitingForRunningWork] = useState(false);
+  // SCIENT-FORK:END
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [isCheckAnimationLatched, setIsCheckAnimationLatched] = useState(false);
@@ -234,8 +238,11 @@ function SidebarUpdateControl() {
     isDownloading,
     showCheckIcon,
   });
+  // SCIENT-FORK:START — the running tooltip says when a managed update waits for running work.
   const tooltip = isRunningEverything
-    ? "Updating…"
+    ? isWaitingForRunningWork
+      ? WAITING_FOR_RUNNING_WORK
+      : "Updating…"
     : runsEverything
       ? everything.summary
       : showUpdateDetails
@@ -245,6 +252,7 @@ function SidebarUpdateControl() {
         : showCheckIcon
           ? "Checking for updates…"
           : "Check for updates";
+  // SCIENT-FORK:END
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -371,6 +379,7 @@ function SidebarUpdateControl() {
           : {}),
         // SCIENT-FORK:START — bulk and explicit Restart share the existing installer.
         ...(bridge && action !== "none" ? { installLocal: () => installFromFooter(bridge) } : {}),
+        onWaitingChange: setIsWaitingForRunningWork,
         // SCIENT-FORK:END
       });
     } catch (error) {
@@ -383,6 +392,9 @@ function SidebarUpdateControl() {
       );
     } finally {
       setIsUpdatingEverything(false);
+      // SCIENT-FORK:START
+      setIsWaitingForRunningWork(false);
+      // SCIENT-FORK:END
       setIsActionPending(false);
     }
   }, [action, everything, installFromFooter]);
