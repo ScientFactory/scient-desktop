@@ -21,6 +21,18 @@ describe("buildSectionSubmenu", () => {
     ]);
   });
 
+  it("checks General for threads the caller resolved there", () => {
+    const menu = buildSectionSubmenu({
+      sections: [],
+      generalIndex: 0,
+      currentSectionIds: [null, null],
+    });
+    expect(menu.children?.map((item) => [item.label, item.checked])).toEqual([
+      ["General", true],
+      ["New section…", undefined],
+    ]);
+  });
+
   it("checks nothing for a mixed selection and labels the bulk move", () => {
     const menu = buildSectionSubmenu({
       sections: [RESEARCH],

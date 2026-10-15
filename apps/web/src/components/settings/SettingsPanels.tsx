@@ -2176,7 +2176,7 @@ export function GeneralSettingsPanel() {
             ) : null}
           </>
         ) : null}
-        {/* SCIENT-FORK:START — optional empty-section cleanup (primary-only). */}
+        {/* SCIENT-FORK:START — sidebar section placement and empty-section cleanup. */}
         <AutomaticThreadPlacementSettings />
         <EmptySectionCleanupSettings />
         {/* SCIENT-FORK:END */}

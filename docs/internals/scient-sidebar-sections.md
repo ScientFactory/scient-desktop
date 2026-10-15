@@ -53,10 +53,56 @@ list-level geometry work still grow with the list size.
   `thread.metadata-updated` with the thread's _unchanged_ `updatedAt`. So
   organizing never reads as activity, reorders a list, or changes a timestamp.
 - **Catalog:** names, order, `emptySince`, `environmentIds` and
-  `createdInProjects` live in `threadSections` in the **primary**
-  environment's server settings. Every window and client shares it, and
-  threads in other environments keep ids that resolve against that one
-  catalog.
+  `createdInProjects` live in `threadSections` in the server settings of the
+  environment whose threads the sections hold. Each environment has its own
+  catalog and General position.
+
+**A section belongs to one environment.** A thread's `sectionId` resolves only
+against the catalog of the thread's own environment, whichever client is
+looking. The catalog's home is a property of the data, not of the viewer.
+
+- **Why:** the catalog used to live on the viewing client's _primary_
+  environment. The hosted app has no primary, so sections disappeared there;
+  a second desktop attached to the same server resolved its threads' ids
+  against its own catalog, so they fell into General. Reading each
+  environment's own catalog removes both failures.
+- **Identity:** section ids are unique within one catalog only, so the sidebar
+  names a section by both (`sectionGroupId`: the section id and environment
+  id, URI-encoded around an `@`, colon-free like the other group ids). Group
+  ids, collapse state, automatic-placement groups, drag targets and Undo all
+  use it. Collapse state saved as a bare section id still collapses that
+  section.
+- **Reading:** `sectionCatalogsAtom` lists every connected environment whose
+  server advertises `threadSections`, primary first, from the configs every
+  client already receives. No primary is needed, so the hosted app and a
+  second desktop see the same sections as the owning machine. The Group by
+  section toggle shows whenever one catalog exists.
+- **Writing:** every catalog edit targets one environment's server, with one
+  write queue per environment. Membership writes name the section's
+  environment and are refused for a thread on another one
+  (`ThreadSectionElsewhereError`); the Sections view refuses such drops before
+  they start.
+- **One General:** threads without a known section, from every environment,
+  share one General. `combinedSectionLayoutOrder` lists each environment's
+  sections before its General first (environment by environment, in catalog
+  order), then General, then the rest. Reordering writes each environment its
+  own part (`environmentGroupOrder`) and skips environments whose part is
+  unchanged. Order _between_ environments is not stored: a section dragged
+  past another environment's sections returns to its environment's block.
+  Move up/down steps only over General and sections of the same environment.
+- **Names:** a section header names its machine only while sections from more
+  than one environment are listed. Two environments' sections with the same
+  name are separate sections; they are never merged by name.
+- **What was given up:** one section can no longer hold threads from two
+  environments. Creating a section for threads on several environments creates
+  a section of that name on each, and reports any environment where creation
+  failed. Ids filed under the old model, where another environment's thread
+  pointed into the primary catalog, read as General; nothing migrates them,
+  and nothing rewrites them either.
+- **Mixed versions:** the server contract is unchanged, so new clients work
+  with any server that advertises `threadSections`. Older clients still read
+  and write their primary's catalog for every environment's threads, so
+  upgrade every client of a multi-environment setup together.
 
 **Catalog writes are conditional.** Clients replace the whole catalog, so two
 clients editing at once could each overwrite the other's edit.
@@ -69,15 +115,15 @@ clients editing at once could each overwrite the other's edit.
 - **The retry:** the client sees its edit missing from the returned settings
   and reapplies it to the catalog the server holds, up to three times
   (`writeCatalog`).
-- **Within one client**, writes also run one at a time.
+- **Within one client**, writes to one environment also run one at a time.
 - **A missing section is confirmed before it is trusted.** A write resolves
   before the settings stream delivers it, so the local copy can lack a
   section this client just created. An edit that needs a section it cannot
-  find (registering environments, rename, remove) first sends a write that
-  changes nothing, conditional on its copy; only if the server accepts it is
-  the section really gone. Otherwise the edit reruns on the server's catalog.
-  Without this, New section… created the section and then failed to file the
-  thread into it.
+  find (marking it occupied before filing, rename, remove) first sends a write
+  that changes nothing, conditional on its copy; only if the server accepts it
+  is the section really gone. Otherwise the edit reruns on the server's
+  catalog. Without this, New section… created the section and then failed to
+  file the thread into it.
 - **Creation projects are add-only.** The precondition leaves out
   `createdInProjects`, so clients that predate it (and drop it when reading)
   can still write. The server merges the stored refs back into every written
@@ -108,8 +154,12 @@ Because it's one rule, the field never shows a name that saves differently.
 ### Behavior
 
 **New section… files its threads.** Creating a section from a thread menu
-(or the chat header) creates it already registered for those threads'
-environments and projects, then files them. The compact creation popover shows a section-name input and small action buttons; its accessible title identifies the threads it is for. It opens beside
+(or the chat header) creates it on those threads' environment, already
+recording their projects there, then files them; threads on several
+environments get a section of that name on each. A section started empty from
+the New section row goes to the environment of the sidebar's selected project,
+else the first catalog's (the primary's when it has one); the form shows a
+machine picker when more than one environment stores sections. The compact creation popover shows a section-name input and small action buttons; its accessible title identifies the threads it is for. It opens beside
 the initiating button or native-menu origin in both sidebar modes and the chat
 header, without a backdrop or modal focus trap. The sidebar's New section row
 opens the same form instead of becoming a bottom-of-list input.
@@ -120,7 +170,7 @@ fact, so the fork is never briefly unsectioned. A removed section's id reads as
 General, as for the origin.
 
 **Sections follow the sidebar's project scope.** Under All projects every
-section is listed. With a project selected (`sectionIdsInProjectScope`):
+section is listed. With a project selected (`sectionGroupIdsInProjectScope`):
 
 - **Where it has threads:** a section is listed when any unarchived thread of
   the project is in it, on any shelf. A section with threads in two projects
@@ -130,12 +180,14 @@ section is listed. With a project selected (`sectionIdsInProjectScope`):
   created (published by the sidebar for creation elsewhere,
   `sidebarScope.ts`) and the projects of the threads filed on creation. One
   without that record, such as a section created before this, lists only
-  under All projects. "No threads anywhere" is concluded only while every
-  environment in its `environmentIds` is connected.
-- **Order is global:** reordering in a scope keeps hidden sections in their
-  slots (`mergeListedGroupOrder`, applied inside each write attempt).
-- **Filing stays global:** the Section submenu lists every section, so a
-  thread can join a section of another project.
+  under All projects. "No threads anywhere" is concluded only while this
+  client holds the live thread list of the section's environment.
+- **Order is per catalog:** reordering in a scope keeps hidden sections in
+  their slots (`mergeListedGroupOrder`, applied inside each write attempt).
+- **Filing crosses projects, not environments:** the Section submenu lists
+  every section of the threads' environment, so a thread can join a section of
+  another project there. A selection spanning environments offers only
+  General and New section….
 
 **Sections never change lifecycle.** Filing, unfiling and dragging a thread do
 not pin, unpin, settle, snooze or wake it. There are two drag exceptions, both
@@ -182,7 +234,11 @@ section when un-settled or woken.
   An explicit inactive-above-active
   exception is allowed and survives until that row's own next eligibility transition.
   Remotely acknowledged order-key changes are deliberate placement too.
-- **Persistence:** positions live under `scient:sidebar:placement-order:<primary environment>`.
+- **Persistence:** positions live under `scient:sidebar:placement-order:sections`, keyed
+  by section group ids, so they no longer depend on which environment is primary.
+  The one entry saved under the former `placement-order:<primary environment>` key moves
+  there once, its group ids qualified with that environment (`placementMigration.ts`);
+  anything ambiguous reseeds.
   Storage contains scoped IDs, eligibility and order keys only. Read defensively;
   unavailable storage still permits in-memory operation. Restart discards deadlines,
   then reconciles current synchronized membership. Turning placement off cancels timers
@@ -243,35 +299,44 @@ rows) by transform.
 
 **New thread in a section survives only its own draft.**
 
-- **Remembering:** the section is remembered for the draft's thread id, and
-  filed once that thread exists. The entry is dropped only after the write
-  succeeds, so a failed write is retried on a later update. Its own optimistic
-  membership does not acknowledge the write.
+- **Remembering:** the section and its environment are remembered for the
+  draft's thread id, and filed once that thread exists. The draft starts in a
+  project on the section's environment (the current project when it is there,
+  else the project of any unarchived thread in the section, shelved ones
+  included, else one it was created for). The entry is
+  dropped only after the write succeeds, so a failed write is retried on a
+  later update. Its own optimistic membership does not acknowledge the write.
+- **Moved drafts:** if the thread appears on another environment (the composer
+  retargeted the draft), the entry is dropped unfiled. Entries saved before
+  environments were recorded file into that id on the thread's environment.
 - **Forgetting:** T3 reuses an empty draft for any New thread request. So
   reusing one forgets its remembered section; the only seam for this is in
   `useHandleNewThread.ts`. "New thread in section" then remembers the section
   again.
 
-**Empty-section cleanup is opt-in, primary-only, and conservative.**
+**Empty-section cleanup is opt-in, per environment, and conservative.**
 
 - **Setting:** `threadSectionsDeleteEmptyAfterDays` is null (off) by default.
-  Like the catalog, it's read and written on the primary environment only,
-  whatever environment the settings page has selected.
-- **Empty means:** no active, pinned, snoozed or settled thread points to the
-  section. Archived threads aren't visible to the sidebar and don't count.
+  Each environment stores its own, beside its catalog; the settings row is
+  server-scoped and follows the environment the settings page has selected.
+- **Empty means:** no active, pinned, snoozed or settled thread of the
+  section's environment points to it. Archived threads aren't visible to the
+  sidebar and don't count. Threads of other environments can't be in it.
 - **Seeing occupied is trusted; seeing empty is not.**
-  - **Recording:** whenever membership changes, a client records the
-    environments holding each section's threads in `environmentIds`, and
-    clears any `emptySince` stamp. This runs whether or not cleanup is on, so
-    turning it on later is safe. Filing a thread requires successful registration
-    of its environment first; a failed registration leaves membership unchanged.
+  - **Recording:** filing a thread first marks its section occupied on the
+    section's environment (`markOccupied`: records the environment and clears
+    any `emptySince` stamp; a no-op once recorded), so filing from the chat
+    header with no sidebar mounted still restarts the count. A failed or
+    refused mark leaves membership unchanged. Whenever membership changes, a
+    mounted sidebar also records what it sees. This runs whether or not
+    cleanup is on, so turning it on later is safe.
   - **Judging:** a client stamps a section `emptySince`, or removes it once
-    stamped for the configured days, only when it sees every environment in
-    `environmentIds`. Every environment must also have a live, synchronized shell
-    snapshot for a minute. A connected transport alone is insufficient. Losing
-    synchronization cancels timers and invalidates queued sweeps. No single
-    client or server sees every environment's threads.
-- **Undo:** removals offer Undo.
+    stamped for the configured days, only after it has held that
+    environment's live, synchronized shell snapshot for a minute. A connected
+    transport alone is insufficient. Losing synchronization cancels timers and
+    invalidates queued sweeps. `environmentIds` that older clients recorded
+    for other environments no longer hold a section back.
+- **Undo:** removals offer Undo, restored on the same environment.
 
 ### Presentation
 
@@ -373,7 +438,7 @@ Upstream-owned files touched. JavaScript mounts are additive and carry
 | `apps/web/src/hooks/showThreadUndoNotice.ts`                                                                                               | In place: `"Moved"` in the undo action union                                                                                                                                                                                                                                                                                                                                             |
 | `apps/web/src/components/ui/sidebar.tsx`                                                                                                   | `toggle` variant of `SidebarMenuButton`                                                                                                                                                                                                                                                                                                                                                  |
 | `apps/web/src/contextMenuFallback.ts`                                                                                                      | `list-filter` icon                                                                                                                                                                                                                                                                                                                                                                       |
-| `apps/web/src/components/settings/SettingsPanels.tsx`, `settingsSearch.ts`                                                                 | `EmptySectionCleanupSettings` under General → Organization, and its two search entries                                                                                                                                                                                                                                                                                                   |
+| `apps/web/src/components/settings/SettingsPanels.tsx`, `settingsSearch.ts`                                                                 | `AutomaticThreadPlacementSettings` and `EmptySectionCleanupSettings` under General → Organization, and their search entries                                                                                                                                                                                                                                                              |
 | `apps/web/src/components/CommandPalette.tsx`, `CommandPalette.logic.ts`                                                                    | "Add project" at the end of the "New thread in…" picker, which also opens with no projects. In place: `shouldOpenNewThreadTargetPicker` is true whatever the number of projects, and the picker's early return and its two project lists (the pushed picker and the palette's "New thread in…" submenu)                                                                                  |
 
 **When aligning:**
@@ -391,21 +456,40 @@ Upstream-owned files touched. JavaScript mounts are additive and carry
 ## Verification
 
 - **Web unit tests** (`apps/web/src/scient/sections/`):
-  - `logic.test.ts`: catalog edits, grouping, project-scope visibility,
-    drop planning (header drops, pinned rows, collapsed sections, order-key
-    support), drag order, environment-aware cleanup sweeps, and
-    capitalization;
+  - `logic.test.ts`: catalog edits, section group ids, combining and
+    splitting environments' layouts, grouping that resolves membership only in
+    the thread's own catalog, project-scope visibility, drop planning (header
+    drops, pinned rows, collapsed sections, order-key support), drag order,
+    cleanup sweeps, and capitalization;
+  - `catalog.test.tsx`: catalogs listed without a primary, writes and queues
+    per environment, ids never resolved in another catalog, marking sections
+    occupied (including one created a moment earlier), queued cleanup;
   - `catalogWrite.test.ts`: concurrent edits from two clients both survive,
     and a missing section is confirmed before it is trusted;
-  - `useNewSectionForThreads.test.tsx`: New section… creates and files;
-  - `pendingNewThreadSections.test.ts`: optimistic rollback, filing retries and draft reuse;
-  - `actions.test.tsx`, `catalog.test.tsx`: registration failures, conflicts and queued cleanup;
-  - `useEmptySectionCleanup.test.tsx`: synchronization gating and cancellation;
-  - `menu.test.ts`.
+  - `newSectionFiling.test.tsx`: the real catalogs and actions file into a
+    section created a moment earlier, on each thread's own environment;
+  - `useNewSectionForThreads.test.tsx`: New section… creates and files, per
+    environment, and the machine choice for an empty section;
+  - `pendingNewThreadSections.test.ts`: optimistic rollback, filing retries,
+    draft reuse, moved drafts and entries saved before environments;
+  - `actions.test.tsx`: membership on the thread's environment only, even
+    when another environment's section shares the id, after marking the
+    section occupied;
+  - `placementMigration.test.ts`: saved placement carried over once;
+  - `useThreadSectionMenu.test.tsx`, `menu.test.ts`: the submenu per environment;
+  - `useSidebarSections.test.tsx`: the toggle without a primary, reordering per
+    environment, machine labels, legacy collapse state, and the project a new
+    thread in another machine's section starts in;
+  - `useEmptySectionCleanup.test.tsx`: per-environment settings, synchronization
+    gating and cancellation.
 - **Browser tests** (Chromium, `layout` project): `SidebarSectionsView`,
-  `SidebarSectionsToggle` and `scient/sidebar/SidebarNewThreadRow` cover
-  real-pointer header and thread drags, header layout, the toggle and the New
-  thread row.
+  `NewSectionPopover`, `SidebarSectionsToggle` and
+  `scient/sidebar/SidebarNewThreadRow` cover real-pointer header and thread
+  drags, refused drops into another environment's section, machine labels, the
+  creation form and its machine picker, header layout, the toggle and the New
+  thread row. On a cold Windows cache the browser can take over a minute to
+  connect; pass `--browser.connectTimeout=600000` rather than reading that as
+  a failure.
 - **Server tests:**
   - `apps/server/src/scient/threadSections/`: catalog preconditions through `updateSettings`;
   - `apps/server/src/orchestration-v2/runtimeLayer.test.ts`: native filing/clear, unchanged activity

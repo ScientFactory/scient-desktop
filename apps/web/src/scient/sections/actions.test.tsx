@@ -7,20 +7,23 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  record: vi.fn(),
   mutate: vi.fn(),
   shell: vi.fn(),
+  mark: vi.fn(),
 }));
-vi.mock("./catalog", () => ({
-  useThreadSectionCatalog: () => ({ recordEnvironments: mocks.record }),
-}));
+vi.mock("./catalog", () => ({ useThreadSectionCatalogs: () => ({ markOccupied: mocks.mark }) }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.mutate }));
 vi.mock("../../state/entities", () => ({ readThreadShell: mocks.shell }));
 vi.mock("../../state/threads", () => ({ threadEnvironment: { setSection: {} } }));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../../rpc/atomRegistry", () => ({
   appAtomRegistry: {
-    get: () => new Map([["remote", { environment: { capabilities: { threadSections: true } } }]]),
+    get: () =>
+      new Map([
+        ["remote", { environment: { capabilities: { threadSections: true } } }],
+        ["primary", { environment: { capabilities: { threadSections: true } } }],
+        ["old", { environment: { capabilities: {} } }],
+      ]),
   },
 }));
 vi.mock("../../components/ui/toast", () => ({
@@ -31,10 +34,12 @@ vi.mock("../../hooks/showThreadUndoNotice", () => ({ showThreadUndoNotice: vi.fn
 
 import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
-import { useThreadSectionActions } from "./actions";
+import { ThreadSectionElsewhereError, useThreadSectionActions } from "./actions";
 
-const target = scopeThreadRef(EnvironmentId.make("remote"), ThreadId.make("thread"));
-const section = ThreadSectionId.make("research");
+const REMOTE = EnvironmentId.make("remote");
+const target = scopeThreadRef(REMOTE, ThreadId.make("thread"));
+const sectionId = ThreadSectionId.make("research");
+const section = { environmentId: REMOTE, sectionId };
 let actions: ReturnType<typeof useThreadSectionActions>;
 let renderer: ReactTestRenderer;
 function Probe() {
@@ -49,7 +54,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
   mocks.shell.mockReturnValue({ sectionId: null });
-  mocks.record.mockResolvedValue(true);
+  mocks.mark.mockResolvedValue(true);
   mocks.mutate.mockResolvedValue(AsyncResult.success(undefined));
   act(() => {
     renderer = create(<Probe />);
@@ -60,62 +65,125 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("section membership registration", () => {
-  it("does not file a remote thread when the primary catalog write fails", async () => {
-    mocks.record.mockResolvedValue(false);
-    expect((await actions.setThreadSection(target, section))._tag).toBe("Failure");
-    expect(mocks.mutate).not.toHaveBeenCalled();
-
-    mocks.record.mockResolvedValue(true);
+describe("section membership", () => {
+  it("files a thread into a section of its own environment, on that environment only", async () => {
     expect((await actions.setThreadSection(target, section))._tag).toBe("Success");
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    expect(mocks.mutate).toHaveBeenCalledWith({
+      environmentId: REMOTE,
+      input: { threadId: target.threadId, sectionId },
+    });
   });
 
-  it("waits for registration acknowledgment before writing membership", async () => {
+  it("marks the section occupied before filing, and files nothing if that fails", async () => {
     let resolve!: (value: boolean) => void;
-    const registration = new Promise<boolean>((done) => {
-      resolve = done;
-    });
-    mocks.record.mockReturnValue(registration);
+    mocks.mark.mockReturnValue(
+      new Promise<boolean>((done) => {
+        resolve = done;
+      }),
+    );
     const filing = actions.setThreadSection(target, section);
-    expect(mocks.record).toHaveBeenCalledWith(section, [target.environmentId]);
+    expect(mocks.mark).toHaveBeenCalledWith(section);
     expect(mocks.mutate).not.toHaveBeenCalled();
     resolve(true);
-    await filing;
+    expect((await filing)._tag).toBe("Success");
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+
+    mocks.mutate.mockClear();
+    mocks.mark.mockResolvedValue(false);
+    expect((await actions.setThreadSection(target, section))._tag).toBe("Failure");
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("moves to General without touching any catalog", async () => {
+    mocks.shell.mockReturnValue({ sectionId });
+    await actions.setThreadSection(target, null);
+    expect(mocks.mark).not.toHaveBeenCalled();
+  });
+
+  it("refuses another environment's section even when it shares the thread's section id", async () => {
+    // The thread is already in its own "research"; the primary has one too.
+    mocks.shell.mockReturnValue({ sectionId });
+    const elsewhere = { environmentId: EnvironmentId.make("primary"), sectionId };
+    expect((await actions.setThreadSection(target, elsewhere))._tag).toBe("Failure");
+    vi.mocked(stackedThreadToast).mockImplementation((toast) => toast as never);
+    expect(await actions.moveThreadsToSection([target], elsewhere)).toBe(false);
+    expect(toastManager.add).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Failed to move thread to section" }),
+    );
+    expect(mocks.mark).not.toHaveBeenCalled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a section of another environment without writing anything", async () => {
+    const result = await actions.setThreadSection(target, {
+      environmentId: EnvironmentId.make("primary"),
+      sectionId,
+    });
+    expect(result._tag).toBe("Failure");
+    expect(
+      result._tag === "Failure" && Cause.squash(result.cause as Cause.Cause<unknown>),
+    ).toBeInstanceOf(ThreadSectionElsewhereError);
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a thread whose server does not store sections", async () => {
+    const old = EnvironmentId.make("old");
+    const result = await actions.setThreadSection(scopeThreadRef(old, ThreadId.make("t")), {
+      environmentId: old,
+      sectionId,
+    });
+    expect(result._tag).toBe("Failure");
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("moves a thread to General", async () => {
+    mocks.shell.mockReturnValue({ sectionId });
+    expect((await actions.setThreadSection(target, null))._tag).toBe("Success");
     expect(mocks.mutate).toHaveBeenCalledWith({
-      environmentId: target.environmentId,
-      input: { threadId: target.threadId, sectionId: section },
+      environmentId: REMOTE,
+      input: { threadId: target.threadId, sectionId: null },
     });
   });
 
-  it("allows moving to General without registering an environment", async () => {
-    mocks.shell.mockReturnValue({ sectionId: section });
-    mocks.record.mockResolvedValue(false);
-    expect((await actions.setThreadSection(target, null))._tag).toBe("Success");
-    expect(mocks.record).not.toHaveBeenCalled();
-    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  it("skips a thread already in the section", async () => {
+    mocks.shell.mockReturnValue({ sectionId });
+    expect((await actions.setThreadSection(target, section))._tag).toBe("Success");
+    expect(mocks.mutate).not.toHaveBeenCalled();
   });
 });
 
 describe("moving threads into a section", () => {
-  const other = scopeThreadRef(EnvironmentId.make("remote"), ThreadId.make("other"));
+  const other = scopeThreadRef(REMOTE, ThreadId.make("other"));
 
   it("files every thread and offers an Undo that restores its previous section", async () => {
     expect(await actions.moveThreadsToSection([target, other], section)).toBe(true);
     expect(mocks.mutate).toHaveBeenCalledTimes(2);
     expect(mocks.mutate).toHaveBeenCalledWith({
       environmentId: other.environmentId,
-      input: { threadId: other.threadId, sectionId: section },
+      input: { threadId: other.threadId, sectionId },
     });
     const notices = vi.mocked(showThreadUndoNotice).mock.calls;
     expect(notices).toHaveLength(2);
     expect(notices[0]?.[0]).toMatchObject({ action: "Moved" });
     // Undo writes the thread's previous section (General) back.
-    mocks.shell.mockReturnValue({ sectionId: section });
+    mocks.shell.mockReturnValue({ sectionId });
     await notices[0]![0].undo();
     expect(mocks.mutate).toHaveBeenLastCalledWith({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, sectionId: null },
+    });
+  });
+
+  it("restores a previous section on the thread's own environment", async () => {
+    const previous = ThreadSectionId.make("previous");
+    mocks.shell.mockReturnValue({ sectionId: previous });
+    await actions.moveThreadsToSection([target], section);
+    mocks.shell.mockReturnValue({ sectionId });
+    await vi.mocked(showThreadUndoNotice).mock.calls[0]![0].undo();
+    expect(mocks.mutate).toHaveBeenLastCalledWith({
+      environmentId: REMOTE,
+      input: { threadId: target.threadId, sectionId: previous },
     });
   });
 
@@ -126,16 +194,21 @@ describe("moving threads into a section", () => {
     expect(toastManager.add).not.toHaveBeenCalled();
   });
 
-  it("reports a filing failure instead of silently leaving the section empty", async () => {
-    mocks.record.mockResolvedValue(false);
-    expect(await actions.moveThreadsToSection([target], section)).toBe(false);
+  it("reports a refused move instead of silently leaving the section empty", async () => {
+    vi.mocked(stackedThreadToast).mockImplementation((toast) => toast as never);
+    const elsewhere = { environmentId: EnvironmentId.make("primary"), sectionId };
+    expect(await actions.moveThreadsToSection([target], elsewhere)).toBe(false);
     expect(mocks.mutate).not.toHaveBeenCalled();
     expect(showThreadUndoNotice).not.toHaveBeenCalled();
-    vi.mocked(stackedThreadToast).mockImplementation((toast) => toast as never);
-    await actions.moveThreadsToSection([target], section);
-    // The notice is actually shown, not only built.
     expect(vi.mocked(toastManager.add)).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "error", title: "Failed to move thread to section" }),
+      expect.objectContaining({
+        type: "error",
+        title: "Failed to move thread to section",
+        description: new ThreadSectionElsewhereError({
+          environmentId: REMOTE,
+          threadId: target.threadId,
+        }).message,
+      }),
     );
   });
 });
