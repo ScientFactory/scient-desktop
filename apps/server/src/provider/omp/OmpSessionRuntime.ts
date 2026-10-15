@@ -296,11 +296,17 @@ const eventTypeLabel = (type: string): string => {
 const toolFailed = (event: OmpRpcEvent): boolean =>
   event.isError === true || event.status === "error" || event.status === "failed";
 
-/** The state of the background job a tool result reports (`details.async.state`). */
-const backgroundJobState = (result: unknown): string | undefined =>
+/** The background job a tool result reports (`details.async`). */
+const backgroundJob = (result: unknown): Record<string, unknown> | undefined =>
   isRecord(result) && isRecord(result.details) && isRecord(result.details.async)
-    ? text(result.details.async.state)
+    ? result.details.async
     : undefined;
+
+/** The state of that job: running, completed, failed or cancelled. */
+const backgroundJobState = (result: unknown): string | undefined =>
+  text(backgroundJob(result)?.state);
+
+const backgroundJobId = (result: unknown): string | undefined => text(backgroundJob(result)?.jobId);
 
 /** A background job's last frame: it completed, failed or was cancelled. */
 const settlesBackgroundJob = (result: unknown): boolean => {
@@ -416,14 +422,23 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
    */
   const turnToolCallIds = new Set<string>();
   /**
-   * Calls whose background job may still report, the open turn's and earlier
-   * ones'. A model can give a later call the same id; while an earlier call
-   * under that id may report, the two cannot be told apart, so the id reports
-   * no update. A job's last frame frees its id when only one call could have
-   * sent it. A settled session does not: a cancelled job can still report.
+   * Background jobs that may still report, by job id
+   * (`details.async.jobId`): the call that started each and the turn it
+   * belongs to (none when its frames were not the open turn's). A model can
+   * give a later call an earlier call's id. A job's frames carry its job id,
+   * so they never reach the later call; an update without one, under an id an
+   * earlier turn's job still holds, could be either call's and is not shown.
+   * A job is forgotten at its last frame (completed, failed or cancelled), not
+   * when the session settles: a cancelled job can still report.
+   *
+   * Not covered: a call aborted inside OMP whose job never went to the
+   * background can report afterwards without a job id. If a later turn reuses
+   * its id, that update shows on the later call. Scient's Stop closes the
+   * process, so this takes an abort from elsewhere.
    */
-  const turnBackgroundToolCallIds = new Set<string>();
-  const earlierBackgroundToolCallIds = new Set<string>();
+  const backgroundJobs = new Map<string, { toolCallId: string; turnId: string | undefined }>();
+  /** Jobs whose last frame came before their call returned, so its end does not revive them. */
+  const settledJobIds = new Set<string>();
   let assistantMessageSeen = false;
   let failureDetail: string | undefined;
   /** The prompt command itself failed; its sender reports that error. */
@@ -588,10 +603,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       activeAssistantTimestamp = undefined;
       latestCompletedAssistantReference = undefined;
       completedAssistantIds.clear();
-      for (const toolCallId of turnBackgroundToolCallIds)
-        earlierBackgroundToolCallIds.add(toolCallId);
       turnToolCallIds.clear();
-      turnBackgroundToolCallIds.clear();
       assistantMessageSeen = false;
       drainRetries = 0;
       // A retry already scheduled stays the only one: it rechecks whichever
@@ -1143,18 +1155,31 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const published = turnIsOpen(turn) && !staleRunOpen();
         // Background jobs are tracked from every frame, published or not.
         if (event.type === "tool_execution_update") {
-          const turnCall = turnToolCallIds.has(toolCallId);
-          const earlierCall = earlierBackgroundToolCallIds.has(toolCallId);
-          if (settlesBackgroundJob(event.partialResult)) {
-            if (!turnCall) earlierBackgroundToolCallIds.delete(toolCallId);
-            else if (!earlierCall) turnBackgroundToolCallIds.delete(toolCallId);
+          const jobId = backgroundJobId(event.partialResult);
+          const job = jobId === undefined ? undefined : backgroundJobs.get(jobId);
+          if (jobId !== undefined && settlesBackgroundJob(event.partialResult)) {
+            if (job) backgroundJobs.delete(jobId);
+            else settledJobIds.add(jobId);
           }
-          if (!turnCall || earlierCall) return;
-        } else if (
-          event.type === "tool_execution_end" &&
-          backgroundJobState(event.result) === "running"
-        ) {
-          (published ? turnBackgroundToolCallIds : earlierBackgroundToolCallIds).add(toolCallId);
+          const ownCall =
+            turnToolCallIds.has(toolCallId) &&
+            (job
+              ? job.turnId === activeTurnId
+              : jobId !== undefined ||
+                ![...backgroundJobs.values()].some(
+                  (other) => other.toolCallId === toolCallId && other.turnId !== activeTurnId,
+                ));
+          if (!ownCall) return;
+        } else if (event.type === "tool_execution_end") {
+          const jobId = backgroundJobId(event.result);
+          if (jobId !== undefined && backgroundJobState(event.result) === "running") {
+            if (!settledJobIds.delete(jobId)) {
+              backgroundJobs.set(jobId, {
+                toolCallId,
+                turnId: published ? activeTurnId : undefined,
+              });
+            }
+          }
         }
         if (!published) return;
         turnToolCallIds.add(toolCallId);
