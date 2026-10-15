@@ -43,6 +43,8 @@ const OMP_INBOX_CAPACITY = 256;
 const OMP_SETTLED_PROMPT_MEMORY = 16;
 /** Prompt outcome frames held while the open turn waits for its prompt id. */
 const OMP_PENDING_OUTCOME_MEMORY = 16;
+/** Background jobs kept after the session settled, for a cancelled job's stray frames. */
+const OMP_SETTLED_JOB_MEMORY = 256;
 
 const ompDrainRetry = (attempt: number, busy: boolean): "confirm" | "retry" | "give-up" => {
   if (!busy) return "confirm";
@@ -442,10 +444,19 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     string,
     { readonly toolCallId: string; readonly turnId: string | undefined; running: boolean }
   >();
-  /** Jobs of the open run whose last frame came before their call returned, so its end does not revive them. */
+  /** Jobs whose last frame came before their call returned, so its end does not revive them. */
   const settledJobIds = new Set<string>();
+  /**
+   * A settled session runs nothing: no job is running and no call awaits its
+   * end. The most recent settled jobs are kept for their stray frames.
+   */
   const sessionSettled = () => {
     for (const job of backgroundJobs.values()) job.running = false;
+    for (const jobId of backgroundJobs.keys()) {
+      if (backgroundJobs.size <= OMP_SETTLED_JOB_MEMORY) break;
+      backgroundJobs.delete(jobId);
+    }
+    settledJobIds.clear();
   };
   let assistantMessageSeen = false;
   let failureDetail: string | undefined;
@@ -612,8 +623,6 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       latestCompletedAssistantReference = undefined;
       completedAssistantIds.clear();
       turnToolCallIds.clear();
-      // An early last frame waits only for its own run's end.
-      settledJobIds.clear();
       assistantMessageSeen = false;
       drainRetries = 0;
       // A retry already scheduled stays the only one: it rechecks whichever

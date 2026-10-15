@@ -1209,6 +1209,37 @@ describe("Oh My Pi session runtime outcomes", () => {
     }),
   );
 
+  it.effect("an abandoned run's late return does not revive a job that already finished", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("first");
+      yield* h.runtime.accepted("prompt-1", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash" },
+        jobUpdate("call-1", "completed", "done"),
+      );
+      yield* h.settleFrames;
+      // The turn settles while its run is still open; the run returns the call later.
+      yield* h.runtime.commandFailed("first");
+      expect(yield* h.outcome).toMatchObject({ outcome: "failed" });
+      yield* h.runtime.begin("second");
+      yield* h.wire.send(
+        backgroundedEnd("call-1"),
+        { type: "agent_end", messages: [], isTerminal: true },
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: "read" },
+        { type: "tool_execution_update", toolCallId: "call-1", toolName: "read" },
+      );
+      const produced = yield* h.settleFrames;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(toolFrames(produced)).toEqual([
+        { toolCallId: "call-1", phase: "started" },
+        { toolCallId: "call-1", phase: "updated" },
+      ]);
+    }),
+  );
+
   it.effect("a job that finishes before its call returns is not revived by the return", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
