@@ -67,7 +67,13 @@ function impactSignals(root, previous, target, paths) {
 
 function argumentsFor(argv) {
   const [command, ...rest] = argv;
-  if (!["plan", "start"].includes(command)) throw new Error("Use plan or start");
+  if (command === "facts") {
+    if (rest.length !== 2 || rest[0] !== "--merge" || !rest[1] || rest[1].startsWith("--")) {
+      throw new Error("facts requires exactly --merge <upstream-merge-commit>");
+    }
+    return { command, args: { "--merge": rest[1] } };
+  }
+  if (!["plan", "start"].includes(command)) throw new Error("Use plan, start or facts");
   const args = {};
   const allowed = new Set(["--base", "--target", "--format", "--worktree", "--branch"]);
   for (let i = 0; i < rest.length; i += 1) {
@@ -316,6 +322,97 @@ export function startAlignment(plan) {
   }
 }
 
+/** Receipt boundary facts for a committed upstream merge, derived from Git instead of copied by hand. */
+export function alignmentFacts(merge, { cwd = process.cwd() } = {}) {
+  const root = output(cwd, ["rev-parse", "--show-toplevel"]);
+  const commit = output(root, ["rev-parse", "--verify", "--end-of-options", `${merge}^{commit}`]);
+  if (!isAncestor(root, commit, "HEAD"))
+    throw new Error("HEAD does not contain the upstream merge");
+  const [, base, target, ...extraParents] = output(root, [
+    "rev-list",
+    "--parents",
+    "-n",
+    "1",
+    commit,
+  ]).split(" ");
+  if (!target || extraParents.length > 0) {
+    throw new Error("The upstream merge must have exactly two parents");
+  }
+  const state = JSON.parse(output(root, ["show", `${base}:upstream-state.json`]));
+  const previous = output(root, [
+    "rev-parse",
+    "--verify",
+    "--end-of-options",
+    `${state.integrationBase}^{commit}`,
+  ]);
+  if (!isAncestor(root, previous, target)) {
+    throw new Error("Second parent does not follow the owned base's recorded integration");
+  }
+  const mergeBase = output(root, ["merge-base", base, target]);
+  const owned = new Set(
+    nulPaths(git(root, ["diff", "--no-renames", "--name-only", "-z", mergeBase, base]).stdout),
+  );
+  const officialPaths = nulPaths(
+    git(root, ["diff", "--no-renames", "--name-only", "-z", previous, target]).stdout,
+  );
+  let nearestTag = null;
+  try {
+    nearestTag = output(root, ["describe", "--tags", "--abbrev=0", target]);
+  } catch (error) {
+    if (!/No names found|No tags can describe/u.test(error.message)) throw error;
+  }
+  const catchUps = output(root, [
+    "rev-list",
+    "--reverse",
+    "--first-parent",
+    "--merges",
+    "--parents",
+    `${commit}..HEAD`,
+  ])
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [catchUp, , ownedMain] = line.split(" ");
+      return { merge: catchUp, ownedMain };
+    });
+  return {
+    base,
+    previous,
+    target,
+    tagsAtTarget: output(root, ["tag", "--points-at", target]).split("\n").filter(Boolean),
+    nearestTag,
+    commitCount: Number(output(root, ["rev-list", "--count", `${previous}..${target}`])),
+    incomingPaths: officialPaths.length,
+    overlappingPaths: officialPaths.filter((path) => owned.has(path)).length,
+    initiallyUnmerged: simulatedConflicts(root, base, target).paths,
+    merge: commit,
+    tree: output(root, ["rev-parse", `${commit}^{tree}`]),
+    catchUps,
+  };
+}
+
+function printFacts(facts) {
+  const tag =
+    facts.tagsAtTarget.length > 0
+      ? `tagged ${facts.tagsAtTarget.map((name) => `\`${name}\``).join(", ")}`
+      : `no tag at the target (nearest reachable: ${facts.nearestTag ? `\`${facts.nearestTag}\`` : "none"})`;
+  const lines = [
+    `- Owned base: \`${facts.base}\`.`,
+    `- Previous official boundary: \`${facts.previous}\`.`,
+    `- Frozen official target: \`${facts.target}\`, ${tag}.`,
+    `- Range: ${facts.commitCount} official commits, ${facts.incomingPaths} incoming paths, ` +
+      `${facts.overlappingPaths} same-path overlaps with Scient, ` +
+      `${facts.initiallyUnmerged.length} initially unmerged paths.`,
+    `- Literal integration merge: \`${facts.merge}\`, tree \`${facts.tree}\`; parents are the ` +
+      "owned base and the frozen official target.",
+    ...facts.catchUps.map(
+      (catchUp) =>
+        `- Owned-main catch-up: merge \`${catchUp.merge}\` of owned main \`${catchUp.ownedMain}\`.`,
+    ),
+  ];
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
 function printPlan(plan, result) {
   if (plan.format === "json") {
     process.stdout.write(`${JSON.stringify({ ...plan, result }, null, 2)}\n`);
@@ -372,6 +469,12 @@ function printPlan(plan, result) {
 }
 
 export function runAlignment(argv = process.argv.slice(2), options) {
+  const { command, args } = argumentsFor(argv);
+  if (command === "facts") {
+    const facts = alignmentFacts(args["--merge"], options);
+    printFacts(facts);
+    return { facts };
+  }
   const plan = inspectAlignment(argv, options);
   const result = plan.command === "start" ? startAlignment(plan) : null;
   printPlan(plan, result);

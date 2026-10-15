@@ -275,6 +275,30 @@
       ]
     },
     {
+      "id": "ownership",
+      "triggers": [
+        "apps/server/src/server.ts",
+        "apps/server/src/serverOwnership",
+        "apps/server/src/serverRuntimeState",
+        "apps/server/src/persistence/Sqlite",
+        "apps/desktop/src/backend/",
+        "apps/desktop/src/wsl/"
+      ],
+      "consumers": [
+        "Server startup -> one owner per state directory -> runtime state record; desktop backend pool and WSL backend start through the same owner"
+      ],
+      "decidingAssertions": [
+        "Two racing starts leave exactly one owner; a second start is refused without touching the live record; a stale record is ignored and never removed when another server published it. On Windows, a stale record whose PID now names a SYSTEM process does not block startup."
+      ],
+      "checks": {
+        "server": ["src/serverRuntimeState.test.ts"]
+      },
+      "limits": [
+        "The SYSTEM-process case runs only on Windows; hosted Linux CI does not exercise it.",
+        "Desktop backend pool and WSL launch paths are not exercised by this server suite."
+      ]
+    },
+    {
       "id": "reader",
       "triggers": [
         "apps/web/src/components/chat/MessagesTimeline",

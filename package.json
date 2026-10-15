@@ -20,7 +20,7 @@
     "icons:check": "node scripts/export-brand-icons.ts --check",
     "licenses:sync": "node scripts/sync-third-party-license-notices.ts",
     "icons:export:android": "node scripts/export-android-icons.ts",
-    "build": "vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-t3code' --filter './scripts' build",
+    "build": "vp run --fail-if-no-match --filter \"./apps/*\" --filter \"./packages/*\" --filter \"./oxlint-plugin-t3code\" --filter \"./scripts\" build",
     "build:marketing": "vp run --filter @t3tools/marketing build",
     "build:desktop": "vp run --filter @t3tools/desktop --filter t3 build",
     "build:resource-monitor": "cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml",
@@ -72,6 +72,8 @@
     "alignment:checks": "node scripts/scient-alignment-checks.mjs",
     "alignment:plan": "node scripts/scient-alignment.mjs plan",
     "alignment:start": "node scripts/scient-alignment.mjs start",
+    "alignment:facts": "node scripts/scient-alignment.mjs facts",
+    "alignment:gates": "node scripts/scient-alignment-gates.mjs",
     "build:synctex-runtime": "node scripts/stage-synctex-runtime.ts",
     "voice:runtime:stage": "node scripts/stage-whisper-runtime.ts --verbose --dev-cache"
   },

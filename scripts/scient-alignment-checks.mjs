@@ -1,5 +1,6 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -7,6 +8,49 @@ const mapping = JSON.parse(
   NodeFS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url)),
 );
 const matches = (path, prefix) => path.startsWith(prefix);
+
+/**
+ * Child environment for local checks. A Scient desktop host gives its agents
+ * variables that point at the live profile or make Electron run as Node; drop
+ * them and, given a synthetic home, root every default state path there.
+ */
+export function checkEnvironment(env, home) {
+  const hostOwned = (name) => {
+    const upper = name.toUpperCase();
+    return (
+      ["ELECTRON_RUN_AS_NODE", "T3CODE_HOME", "T3CODE_CLI_PATH"].includes(upper) ||
+      upper.startsWith("SCIENT_NEXT_") ||
+      upper.startsWith("SCIENT_ANALYTICS_")
+    );
+  };
+  const kept = Object.fromEntries(Object.entries(env).filter(([name]) => !hostOwned(name)));
+  return home === undefined ? kept : { ...kept, SCIENT_NEXT_HOME: home, T3CODE_HOME: home };
+}
+
+/** A fresh state root, so a check cannot fall back to a live profile. */
+export const makeCheckHome = () =>
+  NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-check-home-"));
+
+/** Run a repository tool with the check environment. Windows reaches `pnpm.cmd` through its shell. */
+export function runTool(argv, { home, ...options } = {}) {
+  const spawnOptions = {
+    stdio: "inherit",
+    ...options,
+    env: checkEnvironment(process.env, home),
+  };
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone alignment CLI has no Effect runtime.
+  if (NodeOS.platform() !== "win32") {
+    return NodeChildProcess.spawnSync(argv[0], argv.slice(1), spawnOptions);
+  }
+  // A quoted command name breaks `%~dp0` in npm-style .cmd shims, so only arguments
+  // are quoted. Inside double quotes cmd.exe still expands `%` and cannot escape `"`.
+  const [name, ...rest] = argv;
+  if (!/^[\w.-]+$/u.test(name) || rest.some((arg) => /["%]/u.test(arg))) {
+    throw new Error(`Unsupported shell command: ${argv.join(" ")}`);
+  }
+  const command = [name, ...rest.map((arg) => `"${arg}"`)].join(" ");
+  return NodeChildProcess.spawnSync(command, { ...spawnOptions, shell: true });
+}
 
 /** Select consumers conservatively, including paths the maintained map does not know. */
 export function selectBoundaries(paths) {
@@ -175,19 +219,24 @@ export function main(argv) {
         throw new Error(`Unavailable check in target checkout: ${file}`);
       }
     }
-    if (command.requiredEnv && !process.env[command.requiredEnv]) {
+    if (command.requiredEnv && !checkEnvironment(process.env)[command.requiredEnv]) {
       throw new Error(`Native checks require ${command.requiredEnv}; no native pass claimed`);
     }
   }
   if (!commands.some((command) => command.included)) {
     console.log("No mapped checks selected; no behavioral qualification claimed.");
   }
+  // Run every group so one pass reports all failing boundaries.
+  const failed = [];
   for (const command of commands.filter((command) => command.included)) {
     const start = performance.now();
-    const result = NodeChildProcess.spawnSync(command.argv[0], command.argv.slice(1), {
-      cwd: command.cwd,
-      stdio: "inherit",
-    });
+    const home = makeCheckHome();
+    let result;
+    try {
+      result = runTool(command.argv, { cwd: command.cwd, home });
+    } finally {
+      NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
+    }
     console.log(
       JSON.stringify({
         check: command.id,
@@ -197,9 +246,10 @@ export function main(argv) {
       }),
     );
     if (result.error) throw result.error;
-    if (result.status !== 0) return result.status ?? 1;
+    if (result.status !== 0) failed.push(command.id);
   }
-  return 0;
+  if (failed.length) console.log(`Failed checks: ${failed.join(", ")}`);
+  return failed.length ? 1 : 0;
 }
 
 if (

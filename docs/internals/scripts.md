@@ -75,8 +75,8 @@ authenticated.
 The maintained [boundary map](../../scripts/scient-alignment-checks.json) records affected
 owners and untouched consumers, deciding assertions, commands, prerequisites and limits
 for provider guidance/skills/MCP/native input, Stop/Resume ownership, queue admission and
-restart, settings precedence and instance identity, immutable persistence, and chat reader
-interaction. Maintain the assertions and consumer triggers together when those contracts move.
+restart, settings precedence and instance identity, immutable persistence, one server
+owner per state directory, and chat reader interaction. Maintain the assertions and consumer triggers together when those contracts move.
 This is a bounded impact map, not an exhaustive dependency graph or a qualification policy.
 
 Print a plan before executing it:
@@ -96,7 +96,7 @@ renames retain their paths, including both rename sides. `--path` is repeatable 
 repository-relative consumer impact; it need not be an existing file. Choose exactly one
 selection mode. Unknown paths and shared contracts, client runtime, execution/provider
 cores, mobile surfaces, shared ChatComposer/ComposerPrimaryActions hosts, dependencies
-or test setup select all six boundaries. Recognized chat reader owners select reader
+or test setup select all boundaries. Recognized chat reader owners select reader
 checks; other chat paths retain the unknown-path fallback. ChatView also selects settings;
 queuedRunShortcuts selects the queue boundary and its existing client dispatch witnesses. Maintainer prose under `docs/internals/` and
 `docs/operations/`, and read-only `.repos/` references, are explicit exclusions; runtime
@@ -114,8 +114,35 @@ checkout's own suites with its installed dependencies; it never copies test or p
 source into the target or changes its index. Missing/moved suites or an unresolved index
 refuse execution (exit 2) instead of silently producing an empty pass. Printed plans can
 still be reviewed before conflicts are resolved. Commands run serially with the existing
-package configurations and stop at the first failure. Execution is synchronous and does
-not cache, resume, install dependencies, coordinate other lanes or launch an app.
+package configurations; a failing group does not stop later groups, and the run ends by
+listing every failed group. Execution is synchronous and does not cache, resume, install
+dependencies, coordinate other lanes or launch an app.
+
+Every command runs without the variables a Scient desktop host gives its agents
+(`ELECTRON_RUN_AS_NODE`, `T3CODE_HOME`, `T3CODE_CLI_PATH`, `SCIENT_NEXT_*`,
+`SCIENT_ANALYTICS_*`) and with `SCIENT_NEXT_HOME` and `T3CODE_HOME` set to a fresh
+temporary directory, so a check cannot fall back to a live profile. Explicit test inputs
+such as `SCIENT_PI_TEST_BINARY` pass through.
+
+## Alignment gates and receipt facts
+
+`pnpm alignment:gates` runs the final local gate list from the
+[alignment protocol](./upstream-alignment-protocol.md#5-validate-progressively) serially in
+the same environment, each gate with its own temporary home. It continues past failures,
+writes `results.json` and a log per gate to a new temporary directory after every gate,
+and prints a Markdown table with the candidate commit, tree, platform and tool versions.
+Typecheck uses `pnpm -r --no-bail`, so one run reports every failing package. A desktop
+smoke run that leaves its temporary home empty resolved state elsewhere and fails.
+`--only fmt,lint` runs a subset and labels the result partial.
+
+On Windows the repository-wide test aggregate is reported as not run: the local aggregate
+is not a supported Windows lane yet (see `windows-tests.yml`), so hosted test
+qualification of the pushed candidate remains pending. `--tests` runs it anyway.
+
+`pnpm alignment:facts --merge <upstream-merge>` prints the receipt's boundary facts for
+a committed upstream merge: owned base, previous boundary, target and its exact tags,
+commit and path counts, initially unmerged paths reconstructed with the same merge
+simulation as `plan`, the merge tree and later owned-main catch-ups on the branch.
 Shared model curation and project/settings reducers run before server integration checks.
 Affected compilation and static checks remain separate required composition checks.
 For older target revisions, review the actual assertion bodies too: an existing suite
