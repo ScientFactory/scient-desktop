@@ -1,3 +1,4 @@
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useMemo } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -6,7 +7,11 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { useStartProviderRuntimeAction } from "../providerConnection/useProviderLifecycleController";
-import { appProviderSnapshots, watchManagedRuntimeUpdate } from "./managedRuntimeUpdateWatch";
+import {
+  appProviderSnapshots,
+  watchManagedRuntimeUpdate,
+  type ReadServerProviders,
+} from "./managedRuntimeUpdateWatch";
 import {
   collectProviderUpdateMachines,
   getProviderUpdateResultsToastView,
@@ -32,6 +37,9 @@ const UNSTARTED_MANAGED_UPDATE: ProviderUpdateOutcome = {
 export function useProviderUpdateInventory() {
   const { environments } = useEnvironments();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
+    reportFailure: false,
+  });
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
   const startRuntimeAction = useStartProviderRuntimeAction();
@@ -92,5 +100,12 @@ export function useProviderUpdateInventory() {
     }
   };
 
-  return { machines, updateAll };
+  /** A machine's current provider list, from its server rather than the cached snapshot. */
+  const readServerProviders: ReadServerProviders = async (environmentId) => {
+    const result = await refreshProviders({ environmentId, input: {} });
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    return result.value.providers;
+  };
+
+  return { machines, updateAll, readServerProviders };
 }

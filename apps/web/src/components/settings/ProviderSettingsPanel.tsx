@@ -1194,8 +1194,9 @@ export function EnvironmentProviderSettings({
         }
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
-            {/* SCIENT-FORK: Scient's list, managed runtimes included. */}
+            {/* SCIENT-FORK:START — Scient's list, managed runtimes included. */}
             <ProviderUpdateAllAction />
+            {/* SCIENT-FORK:END */}
             <Tooltip>
               <TooltipTrigger
                 render={

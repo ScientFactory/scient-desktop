@@ -160,44 +160,82 @@ export function watchManagedRuntimeUpdate(
 }
 
 /**
- * Resolves once each given environment is either confirmed idle, connected
- * with no managed runtime operation in progress whoever started it, or cannot
- * be: missing, lost, or reconnecting for longer than the grace period. A
- * reconnecting environment's cached snapshot confirms nothing, since an update
- * may have started after it. Resolves with the environments it could not
- * confirm; restarting one could cut an update off.
+ * The environment server's own provider list, asked over its current
+ * connection; rejects when the server does not answer.
  */
-export function waitForManagedRuntimesIdle(
+export type ReadServerProviders = (
+  environmentId: EnvironmentId,
+) => Promise<ReadonlyArray<ServerProvider>>;
+
+const hasActiveManagedOperation = (providers: ReadonlyArray<ServerProvider>) =>
+  providers.some((provider) =>
+    isManagedRuntimeOperationActive(provider.connection?.runtime?.operation),
+  );
+
+/**
+ * Whether an environment can restart without cutting off a managed runtime
+ * operation, whoever started it. Waits while one runs. Only the server's own
+ * answer confirms it, asked once the cached snapshot shows the environment
+ * connected and idle: a cached snapshot can predate an update whose answer
+ * was lost, even one that still reads connected. False when it cannot be
+ * confirmed: the environment is missing or lost, or reconnects, or its server
+ * does not answer, for longer than the grace period.
+ */
+async function confirmManagedRuntimesIdle(
   source: ProviderSnapshotSource,
-  environmentIds: ReadonlyArray<EnvironmentId>,
+  environmentId: EnvironmentId,
+  readServerProviders: ReadServerProviders,
   reconnectGraceMs = RECONNECT_GRACE_MS,
-): Promise<ReadonlySet<EnvironmentId>> {
-  const reconnectingSince = new Map<EnvironmentId, number>();
-  return whenSettled(
-    source,
-    (environments) => {
-      const unconfirmed = new Set<EnvironmentId>();
-      let busy = false;
-      for (const environmentId of new Set(environmentIds)) {
+): Promise<boolean> {
+  const pollMs = Math.min(10_000, reconnectGraceMs);
+  let reconnectingSince: number | null = null;
+  let unansweredSince: number | null = null;
+  for (;;) {
+    const cached = await whenSettled(
+      source,
+      (environments) => {
         const environment = environments.find(
           (candidate) => candidate.environmentId === environmentId,
         );
-        if (!environment || environment.connection === "lost") {
-          unconfirmed.add(environmentId);
-        } else if (environment.connection === "reconnecting") {
-          const since = reconnectingSince.get(environmentId) ?? Date.now();
-          reconnectingSince.set(environmentId, since);
-          if (Date.now() - since < reconnectGraceMs) busy = true;
-          else unconfirmed.add(environmentId);
-        } else {
-          reconnectingSince.delete(environmentId);
-          busy ||= environment.providers.some((provider) =>
-            isManagedRuntimeOperationActive(provider.connection?.runtime?.operation),
-          );
+        if (!environment || environment.connection === "lost") return "lost" as const;
+        if (environment.connection === "reconnecting") {
+          reconnectingSince ??= Date.now();
+          return Date.now() - reconnectingSince >= reconnectGraceMs ? ("lost" as const) : undefined;
         }
-      }
-      return busy ? undefined : unconfirmed;
-    },
-    Math.min(10_000, reconnectGraceMs),
+        reconnectingSince = null;
+        return hasActiveManagedOperation(environment.providers) ? undefined : ("idle" as const);
+      },
+      pollMs,
+    );
+    if (cached === "lost") return false;
+    const answer = await readServerProviders(environmentId).then(
+      (providers) => providers,
+      () => null,
+    );
+    if (answer === null) {
+      unansweredSince ??= Date.now();
+      if (Date.now() - unansweredSince >= reconnectGraceMs) return false;
+    } else {
+      unansweredSince = null;
+      if (!hasActiveManagedOperation(answer)) return true;
+    }
+    // Not yet: let the snapshot catch up before asking again.
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
+/** The given environments that `confirmManagedRuntimesIdle` could not confirm, once each has settled. */
+export async function waitForManagedRuntimesIdle(
+  source: ProviderSnapshotSource,
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  readServerProviders: ReadServerProviders,
+  reconnectGraceMs = RECONNECT_GRACE_MS,
+): Promise<ReadonlySet<EnvironmentId>> {
+  const ids = [...new Set(environmentIds)];
+  const confirmed = await Promise.all(
+    ids.map((environmentId) =>
+      confirmManagedRuntimesIdle(source, environmentId, readServerProviders, reconnectGraceMs),
+    ),
   );
+  return new Set(ids.filter((_, index) => !confirmed[index]));
 }
