@@ -1,7 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { OmpSettings } from "@t3tools/contracts";
 
@@ -15,9 +21,11 @@ import {
 import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 
 import { makeOmpScriptedWire } from "./omp/OmpCaptureReplay.testFixtures.ts";
-import { makeOmpRedaction, type OmpRpcProcess } from "./omp/OmpRpcProcess.ts";
-import { checkOmpProviderStatus } from "./OmpProvider.ts";
+import { makeOmpExecutableGate, OmpExecutableGate } from "./omp/OmpExecutableGate.ts";
+import { makeOmpRedaction, makeOmpRpcProcess, type OmpRpcProcess } from "./omp/OmpRpcProcess.ts";
+import { checkOmpProviderStatus, type OmpProcessFactory } from "./OmpProvider.ts";
 import { ompTarget } from "./omp/OmpTarget.ts";
+import { scientAgentTarget } from "./scient/ScientAgentTarget.ts";
 
 const response = (command: string, data: unknown = {}): OmpRpcResponse => ({
   id: "status-request",
@@ -360,6 +368,109 @@ describe("Oh My Pi provider discovery errors", () => {
       expect(result.message).toBe(
         "Oh My Pi sent output Scient could not read: RPC emitted a second ready frame.",
       );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("Oh My Pi provider executable checks", () => {
+  /** The real process factory, so the version probe spawns through the given spawner. */
+  const realProcess = Effect.map(
+    makeOmpExecutableGate(),
+    (gate): OmpProcessFactory =>
+      (options) =>
+        makeOmpRpcProcess(options).pipe(Effect.provideService(OmpExecutableGate, gate)),
+  );
+
+  /** A spawner whose version probe prints `stdout` and exits 0. */
+  const versionProbe = (stdout: string) =>
+    ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(new TextEncoder().encode(stdout)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      ),
+    );
+
+  it.effect.each([
+    { caseTitle: "Oh My Pi is not found on PATH", target: ompTarget, managed: false },
+    {
+      caseTitle: "Scient Agent's managed path is missing",
+      target: scientAgentTarget,
+      managed: true,
+    },
+  ])("says the agent is not installed when $caseTitle", ({ target, managed }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-omp-missing-" });
+      const binaryPath = managed
+        ? path.join(root, "provider-runtimes", target.stateNamespace, "versions", "0.1.0", "agent")
+        : "omp";
+      const result = yield* checkOmpProviderStatus(
+        target,
+        { enabled: true, binaryPath },
+        { PATH: root },
+        yield* realProcess,
+      );
+      expect(result.status).toBe("error");
+      expect(result.installed).toBe(false);
+      expect(result.message).toBe(
+        `${target.name} is not installed or its executable could not be found.`,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+  );
+
+  it.effect("still reports a failed version check for an executable that will not run", () =>
+    Effect.gen(function* () {
+      const result = yield* checkOmpProviderStatus(
+        ompTarget,
+        settings,
+        { PATH: "/usr/bin" },
+        yield* realProcess,
+      ).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "ChildProcess",
+                method: "spawn",
+                description: "EACCES",
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(result.status).toBe("error");
+      expect(result.installed).toBe(true);
+      expect(result.message).toBe("Oh My Pi version verification failed.");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("still names the supported releases for an executable of the wrong version", () =>
+    Effect.gen(function* () {
+      const result = yield* checkOmpProviderStatus(
+        ompTarget,
+        settings,
+        { PATH: "/usr/bin" },
+        yield* realProcess,
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, versionProbe("omp/1.0.0\n")),
+      );
+      expect(result.status).toBe("error");
+      expect(result.installed).toBe(true);
+      expect(result.message).toBe(ompTarget.unsupportedDetail);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
