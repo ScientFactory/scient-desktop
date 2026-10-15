@@ -219,6 +219,9 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const cleanupOwnedResources = Effect.fn("ProviderRuntimeManager.cleanupOwnedResources")(
     function* (active: ActiveRuntimeOperation, mode: ActiveRuntimeCleanupMode) {
       if (mode === "interrupt") {
+        // Wait out a start still handing off, so its worker is registered here
+        // or the start has seen the operation claimed and stopped.
+        yield* active.transitionLock.withPermits(1)(Effect.void);
         const fiber = yield* Ref.get(active.fiberRef);
         if (fiber) yield* Fiber.interrupt(fiber);
       }
@@ -748,33 +751,43 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
               ),
             ),
           );
-          return yield* Effect.gen(function* () {
-            const initialProviders = yield* restore(
-              providerRegistry.setProviderManagedRuntimeSummary({
-                instanceId: input.instanceId,
-                runtime: {
-                  ...baseSummary,
-                  operation: operation({
-                    operationId,
-                    action: input.action,
-                    status: "preparing",
-                    startedAt,
-                    message: "Preparing the provider runtime operation.",
+          // The handoff holds the transition lock. Cancellation and shutdown take it
+          // before stopping the worker, so they find either a registered worker
+          // to interrupt or, having claimed first, a start that stops here.
+          return yield* transitionLock
+            .withPermits(1)(
+              Effect.gen(function* () {
+                if (
+                  (yield* Ref.get(activeRef)).get(input.instanceId)?.operationId !== operationId
+                ) {
+                  return yield* makeError({
+                    provider: target.provider,
+                    instanceId: input.instanceId,
+                    reason: "runtime_operation_not_found",
+                    message: "The provider runtime operation was cancelled before it started.",
+                  });
+                }
+                const initialProviders = yield* restore(
+                  providerRegistry.setProviderManagedRuntimeSummary({
+                    instanceId: input.instanceId,
+                    runtime: {
+                      ...baseSummary,
+                      operation: operation({
+                        operationId,
+                        action: input.action,
+                        status: "preparing",
+                        startedAt,
+                        message: "Preparing the provider runtime operation.",
+                      }),
+                    },
                   }),
-                },
+                );
+                const fiber = yield* Effect.forkDetach(supervise);
+                yield* Ref.set(fiberRef, fiber);
+                return { providers: initialProviders };
               }),
-            );
-            const fiber = yield* Effect.forkDetach(supervise);
-            yield* Ref.set(fiberRef, fiber);
-            const stillCurrent = (yield* Ref.get(activeRef)).get(input.instanceId)?.operationId;
-            if (stillCurrent !== operationId) {
-              // Cancellation can claim the operation before this handoff begins.
-              // Register the detached fiber and close that race atomically so no
-              // supervisor can outlive both manager ownership and its fiber handle.
-              yield* Fiber.interrupt(fiber);
-            }
-            return { providers: initialProviders };
-          }).pipe(Effect.onExit(cleanupStartupExit));
+            )
+            .pipe(Effect.onExit(cleanupStartupExit));
         }),
       );
     },
