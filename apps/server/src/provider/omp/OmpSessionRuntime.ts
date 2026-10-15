@@ -427,18 +427,26 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
    * belongs to (none when its frames were not the open turn's). A model can
    * give a later call an earlier call's id. A job's frames carry its job id,
    * so they never reach the later call; an update without one, under an id an
-   * earlier turn's job still holds, could be either call's and is not shown.
-   * A job is forgotten at its last frame (completed, failed or cancelled), not
-   * when the session settles: a cancelled job can still report.
+   * earlier turn's running job holds, could be either call's and is not shown.
+   * A job is forgotten at its last frame (completed, failed or cancelled). A
+   * settled session ends that doubt, since OMP then runs no job, but not the
+   * job's own frames: a cancelled job can still report, and some cancelled
+   * jobs never send a last frame.
    *
    * Not covered: a call aborted inside OMP whose job never went to the
    * background can report afterwards without a job id. If a later turn reuses
    * its id, that update shows on the later call. Scient's Stop closes the
    * process, so this takes an abort from elsewhere.
    */
-  const backgroundJobs = new Map<string, { toolCallId: string; turnId: string | undefined }>();
-  /** Jobs whose last frame came before their call returned, so its end does not revive them. */
+  const backgroundJobs = new Map<
+    string,
+    { readonly toolCallId: string; readonly turnId: string | undefined; running: boolean }
+  >();
+  /** Jobs of the open run whose last frame came before their call returned, so its end does not revive them. */
   const settledJobIds = new Set<string>();
+  const sessionSettled = () => {
+    for (const job of backgroundJobs.values()) job.running = false;
+  };
   let assistantMessageSeen = false;
   let failureDetail: string | undefined;
   /** The prompt command itself failed; its sender reports that error. */
@@ -604,6 +612,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       latestCompletedAssistantReference = undefined;
       completedAssistantIds.clear();
       turnToolCallIds.clear();
+      // An early last frame waits only for its own run's end.
+      settledJobIds.clear();
       assistantMessageSeen = false;
       drainRetries = 0;
       // A retry already scheduled stays the only one: it rechecks whichever
@@ -668,6 +678,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     Effect.gen(function* () {
       yield* sessionInfo(state.sessionFile, state.sessionId);
       if (state.isSettled !== undefined) reportsPromptResults = true;
+      if (state.isSettled === true) sessionSettled();
       const pending = state.isSettled === undefined ? state.hasPendingAsyncWork : !state.isSettled;
       if (pending !== undefined) yield* publish({ type: "background-work", pending });
       // An acknowledged prompt may never emit agent_start. Only count time
@@ -961,6 +972,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           promptReported = true;
         }
         if (event.sessionSettled !== undefined) {
+          if (event.sessionSettled) sessionSettled();
           yield* publish({ type: "background-work", pending: !event.sessionSettled });
         }
         evidence.promptStatus = event.status;
@@ -1167,18 +1179,26 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
               ? job.turnId === activeTurnId
               : jobId !== undefined ||
                 ![...backgroundJobs.values()].some(
-                  (other) => other.toolCallId === toolCallId && other.turnId !== activeTurnId,
+                  (other) =>
+                    other.running &&
+                    other.toolCallId === toolCallId &&
+                    other.turnId !== activeTurnId,
                 ));
           if (!ownCall) return;
         } else if (event.type === "tool_execution_end") {
           const jobId = backgroundJobId(event.result);
-          if (jobId !== undefined && backgroundJobState(event.result) === "running") {
-            if (!settledJobIds.delete(jobId)) {
-              backgroundJobs.set(jobId, {
-                toolCallId,
-                turnId: published ? activeTurnId : undefined,
-              });
-            }
+          // The end consumes its job's early last frame, whatever state it reports.
+          const settledEarly = jobId !== undefined && settledJobIds.delete(jobId);
+          if (
+            jobId !== undefined &&
+            !settledEarly &&
+            backgroundJobState(event.result) === "running"
+          ) {
+            backgroundJobs.set(jobId, {
+              toolCallId,
+              turnId: published ? activeTurnId : undefined,
+              running: true,
+            });
           }
         }
         if (!published) return;
@@ -1335,6 +1355,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (event.type === "session_settled") {
         // This event is newer than any state buffered before the event drain.
         pendingDrainState = undefined;
+        sessionSettled();
         yield* publish({ type: "session-settled" });
         return;
       }

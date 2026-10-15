@@ -1127,8 +1127,7 @@ describe("Oh My Pi session runtime outcomes", () => {
   it.effect("a reused id reports no update while the earlier call can still report", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
-      // A settled session does not end the job: a cancelled one can still report.
-      yield* backgroundTurn(h, "call-1", [{ type: "session_settled" }]);
+      yield* backgroundTurn(h, "call-1");
       yield* h.wire.send(
         { type: "agent_start" },
         // The model names its new call as before; its arguments stream before it starts.
@@ -1156,6 +1155,29 @@ describe("Oh My Pi session runtime outcomes", () => {
         { toolCallId: "call-1", phase: "updated" },
       ]);
     }),
+  );
+
+  it.effect(
+    "once the session settles, an earlier job no longer hides a reused id's updates, but its own frames stay out",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* wireHarness();
+        // A task queued for a slot can be cancelled without a last frame; the session then settles.
+        yield* backgroundTurn(h, "call-1", [{ type: "session_settled" }]);
+        yield* h.wire.send(
+          { type: "agent_start" },
+          { type: "tool_execution_start", toolCallId: "call-1", toolName: "read" },
+          // A cancelled job can still report.
+          jobUpdate("call-1", "running", "earlier output"),
+          { type: "tool_execution_update", toolCallId: "call-1", toolName: "read" },
+        );
+        const produced = yield* h.settleFrames;
+        yield* Scope.close(h.scope, Exit.void);
+        expect(toolFrames(produced)).toEqual([
+          { toolCallId: "call-1", phase: "started" },
+          { toolCallId: "call-1", phase: "updated" },
+        ]);
+      }),
   );
 
   it.effect("each earlier job under a reused id is tracked until its own last frame", () =>
