@@ -21,6 +21,7 @@ import { compileOmpCommandCatalog } from "./omp/OmpCommandPolicy.ts";
 import { ompModelToServerModel } from "./omp/OmpModel.ts";
 import {
   OMP_ISOLATED_ARGS,
+  ompNotInstalledDetail,
   ompUserDetail,
   type OmpRpcProcess,
   type OmpRpcProcessOptions,
@@ -193,9 +194,10 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
   ).pipe(Effect.exit);
   if (discovery._tag === "Failure") {
     const error = Cause.squash(discovery.cause);
+    // The probe tells an absent executable from one that cannot find what it runs.
     const commandMissing =
       isCommandMissingCause(error) ||
-      (isProtocolError(error) && isCommandMissingCause(error.cause));
+      (isProtocolError(error) && error.detail === ompNotInstalledDetail(target));
     return buildServerProvider({
       presentation: presentation(target),
       enabled: true,
