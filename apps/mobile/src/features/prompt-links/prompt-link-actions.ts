@@ -1,9 +1,9 @@
+import * as Dialog from "../../components/ui/Dialog";
 import * as Linking from "expo-linking";
 import { type LinkedPrompt } from "@t3tools/shared/promptLinks";
 // SCIENT-FORK:START — registered app identity and local draft-link policy.
 import { buildScientNewThreadLink as buildNewThreadLink } from "@t3tools/shared/scientPromptLinks";
 // SCIENT-FORK:END
-import { Alert } from "react-native";
 
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
@@ -15,7 +15,7 @@ import { linkedThreadDraftAction } from "./prompt-link-model";
 
 /** Shows the one notice a prompt link owes the user, built with `promptLinkNotice`. */
 export function showPromptLinkNotice(notice: string): void {
-  Alert.alert("Prompt from a link", notice);
+  Dialog.alert("Prompt from a link", notice);
 }
 
 /**
@@ -31,7 +31,7 @@ export async function applyLinkedPromptToThreadDraft(
   try {
     await waitForComposerDraftsLoaded();
   } catch {
-    Alert.alert("Could not open link", "Drafts could not be loaded, so the prompt was not added.");
+    Dialog.alert("Could not open link", "Drafts could not be loaded, so the prompt was not added.");
     return;
   }
   const action = linkedThreadDraftAction(getComposerDraftSnapshot(draftKey).text, prompt.text);
@@ -40,7 +40,7 @@ export async function applyLinkedPromptToThreadDraft(
     showPromptLinkNotice(notice);
     return;
   }
-  Alert.alert("Linked prompt ready. Replace draft?", notice, [
+  Dialog.alert("Linked prompt ready. Replace draft?", notice, [
     { text: "Keep mine", style: "cancel" },
     { text: "Replace", onPress: () => setComposerDraftText(draftKey, prompt.text) },
   ]);
@@ -53,6 +53,6 @@ export async function copyPromptLink(prompt: string): Promise<void> {
   const link = Linking.createURL("new", { queryParams: Object.fromEntries(params) });
   // SCIENT-FORK:END
   if (!(await tryCopyTextWithHaptic(link, { target: "prompt link" }))) {
-    Alert.alert("Could not copy", "Try again.");
+    Dialog.alert("Could not copy", "Try again.");
   }
 }

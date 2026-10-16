@@ -9,6 +9,21 @@ import {
   SCIENT_DESKTOP_BETA_RELEASE_REPOSITORY,
 } from "./scientRelease.ts";
 
+/**
+ * The tar to extract a release archive with. Windows ships bsdtar in
+ * System32, which reads both formats; a Git-for-Windows GNU tar earlier on
+ * PATH cannot open the zip, so the system copy is named by absolute path.
+ * Upstream installers (Codex, ACP registry) import this from here.
+ */
+export function cliArchiveTarCommand(
+  platform: NodeJS.Platform,
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  if (platform !== "win32") return "tar";
+  const systemRoot = env["SystemRoot"] ?? env["windir"] ?? "C:\\Windows";
+  return `${systemRoot}\\System32\\tar.exe`;
+}
+
 export const CLI_RELEASE_CHANNELS = ["stable", "beta", "nightly", "preview"] as const;
 export type CliReleaseChannel = (typeof CLI_RELEASE_CHANNELS)[number];
 

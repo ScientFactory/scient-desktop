@@ -1577,11 +1577,25 @@ export const layer: Layer.Layer<
               Effect.gen(function* () {
                 const terminal = yield* Ref.get(terminalEvent);
                 if (terminal === null) {
-                  return;
+                  // SCIENT-FORK:START — a committed cancelled start is final without a native terminal.
+                  if (yield* Ref.get(rootRunFinalized)) return;
+                  // SCIENT-FORK:END
+                  // A session release interrupts or fails the stream; a clean
+                  // end without a terminal means the run would never settle.
+                  return yield* new RunExecutionIngestError({
+                    runId: input.run.id,
+                    cause: new ProviderAdapter.ProviderAdapterEventStreamError({
+                      driver: input.providerThread.driver,
+                      providerSessionId: input.providerSessionId,
+                      cause: "Provider event stream ended without a root terminal.",
+                    }),
+                  });
                 }
                 yield* finalizeRootRun(terminal);
               }),
             ),
+            // Server shutdown interrupts the subscription and leaves the run to
+            // restart recovery; every other failure fails the run.
             Effect.catchCause((cause) => {
               if (Cause.hasInterruptsOnly(cause))
                 return Effect.failCause(
@@ -1678,21 +1692,6 @@ export const layer: Layer.Layer<
           });
           // SCIENT-FORK:END
 
-          // A failed read fails the start below, so the run is recorded as
-          // failed instead of staying active with no provider turn.
-          const shouldStart =
-            input.shouldStartProviderTurn === undefined
-              ? Exit.succeed(true)
-              : yield* Effect.exit(input.shouldStartProviderTurn());
-          if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
-            // SCIENT-FORK:START — a committed declined start is already final.
-            if (yield* cancelDeclinedStart) yield* settleDeclinedStart;
-            else yield* interruptProviderEvents;
-            // SCIENT-FORK:END
-
-            return;
-          }
-
           // A provider turn is a sign that the session is still alive. Keep
           // its already-issued MCP credential valid even when the agent goes
           // a long time between browser-tool calls.
@@ -1750,6 +1749,20 @@ export const layer: Layer.Layer<
                 }),
             ...(appContext.length === 0 ? {} : { appContext }),
           };
+          // Check after the context read: ingestion can settle the run while
+          // it awaits. A failed ownership read fails the start below.
+          const shouldStart =
+            input.shouldStartProviderTurn === undefined
+              ? Exit.succeed(true)
+              : yield* Effect.exit(input.shouldStartProviderTurn());
+          if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
+            // SCIENT-FORK:START — a committed declined start is already final.
+            if (yield* cancelDeclinedStart) yield* settleDeclinedStart;
+            else yield* interruptProviderEvents;
+            // SCIENT-FORK:END
+            return;
+          }
+
           const compact =
             input.message.attachments.length === 0 &&
             input.message.text.trim().toLowerCase() === "/compact";

@@ -275,6 +275,7 @@ const makeWakeHarnessWithOptions = (options?: {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+                backgroundTasks: () => Effect.succeed(false),
                 setPermissionMode: () => Effect.void,
                 interrupt: Effect.void,
                 close: Queue.shutdown(processMessages),
@@ -307,6 +308,7 @@ const makeWakeHarnessWithOptions = (options?: {
               setModel: () => Effect.void,
               applyFlagSettings: () => Effect.void,
               stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+              backgroundTasks: () => Effect.succeed(false),
               setPermissionMode: (mode) =>
                 Effect.sync(() => {
                   permissionModeChanges.push(mode);

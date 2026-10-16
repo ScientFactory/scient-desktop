@@ -33,8 +33,9 @@ export const checkedFileIdentity = (
 ): CheckedFile => ({
   canonicalPath,
   size: Number(info.size),
-  dev: info.dev,
-  ino: Option.isSome(info.ino) ? info.ino.value : null,
+  // Compared with Node's numeric handle stats below.
+  dev: Number(info.dev),
+  ino: Option.isSome(info.ino) ? Number(info.ino.value) : null,
   mtimeMs: Option.isSome(info.mtime) ? info.mtime.value.getTime() : null,
 });
 

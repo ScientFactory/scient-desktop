@@ -4,11 +4,11 @@ import { Image } from "expo-image";
 import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
 import { Platform, View } from "react-native";
 
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 import { SCIENT_BRAND_MARK_SOURCE } from "./brandAssets";
 import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../lib/mobileBranding";
-import { useAndroidControlSizing } from "./useAndroidControlSizing";
+import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 
 /**
  * Horizontal correction applied to content rendered in the brand title slot,

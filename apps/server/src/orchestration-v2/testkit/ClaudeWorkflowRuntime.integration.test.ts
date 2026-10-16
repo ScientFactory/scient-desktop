@@ -60,6 +60,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
           open: () =>
             Effect.succeed({
               stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+              backgroundTasks: () => Effect.succeed(false),
               setPermissionMode: () =>
                 Effect.die("Permission-mode mutation is outside this fixture."),
               messages: Stream.fromQueue(messages),

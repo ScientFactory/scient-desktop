@@ -126,6 +126,7 @@ describe("serverSettings helpers", () => {
       }).storageCleanup,
     ).toMatchObject({
       worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
       worktreeOnMerge: true,
       logsAfterDays: 30,
     });

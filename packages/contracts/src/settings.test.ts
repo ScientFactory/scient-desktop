@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import { ComputeLanguageId } from "@scientfactory/compute";
 
-import type { CommandId, ProjectId } from "./baseSchemas.ts";
+import { type CommandId, ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { AuthProvidersManageScope, AuthSettingsWriteScope } from "./auth.ts";
 import {
@@ -88,12 +88,30 @@ describe("ServerSettings response streaming", () => {
 });
 
 describe("storage cleanup settings", () => {
+  it("keeps cleanup disabled for existing installations", () => {
+    expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
+    expect(decodeServerSettings({}).storageCleanup).toEqual({
+      worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
+      worktreeOnMerge: false,
+      worktreeOnDelete: false,
+      worktreeUnchanged: false,
+      // Scient keeps any local file by default; upstream keeps only uncommitted changes.
+      worktreeKeepWhen: "any-local-files",
+      browserArtifactsAfterDays: null,
+      logsAfterDays: null,
+    });
+  });
+
   it("accepts eight-day retention and disabling one rule without resetting others", () => {
     expect(decodeServerSettingsPatch({ storageCleanup: { worktreeAfterDays: 8 } })).toEqual({
       storageCleanup: { worktreeAfterDays: 8 },
     });
     expect(decodeServerSettingsPatch({ storageCleanup: { worktreeAfterDays: null } })).toEqual({
       storageCleanup: { worktreeAfterDays: null },
+    });
+    expect(decodeServerSettingsPatch({ storageCleanup: { worktreeSettledAfterDays: 0 } })).toEqual({
+      storageCleanup: { worktreeSettledAfterDays: 0 },
     });
   });
 
@@ -110,6 +128,27 @@ describe("storage cleanup settings", () => {
         },
       }),
     ).toThrow();
+    expect(
+      decodeServerSettings({
+        projectSettingsOverrides: {
+          project: {
+            worktreeCleanup: {
+              mode: "custom",
+              rules: {
+                worktreeAfterDays: null,
+                worktreeOnMerge: false,
+                worktreeOnDelete: false,
+                worktreeUnchanged: false,
+              },
+            },
+          },
+        },
+      }).projectSettingsOverrides[ProjectId.make("project")]?.worktreeCleanup,
+    ).toMatchObject({
+      mode: "custom",
+      // Scient keeps any local file by default.
+      rules: { worktreeSettledAfterDays: null, worktreeKeepWhen: "any-local-files" },
+    });
   });
 
   it("rejects unknown local-file retention policies", () => {
@@ -121,6 +160,12 @@ describe("storage cleanup settings", () => {
   it.each([0, -1, 1.5, 3651])("rejects invalid retention %s", (days) => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { browserArtifactsAfterDays: days } }),
+    ).toThrow();
+  });
+
+  it.each([-1, 1.5, 3651])("rejects invalid settled retention %s", (days) => {
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { worktreeSettledAfterDays: days } }),
     ).toThrow();
   });
 });

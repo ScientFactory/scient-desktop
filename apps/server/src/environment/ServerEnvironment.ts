@@ -238,7 +238,9 @@ export const make = Effect.gen(function* () {
       otlpEndpointCheck: !SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled,
       // SCIENT-FORK:END
       projectWorktreeCleanup: true,
+      settledWorktreeCleanup: true,
       worktreesDirectory: true,
+      threadAutoSettlementScope: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
       projectProviderInstanceOverrides: true,

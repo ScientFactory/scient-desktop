@@ -292,7 +292,7 @@ import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -1308,6 +1308,13 @@ const buildAppUnderTest = (options?: {
           }),
         ),
         Layer.provide(
+          Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
+            getEnvironmentId:
+              options?.layers?.serverEnvironment?.getEnvironmentId ??
+              Effect.succeed(testEnvironmentDescriptor.environmentId),
+          }),
+        ),
+        Layer.provide(
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () => Effect.succeed(null),
             ...options?.layers?.repositoryIdentityResolver,
@@ -1400,7 +1407,7 @@ const buildAppUnderTest = (options?: {
             : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
         ),
         Layer.provide(
-          GitHubApi.layerWithDependencies.pipe(
+          GitHubRest.layerWithDependencies.pipe(
             Layer.provide(ServerSourceControlHost.layer),
             Layer.provide(VcsDriverRegistry.layer),
             Layer.provideMerge(VcsProcess.layer),

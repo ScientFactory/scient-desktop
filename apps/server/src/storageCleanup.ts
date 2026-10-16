@@ -40,6 +40,7 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
+import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
@@ -62,6 +63,9 @@ const decodeCleanupSession = Schema.decodeUnknownEffect(
 );
 
 const DAY_MS = 86_400_000;
+// After a settle, the project's settle script needs time to open its
+// terminal, which then protects the worktree.
+const SETTLE_SCRIPT_GRACE_MS = 60_000;
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const REPORT_ENTRY_LIMIT = 200;
@@ -75,6 +79,7 @@ function cleanupFailureReason(error: { readonly message: string }) {
 
 const worktreeCleanupEnabled = (rules: WorktreeCleanupRules) =>
   rules.worktreeAfterDays !== null ||
+  rules.worktreeSettledAfterDays !== null ||
   rules.worktreeOnMerge ||
   rules.worktreeOnDelete ||
   rules.worktreeUnchanged;
@@ -179,6 +184,7 @@ const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const sql = yield* SqlClient.SqlClient;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
@@ -579,15 +585,35 @@ const make = Effect.gen(function* () {
           return keep("repository or branch changed");
         const changes = yield* localChangesReason(worktreePath);
         if (changes !== null) return keep(changes);
+        // The project's settle script starts in the worktree right after a
+        // settle. Settling stamps updatedAt now, even when automatic
+        // settlement backdates settledAt to the thread's last activity.
+        if (
+          !deleted &&
+          thread.settledAt !== null &&
+          now - DateTime.toEpochMillis(thread.updatedAt) < SETTLE_SCRIPT_GRACE_MS
+        )
+          return keep("settled moments ago");
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
         const old =
           !deleted &&
           settings.worktreeAfterDays !== null &&
           storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
-        let eligible = deleted || old;
+        const settledFor =
+          deleted || thread.settledAt === null
+            ? null
+            : now - DateTime.toEpochMillis(thread.settledAt);
+        const settledDays = settledFor === null ? null : Math.floor(settledFor / DAY_MS);
+        const settled =
+          settledFor !== null &&
+          settings.worktreeSettledAfterDays !== null &&
+          settledFor >= settings.worktreeSettledAfterDays * DAY_MS;
+        let eligible = deleted || old || settled;
         let removalReason = deleted
           ? "thread was deleted"
-          : `inactive for ${Math.floor((now - storageCleanupActivityAt(thread)) / DAY_MS)} days`;
+          : old
+            ? `inactive for ${Math.floor((now - storageCleanupActivityAt(thread)) / DAY_MS)} days`
+            : `settled for ${settledDays} days`;
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
           const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
@@ -635,9 +661,13 @@ const make = Effect.gen(function* () {
           return keep(
             !deleted && settings.worktreeAfterDays !== null
               ? `inactive for ${Math.floor((now - storageCleanupActivityAt(thread)) / DAY_MS)} of ${settings.worktreeAfterDays} days`
-              : settings.worktreeOnMerge
-                ? "not merged"
-                : "has commits beyond the default branch",
+              : settings.worktreeSettledAfterDays !== null
+                ? settledFor === null
+                  ? "not settled"
+                  : `settled for ${settledDays} of ${settings.worktreeSettledAfterDays} days`
+                : settings.worktreeOnMerge
+                  ? "not merged"
+                  : "has commits beyond the default branch",
           );
         // Threads, queued deletion work and provider sessions as they are now, so a
         // queued turn, resumed session or new thread sharing this path cancels
@@ -673,8 +703,9 @@ const make = Effect.gen(function* () {
             latest.length !== 1 ||
             latest[0]!.id !== thread.id ||
             !storageCleanupThreadIdle(latest[0]!, now) ||
-            storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread)
+            storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread) ||
             // SCIENT-FORK:END archived-worktree-retention
+            !Equal.equals(latest[0]!.settledAt, thread.settledAt)
           )
             return "thread activity or shared worktree changed since check";
           // Sessions can outlive their run and can be shared across app threads.
@@ -685,13 +716,16 @@ const make = Effect.gen(function* () {
           const sessions = yield* Effect.forEach(sessionRows, (row) =>
             decodeCleanupSession(row.payload_json),
           );
-          if (
-            sessions.some((session) => {
-              const cwd = path.resolve(session.cwd);
-              return cwd === worktreePath || inside(worktreePath, cwd);
-            })
-          )
-            return "provider session is still open";
+          // A stored session can stay ready after its runtime was released,
+          // for example once every thread detached; only a live one holds it.
+          for (const session of sessions) {
+            const cwd = path.resolve(session.cwd);
+            if (
+              (cwd === worktreePath || inside(worktreePath, cwd)) &&
+              (yield* providerSessions.isLive(session.id))
+            )
+              return "provider session is still open";
+          }
           return null;
         });
         // Most cancelled removals are caught here, before the worktree is walked.

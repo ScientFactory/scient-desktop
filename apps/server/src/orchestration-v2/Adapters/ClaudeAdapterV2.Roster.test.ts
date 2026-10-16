@@ -152,6 +152,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   processQueues.push({ nativeThreadId, queue });
                   return {
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+                    backgroundTasks: () => Effect.succeed(false),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(queue),
@@ -407,6 +408,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 processQueues.push(sdkMessages);
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+                  backgroundTasks: () => Effect.succeed(false),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(sdkMessages),
@@ -608,6 +610,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   processQueues.push(sdkMessages);
                   return {
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+                    backgroundTasks: () => Effect.succeed(false),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),

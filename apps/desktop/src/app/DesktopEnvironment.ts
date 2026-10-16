@@ -133,11 +133,14 @@ function resolveDesktopAppStageLabel(input: {
     return "Dev";
   }
 
+  // SCIENT-FORK:START desktop-release-channels — Scient labels come from its own
+  // Stable/Beta/Nightly version channels, not T3's product-wide stage rename.
   return isBetaDesktopVersion(input.appVersion)
     ? "Beta"
     : isNightlyDesktopVersion(input.appVersion)
       ? "Nightly"
       : "Alpha";
+  // SCIENT-FORK:END desktop-release-channels
 }
 
 export function resolveDesktopAppBranding(input: {

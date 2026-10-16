@@ -1,9 +1,9 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
-import { Alert } from "react-native";
 
 import type {
   EnvironmentId,
@@ -908,7 +908,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         }
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          Alert.alert(
+          Dialog.alert(
             "Could not switch machine",
             error instanceof Error
               ? error.message

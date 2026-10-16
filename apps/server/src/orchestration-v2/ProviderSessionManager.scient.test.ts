@@ -13,6 +13,7 @@ import { ThreadId, type ProviderSessionId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -895,7 +896,7 @@ it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts 
   }),
 );
 
-it.effect("ProviderSessionManagerV2 closes event subscriptions normally on server shutdown", () =>
+it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shutdown", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
@@ -930,7 +931,10 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
 
       yield* manager.shutdown;
 
-      assert.isEmpty(yield* bufferedSubscription.events.pipe(Stream.runCollect));
+      // Buffered events are dropped and the consumer sees an interruption, not
+      // a clean end, so it leaves run settlement to restart recovery.
+      const exit = yield* bufferedSubscription.events.pipe(Stream.runCollect, Effect.exit);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
     });
 
     yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));

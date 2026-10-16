@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -20,7 +21,6 @@ import {
 import { parseScientNewThreadLink as parseNewThreadLink } from "@t3tools/shared/scientPromptLinks";
 // SCIENT-FORK:END
 import { useEffect, useEffectEvent, useRef } from "react";
-import { Alert } from "react-native";
 
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useServerConfigs, useThreadShells } from "../../state/entities";
@@ -105,7 +105,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     try {
       await waitForComposerDraftsLoaded();
     } catch {
-      Alert.alert(
+      Dialog.alert(
         "Could not open link",
         "Drafts could not be loaded, so the prompt was not added.",
       );
@@ -173,7 +173,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
         .map((environment) => environment.environmentId),
     );
     if (environmentId === null) {
-      Alert.alert(
+      Dialog.alert(
         "Could not start without a project",
         "No connected environment offers threads without a project.",
       );
@@ -183,7 +183,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        Alert.alert(
+        Dialog.alert(
           "Could not start without a project",
           error instanceof Error
             ? error.message
@@ -202,7 +202,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     const environmentId =
       flow.selectedEnvironmentId ?? connectedEnvironments[0]?.environmentId ?? null;
     if (environmentId === null) {
-      Alert.alert("Could not clone", "Connect an environment first.");
+      Dialog.alert("Could not clone", "Connect an environment first.");
       return;
     }
     // Only a tracked clone opens a draft the prompt can ride into; older servers do not.
@@ -238,7 +238,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
   const resolveLink = useEffectEvent((linkSearch: string) => {
     const parsed = parseNewThreadLink(linkSearch);
     if (!parsed.ok) {
-      Alert.alert("Could not open link", parsed.error);
+      Dialog.alert("Could not open link", parsed.error);
       return;
     }
     const link = parsed.value;
@@ -291,7 +291,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
       void openProjectDraft(project, request);
       return;
     }
-    Alert.alert(`You don't have ${promptLinkRepositoryName(repository)}`, undefined, [
+    Dialog.alert(`You don't have ${promptLinkRepositoryName(repository)}`, undefined, [
       { text: "Cancel", style: "cancel" },
       ...(request.prompt
         ? [{ text: "Use without project", onPress: () => void openScratchDraft(request) }]

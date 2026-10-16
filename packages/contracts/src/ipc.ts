@@ -93,8 +93,10 @@ export type DesktopUpdateStatus =
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
+// SCIENT-FORK:START — Scient's Stable/Beta release channels.
 export type DesktopUpdateChannel = "latest" | "beta" | "nightly";
-export type DesktopAppStageLabel = "Alpha" | "Dev" | "Beta" | "Nightly";
+// SCIENT-FORK:END
+export type DesktopAppStageLabel = "Alpha" | "Beta" | "Dev" | "Nightly";
 
 export const DesktopUpdateStatusSchema = Schema.Literals([
   "disabled",
@@ -108,8 +110,10 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
+// SCIENT-FORK:START — Scient's Stable/Beta release channels.
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "beta", "nightly"]);
-export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Beta", "Nightly"]);
+// SCIENT-FORK:END
+export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Beta", "Dev", "Nightly"]);
 
 export interface DesktopAppBranding {
   baseName: string;

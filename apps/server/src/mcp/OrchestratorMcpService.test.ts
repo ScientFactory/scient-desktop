@@ -103,6 +103,7 @@ describe("OrchestratorMcpService", () => {
           messages: [],
           subagents: [],
           providerThreads: [],
+          runtimeRequests: [],
         } as unknown as OrchestrationV2ThreadProjection;
         let hasNestedWork = true;
         const layerDependencies = Layer.mergeAll(
@@ -268,6 +269,7 @@ describe("OrchestratorMcpService", () => {
           messages: [],
           subagents: [],
           providerThreads: [],
+          runtimeRequests: [],
           turnItems: [],
         } as unknown as OrchestrationV2ThreadProjection;
         const layerDependencies = Layer.mergeAll(
@@ -368,6 +370,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -463,6 +466,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -561,6 +565,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -642,6 +647,8 @@ describe("OrchestratorMcpService", () => {
     readonly deleted: boolean;
     /** The grandchild passes the check, and its user raises it before the stop reaches it. */
     readonly raisedDuringStop?: boolean;
+    /** The child itself, not the task under it, now runs in full access. */
+    readonly raisedChild?: boolean;
   }) =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-cancel-grandchild-parent");
@@ -686,6 +693,7 @@ describe("OrchestratorMcpService", () => {
               appOwnedTask("node:mcp-cancel-grandchild-below", childThreadId, grandchildThreadId),
             ],
             providerThreads: [],
+            runtimeRequests: [],
           },
         ],
         [
@@ -697,6 +705,7 @@ describe("OrchestratorMcpService", () => {
             messages: [],
             subagents: [],
             providerThreads: [],
+            runtimeRequests: [],
           },
         ],
       ]) as unknown as ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
@@ -708,7 +717,8 @@ describe("OrchestratorMcpService", () => {
           // to full access.
           getThreadShell: (threadId) =>
             Effect.succeed(
-              threadId === grandchildThreadId && child.raisedDuringStop !== true
+              threadId === (child.raisedChild === true ? childThreadId : grandchildThreadId) &&
+                child.raisedDuringStop !== true
                 ? liveThreadShell(threadId)
                 : threadId === childThreadId && child.deleted
                   ? null
@@ -793,6 +803,16 @@ describe("OrchestratorMcpService", () => {
         ),
       );
     });
+
+  it.effect("refuses to cancel a task whose child now runs above the parent's modes", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* cancelOverRaisedGrandchild({ deleted: false, raisedChild: true }), {
+        code: "runtime_mode_escalation_denied",
+        dispatched: [],
+        stoppedBelow: false,
+      });
+    }),
+  );
 
   it.effect("refuses to cancel a task when a task under it now runs above the parent's modes", () =>
     Effect.gen(function* () {
@@ -931,6 +951,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     messages: [],
     subagents: [],
     providerThreads: [],
+    runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 

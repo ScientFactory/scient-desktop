@@ -216,6 +216,8 @@ export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManag
     >,
     ProviderSessionManagerV2Error
   >;
+  /** Whether the session's runtime is running. Unlike `get`, not activity. */
+  readonly isLive: (providerSessionId: ProviderSessionId) => Effect.Effect<boolean>;
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -847,12 +849,15 @@ export const layerWithOptions = (
           );
         });
 
-      const closeSubscribers = (entry: LiveSessionEntry) =>
+      // Server shutdown interrupts subscribers rather than ending them: a
+      // cleanly ended stream without a terminal fails its run, while an
+      // interrupted one leaves run settlement to restart recovery.
+      const interruptSubscribers = (entry: LiveSessionEntry) =>
         Effect.gen(function* () {
           const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
           yield* Effect.forEach(
             subscribers.values(),
-            (queue) => Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue))),
+            (queue) => Queue.clear(queue).pipe(Effect.andThen(Queue.interrupt(queue))),
             { discard: true },
           );
         });
@@ -1152,7 +1157,7 @@ export const layerWithOptions = (
         closeScope: closeOwnedScope,
         cancelIdle: cancelIdleFiber,
         endSubscribers,
-        closeSubscribers,
+        closeSubscribers: interruptSubscribers,
         failSubscribers,
         releaseConsumer: releaseEventConsumer,
         writeSession: (
@@ -2463,15 +2468,17 @@ export const layerWithOptions = (
                 }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
                 return;
               }
-              const cause = Exit.isFailure(exit)
-                ? exit.cause
-                : Cause.fail(
-                    new ProviderAdapter.ProviderAdapterEventStreamError({
-                      driver: entry.runtime.driver,
-                      providerSessionId: entry.runtime.providerSessionId,
-                      cause: "Provider event stream ended unexpectedly.",
-                    }),
-                  );
+              // Subscribers read an interrupt as server shutdown, so keep it for that.
+              const cause =
+                Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
+                  ? exit.cause
+                  : Cause.fail(
+                      new ProviderAdapter.ProviderAdapterEventStreamError({
+                        driver: entry.runtime.driver,
+                        providerSessionId: entry.runtime.providerSessionId,
+                        cause: "Provider event stream ended unexpectedly.",
+                      }),
+                    );
               yield* publishToSubscribers(entry.eventSubscribers, {
                 type: "failure",
                 cause,
@@ -2965,6 +2972,16 @@ export const layerWithOptions = (
                 ),
               );
           }),
+        isLive: (providerSessionId) =>
+          Ref.get(sessions).pipe(
+            Effect.map((current) => {
+              const key = sessionKey(providerSessionId);
+              // SCIENT-FORK:START — a retiring owner's runtime runs until its physical close ends.
+              if (closingSessions.has(key)) return true;
+              // SCIENT-FORK:END
+              return current.has(key);
+            }),
+          ),
         get: (providerSessionId) =>
           Effect.gen(function* () {
             const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));

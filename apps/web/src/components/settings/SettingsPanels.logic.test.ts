@@ -282,6 +282,7 @@ describe("getChangedBrowserSettingLabels", () => {
         browserRecordingShowMousePresses: true,
         browserLinkTarget: "system",
         browserAutoShowFloatingPreview: !DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
+        pullRequestLinksOpenInApp: false,
       }),
     ).toEqual([
       "Browser viewport",
@@ -292,6 +293,7 @@ describe("getChangedBrowserSettingLabels", () => {
       "Recording mouse presses",
       "Open links in",
       "Floating preview",
+      "Open pull requests in Scient",
     ]);
   });
 });

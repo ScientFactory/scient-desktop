@@ -3994,9 +3994,11 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
             { ...ids, rootProviderTurnId: ProviderTurnId.make("turn:previous") },
             "interrupted",
           ),
+          rootTerminalEvent(ids, "cancelled"),
         ]),
     });
-    assert.deepEqual(observed, []);
+    // Only the root terminal settles the run and refreshes pull requests.
+    assert.deepEqual(observed, ["run:cancelled", "pull-requests-refreshed"]);
   }),
 );
 
@@ -4044,6 +4046,58 @@ it.live("keeps writing a broken run's failed end until it saves, as when the dis
       written.map((item) => item.type),
       ["error"],
     );
+  }),
+);
+
+it.effect("fails the run when its event stream ends without a root terminal", () =>
+  Effect.gen(function* () {
+    const { observed, events } = yield* captureRootRunTermination({
+      key: "stream-end-without-terminal",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () => Stream.empty,
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.equal(
+      events.findLast((event) => event.type === "provider-thread.updated")?.payload.status,
+      "idle",
+    );
+  }),
+);
+
+it.effect("leaves the run to restart recovery when shutdown interrupts its event stream", () =>
+  Effect.gen(function* () {
+    const { written, observed } = yield* captureRootRunTermination({
+      key: "stream-end:shutdown",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () => Stream.failCause(Cause.interrupt()),
+    });
+    assert.deepEqual(written, []);
+    assert.deepEqual(observed, []);
+  }),
+);
+
+it.effect("does not start a turn whose run settled during the app context read", () =>
+  Effect.gen(function* () {
+    const contextReadStarted = yield* Deferred.make<void>();
+    const runFailed = yield* Deferred.make<void>();
+    const current = yield* Ref.make(true);
+    const providerCalls = yield* Ref.make(0);
+    const { observed } = yield* captureRootRunTermination({
+      key: "stream-end:context-read",
+      shouldStartProviderTurn: () => Ref.get(current),
+      shouldFinalizeRun: () => Ref.get(current),
+      events: () => Stream.unwrap(Deferred.await(contextReadStarted).pipe(Effect.as(Stream.empty))),
+      appContext: Deferred.succeed(contextReadStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(runFailed)),
+        Effect.as([]),
+      ),
+      refreshAfterTurn: Ref.set(current, false).pipe(
+        Effect.andThen(Deferred.succeed(runFailed, undefined)),
+      ),
+      startTurn: () => Ref.update(providerCalls, (count) => count + 1),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.equal(yield* Ref.get(providerCalls), 0);
   }),
 );
 
@@ -4647,6 +4701,8 @@ function captureRootRunTermination(input: {
   readonly observeLifecycle?: (phase: string) => void;
   readonly snapshotSubscription?: ProviderAdapter.ProviderAdapterV2SessionRuntime["subscribeTextSnapshotEvents"];
   readonly onStartFailure?: (cause: Cause.Cause<unknown>) => void;
+  readonly shouldStartProviderTurn?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["shouldStartProviderTurn"];
+  readonly appContext?: ReturnType<McpAppModelContext.McpAppModelContext["Service"]["forThread"]>;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -4685,7 +4741,11 @@ function captureRootRunTermination(input: {
     });
     const testLayer = RunExecutionService.layer.pipe(
       Layer.provide(threadCommandExecutorLayer),
-      Layer.provide(McpAppModelContext.layerEmpty),
+      Layer.provide(
+        Layer.mock(McpAppModelContext.McpAppModelContext)({
+          forThread: () => input.appContext ?? Effect.succeed([]),
+        }),
+      ),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
@@ -4838,6 +4898,9 @@ function captureRootRunTermination(input: {
           attemptId: ids.attemptId,
           providerTurnOrdinal: 1,
           shouldFinalizeRun: input.shouldFinalizeRun,
+          ...(input.shouldStartProviderTurn === undefined
+            ? {}
+            : { shouldStartProviderTurn: input.shouldStartProviderTurn }),
           ...(input.hasUnpairedRunInterruptRequest === undefined
             ? {}
             : {

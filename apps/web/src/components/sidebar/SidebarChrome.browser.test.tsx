@@ -213,65 +213,110 @@ it.each(["available", "downloading", "downloaded", "error"] as const)(
   },
 );
 
-it.each(["Update", "Updating"] as const)(
-  "fits the %s label for other machines and providers inside the minimum sidebar",
-  async (label) => {
-    fixture.everything = {
-      hasUpdates: true,
-      summary: "Update 1 server and 2 providers",
-      lines: ["alvin: server to 0.6.21, Codex, Claude"],
-      restarts: [],
-      skipped: [],
-      // The run stays in progress so the button keeps its running label, which
-      // the shared run state drives.
-      run: () => {
-        setUpdateEverythingRun(() => ({ localVersion: null, phase: "providers", machines: [] }));
-        return new Promise<void>(() => {});
-      },
-    };
-    await mountFooter(216, {
-      ...updateState,
-      status: "idle",
-      downloadedVersion: null,
-      availableVersion: null,
+const idleUpdateState: DesktopUpdateState = {
+  ...updateState,
+  status: "idle",
+  downloadedVersion: null,
+  availableVersion: null,
+};
+
+function everythingFixture(): ReturnType<typeof useUpdateEverything> {
+  return {
+    hasUpdates: true,
+    summary: "Update 1 server and 2 providers",
+    lines: ["alvin: server to 0.6.21, Codex, Claude"],
+    restarts: [],
+    skipped: [],
+    // The run stays in progress, so the footer keeps showing it.
+    run: () => {
+      setUpdateEverythingRun(() => ({
+        localVersion: null,
+        phase: "providers",
+        restartAt: null,
+        machines: [
+          {
+            environmentId: EnvironmentId.make("sidebar-geometry-alvin"),
+            label: "alvin",
+            updatesProviders: true,
+            server: null,
+            handedOffVersion: null,
+            startedAt: Date.now(),
+            result: null,
+            failure: null,
+            providerFailure: null,
+          },
+        ],
+      }));
+      return new Promise<void>(() => {});
+    },
+  };
+}
+
+it("fits the Update label for other machines and providers inside the minimum sidebar", async () => {
+  fixture.everything = everythingFixture();
+  await mountFooter(216, idleUpdateState);
+  const pill = page.getByRole("button", { name: /^Update: / });
+  await expect.element(pill).toBeVisible();
+
+  const button = pill.element() as HTMLButtonElement;
+  expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
+  const rect = button.getBoundingClientRect();
+  expect(rect.width).toBeGreaterThan(64);
+  const icon = button.querySelector("svg")!.getBoundingClientRect();
+  const text = button.querySelector("span.tabular-nums")!.getBoundingClientRect();
+  expect(icon.left - rect.left).toBeGreaterThanOrEqual(5);
+  expect(Math.abs(icon.left - rect.left - (rect.right - text.right))).toBeLessThanOrEqual(1);
+
+  const footer = host!
+    .querySelector<HTMLElement>('[data-sidebar="footer"]')!
+    .getBoundingClientRect();
+  let previousRight = footer.left;
+  for (const visible of [...host!.querySelectorAll("button")].filter(
+    (candidate) => candidate.getClientRects().length,
+  )) {
+    const bounds = visible.getBoundingClientRect();
+    expect(bounds.left).toBeGreaterThanOrEqual(previousRight);
+    expect(bounds.right).toBeLessThanOrEqual(footer.right);
+    previousRight = bounds.right;
+  }
+  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+    await page.screenshot({
+      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/everything-update.png`,
+      element: host!,
     });
-    if (label === "Updating") {
-      await page.getByRole("button", { name: /^Update: / }).click();
-      await page.getByRole("button", { name: "Update", exact: true }).click();
-      await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
-    }
-    const pill = page.getByRole("button", { name: new RegExp(`^${label}: `) });
-    await expect.element(pill).toBeVisible();
+  }
+});
 
-    const button = pill.element() as HTMLButtonElement;
-    expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
-    const rect = button.getBoundingClientRect();
-    expect(rect.width).toBeGreaterThan(64);
-    const icon = button.querySelector("svg")!.getBoundingClientRect();
-    const text = button.querySelector("span.tabular-nums")!.getBoundingClientRect();
-    expect(icon.left - rect.left).toBeGreaterThanOrEqual(5);
-    expect(Math.abs(icon.left - rect.left - (rect.right - text.right))).toBeLessThanOrEqual(1);
+it("keeps a running update pass inside the minimum sidebar", async () => {
+  fixture.everything = everythingFixture();
+  await mountFooter(216, idleUpdateState);
+  await page.getByRole("button", { name: /^Update: / }).click();
+  await page.getByRole("button", { name: "Update", exact: true }).click();
+  await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
+  // A running pass replaces the pill with the progress capsule.
+  const progress = page.getByRole("button", { name: "0 of 1 updated" });
+  await expect.element(progress).toBeVisible();
 
-    const footer = host!
-      .querySelector<HTMLElement>('[data-sidebar="footer"]')!
-      .getBoundingClientRect();
-    let previousRight = footer.left;
-    for (const visible of [...host!.querySelectorAll("button")].filter(
-      (candidate) => candidate.getClientRects().length,
-    )) {
-      const bounds = visible.getBoundingClientRect();
-      expect(bounds.left).toBeGreaterThanOrEqual(previousRight);
-      expect(bounds.right).toBeLessThanOrEqual(footer.right);
-      previousRight = bounds.right;
-    }
-    if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
-      await page.screenshot({
-        path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/everything-${label.toLowerCase()}.png`,
-        element: host!,
-      });
-    }
-  },
-);
+  const capsule = (progress.element() as HTMLElement).parentElement!;
+  const bounds = capsule.getBoundingClientRect();
+  const footer = host!
+    .querySelector<HTMLElement>('[data-sidebar="footer"]')!
+    .getBoundingClientRect();
+  expect(bounds.left).toBeGreaterThanOrEqual(footer.left);
+  expect(bounds.right).toBeLessThanOrEqual(footer.right);
+  for (const visible of [...host!.querySelectorAll("button")].filter(
+    (candidate) => candidate.getClientRects().length && !capsule.contains(candidate),
+  )) {
+    const other = visible.getBoundingClientRect();
+    expect(other.right <= bounds.left || other.left >= bounds.right).toBe(true);
+  }
+  if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS) {
+    await page.screenshot({
+      path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/everything-updating.png`,
+      element: host!,
+    });
+  }
+});
 
 it("keeps all four utilities equally spaced and inset while updates are idle", async () => {
   await mountFooter(216, {

@@ -52,6 +52,7 @@ import {
 import {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ThreadTranscript,
 } from "./orchestrationV2.ts";
 import {
   OrchestrationV2HttpThreadBoundedSnapshot,
@@ -103,6 +104,7 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "scope_not_granted",
   "invalid_command",
   "invalid_history_cursor",
+  "thread_transcript_too_large",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -639,6 +641,14 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       params: EnvironmentOrchestrationThreadSnapshotParams,
       success: OrchestrationV2HttpThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("threadTranscript", "/api/orchestration/threads/:threadId/transcript", {
+      headers: OrchestrationProtocolHeaders,
+      params: EnvironmentOrchestrationThreadSnapshotParams,
+      success: OrchestrationV2ThreadTranscript,
+      error: [EnvironmentRequestInvalidError, ...EnvironmentOrchestrationThreadSnapshotErrors],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
