@@ -83,11 +83,11 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
     GIT_CONFIG_KEY_0: `http.${remote}.extraheader`,
     GIT_CONFIG_VALUE_0: authorization,
     GIT_CONFIG_KEY_1: "user.name",
-    // SCIENT-FORK:START — Scient-facing copy.
+    // SCIENT-FORK:START — Scient's identity in pushed commits, on a Scient-controlled domain.
     GIT_CONFIG_VALUE_1: "Scient",
-    // SCIENT-FORK:END
     GIT_CONFIG_KEY_2: "user.email",
-    GIT_CONFIG_VALUE_2: "noreply@t3.codes",
+    GIT_CONFIG_VALUE_2: "noreply@scientfactory.com",
+    // SCIENT-FORK:END
   };
   const git = (args: ReadonlyArray<string>, allowNonZeroExit = false) =>
     process.run({
