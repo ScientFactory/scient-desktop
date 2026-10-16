@@ -11,6 +11,7 @@ import {
   scientAgentAccounts,
   scientAgentAccountSections,
   scientAgentAnswerFor,
+  scientAgentAnswerInput,
 } from "./scientAgentAccountList";
 
 const entry = (
@@ -88,17 +89,24 @@ describe("scientAgentAccountSections", () => {
   });
 });
 
+const running = (operationId: string, account: string, questionId = "question-1") => ({
+  operationId,
+  method: "scient_agent_account" as const,
+  status: "waiting_for_browser" as const,
+  startedAt: "2026-10-02T00:00:00.000Z",
+  finishedAt: null,
+  message: "Finish signing in securely in your browser.",
+  account,
+  acceptsAuthorizationCode: true,
+  questionId,
+});
+
 describe("scientAgentAnswerFor", () => {
-  const running = (operationId: string, account: string) => ({
-    operationId,
-    method: "scient_agent_account" as const,
-    status: "waiting_for_browser" as const,
-    startedAt: "2026-10-02T00:00:00.000Z",
-    finishedAt: null,
-    message: "Finish signing in securely in your browser.",
-    account,
-  });
-  const draft = { operationId: "connect-1", value: "sk-typed-for-deepseek" };
+  const draft = {
+    operationId: "connect-1",
+    questionId: "question-1",
+    value: "sk-typed-for-deepseek",
+  };
 
   it("keeps what was typed for the sign-in it was typed for", () => {
     expect(scientAgentAnswerFor(draft, running("connect-1", "deepseek"))).toBe(
@@ -109,6 +117,40 @@ describe("scientAgentAnswerFor", () => {
   it("drops it when another sign-in replaced that one, or none is running", () => {
     expect(scientAgentAnswerFor(draft, running("connect-2", "openrouter"))).toBe("");
     expect(scientAgentAnswerFor(draft, null)).toBe("");
+  });
+
+  it("drops it when the agent moved on to its next question", () => {
+    expect(
+      scientAgentAnswerFor(draft, running("connect-1", "cloudflare-ai-gateway", "question-2")),
+    ).toBe("");
+  });
+});
+
+describe("scientAgentAnswerInput", () => {
+  const instanceId = ProviderInstanceId.make("scient");
+
+  it("names the question the answer was typed for", () => {
+    expect(
+      scientAgentAnswerInput(
+        instanceId,
+        running("connect-1", "cloudflare-ai-gateway", "question-2"),
+        "0123456789abcdef0123456789abcdef",
+      ),
+    ).toEqual({
+      instanceId,
+      operationId: "connect-1",
+      authorizationCode: "0123456789abcdef0123456789abcdef",
+      questionId: "question-2",
+    });
+  });
+
+  it("names none for an operation from a server that predates question ids", () => {
+    const { questionId: _questionId, ...older } = running("connect-1", "deepseek");
+    expect(scientAgentAnswerInput(instanceId, older, "sk-key")).toEqual({
+      instanceId,
+      operationId: "connect-1",
+      authorizationCode: "sk-key",
+    });
   });
 });
 
