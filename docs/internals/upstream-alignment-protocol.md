@@ -449,6 +449,13 @@ git diff --cached --check
 git diff --check
 ```
 
+`pnpm alignment:gates` runs this list without the desktop host's live-profile variables,
+continues past failures and prints the receipt table; typecheck there reports every failing
+package in one run ([details](./scripts.md#alignment-gates-and-receipt-facts)). On Windows,
+where the repository-wide aggregate is not yet a supported local lane, record the test row as
+"not run — hosted test qualification pending" and cite the hosted result for the pushed
+candidate; that result does not establish Windows-wide test compatibility.
+
 Record the checked revision and results. If later edits change only maintainer documentation or
 formatting, reuse unaffected runtime-test evidence after inspecting the exact diff. For code,
 fixtures, generated inputs, contracts, or dependencies, rerun the checks those edits can affect;
@@ -492,9 +499,13 @@ Create a dated receipt under `docs/internals/` that records:
   when applicable; and
 - the publication boundary.
 
-Only after the history-preserving merge exists and its gate passes should `upstream-state.json` and
-the current pointer in `UPSTREAM.md` advance to that exact target and merge. Push a draft pull request
-for review. Do not merge to `main`, publish, or clean the worktree until review and user acceptance
+Generate the boundary facts with `pnpm alignment:facts --merge <upstream-merge>` instead of
+copying them by hand.
+
+Once the upstream merge is committed, push it as a draft pull request so hosted CI runs while
+local qualification and review continue, and read that first hosted result. Only after the
+history-preserving merge exists and its gate passes should `upstream-state.json` and the current
+pointer in `UPSTREAM.md` advance to that exact target and merge. Do not merge to `main`, publish, or clean the worktree until review and user acceptance
 authorize those separate actions.
 
 In `UPSTREAM.md`, identify the alignment's Scient pull request by number without describing whether

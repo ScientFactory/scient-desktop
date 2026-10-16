@@ -5,11 +5,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { afterEach, test } from "vite-plus/test";
-import { selectBoundaries } from "./scient-alignment-checks.mjs";
+import { checkEnvironment, selectBoundaries } from "./scient-alignment-checks.mjs";
 
 const cli = NodeURL.fileURLToPath(new URL("./scient-alignment-checks.mjs", import.meta.url));
 const ids = (paths) => selectBoundaries(paths).boundaries.map((row) => row.id);
-const all = ["provider", "stop", "queue", "settings", "persistence", "reader"];
+const all = ["provider", "stop", "queue", "settings", "persistence", "fork", "ownership", "reader"];
 const directories = [];
 afterEach(() => {
   for (const directory of directories.splice(0))
@@ -105,6 +105,43 @@ test("composer hosts include settings, Stop and queue consumers and existing cli
   const unknown = "apps/web/src/components/chat/NewComposerHost.tsx";
   NodeAssert.deepEqual(ids([unknown]), all);
   NodeAssert.deepEqual(selectBoundaries([unknown]).unknown, [unknown]);
+});
+
+test("server and desktop owner paths select the one-owner promise", () => {
+  for (const path of [
+    "apps/server/src/serverOwnership.ts",
+    "apps/server/src/server.ts",
+    "apps/desktop/src/backend/DesktopBackendPool.ts",
+  ]) {
+    NodeAssert.deepEqual(ids([path]), ["ownership"]);
+  }
+  NodeAssert.ok(!ids(["apps/server/src/serverSettings.ts"]).includes("ownership"));
+});
+
+test("checks replace the desktop host's variables with a synthetic home and keep test inputs", () => {
+  NodeAssert.deepEqual(
+    checkEnvironment(
+      {
+        ELECTRON_RUN_AS_NODE: "1",
+        T3CODE_HOME: "live",
+        T3CODE_CLI_PATH: "live",
+        Scient_Next_Home: "live",
+        SCIENT_NEXT_SAFETY_ENVELOPE: "true",
+        SCIENT_ANALYTICS_ENABLED: "true",
+        SCIENT_PI_TEST_BINARY: "/opt/pi",
+        T3CODE_TRANSFER_BUDGET_REPORT_PATH: "report.json",
+        PATH: "bin",
+      },
+      "synthetic",
+    ),
+    {
+      SCIENT_PI_TEST_BINARY: "/opt/pi",
+      T3CODE_TRANSFER_BUDGET_REPORT_PATH: "report.json",
+      PATH: "bin",
+      SCIENT_NEXT_HOME: "synthetic",
+      T3CODE_HOME: "synthetic",
+    },
+  );
 });
 
 test("maintainer prose and reference repositories are explicit exclusions, runtime guidance is not", () => {
@@ -241,6 +278,38 @@ test("missing target suite refuses execution before running a substring-filtered
   );
   NodeAssert.equal(result.status, 2);
   NodeAssert.match(result.stderr, /Unavailable check in target checkout/);
+});
+
+test("a failing group does not hide later groups", () => {
+  const { cwd } = fixture();
+  const files = [
+    "apps/server/src/serverRuntimeState.test.ts",
+    "apps/web/src/components/chat/readerScrollPolicy.test.ts",
+    "apps/web/src/components/chat/timelineScrollAnchoring.test.tsx",
+    "apps/web/src/components/chat/readerScrolling.browser.test.tsx",
+    "apps/web/src/components/chat/responseFollow.browser.test.tsx",
+    "apps/web/src/components/chat/readingEnd.browser.test.tsx",
+  ];
+  for (const file of files) {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(cwd, file)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(cwd, file), "");
+  }
+  // A failing pnpm on PATH makes every group fail.
+  const bin = NodePath.join(cwd, "fake-bin");
+  NodeFS.mkdirSync(bin);
+  NodeFS.writeFileSync(NodePath.join(bin, "pnpm"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  NodeFS.writeFileSync(NodePath.join(bin, "pnpm.cmd"), "@exit /b 1\r\n");
+  const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const result = NodeChildProcess.spawnSync(
+    process.execPath,
+    [cli, "--cwd", cwd, "--boundary", "ownership", "--boundary", "reader", "--run"],
+    {
+      encoding: "utf8",
+      env: { ...process.env, [pathKey]: `${bin}${NodePath.delimiter}${process.env[pathKey]}` },
+    },
+  );
+  NodeAssert.equal(result.status, 1, result.stderr);
+  NodeAssert.match(result.stdout, /Failed checks: server, web-unit, web-layout/);
 });
 
 test("invalid scope and parent traversal are refused", () => {
