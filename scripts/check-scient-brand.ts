@@ -91,7 +91,7 @@ const BRAND_RULES: ReadonlyArray<BrandRule> = [
     // Case-sensitive, so `t3.json`, `@t3tools/`, `T3CODE_*`, `x-t3-*`, `t3_session`
     // and other retained identifiers never match. T3 Connect has its own rule.
     id: "bare-t3",
-    pattern: /(?<![\w.\/@-])T3(?![\w-])(?! (?:Connect|Account)\b)/u,
+    pattern: /(?<![\w./@-])T3(?![\w-])(?! (?:Connect|Account)\b)/u,
     describe: "T3 used as the product name",
   },
   {
@@ -172,48 +172,93 @@ export function isProductSurface(path: string): boolean {
   return brandRulesFor(path).length > 0;
 }
 
-const BLOCK_COMMENT_OPEN = /(?:^|[\s{(])\/\*/u;
+// Rust `'` is also a lifetime, so only complete char literals are neutralized.
+const RUST_CHAR_LITERAL = /'(?:\\.|[^\\'])'/gu;
+
+/**
+ * One line with its comments removed. Comment markers count only outside
+ * string literals and after whitespace or an opening bracket (`://` in URLs
+ * does not qualify), so a mistaken match keeps text visible rather than
+ * hiding it. String literals are read one line at a time.
+ */
+function stripComments(
+  line: string,
+  state: { inBlockComment: boolean },
+  quotes: string,
+): { readonly code: string; readonly structure: string } {
+  let code = "";
+  let structure = "";
+  let quote: string | undefined;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]!;
+    if (state.inBlockComment) {
+      if (line.startsWith("*/", index)) {
+        state.inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote !== undefined) {
+      code += char;
+      if (char === "\\") {
+        code += line[index + 1] ?? "";
+        index += 1;
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    const before = line[index - 1] ?? " ";
+    if (line.startsWith("//", index) && /\s/u.test(before)) break;
+    if (line.startsWith("/*", index) && /[\s{(]/u.test(before)) {
+      state.inBlockComment = true;
+      index += 1;
+      continue;
+    }
+    if (quotes.includes(char)) quote = char;
+    code += char;
+    structure += char;
+  }
+  return { code, structure };
+}
 
 /**
  * The code on each line with comments removed, so commentary about T3 as
- * upstream stays allowed. Markdown is read as written. Rust test modules
- * (`#[cfg(test)]` to the end of the file) are fixtures, not product text.
+ * upstream stays allowed. Markdown is read as written. In Rust, the item
+ * after a `#[cfg(test)]` line is a fixture, not product text; an item whose
+ * end cannot be found stays checked.
  */
 function productLines(path: string, contents: string): Array<string> {
   const lines = contents.split(/\r?\n/u);
   if (extension(path) === MARKDOWN_EXTENSION) return lines;
   const rust = extension(path) === ".rs";
-  let inBlockComment = false;
-  let inRustTests = false;
-  return lines.map((raw) => {
-    if (inRustTests) return "";
-    if (rust && raw.trim() === "#[cfg(test)]") {
-      inRustTests = true;
-      return "";
+  const state = { inBlockComment: false };
+  const result: Array<string> = [];
+  let testItem: { start: number; depth: number; opened: boolean } | undefined;
+  for (const raw of lines) {
+    const line = rust ? raw.replace(RUST_CHAR_LITERAL, "'_'") : raw;
+    const { code, structure } = stripComments(line, state, rust ? '"' : "\"'`");
+    result.push(code);
+    if (rust && testItem === undefined && raw.trim() === "#[cfg(test)]") {
+      testItem = { start: result.length - 1, depth: 0, opened: false };
+      continue;
     }
-    let line = raw;
-    if (inBlockComment) {
-      const end = line.indexOf("*/");
-      if (end === -1) return "";
-      line = line.slice(end + 2);
-      inBlockComment = false;
-    }
-    for (let open = line.search(BLOCK_COMMENT_OPEN); open !== -1;) {
-      const start = line.indexOf("/*", open);
-      const end = line.indexOf("*/", start + 2);
-      if (end === -1) {
-        line = line.slice(0, start);
-        inBlockComment = true;
-        break;
+    // Further attributes on the same item come before it opens.
+    if (testItem === undefined || (!testItem.opened && code.trimStart().startsWith("#["))) continue;
+    for (const char of structure) {
+      if (char === "{") {
+        testItem.depth += 1;
+        testItem.opened = true;
+      } else if (char === "}") {
+        testItem.depth -= 1;
       }
-      line = line.slice(0, start) + line.slice(end + 2);
-      open = line.search(BLOCK_COMMENT_OPEN);
     }
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("//") || trimmed.startsWith("*")) return "";
-    // A trailing `// note` after code; `://` in URLs is not preceded by whitespace.
-    return line.replace(/\s\/\/\s.*$/u, "");
-  });
+    if (testItem.opened ? testItem.depth <= 0 : structure.trimEnd().endsWith(";")) {
+      result.fill("", testItem.start);
+      testItem = undefined;
+    }
+  }
+  return result;
 }
 
 function entryMatches(entry: BrandAllowlistEntry, violation: BrandViolation): boolean {

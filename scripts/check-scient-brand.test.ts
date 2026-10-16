@@ -269,6 +269,40 @@ describe("comments and fixtures", () => {
     expect(rulesHit("native/hyprland-snap-shot/src/ipc.rs", rust)).toEqual([]);
   });
 
+  it("checks comment markers inside strings as product text", () => {
+    const contents = [
+      'const sample = "copy /*";',
+      'const label = "T3 server";',
+      'const title = "Scient // T3 Code";',
+    ].join("\n");
+    expect(
+      findBrandViolations([{ path: "apps/web/src/example.tsx", contents }]).map((v) => v.line),
+    ).toEqual([2, 3, 3]);
+  });
+
+  it("skips only the Rust item a test attribute annotates", () => {
+    const rust = [
+      "#[cfg(test)]",
+      "mod transport_tests;",
+      "#[cfg(test)]",
+      "mod tests {",
+      "  fn brace() -> char { '}' }",
+      '  const FIXTURE: &str = "T3 {";',
+      "}",
+      'const LABEL: &str = "T3 server";',
+    ].join("\n");
+    expect(
+      findBrandViolations([{ path: "native/hyprland-snap-shot/src/main.rs", contents: rust }]).map(
+        (v) => v.line,
+      ),
+    ).toEqual([8]);
+  });
+
+  it("keeps checking when a Rust test item never closes", () => {
+    const rust = ["#[cfg(test)]", "mod tests {", 'const LABEL: &str = "T3 server";'].join("\n");
+    expect(rulesHit("native/hyprland-snap-shot/src/main.rs", rust)).toEqual(["bare-t3"]);
+  });
+
   it("reads user documentation as written", () => {
     expect(rulesHit("docs/user/example.md", "* The T3 server restarts.")).toEqual(["bare-t3"]);
   });
