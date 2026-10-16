@@ -479,7 +479,7 @@ Hosted CI replaces duplicate covered local checks only under the owner's explici
 instruction for this pass; general qualification policy is unchanged. No cold
 full-suite or end-to-end alignment speedup is asserted. Release remains separate.
 
-The current alignment through
+The alignment through
 `7ac952c630ef8a60d14ca8f6a0c7adce33db4bae` (`v0.0.46-nightly.20261014.3118`) is
 recorded in [the 2026-10-14 receipt](docs/internals/t3-upstream-sync-20261014-7ac952c630.md)
 ([Scient PR #572](https://github.com/ScientFactory/scient-desktop/pull/572)).
@@ -490,6 +490,17 @@ durability around upstream's reader and checkpoint workers, checks Windows
 legacy database owners by process creation time, keeps archived and queued
 work out of storage cleanup, and routes text-generation fallback by provider
 instance. Release remains separate.
+
+The current alignment through
+`86f4a74c5d789f2b4973616775a6adf19525bf4d` is recorded in
+[the 2026-10-16 receipt](docs/internals/t3-upstream-sync-20261016-86f4a74c5d.md).
+Literal merge `36f81155864a8dec205da90b94f25fc205066360` has exact owned base
+`958267ce1e8984d90301b9a32915e6e4ef466704` and the frozen official target as
+parents, retaining all 86 ordinary donor commits. Scient keeps its labels, product
+name and Stable/Beta channels, archived and queued work out of settled-worktree
+cleanup, mode authority across steering, and older clients' pull-request views by
+gating branch deletion until clients decode actions forward-compatibly. Release
+remains separate.
 
 ## Receiving T3 updates
 
