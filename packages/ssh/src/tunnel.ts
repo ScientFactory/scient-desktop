@@ -8,6 +8,7 @@ import {
 } from "@t3tools/shared/httpReadiness";
 import {
   SCIENT_DESKTOP_RELEASE_REPOSITORY,
+  SCIENT_SERVER_PACKAGE_NAME,
   scientServerAllowedScriptsValue,
 } from "@t3tools/shared/scientRelease";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -608,12 +609,30 @@ fi
 # without running anything at all, which the caller only ever sees as a server
 # that never becomes ready. Resolve the CLI once up front so that install
 # failure is reported here, with npm's own output on stderr.
+# npm puts the package's bin directory first but keeps the inherited PATH, so
+# without a package executable \`command -v\` finds any other scient. Accept only
+# the bin of the package npm's own lockfile records as fetched from the spec.
+T3_PINNED_CLI_CHECK='const fs = require("node:fs");
+const path = require("node:path");
+const [cli, spec, name] = process.argv.slice(1);
+try {
+  const modules = path.dirname(path.dirname(cli));
+  const lock = JSON.parse(fs.readFileSync(path.join(modules, ".package-lock.json"), "utf8"));
+  const root = fs.realpathSync(path.join(modules, name));
+  const pinned =
+    path.basename(path.dirname(cli)) === ".bin" &&
+    lock.packages?.["node_modules/" + name]?.resolved === spec &&
+    fs.realpathSync(cli).startsWith(root + path.sep);
+  process.exitCode = pinned ? 0 : 1;
+} catch {
+  process.exitCode = 1;
+}'
 require_installed_t3_cli() {
   if ! T3_CLI_PATH="$("$@" -- sh -c 'command -v scient')"; then
     printf 'Remote host could not install the Scient server from %s. See npm output above for the cause.\\n' @@T3_PACKAGE_SPEC@@ >&2
     return 1
   fi
-  if [ -n "$T3_CLI_PATH" ]; then
+  if [ -n "$T3_CLI_PATH" ] && node -e "$T3_PINNED_CLI_CHECK" "$T3_CLI_PATH" @@T3_PACKAGE_SPEC@@ @@T3_PACKAGE_NAME@@; then
     return 0
   fi
   printf 'Remote host installed %s but npm produced no scient executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' @@T3_PACKAGE_SPEC@@ >&2
@@ -913,9 +932,10 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
     T3_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
     T3_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),
     T3_ARCHIVE_CHECKSUMS_SECONDS: String(REMOTE_ARCHIVE_CHECKSUMS_SECONDS),
-    // SCIENT-FORK: the pinned npm runtime only reads these two. Without a
+    // SCIENT-FORK: the pinned npm runtime only reads these three. Without a
     // pinned Scient release the runner refuses to start instead of guessing.
     T3_PACKAGE_SPEC: shellSingleQuote(input?.packageSpec?.trim() || ""),
+    T3_PACKAGE_NAME: shellSingleQuote(SCIENT_SERVER_PACKAGE_NAME),
     T3_ALLOWED_SCRIPTS: shellSingleQuote(scientServerAllowedScriptsValue()),
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
   };
