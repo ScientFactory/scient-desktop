@@ -32,7 +32,7 @@ import { triageCommand } from "./cli/triage.ts";
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const connectPublicConfigMissingMessage =
-  "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
+  "Connect commands are unavailable: Scient does not operate a hosted relay for this build.";
 
 class ConnectPublicConfigMissingError extends CliError.UserError {
   override get message() {
@@ -43,7 +43,7 @@ class ConnectPublicConfigMissingError extends CliError.UserError {
 const connectUnavailableCommand = Command.make("connect", {
   command: Argument.String("command").pipe(Argument.variadic),
 }).pipe(
-  Command.withDescription("T3 Connect is unavailable in builds without public configuration."),
+  Command.withDescription("Unavailable: Scient does not operate a hosted relay for this build."),
   Command.unlisted,
   Command.withHandler(() =>
     Effect.fail(

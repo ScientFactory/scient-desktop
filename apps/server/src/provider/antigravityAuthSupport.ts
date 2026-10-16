@@ -75,7 +75,7 @@ const isAcpProcessExitedError = Schema.is(AcpErrors.AcpProcessExitedError);
 const isAcpInputStreamEndedError = Schema.is(AcpErrors.AcpInputStreamEndedError);
 const isAcpProtocolParseError = Schema.is(AcpErrors.AcpProtocolParseError);
 const helperPreparationDetails: Record<string, true> = {
-  "The T3 runtime path cannot be used to suppress Antigravity browser launches.": true,
+  "The Scient runtime path cannot be used to suppress Antigravity browser launches.": true,
   "Antigravity browser suppression could not be verified.": true,
   "Antigravity browser suppression verification timed out.": true,
   "The Antigravity profile directory could not be created.": true,
@@ -460,7 +460,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     helperExecutable.includes("%s")
   ) {
     return yield* authSupportError(
-      "The T3 runtime path cannot be used to suppress Antigravity browser launches.",
+      "The Scient runtime path cannot be used to suppress Antigravity browser launches.",
     );
   }
 

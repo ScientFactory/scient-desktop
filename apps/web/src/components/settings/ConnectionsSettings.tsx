@@ -1532,7 +1532,7 @@ function SavedBackendListRow({
       toastManager.add({
         type: "success",
         title: "MCP URL copied",
-        description: `Add it to an agent, e.g. claude mcp add --transport http t3 ${url}`,
+        description: `Add it to an agent, e.g. claude mcp add --transport http scient ${url}`,
       });
     },
     onError: (error) => {
@@ -3806,7 +3806,7 @@ export function ConnectionsSettings() {
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
                     ? "Let your other devices connect to Scient over the network. Pair devices to give them access. Scient will restart."
-                    : "Devices connected over your local network will disconnect. Existing tunnels, such as T3 Connect or Tailscale HTTPS, keep working. Scient will restart."}
+                    : "Devices connected over your local network will disconnect. Existing tunnels, such as Tailscale HTTPS, keep working. Scient will restart."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
