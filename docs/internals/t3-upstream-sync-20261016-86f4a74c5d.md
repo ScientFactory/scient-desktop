@@ -14,7 +14,11 @@ Generated with `pnpm alignment:facts --merge 36f8115586`:
 - Literal integration merge: `36f81155864a8dec205da90b94f25fc205066360`, tree
   `2246dfbca24a182d3bf244f98b7fa99a94d3f756`; parents are the owned base and the
   frozen official target.
+- Owned-main catch-up: merge `9b8c5e56779b321c4810160a209864a297452025` of owned
+  main `7b07058031f75807cfb09327d90f0670c5849a78` (Scient PR #573, alignment
+  tooling and the onboarding seam signal). It does not change the official merge.
 - Branch: `codex/t3-sync-86f4a74c5d-20261016`; upstream push URL: `DISABLED`.
+- Scient PR: #574.
 
 ## Integrated behavior and composition
 

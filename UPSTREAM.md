@@ -493,7 +493,8 @@ instance. Release remains separate.
 
 The current alignment through
 `86f4a74c5d789f2b4973616775a6adf19525bf4d` is recorded in
-[the 2026-10-16 receipt](docs/internals/t3-upstream-sync-20261016-86f4a74c5d.md).
+[the 2026-10-16 receipt](docs/internals/t3-upstream-sync-20261016-86f4a74c5d.md)
+([Scient PR #574](https://github.com/ScientFactory/scient-desktop/pull/574)).
 Literal merge `36f81155864a8dec205da90b94f25fc205066360` has exact owned base
 `958267ce1e8984d90301b9a32915e6e4ef466704` and the frozen official target as
 parents, retaining all 86 ordinary donor commits. Scient keeps its labels, product
