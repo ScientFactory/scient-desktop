@@ -271,7 +271,54 @@
       "limits": [
         "Tests pin identity/order and compatibility fixtures, not migration SQL-content checksums: independently review immutable shipped migration diffs.",
         "Never run these checks against live profiles. Full legacy importer/recovery and frozen history reader coverage remains applicable when those implementations change.",
-        "Changes to frozen fork history/source reconciliation require ConversationForkBufferedText.native.integration.test.ts and LegacyV1ThreadImporter.test.ts; they are outside this bounded early bundle, whose Stop fixtures only establish frozen-owner protection."
+        "Native fork capture is the fork boundary. Changes to frozen fork history/source reconciliation also require LegacyV1ThreadImporter.test.ts, which is outside this bounded early bundle; its Stop fixtures only establish frozen-owner protection."
+      ]
+    },
+    {
+      "id": "fork",
+      "triggers": [
+        "apps/server/src/orchestration-v2/scient-fork/",
+        "apps/server/src/orchestration-v2/Adapters/",
+        "apps/server/src/persistence/",
+        "packages/effect-codex-app-server/"
+      ],
+      "consumers": [
+        "ConversationForkService -> native buffered-text capture through the real Codex adapter replay -> guarded SQL acknowledgement -> forked thread history"
+      ],
+      "decidingAssertions": [
+        "A fork of a running thread freezes received and coalescer-held native text through the guarded SQL owner, rolls back on SQL failure, survives cancellation and stalled consumers without stopping the source, and forks saved history rather than newer unacknowledged text."
+      ],
+      "checks": {
+        "server": [
+          "src/orchestration-v2/scient-fork/ConversationForkBufferedText.native.integration.test.ts"
+        ]
+      },
+      "limits": [
+        "Controlled Codex app-server replay, not an authenticated Codex session; other providers' native capture is not exercised."
+      ]
+    },
+    {
+      "id": "ownership",
+      "triggers": [
+        "apps/server/src/server.ts",
+        "apps/server/src/serverOwnership",
+        "apps/server/src/serverRuntimeState",
+        "apps/server/src/persistence/Sqlite",
+        "apps/desktop/src/backend/",
+        "apps/desktop/src/wsl/"
+      ],
+      "consumers": [
+        "Server startup -> one owner per state directory -> runtime state record; desktop backend pool and WSL backend start through the same owner"
+      ],
+      "decidingAssertions": [
+        "Two racing starts leave exactly one owner; a second start is refused without touching the live record; a stale record is ignored and never removed when another server published it. On Windows, a stale record whose PID now names a SYSTEM process does not block startup."
+      ],
+      "checks": {
+        "server": ["src/serverRuntimeState.test.ts"]
+      },
+      "limits": [
+        "The SYSTEM-process case runs only on Windows; hosted Linux CI does not exercise it.",
+        "Desktop backend pool and WSL launch paths are not exercised by this server suite."
       ]
     },
     {
