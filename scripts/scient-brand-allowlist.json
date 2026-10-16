@@ -539,5 +539,19 @@
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "overridden-default",
     "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
+  },
+  {
+    "path": "apps/server/src/device/deviceToolMaintenance.ts",
+    "line": "// Keep installs used by any running helper, including older T3 releases.",
+    "rules": ["bare-t3"],
+    "kind": "upstream-reference",
+    "reason": "Upstream comment inside the device helper source this file embeds as a string; never shown to users."
+  },
+  {
+    "path": "packages/provider-pi/src/server/mcpExtensionSource.ts",
+    "line": "// may inherit the canonical T3 server's read-only annotation.",
+    "rules": ["bare-t3"],
+    "kind": "upstream-reference",
+    "reason": "Upstream comment inside the Pi extension source this file embeds as a string; never shown to users."
   }
 ]

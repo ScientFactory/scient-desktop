@@ -280,6 +280,28 @@ describe("comments and fixtures", () => {
     ).toEqual([2, 3, 3]);
   });
 
+  it("reads multi-line templates, JSX text and regular expressions as code", () => {
+    const lines = (contents: string) =>
+      findBrandViolations([{ path: "apps/web/src/example.tsx", contents }]).map((v) => v.line);
+    expect(
+      lines(["const help = `", "Patterns: /*", "`;", 'const label = "T3 server";'].join("\n")),
+    ).toEqual([4]);
+    expect(
+      lines(["const page = `", "<title>Scient // T3 server</title>", "`;"].join("\n")),
+    ).toEqual([2]);
+    expect(lines("const title = <p>Scient // T3 server</p>;")).toEqual([1]);
+    expect(lines('const re = /"/; // T3 Code upstream format')).toEqual([]);
+  });
+
+  it("checks a JS file that does not parse as written", () => {
+    expect(rulesHit("apps/web/src/example.ts", "const = ; // T3 server")).toEqual(["bare-t3"]);
+  });
+
+  it("ignores a commented-out Rust test attribute", () => {
+    const rust = ["/*", "#[cfg(test)]", "*/", 'fn main() { println!("T3 server"); }'].join("\n");
+    expect(rulesHit("native/hyprland-snap-shot/src/main.rs", rust)).toEqual(["bare-t3"]);
+  });
+
   it("skips only the Rust item a test attribute annotates", () => {
     const rust = [
       "#[cfg(test)]",

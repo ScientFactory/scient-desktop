@@ -4,6 +4,7 @@
 // Brand verification is a repository maintenance boundary, not product runtime code.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import { parseSync } from "vite-plus";
 
 // The original guarded surfaces. The inherited-brand rule also covers these
 // hand-picked donor files and release scripts.
@@ -70,6 +71,7 @@ const CODE_EXTENSIONS = new Set([
   ".rs",
   ".qml",
 ]);
+const JS_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]);
 const MARKDOWN_EXTENSION = ".md";
 
 export type BrandRuleId = "inherited-brand" | "bare-t3" | "t3-connect" | "t3-command";
@@ -176,10 +178,28 @@ export function isProductSurface(path: string): boolean {
 const RUST_CHAR_LITERAL = /'(?:\\.|[^\\'])'/gu;
 
 /**
- * One line with its comments removed. Comment markers count only outside
- * string literals and after whitespace or an opening bracket (`://` in URLs
- * does not qualify), so a mistaken match keeps text visible rather than
- * hiding it. String literals are read one line at a time.
+ * JS-family source with every comment blanked, using the parser's own comment
+ * ranges, so strings, templates, regular expressions and JSX text stay checked.
+ * A file that does not parse is checked as written.
+ */
+function withoutJsComments(path: string, contents: string): string {
+  const { comments, errors } = parseSync(path, contents);
+  if (errors.length > 0) return contents;
+  let result = "";
+  let last = 0;
+  for (const comment of comments) {
+    result += contents.slice(last, comment.start);
+    result += contents.slice(comment.start, comment.end).replace(/[^\r\n]/gu, " ");
+    last = comment.end;
+  }
+  return result + contents.slice(last);
+}
+
+/**
+ * One line of C, Rust, QML or HTML with its comments removed. Comment markers
+ * count only outside string literals and after whitespace or an opening
+ * bracket (`://` in URLs does not qualify), so a mistaken match keeps text
+ * visible rather than hiding it. String literals are read one line at a time.
  */
 function stripComments(
   line: string,
@@ -229,6 +249,9 @@ function stripComments(
  * end cannot be found stays checked.
  */
 function productLines(path: string, contents: string): Array<string> {
+  if (JS_EXTENSIONS.has(extension(path))) {
+    return withoutJsComments(path, contents).split(/\r?\n/u);
+  }
   const lines = contents.split(/\r?\n/u);
   if (extension(path) === MARKDOWN_EXTENSION) return lines;
   const rust = extension(path) === ".rs";
@@ -239,7 +262,7 @@ function productLines(path: string, contents: string): Array<string> {
     const line = rust ? raw.replace(RUST_CHAR_LITERAL, "'_'") : raw;
     const { code, structure } = stripComments(line, state, rust ? '"' : "\"'`");
     result.push(code);
-    if (rust && testItem === undefined && raw.trim() === "#[cfg(test)]") {
+    if (rust && testItem === undefined && code.trim() === "#[cfg(test)]") {
       testItem = { start: result.length - 1, depth: 0, opened: false };
       continue;
     }
