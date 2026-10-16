@@ -32,6 +32,7 @@ import {
   CodexOrchestratorReplayHarness,
   layer as makeCodexProviderAdapterRegistryReplayLayer,
 } from "./Adapters/CodexAdapterV2.testkit.ts";
+import { CODEX_THREAD_CONFIG } from "./Adapters/CodexAdapterV2.ts";
 import {
   makeNativeSessionAdapterV2,
   nativeSessionFailure,
@@ -738,7 +739,7 @@ it.live(
               frame: {
                 id: startRequestId,
                 method: "thread/start",
-                params: { config: { "tools.update_plan.enabled": true } },
+                params: { config: CODEX_THREAD_CONFIG },
               },
             },
             { ...sourceStart, label: `thread/start/fallback-${attempt}`, frame: startFrame },

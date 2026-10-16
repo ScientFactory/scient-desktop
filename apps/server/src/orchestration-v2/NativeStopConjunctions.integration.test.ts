@@ -348,6 +348,7 @@ emit({ kind: "ready" });
             }),
             close,
             setModel: () => Effect.die("No model switch in captured Stop proof"),
+            applyFlagSettings: () => Effect.die("No flag settings change in captured Stop proof"),
           };
         }).pipe(Effect.orDie),
       forkSession: () => Effect.die("No fork in Stop conjunction proof"),

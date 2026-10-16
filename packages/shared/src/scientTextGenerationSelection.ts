@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { readCustomModelEntries } from "./model.ts";
 
 const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "codex",
@@ -24,10 +25,19 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "scient",
 ].map((driver) => ProviderDriverKind.make(driver));
 
-/** Shipped Scient writer policy; the caller supplies environment or project enablement. */
+/**
+ * Shipped Scient writer policy; the caller supplies environment or project enablement.
+ *
+ * The model is the chosen instance's cheap default, unless `defaultModelSelection`
+ * (the thread default) is one of that same instance's custom models. A custom
+ * model usually means a backend that may refuse the built-in default, and the
+ * thread default, with its options, is known to work there. Matching is by
+ * instance ID, so another account of the same driver never borrows it.
+ */
 export function fallbackScientTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],
   isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
+  options?: { readonly defaultModelSelection?: ModelSelection | null },
 ): ModelSelection | null {
   const builtIns = TEXT_GENERATION_FALLBACK_DRIVERS.map(
     (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
@@ -58,6 +68,18 @@ export function fallbackScientTextGenerationModelSelection(
   ].find(([instanceId, driver]) => isEnabled(instanceId, driver));
   if (match === undefined) return null;
   const [instanceId, driver] = match;
+  const threadDefault = options?.defaultModelSelection;
+  const config = providerInstances[instanceId]?.config;
+  const customModels =
+    typeof config === "object" && config !== null && "customModels" in config
+      ? config.customModels
+      : undefined;
+  if (
+    threadDefault?.instanceId === instanceId &&
+    readCustomModelEntries(customModels).some((entry) => entry.slug === threadDefault.model)
+  ) {
+    return threadDefault;
+  }
   return {
     instanceId,
     model:

@@ -30,41 +30,57 @@ function isWindowsHost(): boolean {
   return typeof navigator !== "undefined" && isWindowsPlatform(navigator.platform);
 }
 
-function reportInstallFailure(description: string) {
-  toastManager.add(
-    stackedThreadToast({ type: "error", title: "Could not install update", description }),
-  );
-}
+/** Where an install failure goes: a toast by default, or a bulk update's summary. */
+export type ReportDesktopInstallError = (title: string, description: string) => void;
 
-let installInFlight: Promise<void> | null = null;
+const toastInstallFailure: ReportDesktopInstallError = (title, description) => {
+  toastManager.add(stackedThreadToast({ type: "error", title, description }));
+};
+
+let installInFlight: Promise<boolean> | null = null;
 
 /**
  * Restarts into the downloaded update. Restarting is the user's explicit
  * action, so there is no confirmation step. Concurrent calls (the notice and a
- * footer, or repeated clicks) share one request. A refused or failed install
- * surfaces a toast and leaves the footer's Retry state to the updater.
+ * footer, or repeated clicks) share one request, and its failures go to the
+ * first caller's `reportError`. Resolves true when the install was accepted
+ * without an error, so the app is relaunching. A refused or failed install is
+ * reported and leaves the footer's Retry state to the updater.
  */
-export function installDesktopUpdateNow(shell: UpdateInstallShell): Promise<void> {
-  installInFlight ??= runInstall(shell).finally(() => {
+export function installDesktopUpdateNow(
+  shell: UpdateInstallShell,
+  reportError: ReportDesktopInstallError = toastInstallFailure,
+): Promise<boolean> {
+  installInFlight ??= runInstall(shell, reportError).finally(() => {
     installInFlight = null;
   });
   return installInFlight;
 }
 
-async function runInstall(shell: UpdateInstallShell): Promise<void> {
+async function runInstall(
+  shell: UpdateInstallShell,
+  reportError: ReportDesktopInstallError,
+): Promise<boolean> {
+  const title = "Could not install update";
   try {
     const result = await shell.installUpdate();
     if (!result.accepted) {
-      reportInstallFailure(
+      reportError(
+        title,
         result.state.message?.trim() ||
           "Another update step is still running. Try again in a moment.",
       );
-      return;
+      return false;
     }
     const actionError = getDesktopUpdateActionError(result);
-    if (actionError) reportInstallFailure(actionError);
+    if (actionError) {
+      reportError(title, actionError);
+      return false;
+    }
+    return true;
   } catch (error) {
-    reportInstallFailure(error instanceof Error ? error.message : "An unexpected error occurred.");
+    reportError(title, error instanceof Error ? error.message : "An unexpected error occurred.");
+    return false;
   }
 }
 
@@ -119,7 +135,7 @@ export function showScientUpdateReadyNotice({
   readonly state: DesktopUpdateState;
   readonly anchor: Element | null;
   /** The caller's install, so its own pending state covers Restart now too. */
-  readonly install?: () => Promise<void>;
+  readonly install?: () => Promise<unknown>;
 }): ScientUpdateReadyNoticeHandle {
   const version = getDesktopUpdateDownloadedVersion(state);
   const releaseUrl = getDesktopUpdateReleaseUrl(version);

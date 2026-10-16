@@ -460,7 +460,7 @@ merge-group checks and actual delivery. No full-suite or end-to-end speedup is
 asserted. The isolated development candidate was verified stopped; release
 remains separate authorization.
 
-The current qualified alignment candidate through
+The alignment through
 `85272eeeae53c5baa1cba1a36d84bbec81a3a0b5` is recorded in
 [the 2026-10-14 receipt](docs/internals/t3-upstream-sync-20261014-85272eeeae.md)
 ([Scient PR #559](https://github.com/ScientFactory/scient-desktop/pull/559)).
@@ -478,6 +478,18 @@ exclusions from the owner's pending visual acceptance and eventual delivery.
 Hosted CI replaces duplicate covered local checks only under the owner's explicit
 instruction for this pass; general qualification policy is unchanged. No cold
 full-suite or end-to-end alignment speedup is asserted. Release remains separate.
+
+The current alignment through
+`7ac952c630ef8a60d14ca8f6a0c7adce33db4bae` (`v0.0.46-nightly.20261014.3118`) is
+recorded in [the 2026-10-14 receipt](docs/internals/t3-upstream-sync-20261014-7ac952c630.md)
+([Scient PR #572](https://github.com/ScientFactory/scient-desktop/pull/572)).
+Literal merge `d1db50fa986e888fc14cfbd18b86550eb403cfd7` has exact owned base
+`9fad4fb8903e284d324169ab366a26e7f9f292c0` and the frozen official target as
+parents, retaining all 89 ordinary donor commits. Scient keeps full SQLite
+durability around upstream's reader and checkpoint workers, checks Windows
+legacy database owners by process creation time, keeps archived and queued
+work out of storage cleanup, and routes text-generation fallback by provider
+instance. Release remains separate.
 
 ## Receiving T3 updates
 

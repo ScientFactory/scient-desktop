@@ -443,9 +443,16 @@ it.effect("thread.stop keeps a restart continuation of the stopped run from star
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(["thread.stop", "run.interrupt"] as const)(
-  "a successful %s blocks a newer restart continuation when completion timestamps tie",
-  (stopType) =>
+// A restart continuation comes from a run recovery cancelled, or from a settled
+// run whose awaited background work the restart cut.
+it.effect.each([
+  { stopType: "thread.stop", source: "cancelled" },
+  { stopType: "run.interrupt", source: "cancelled" },
+  { stopType: "thread.stop", source: "completed" },
+  { stopType: "run.interrupt", source: "completed" },
+] as const)(
+  "a successful $stopType blocks a newer restart continuation from a $source run when completion timestamps tie",
+  ({ stopType, source: sourceStatus }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -480,7 +487,18 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
         threadId,
         runId: source.id,
         occurredAt: now,
-        payload: { ...source, status: "cancelled", startedAt: now, completedAt: now },
+        payload:
+          sourceStatus === "cancelled"
+            ? { ...source, status: "cancelled", startedAt: now, completedAt: now }
+            : {
+                ...source,
+                status: "completed",
+                startedAt: now,
+                completedAt: now,
+                restartCancelledBackgroundWork: [
+                  { kind: "subagent", label: "Background reviewer" },
+                ],
+              },
       });
       const at = DateTime.formatIso(now);
       yield* sql`
@@ -533,7 +551,7 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
         restartContinuationOfRunId: source.id,
       });
       assert.deepEqual(yield* threadState(threadId), {
-        runs: ["completed", "interrupted", "cancelled"],
+        runs: ["completed", "interrupted", sourceStatus],
         watched: [],
       });
     }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),

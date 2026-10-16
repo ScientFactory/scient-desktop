@@ -221,7 +221,7 @@ const make = Effect.gen(function* () {
     const journal: ConversationImportJournal = {
       version: 1,
       importId: lease.importId,
-      attemptId: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
+      attemptId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
       binding: {
         packageSha256: lease.input.package.packageSha256,
         destination: request.destination,

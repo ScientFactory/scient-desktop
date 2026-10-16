@@ -247,7 +247,7 @@ function assignTurns(input: ValidatedConversationImport, logical = false): TurnA
   return { byMessageId, byQuestionId, keys };
 }
 
-const uuid = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
+const uuid = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4()));
 
 /**
  * Records in history order: by timestamp, then as listed. The sort is stable,

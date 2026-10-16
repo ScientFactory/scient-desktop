@@ -14,6 +14,7 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
+  readProject,
   useAllEnvironmentShellsBootstrapped,
   useProjects,
   useThreadShells,
@@ -66,14 +67,31 @@ function IndexDraftLanding() {
     if (mostRecentProject === null || startingRef.current || !isStillOnIndex()) {
       return;
     }
+    const projectRef = scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id);
+    // A project removed since this render is gone from the store; the next
+    // render picks another one.
+    if (readProject(projectRef) === null) {
+      return;
+    }
     startingRef.current = true;
-    void handleNewThread(scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id), {
-      replace: true,
-      navigationKind: "automatic",
-    }).catch(() => {
-      startingRef.current = false;
-      setStartState((state) => ({ ...state, failed: true }));
-    });
+    // SCIENT-FORK:START — an automatic claim yields to any explicit navigation.
+    void handleNewThread(projectRef, { replace: true, navigationKind: "automatic" })
+      // SCIENT-FORK:END
+      .then((opened) => {
+        // The project was removed while its draft started; land on the next one.
+        // SCIENT-FORK:START — a superseded automatic claim also resolves null; retrying it
+        // would fight the user's own navigation, so only a removed project retries.
+        const projectRemoved = opened === null && readProject(projectRef) === null;
+        // SCIENT-FORK:END
+        if (projectRemoved) {
+          startingRef.current = false;
+          setStartState((state) => ({ ...state, retryRequest: state.retryRequest + 1 }));
+        }
+      })
+      .catch(() => {
+        startingRef.current = false;
+        setStartState((state) => ({ ...state, failed: true }));
+      });
   }, [handleNewThread, mostRecentProject, startState.retryRequest]);
 
   if (!bootstrapped) {

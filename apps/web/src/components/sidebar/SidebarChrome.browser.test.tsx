@@ -7,10 +7,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vitest/browser";
 
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { SidebarNewThreadRow } from "../../scient/sidebar/SidebarNewThreadRow";
 import { SidebarFooter, SidebarProvider } from "../ui/sidebar";
 import { TooltipProvider } from "../ui/tooltip";
 import { SidebarUtilityMenu } from "./SidebarChrome";
+import { setUpdateEverythingRun } from "./updateEverythingRun";
 import type { useUpdateEverything } from "./useUpdateEverything";
 
 const fixture = vi.hoisted(() => ({
@@ -78,6 +80,7 @@ afterEach(() => {
   root?.unmount();
   host?.remove();
   fixture.everything = null;
+  setUpdateEverythingRun(() => null);
   vi.clearAllMocks();
 });
 
@@ -135,14 +138,17 @@ async function mountFooter(width: number, state: DesktopUpdateState) {
   Object.assign(host.style, { width: `${width}px`, margin: "20px", background: "white" });
   document.body.append(host);
   root = createRoot(host);
+  // The app root's registry carries the shared update-run state the pill reads.
   root.render(
-    <SidebarProvider className="min-h-0">
-      <TooltipProvider>
-        <SidebarFooter className="w-full">
-          <SidebarUtilityMenu />
-        </SidebarFooter>
-      </TooltipProvider>
-    </SidebarProvider>,
+    <AppAtomRegistryProvider>
+      <SidebarProvider className="min-h-0">
+        <TooltipProvider>
+          <SidebarFooter className="w-full">
+            <SidebarUtilityMenu />
+          </SidebarFooter>
+        </TooltipProvider>
+      </SidebarProvider>
+    </AppAtomRegistryProvider>,
   );
   await expect.poll(() => host!.querySelectorAll("button").length).toBeGreaterThan(3);
 }
@@ -215,8 +221,13 @@ it.each(["Update", "Updating"] as const)(
       summary: "Update 1 server and 2 providers",
       lines: ["alvin: server to 0.6.21, Codex, Claude"],
       restarts: [],
-      // The run stays in progress so the button keeps its running label.
-      run: () => new Promise<void>(() => {}),
+      skipped: [],
+      // The run stays in progress so the button keeps its running label, which
+      // the shared run state drives.
+      run: () => {
+        setUpdateEverythingRun(() => ({ localVersion: null, phase: "providers", machines: [] }));
+        return new Promise<void>(() => {});
+      },
     };
     await mountFooter(216, {
       ...updateState,

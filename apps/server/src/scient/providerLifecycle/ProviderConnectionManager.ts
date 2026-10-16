@@ -332,7 +332,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       return { providers: target.providers };
     }
 
-    const operationId = `connect-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
+    const operationId = `connect-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
     const startedAt = yield* nowIso;
     const scope = yield* Scope.make();
     const attemptRef = yield* Ref.make<ProviderConnectionAttempt | undefined>(undefined);
@@ -835,7 +835,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         ? disconnectAccount(account)
         : actions.disconnect;
     const runtimeSource = target.snapshot.connection?.runtime?.source ?? "unknown";
-    const operationId = `disconnect-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
+    const operationId = `disconnect-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId: input.instanceId,
       provider: target.provider,
