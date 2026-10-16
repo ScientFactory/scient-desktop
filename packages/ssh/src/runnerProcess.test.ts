@@ -1,6 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { scientServerAllowedScriptsValue } from "@t3tools/shared/scientRelease";
+import {
+  SCIENT_SERVER_PACKAGE_NAME,
+  scientServerAllowedScriptsValue,
+  scientServerPackageSpec,
+} from "@t3tools/shared/scientRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -22,6 +26,32 @@ const Started = Schema.Struct({
 });
 const decodeStarted = Schema.decodeUnknownSync(Schema.fromJsonString(Started));
 
+// npm's npx cache layout: the package bin links into the package, and the
+// hidden lockfile records the spec npm fetched it from.
+const writePinnedInstall = Effect.fn("test.writePinnedInstall")(function* (
+  fixture: string,
+  packageSpec: string,
+  cliSource: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const modules = path.join(fixture, "npx cache", "node_modules");
+  const cliTarget = path.join(modules, SCIENT_SERVER_PACKAGE_NAME, "cli.mjs");
+  const cliPath = path.join(modules, ".bin", "scient");
+  yield* fs.makeDirectory(path.join(modules, ".bin"), { recursive: true });
+  yield* fs.makeDirectory(path.dirname(cliTarget));
+  yield* fs.writeFileString(cliTarget, cliSource);
+  yield* fs.chmod(cliTarget, 0o700);
+  yield* fs.symlink(path.join("..", SCIENT_SERVER_PACKAGE_NAME, "cli.mjs"), cliPath);
+  yield* fs.writeFileString(
+    path.join(modules, ".package-lock.json"),
+    JSON.stringify({
+      packages: { [`node_modules/${SCIENT_SERVER_PACKAGE_NAME}`]: { resolved: packageSpec } },
+    }),
+  );
+  return cliPath;
+});
+
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "remote runner process ownership",
   () => {
@@ -34,13 +64,13 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           const fixture = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-" });
           const bin = path.join(fixture, "bin");
-          const cliPath = path.join(fixture, "installed cli.mjs");
           const callsPath = path.join(fixture, "package-manager-calls.jsonl");
-          const packageSpec = "t3@0.0.35";
+          const packageSpec = scientServerPackageSpec("0.0.35");
           yield* fs.makeDirectory(bin);
           yield* fs.symlink(process.execPath, path.join(bin, "node"));
-          yield* fs.writeFileString(
-            cliPath,
+          const cliPath = yield* writePinnedInstall(
+            fixture,
+            packageSpec,
             `#!/usr/bin/env node
 import * as net from "node:net";
 const server = net.createServer((socket) => {
@@ -59,7 +89,6 @@ server.listen(Number(process.env.T3_TEST_PORT ?? 0), "127.0.0.1", () => {
 });
 `,
           );
-          yield* fs.chmod(cliPath, 0o700);
           yield* fs.writeFileString(
             path.join(bin, packageManager),
             `#!/usr/bin/env node
@@ -161,7 +190,7 @@ if (args.includes("--package")) {
             "--",
             "sh",
             "-c",
-            "command -v t3",
+            "command -v scient",
           ];
           assert.deepEqual(calls, [expectedCall, expectedCall]);
         }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -309,7 +338,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           "success",
           "failed-with-path",
           "existing-cli",
+          "path-shadow",
           "node-override",
+          "unpinned",
         ] as const
       ).map((mode) => ({ packageManager, mode })),
     );
@@ -321,28 +352,31 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const fixture = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-install-" });
         const bin = path.join(fixture, "bin");
-        const cliPath = path.join(fixture, "installed cli.mjs");
         const callsPath = path.join(fixture, "installer-calls.jsonl");
-        const packageSpec = "t3@0.0.39-nightly.20260905.1286";
+        const packageSpec = scientServerPackageSpec("0.0.39-beta.20260905.1");
         const args = ["serve", "a path with spaces"];
         yield* fs.makeDirectory(bin);
         yield* fs.symlink(process.execPath, path.join(bin, "node"));
-        yield* fs.writeFileString(
-          cliPath,
+        const cliPath = yield* writePinnedInstall(
+          fixture,
+          packageSpec,
           `#!/usr/bin/env node
 process.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");
 `,
         );
-        yield* fs.chmod(cliPath, 0o700);
         yield* fs.writeFileString(callsPath, "");
+        // "path-shadow" is npm without a package executable: `command -v` then
+        // falls through to whatever scient is on the inherited PATH.
         yield* fs.writeFileString(
           path.join(bin, packageManager),
           `#!/usr/bin/env node
 const fs = require("node:fs");
 fs.appendFileSync(process.env.T3_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
 const mode = process.env.T3_TEST_MODE;
-if (mode === "success" || mode === "failed-with-path") {
+if (mode === "success" || mode === "failed-with-path" || mode === "existing-cli") {
   process.stdout.write(process.env.T3_TEST_CLI + "\\n");
+} else if (mode === "path-shadow") {
+  process.stdout.write(process.env.PATH + "/scient\\n");
 }
 if (mode === "etarget" || mode === "failed-with-path") {
   process.stderr.write("npm error code ETARGET\\nnpm error notarget No matching version found.\\n");
@@ -354,7 +388,20 @@ if (mode === "etarget" || mode === "failed-with-path") {
 `,
         );
         yield* fs.chmod(path.join(bin, packageManager), 0o700);
-        if (mode === "existing-cli") yield* fs.symlink(cliPath, path.join(bin, "t3"));
+        // A CLI already on the remote PATH is never trusted in place of the pinned package.
+        if (mode === "existing-cli" || mode === "path-shadow") {
+          const pathCli = path.join(fixture, "path cli.mjs");
+          yield* fs.writeFileString(
+            pathCli,
+            `#!/usr/bin/env node
+process.stderr.write("path cli ran\\n");
+process.exitCode = 99;
+`,
+          );
+          yield* fs.chmod(pathCli, 0o700);
+          yield* fs.symlink(pathCli, path.join(bin, "t3"));
+          yield* fs.symlink(pathCli, path.join(bin, "scient"));
+        }
 
         const child = yield* spawner.spawn(
           ChildProcess.make("/bin/sh", ["-s", "--", ...args], {
@@ -369,7 +416,7 @@ if (mode === "etarget" || mode === "failed-with-path") {
             stdin: Stream.make(
               new TextEncoder().encode(
                 buildRemoteT3RunnerScript({
-                  packageSpec,
+                  ...(mode === "unpinned" ? {} : { packageSpec }),
                   ...(mode === "node-override" ? { nodeScriptPath: cliPath } : {}),
                 }),
               ),
@@ -386,9 +433,10 @@ if (mode === "etarget" || mode === "failed-with-path") {
         );
         const installFailed =
           mode === "etarget" || mode === "network" || mode === "failed-with-path";
-        const missingExecutable = mode === "empty-success";
-        assert.equal(exitCode, installFailed || missingExecutable ? 1 : 0);
-        if (installFailed || missingExecutable) {
+        const missingExecutable = mode === "empty-success" || mode === "path-shadow";
+        const unpinned = mode === "unpinned";
+        assert.equal(exitCode, installFailed || missingExecutable || unpinned ? 1 : 0);
+        if (installFailed || missingExecutable || unpinned) {
           assert.equal(stdout, "");
         } else {
           assert.deepEqual(decodeArguments(stdout), args);
@@ -396,13 +444,19 @@ if (mode === "etarget" || mode === "failed-with-path") {
         if (installFailed) {
           const npmError = mode === "network" ? "ENETUNREACH" : "ETARGET";
           assert.include(stderr, `npm error code ${npmError}\n`);
-          assert.include(stderr, `Remote host could not install ${packageSpec}.`);
+          assert.include(
+            stderr,
+            `Remote host could not install the Scient server from ${packageSpec}.`,
+          );
           assert.notInclude(stderr, "Remote host installed");
           assert.notInclude(stderr, "Install a C toolchain");
         } else if (missingExecutable) {
           assert.include(stderr, `Remote host installed ${packageSpec}`);
-          assert.include(stderr, "npm produced no t3 executable");
+          assert.include(stderr, "npm produced no scient executable");
           assert.include(stderr, "Install a C toolchain");
+          assert.notInclude(stderr, "path cli ran");
+        } else if (unpinned) {
+          assert.include(stderr, "This Scient build has no published Scient server release");
         } else {
           assert.equal(stderr, "");
         }
@@ -415,9 +469,9 @@ if (mode === "etarget" || mode === "failed-with-path") {
           "--",
           "sh",
           "-c",
-          "command -v t3",
+          "command -v scient",
         ];
-        const usesInstaller = mode !== "existing-cli" && mode !== "node-override";
+        const usesInstaller = mode !== "node-override" && mode !== "unpinned";
         const calls = yield* fs.readFileString(callsPath);
         if (usesInstaller) {
           assert.deepEqual(

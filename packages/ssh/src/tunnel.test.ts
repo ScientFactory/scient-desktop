@@ -2,7 +2,10 @@ import * as NodeNet from "node:net";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { SCIENT_DESKTOP_RELEASE_REPOSITORY } from "@t3tools/shared/scientRelease";
+import {
+  SCIENT_DESKTOP_RELEASE_REPOSITORY,
+  scientServerPackageSpec,
+} from "@t3tools/shared/scientRelease";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
@@ -245,47 +248,62 @@ describe("ssh tunnel scripts", () => {
   // SCIENT-FORK:START — Scient's SSH product still installs the exact pinned
   // server package from its own signed release over npx/npm. Upstream deleted
   // this path, so these assertions have no upstream counterpart.
-  it("builds the remote t3 runner with npx and npm fallbacks", () => {
-    const script = SshTunnel.buildRemoteT3RunnerScript();
+  it("runs only the pinned Scient server package, with npx and npm fallbacks", () => {
+    const packageSpec = scientServerPackageSpec("0.6.21");
+    const script = SshTunnel.buildRemoteT3RunnerScript({ packageSpec });
 
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
-    assert.include(script, 'exec t3 "$@"');
     assert.include(script, 'exec "$T3_CLI_PATH" "$@"');
-    assert.include(script, "could not install 't3@latest'");
+    assert.include(script, "sh -c 'command -v scient'");
+    assert.include(script, `could not install the Scient server from '${packageSpec}'`);
     assert.include(
       script,
-      "require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@latest'",
+      `require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package '${packageSpec}'`,
     );
     assert.include(
       script,
-      "require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@latest'",
+      `require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package '${packageSpec}'`,
     );
-    assert.include(script, "npm produced no t3 executable");
+    assert.include(script, "npm produced no scient executable");
+    // Neither a CLI already on the remote PATH nor T3's npm package may run.
+    assert.notInclude(script, "command -v t3");
+    assert.notInclude(script, 'exec t3 "$@"');
+    assert.notInclude(script, "t3@latest");
+    assert.notInclude(script, "t3@nightly");
     // The pairing script runs the runner directly, so the npm install block
-    // must do its own node discovery before it looks for an installed CLI.
-    assert.include(
-      script,
-      "ensure_remote_node_path || true\nif command -v t3 >/dev/null 2>&1; then",
-    );
+    // must do its own node discovery before it installs the CLI.
+    assert.include(script, `ensure_remote_node_path || true\nif [ -z '${packageSpec}' ]; then`);
     assert.notInclude(script, "SHA256SUMS");
     assert.notInclude(script, "T3_ARCHIVE_VERSION=");
   });
 
+  it("refuses to start without a pinned Scient server release", () => {
+    const script = SshTunnel.buildRemoteT3RunnerScript();
+
+    assert.include(script, "if [ -z '' ]; then");
+    assert.include(script, "This Scient build has no published Scient server release");
+    assert.isBelow(
+      script.indexOf("This Scient build has no published Scient server release"),
+      script.indexOf("require_installed_t3_cli npx"),
+    );
+    assert.notInclude(script, "t3@latest");
+  });
+
   it("shell-quotes package specs in the remote t3 runner", () => {
     const script = SshTunnel.buildRemoteT3RunnerScript({
-      packageSpec: "t3@nightly; touch /tmp/t3-owned",
+      packageSpec: "scient.tgz; touch /tmp/scient-owned",
     });
 
     assert.include(
       script,
-      "require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@nightly; touch /tmp/t3-owned'",
+      "require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 'scient.tgz; touch /tmp/scient-owned'",
     );
     assert.include(
       script,
-      "require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@nightly; touch /tmp/t3-owned'",
+      "require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 'scient.tgz; touch /tmp/scient-owned'",
     );
     assert.include(script, 'exec "$T3_CLI_PATH" "$@"');
-    assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
+    assert.notInclude(script, "exec npx --yes scient.tgz; touch /tmp/scient-owned");
   });
   // SCIENT-FORK:END
 
@@ -317,7 +335,7 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, '"$RUNNER_FILE" serve --host 127.0.0.1');
     assert.include(launch, '--base-dir "$DEFAULT_SERVER_HOME"');
     assert.notInclude(launch, "server-home");
-    assert.include(launch, "Remote T3 server did not become ready");
+    assert.include(launch, "Remote Scient server did not become ready");
     assert.include(launch, 'wait_ready "60000"');
     assert.include(launch, 'if [ -s "$LOG_FILE" ]; then');
     assert.include(launch, "It wrote nothing to %s");
@@ -371,15 +389,10 @@ describe("ssh tunnel scripts", () => {
       launch.indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
     // SCIENT-FORK: the pinned package spec reaches both generated scripts.
-    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
-    assert.include(
-      SshTunnel.buildRemotePairingScript(stateKey, { packageSpec: "t3@nightly" }),
-      "t3@nightly",
-    );
-    assert.include(
-      SshTunnel.buildRemoteLaunchScript({ packageSpec: "t3@nightly" }),
-      "T3_ARCHIVE_MODE=0",
-    );
+    const packageSpec = scientServerPackageSpec("0.6.21");
+    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec }), packageSpec);
+    assert.include(SshTunnel.buildRemotePairingScript(stateKey, { packageSpec }), packageSpec);
+    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec }), "T3_ARCHIVE_MODE=0");
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
@@ -475,7 +488,9 @@ describe("ssh tunnel scripts", () => {
 
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
-        SshTunnel.launchOrReuseRemoteServer(target, undefined, { packageSpec: "t3@nightly" }),
+        SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+          packageSpec: scientServerPackageSpec("0.6.21"),
+        }),
       );
       yield* Effect.yieldNow;
       yield* TestClock.adjust(Duration.seconds(95));
@@ -671,7 +686,7 @@ describe("ssh tunnel scripts", () => {
                 ...makeSuccessfulProcess(""),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
                 stderr: Stream.make(
-                  new TextEncoder().encode("Remote T3 server did not stop within 2 seconds.\n"),
+                  new TextEncoder().encode("Remote Scient server did not stop within 2 seconds.\n"),
                 ),
               };
             }
@@ -713,7 +728,7 @@ describe("ssh tunnel scripts", () => {
             assert.instanceOf(disconnected.failure, SshCommandError);
             assert.equal(
               disconnected.failure.message,
-              "Remote T3 server did not stop within 2 seconds.",
+              "Remote Scient server did not stop within 2 seconds.",
             );
           }
         } else {

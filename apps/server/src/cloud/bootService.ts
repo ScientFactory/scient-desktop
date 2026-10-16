@@ -443,7 +443,7 @@ const BootServiceProblem = Schema.Literals([
 ]);
 type BootServiceProblem = typeof BootServiceProblem.Type;
 
-/** These codes and recovery steps are documented in docs/user/background-service.md. */
+/** These codes and recovery steps are printed by the service status command. */
 export function formatBootServiceProblem(problem: BootServiceProblem): string {
   switch (problem) {
     case "user-manager-unavailable":

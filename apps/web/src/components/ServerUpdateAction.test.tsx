@@ -165,19 +165,19 @@ describe("ServerUpdateAction", () => {
   it.each([
     [
       { kind: "npm-global", prefix: "/opt/node" },
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3",
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient",
       "Relaunch command copied",
       "This does not update an installed scient command.",
     ],
     [
       { kind: "npx" },
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3",
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient",
       "Relaunch command copied",
       "This does not update an installed scient command.",
     ],
     [
       undefined,
-      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz t3",
+      "npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package=https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.45/scient-server-0.0.45.tgz scient",
       "Relaunch command copied",
       "This does not update an installed scient command.",
     ],
@@ -218,7 +218,7 @@ describe("ServerUpdateAction", () => {
     expect(testState.toast).toHaveBeenCalledWith({
       type: "success",
       title: "Test server updated",
-      description: "Reconnected on t3@0.0.31.",
+      description: "Reconnected on Scient server 0.0.31.",
     });
   });
 

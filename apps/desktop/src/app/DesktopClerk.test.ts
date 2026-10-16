@@ -328,17 +328,17 @@ it.effect("deferred provider auth deep links do not navigate or start authentica
     const clerk = yield* DesktopClerk.DesktopClerk;
     yield* clerk.configure;
     const event = { preventDefault: vi.fn() };
-    listeners.get("open-url")!(event, "t3code-dev://app/auth/callback?code=clerk-code");
-    listeners.get("open-url")!(event, "t3code://app/welcome");
+    listeners.get("open-url")!(event, "scient-next-dev://app/auth/callback?code=clerk-code");
+    listeners.get("open-url")!(event, "scient://app/welcome");
     assert.equal(loadURL.mock.calls.length, 0);
     assert.equal(event.preventDefault.mock.calls.length, 0);
     listeners.get("second-instance")!({}, [
       "t3",
-      "t3code-dev://app/settings/providers?instanceId=work&code=never-forward",
+      "scient-next-dev://app/settings/providers?instanceId=work&code=never-forward",
     ]);
     yield* Effect.promise(() => revealed.promise);
     assert.deepEqual(loadURL.mock.calls, []);
-    listeners.get("open-url")!(event, "t3code-dev://app/welcome#agents:machine-id");
+    listeners.get("open-url")!(event, "scient-next-dev://app/welcome#agents:machine-id");
     listeners.get("open-url")!(event, "https://example.com");
     listeners.get("open-file")!(event, "/tmp/report.html");
     assert.equal(event.preventDefault.mock.calls.length, 0);
@@ -369,7 +369,7 @@ it.effect.each(["startup", "open-url"] as const)(
       const link = codexAuthHandoffUrl(
         {
           authorizationUrl: authorize.toString(),
-          returnUrl: "https://app.t3.codes/welcome#agents:remote-one",
+          returnUrl: "http://127.0.0.1:3773/welcome#agents:remote-one",
           environmentId: EnvironmentId.make("remote-one"),
           instanceId: ProviderInstanceId.make("work"),
           flowId: "flow-one",
