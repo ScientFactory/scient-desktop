@@ -124,6 +124,7 @@ describe("alignment workflow", () => {
       ],
     });
     expect(() => alignmentFacts(f.base, { cwd: f.root })).toThrow(/exactly two parents/u);
+    expect(() => alignmentFacts(catchUp, { cwd: f.root })).toThrow(/not official history/u);
     // On main the alignment arrived through a second parent, so its continuation is elsewhere.
     f.git("switch", "-q", "main");
     expect(() => alignmentFacts(merge, { cwd: f.root })).toThrow(/not on its mainline/u);

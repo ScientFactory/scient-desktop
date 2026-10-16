@@ -349,8 +349,14 @@ export function alignmentFacts(merge, { cwd = process.cwd() } = {}) {
     "--end-of-options",
     `${state.integrationBase}^{commit}`,
   ]);
-  if (!isAncestor(root, previous, target)) {
-    throw new Error("Second parent does not follow the owned base's recorded integration");
+  // Owned commits never appear in official history, even after main lands an alignment.
+  const officialMain = output(root, [
+    "rev-parse",
+    "--verify",
+    "refs/remotes/upstream/main^{commit}",
+  ]);
+  if (!isAncestor(root, target, officialMain) || !isAncestor(root, previous, target)) {
+    throw new Error("Second parent is not official history after the recorded integration");
   }
   const mergeBase = output(root, ["merge-base", base, target]);
   const owned = new Set(
@@ -365,13 +371,7 @@ export function alignmentFacts(merge, { cwd = process.cwd() } = {}) {
   } catch (error) {
     if (!/No names found|No tags can describe/u.test(error.message)) throw error;
   }
-  // A later merge of official history extends the alignment; any other merge catches up owned
-  // main. Owned commits never appear in official history, even after main lands the alignment.
-  const officialMain = output(root, [
-    "rev-parse",
-    "--verify",
-    "refs/remotes/upstream/main^{commit}",
-  ]);
+  // A later merge of official history extends the alignment; any other merge catches up owned main.
   const laterMerges = output(root, [
     "rev-list",
     "--reverse",
