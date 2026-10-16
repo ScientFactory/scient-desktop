@@ -1579,6 +1579,12 @@ export const layer: Layer.Layer<
                 if (terminal === null) {
                   // SCIENT-FORK:START — a committed cancelled start is final without a native terminal.
                   if (yield* Ref.get(rootRunFinalized)) return;
+                  // A Stop owns a run whose provider stopped before reporting its terminal,
+                  // such as an OMP background Stop before a wake run's native start. The
+                  // declined start or Stop's settle follow-up records it interrupted.
+                  if (yield* input.hasUnpairedRunInterruptRequest?.() ?? Effect.succeed(false)) {
+                    return;
+                  }
                   // SCIENT-FORK:END
                   // A session release interrupts or fails the stream; a clean
                   // end without a terminal means the run would never settle.

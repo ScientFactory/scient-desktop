@@ -112,6 +112,24 @@ Agent and OMP runtimes now covers it, so a version change on main voids a stale
 qualification. That workflow test cannot run on Windows (it compares
 backslash paths), which is why the local checks did not report it.
 
+Later hosted runs found three more composition issues and one timing-sensitive
+test, all corrected and reviewed:
+
+- Upstream fails a run whose provider stream ends cleanly without a terminal
+  event (#19131). OMP's interrupt ends its process that way, so a background
+  Stop that arrived before a wake run's native start failed the run. A run with
+  an unanswered Stop now leaves its outcome to the Stop, which records it
+  interrupted as before; provider errors and unexpected endings still fail it.
+- Server shutdown interrupts native subscriptions instead of ending them
+  normally; a normal end would now fail every running run, while an interrupt
+  leaves them to restart recovery. The Pi shutdown case asserts that.
+- Codex receives upstream's 65-minute MCP tool timeout, above Scient's one-hour
+  wait cap.
+- Two reader layout cases waited the default second for an eased reveal that
+  can take longer on a loaded runner; they now wait up to five seconds with the
+  same 23–25 px bound. Under 12–20× CPU throttling the old wait failed every time
+  and the new one passed, always settling at 24 px.
+
 Follow-ups, not changed here: storage cleanup filters stopped sessions before its
 liveness check, so a session whose physical close timed out can be missed (this
 predates the range); a withdrawn update target loses Retry for the rest of the pass,
