@@ -271,8 +271,8 @@ provider session. The request becomes the V2 command
 the timeout expires. A wait timeout does not cancel the child; the result sets
 `waitTimedOut: true`, and the caller can continue with `task_status`. A pending blocking
 question also ends the wait with `hasPendingQuestion: true` and `waitTimedOut: false`.
-If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request_list`,
-`t3_pending_request_read` (with `requestId`) and `t3_pending_request_respond`, or ask
+If `hasPendingQuestion`, pass `threadId=childThreadId` to `scient_pending_request_list`,
+`scient_pending_request_read` (with `requestId`) and `scient_pending_request_respond`, or ask
 the user; the task's completion still wakes this thread. Async questions and approvals
 do not end the wait.
 

@@ -3,6 +3,7 @@ import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
+  ForwardCompatibleArray,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -416,7 +417,9 @@ export const PullRequestCapabilities = Schema.Struct({
   /** A comment can be posted, and the conversation read back. */
   comment: Schema.Boolean,
   /** The actions this host can carry out; anything absent is never offered. */
-  actions: Schema.Array(PullRequestAction),
+  // SCIENT-FORK:START pull-request-action-compatibility — older clients drop actions they do not know.
+  actions: ForwardCompatibleArray(PullRequestAction),
+  // SCIENT-FORK:END pull-request-action-compatibility
   /** Merge strategies the provider itself offers, before repository settings narrow them. */
   mergeMethods: Schema.Array(PullRequestMergeMethod),
   deleteBranch: Schema.optional(Schema.Boolean),
@@ -481,7 +484,9 @@ export const PullRequestViewerPermissions = Schema.Struct({
   /** May request remote stack rebases, including when this layer is already current. */
   stackRebase: Schema.optional(Schema.Boolean),
   /** Which of the actions this viewer may take; anything absent is theirs to look at only. */
-  actions: Schema.Array(PullRequestAction),
+  // SCIENT-FORK:START pull-request-action-compatibility
+  actions: ForwardCompatibleArray(PullRequestAction),
+  // SCIENT-FORK:END pull-request-action-compatibility
   /** This viewer may write a remark: a comment, a reply, or a note against a line. */
   comment: Schema.Boolean,
   /** This viewer may mark a review conversation resolved, and unresolved again. */
@@ -640,7 +645,9 @@ export const PullRequestProviderSummary = Schema.Struct({
    * The actions this host can carry out, so a row can offer them before its detail is read.
    * Absent from servers older than this field; clients then offer what they always did.
    */
-  actions: Schema.optional(Schema.Array(PullRequestAction)),
+  // SCIENT-FORK:START pull-request-action-compatibility
+  actions: Schema.optional(ForwardCompatibleArray(PullRequestAction)),
+  // SCIENT-FORK:END pull-request-action-compatibility
   projectCount: PositiveInt,
   /** False when the provider's CLI or credentials are missing, with `detail` saying which. */
   configured: Schema.Boolean,

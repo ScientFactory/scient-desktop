@@ -2528,7 +2528,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
       expect(detail.headRepositoryNameWithOwner).toBe("contributor/web-fork");
-      expect(detail.viewerPermissions.actions).toContain("delete-branch");
+      // SCIENT-FORK:START pull-request-branch-deletion-gate
+      expect(detail.viewerPermissions.actions).not.toContain("delete-branch");
+      // SCIENT-FORK:END pull-request-branch-deletion-gate
       expect(queryAt(0)).toContain("headRepository{nameWithOwner viewerPermission}");
     }),
   );

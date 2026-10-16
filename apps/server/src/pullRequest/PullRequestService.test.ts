@@ -1703,7 +1703,9 @@ it.effect("runs branch deletion only when the host and viewer support it, never 
   }),
 );
 
-it.effect("keeps branch deletion on the credential that passed source repository permissions", () =>
+// SCIENT-FORK:START pull-request-branch-deletion-gate — upstream asserts the deletion runs on the
+// credential that passed the permission check; while the gate is closed the command is refused.
+it.effect("refuses branch deletion before any host write while the gate is closed", () =>
   Effect.gen(function* () {
     let activeToken = "account-a";
     const requests: Array<{ operation: string; authorization: string | undefined }> = [];
@@ -1806,29 +1808,19 @@ it.effect("keeps branch deletion on the credential that passed source repository
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [provider],
     });
-    yield* service.runAction({
-      projectId: "p1" as ProjectId,
-      repository: "acme/web",
-      number: 1,
-      action: "delete-branch",
-    });
-    assert.strictEqual(activeToken, "account-b");
-    assert.strictEqual(
-      requests.filter(({ operation }) => operation.includes("updateRefs(")).length,
-      1,
-    );
-    assert.deepStrictEqual(
-      requests.map(({ authorization }) => authorization),
-      [
-        "Bearer account-a",
-        "Bearer account-a",
-        "Bearer account-a",
-        "Bearer account-a",
-        "Bearer account-a",
-      ],
-    );
+    const refused = yield* service
+      .runAction({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        action: "delete-branch",
+      })
+      .pipe(Effect.flip);
+    assert.match(refused.message, /cannot delete a change request's source branch/);
+    assert.isFalse(requests.some(({ operation }) => operation.includes("updateRefs(")));
   }),
 );
+// SCIENT-FORK:END pull-request-branch-deletion-gate
 
 it.effect("refuses an action this viewer may not take, and says what access it takes", () =>
   Effect.gen(function* () {

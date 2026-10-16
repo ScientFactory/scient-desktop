@@ -38,6 +38,9 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // runtime, which the bundler cannot see. Keep the wrapper and its
   // platform-specific packages available on the real filesystem.
   "@napi-rs/canvas",
+  // The server loads undici through createRequire to keep fetch on HTTP/1.1 under Node 26
+  // (apps/server/src/outboundHttp.ts), which the bundler cannot see.
+  "undici",
   "ffi-rs",
   "@yuuang/",
   "@ff-labs/",

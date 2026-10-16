@@ -64,7 +64,8 @@ it.effect("maps credential verification failures without relabeling operation fa
   }),
 );
 
-it.effect("advertises standalone branch deletion for source repository writers", () =>
+// SCIENT-FORK:START pull-request-branch-deletion-gate — the machinery stays, the offer is gated.
+it.effect("keeps branch deletion runnable but neither advertises nor permits it", () =>
   Effect.gen(function* () {
     let action: string | undefined;
     const provider = yield* make.pipe(
@@ -77,8 +78,8 @@ it.effect("advertises standalone branch deletion for source repository writers",
         }),
       ),
     );
-    expect(provider.capabilities.deleteBranch).toBe(true);
-    expect(provider.capabilities.actions).toContain("delete-branch");
+    expect(provider.capabilities.deleteBranch).toBe(false);
+    expect(provider.capabilities.actions).not.toContain("delete-branch");
     yield* provider.runAction({
       cwd: "/w",
       repository: "acme/web",
@@ -94,7 +95,8 @@ it.effect("advertises standalone branch deletion for source repository writers",
       didAuthor: false,
       canDeleteBranch: true,
     };
-    expect(gitHubViewerPermissions(access).actions).toContain("delete-branch");
+    expect(gitHubViewerPermissions(access).actions).not.toContain("delete-branch");
+    // SCIENT-FORK:END pull-request-branch-deletion-gate
     expect(
       gitHubViewerPermissions({
         ...access,
@@ -268,8 +270,9 @@ describe("gitHubViewerPermissions", () => {
       }),
     ).toEqual({
       // Arming a merge for later is the merge, so it travels with it.
+      // SCIENT-FORK:START pull-request-branch-deletion-gate — "delete-branch" is not offered.
       actions: [
-        "delete-branch",
+        // SCIENT-FORK:END pull-request-branch-deletion-gate
         "merge",
         "enable-auto-merge",
         "disable-auto-merge",

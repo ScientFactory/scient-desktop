@@ -38,6 +38,7 @@ import {
   supportedBulkServerTargets,
   unsupportedBulkServerMachines,
 } from "./updateEverything.logic";
+import { publishQualifiedUpdateRunServers } from "./updateEverythingRun";
 // SCIENT-FORK:END
 
 /** How long this app counts down before it relaunches, so the user can postpone it. */
@@ -96,9 +97,12 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const committedServersRef = useRef(servers);
   useLayoutEffect(() => {
     committedServersRef.current = servers;
+    // A failed server's Retry rechecks the same eligibility.
+    publishQualifiedUpdateRunServers(servers);
     return () => {
-      // A delayed pass cannot retain eligibility after its sidebar owner leaves.
+      // A delayed pass or retry cannot retain eligibility after its sidebar owner leaves.
       committedServersRef.current = [];
+      publishQualifiedUpdateRunServers([]);
     };
   }, [servers]);
   const skipped: ReadonlyArray<SkippedMachine> = [

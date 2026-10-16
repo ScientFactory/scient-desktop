@@ -10,7 +10,8 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
-import type { UpdateEverythingMachine } from "./updateEverything.logic";
+import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
+import type { UpdateEverythingMachine, UpdateRunMachine } from "./updateEverything.logic";
 
 type TestEnvironment = {
   environmentId: EnvironmentId;
@@ -27,7 +28,16 @@ const testState = vi.hoisted(() => ({
   updateStateAtom: undefined as Atom.Atom<{ status: "idle" }> | undefined,
   availability: undefined as AsyncResult.AsyncResult<boolean, string> | undefined,
   updateProviders: vi.fn<() => Promise<ReadonlyArray<never>>>(),
-  settleMachine: vi.fn<(environmentId: string, failed: boolean) => void>(),
+  settleMachine:
+    vi.fn<
+      (
+        environmentId: string,
+        failure: string | null,
+        options?: { readonly serverUpdated?: boolean; readonly providerFailure?: string | null },
+      ) => void
+    >(),
+  // The real run module, so a Retry runs against what the hook last published.
+  runModule: undefined as typeof import("./updateEverythingRun") | undefined,
   showResult: vi.fn<(result: { readonly failures: ReadonlyArray<string> }) => void>(),
   updateServer:
     vi.fn<
@@ -50,7 +60,11 @@ vi.mock("~/state/session", () => ({
   environmentSession: { sessionStateAtom: (id: string) => testState.sessions.get(id)! },
 }));
 vi.mock("~/rpc/atomRegistry", () => ({
-  appAtomRegistry: { get: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom) },
+  appAtomRegistry: {
+    get: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom),
+    update: <R, W>(atom: Atom.Writable<R, W>, f: (value: R) => W) =>
+      testState.registry!.update(atom, f),
+  },
 }));
 vi.mock("~/state/server", () => ({
   serverEnvironment: {
@@ -77,13 +91,25 @@ vi.mock("~/scient/desktopUpdate/serverReleaseAvailability", async (importOrigina
   };
 });
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
-vi.mock("./updateEverythingRun", () => ({
-  setUpdateEverythingRun: () => {},
-  settleUpdateRunMachine: testState.settleMachine,
-  showUpdateEverythingResult: testState.showResult,
-  saveUpdateEverythingResult: () => {},
-  clearSavedUpdateEverythingResult: () => {},
-}));
+vi.mock("./updateEverythingRun", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./updateEverythingRun")>();
+  testState.runModule = original;
+  return {
+    setUpdateEverythingRun: () => {},
+    settleUpdateRunMachine: testState.settleMachine,
+    showUpdateEverythingResult: testState.showResult,
+    saveUpdateEverythingResult: () => {},
+    clearSavedUpdateEverythingResult: () => {},
+    // No server restarts into its update here, so each hands off when its update finishes.
+    waitForServerUpdateHandoff: (_environmentId: EnvironmentId, finished: Promise<unknown>) =>
+      finished.then(
+        () => {},
+        () => {},
+      ),
+    waitForUpdateRestart: async () => false,
+    publishQualifiedUpdateRunServers: original.publishQualifiedUpdateRunServers,
+  };
+});
 
 import { useUpdateEverything } from "./useUpdateEverything";
 
@@ -303,9 +329,10 @@ it("retires an unmounted held pass without disabling a newly confirmed pass", as
   await pass.finish();
   expect(testState.updateServer).not.toHaveBeenCalled();
   // The withdrawn servers settle and are named in the summary instead of waiting forever.
+  const withdrawn = "Not updated; it was no longer eligible when servers updated.";
   expect(testState.settleMachine.mock.calls).toEqual([
-    ["service", true],
-    ["desktop", true],
+    ["service", withdrawn, { providerFailure: null }],
+    ["desktop", withdrawn, { providerFailure: null }],
   ]);
   expect(testState.showResult.mock.calls[0]?.[0].failures).toEqual([
     "service: Not updated; it was no longer eligible when servers updated.",
@@ -322,3 +349,96 @@ it("retires an unmounted held pass without disabling a newly confirmed pass", as
     "desktop",
   ]);
 });
+
+function failedRunMachine(target: ServerUpdateTarget): UpdateRunMachine {
+  return {
+    environmentId: target.environmentId,
+    label: target.serverLabel,
+    updatesProviders: false,
+    server: target,
+    handedOffVersion: null,
+    startedAt: 0,
+    result: "failed",
+    failure: "Server update failed",
+    providerFailure: null,
+  };
+}
+
+it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
+  "does not retry a failed server whose target lost its %s, and still retries an eligible one",
+  async (change) => {
+    const run = testState.runModule!;
+    await act(() => {
+      renderer = create(<Probe />);
+    });
+    // Confirmed with flags the eligible server no longer has.
+    const confirmed = (id: string, selfUpdate: ServerSelfUpdateCapability): ServerUpdateTarget => ({
+      environmentId: EnvironmentId.make(id),
+      serverLabel: id,
+      selfUpdate,
+      continueThreadsAfterServerUpdate: false,
+      targetVersion: "0.6.2",
+    });
+    const service = confirmed("service", "boot-service");
+    const desktop = confirmed("desktop", "desktop-managed");
+    const savedService =
+      change === "version"
+        ? { ...service, targetVersion: "0.6.3" }
+        : change === "mechanism"
+          ? { ...service, selfUpdate: "desktop-managed" as const }
+          : service;
+    run.setUpdateEverythingRun(() => ({
+      localVersion: null,
+      phase: "servers",
+      restartAt: null,
+      machines: [failedRunMachine(savedService), failedRunMachine(desktop)],
+    }));
+    if (change === "availability") {
+      testState.availability = AsyncResult.failureWithPrevious(Cause.fail("403"), {
+        previous: Option.some(AsyncResult.success(true)),
+      });
+    }
+    if (change === "scope") {
+      testState.registry!.set(
+        testState.sessions.get("service")!,
+        AsyncResult.success({ ...session, scopes: [] }),
+      );
+    }
+    if (change === "owner") {
+      await act(() => renderer!.unmount());
+      renderer = undefined;
+    } else {
+      await act(() => renderer!.update(<Probe />));
+    }
+
+    const update = vi.fn<(target: ServerUpdateTarget) => Promise<ServerUpdateOutcome>>(
+      async () => ({ status: "updated" }),
+    );
+    await act(async () => {
+      run.retryFailedUpdateRunServers(update);
+    });
+
+    if (change === "owner") {
+      expect(update).not.toHaveBeenCalled();
+    } else {
+      // The eligible retry keeps its confirmed version and mechanism, with current flags.
+      expect(update.mock.calls).toEqual([
+        [
+          expect.objectContaining({
+            environmentId: "desktop",
+            selfUpdate: "desktop-managed",
+            targetVersion: "0.6.2",
+            continueThreadsAfterServerUpdate: true,
+          }),
+          { quiet: true },
+        ],
+      ]);
+    }
+    const machines = run.useUpdateEverythingRun()?.machines ?? [];
+    expect(machines.find((machine) => machine.environmentId === "service")).toMatchObject({
+      server: null,
+      result: "failed",
+      failure: run.WITHDRAWN_RETRY_FAILURE,
+    });
+  },
+);

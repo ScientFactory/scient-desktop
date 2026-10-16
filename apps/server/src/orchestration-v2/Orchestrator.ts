@@ -1066,8 +1066,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "contextTransfers",
         ],
         {
+          // SCIENT-FORK:START command-read-scope — Scient's Stop request items and system messages.
           turnItemTypes: ["user_message", "error", "run_interrupt_request"],
           messageRoles: ["user", "system"],
+          // SCIENT-FORK:END command-read-scope
           omitSettledLeafNodes: true,
         },
       )

@@ -49,7 +49,6 @@ describe("shouldBundleCliDependency", () => {
       "@connectrpc/connect-web",
       "@statsig/js-client",
       "@statsig/client-core",
-      "undici",
       "@fastify/busboy",
     ]) {
       assert.strictEqual(shouldBundleCliDependency(id), true, id);
@@ -118,6 +117,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
         "msgpackr-extract",
         "node-pty",
         "playwright-core",
+        "undici",
       ],
     );
   });

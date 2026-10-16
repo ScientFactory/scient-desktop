@@ -25,9 +25,13 @@ import { definition } from "../client/definition.ts";
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: [...definition.changeRequestActions],
+  // SCIENT-FORK:START pull-request-branch-deletion-gate — clients released before
+  // forward-compatible action decoding cannot read "delete-branch", so it is neither
+  // advertised nor accepted until those clients are no longer supported.
+  actions: [...definition.changeRequestActions].filter((action) => action !== "delete-branch"),
   mergeMethods: ["merge", "squash", "rebase"],
-  deleteBranch: true,
+  deleteBranch: false,
+  // SCIENT-FORK:END pull-request-branch-deletion-gate
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
@@ -66,7 +70,8 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
   return {
     ...(access.canWrite ? { stackRebase: true } : {}),
     actions: [
-      ...(access.canDeleteBranch === true ? (["delete-branch"] as const) : []),
+      // SCIENT-FORK:START pull-request-branch-deletion-gate — see CAPABILITIES.
+      // SCIENT-FORK:END pull-request-branch-deletion-gate
       // Arming a merge and taking the arming back are the merge, deferred: whoever may not
       // merge here may not leave an instruction to merge later either.
       ...(access.canWrite
