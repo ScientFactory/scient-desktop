@@ -79,7 +79,7 @@ export function publishQualifiedUpdateRunServers(servers: ReadonlyArray<ServerUp
   qualifiedUpdateRunServers = servers;
 }
 
-export const WITHDRAWN_RETRY_FAILURE = "Not retried; it is no longer eligible for this update.";
+const WITHDRAWN_RETRY_FAILURE = "Not retried; it is no longer eligible for this update.";
 // SCIENT-FORK:END
 
 /** Retries each failed server update in the run. */

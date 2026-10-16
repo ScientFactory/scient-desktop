@@ -438,7 +438,7 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
     expect(machines.find((machine) => machine.environmentId === "service")).toMatchObject({
       server: null,
       result: "failed",
-      failure: run.WITHDRAWN_RETRY_FAILURE,
+      failure: "Not retried; it is no longer eligible for this update.",
     });
   },
 );
