@@ -19,6 +19,7 @@ import {
 import * as Schema from "effect/Schema";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
+import { filterSidebarV2VisibleThreads } from "../../components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -245,9 +246,9 @@ export function useSidebarSections(input: {
   }, [canonicalGroups, environments]);
   const completeGroups = useMemo(() => {
     const now = input.now ?? new Date().toISOString();
-    const active = input.threads.filter((thread) => {
-      if (thread.archivedAt !== null || thread.projectId === null || thread.pinnedAt != null)
-        return false;
+    // The rows the sidebar can show, regardless of project scope; hidden subagents never place.
+    const active = filterSidebarV2VisibleThreads(input.threads, null).filter((thread) => {
+      if (thread.pinnedAt != null) return false;
       const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
       return (
         !(capabilities?.threadSettlement && thread.settledOverride === "settled") &&
