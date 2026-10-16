@@ -539,12 +539,5 @@
     "rules": ["inherited-brand", "bare-t3"],
     "kind": "overridden-default",
     "reason": "Upstream package default product name; Scient compositions pass productName or app identity \"Scient\" instead."
-  },
-  {
-    "path": "packages/shared/src/themePalettes.ts",
-    "line": "label: \"T3 Chat\",",
-    "rules": ["bare-t3"],
-    "kind": "upstream-reference",
-    "reason": "Built-in theme imitating the T3 Chat product's palette; the label names that product. Owner may choose a neutral name."
   }
 ]
