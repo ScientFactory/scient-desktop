@@ -100,38 +100,25 @@ describe("ssh command", () => {
     }),
   );
 
-  it.effect("resolves the remote t3 package spec from the desktop release channel", () =>
+  it.effect("pins the remote server to this desktop's own Scient release", () =>
     Effect.sync(() => {
       assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.17",
-          updateChannel: "latest",
-        }),
+        resolveRemoteT3CliPackageSpec({ appVersion: "0.0.17" }),
         "https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.17/scient-server-0.0.17.tgz",
       );
       assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.17-nightly.20260415.44",
-          updateChannel: "nightly",
-        }),
+        resolveRemoteT3CliPackageSpec({ appVersion: "0.0.17-nightly.20260415.44" }),
         "https://github.com/ScientFactory/scient-desktop/releases/download/v0.0.17-nightly.20260415.44/scient-server-0.0.17-nightly.20260415.44.tgz",
       );
-      assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.0-dev",
-          updateChannel: "nightly",
-          isDevelopment: true,
-        }),
-        "t3@nightly",
+    }),
+  );
+
+  it.effect("offers no remote package for development or unpublished builds", () =>
+    Effect.sync(() => {
+      assert.isUndefined(
+        resolveRemoteT3CliPackageSpec({ appVersion: "0.0.17", isDevelopment: true }),
       );
-      assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.0-dev",
-          updateChannel: "latest",
-          isDevelopment: true,
-        }),
-        "t3@nightly",
-      );
+      assert.isUndefined(resolveRemoteT3CliPackageSpec({ appVersion: "local build" }));
     }),
   );
 

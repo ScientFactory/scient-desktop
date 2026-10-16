@@ -14,19 +14,17 @@ To use one:
 Like every theme, this is a per-client choice: picking it on your desktop does not change what your
 phone or another browser shows.
 
-The machine can also set the environment's theme:
-
-The server command retains the inherited `t3` compatibility name:
+The machine can also set the environment's theme with the `scient` command:
 
 ```bash
-t3 theme set nightfall
+scient theme set nightfall
 ```
 
 Web and desktop clients switch to it — immediately when connected, on their next connect
 otherwise — and a fresh client opens with it. Each client applies a set once, so picking a
-different theme in Settings afterwards sticks until the next `t3 theme set`, and running the same
-set again is how you bring clients back. `t3 theme clear` removes the setting without changing
-what anyone currently has, and `t3 theme show` prints the current theme and everything the
+different theme in Settings afterwards sticks until the next `scient theme set`, and running the same
+set again is how you bring clients back. `scient theme clear` removes the setting without changing
+what anyone currently has, and `scient theme show` prints the current theme and everything the
 machine publishes. Only the environment you are anchored to publishes themes, so a remote client
 follows the machine it is connected to, not the device it runs on. The inherited mobile client keeps its own
 appearance settings and does not follow environment themes.
@@ -41,8 +39,9 @@ Close the editor to show the latest selected theme.
 
 ## Publishing themes
 
-A machine publishes themes by writing files into the `themes` directory of the inherited server
-state directory (`~/.t3/userdata/themes/` by default). The filename is the theme id — `nightfall.json`
+A machine publishes themes by writing files into the `themes` directory of the server state
+directory: `~/.scient-next/userdata/themes/` by default, or `~/.t3/userdata/themes/` for a
+server Scient started over SSH. The filename is the theme id — `nightfall.json`
 appears as `nightfall` — and stays stable while the machine rewrites the colors underneath, so
 selections and defaults keep pointing at it.
 

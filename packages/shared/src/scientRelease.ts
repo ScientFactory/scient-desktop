@@ -26,6 +26,11 @@ export function scientDesktopUpdateFeed(channel: "latest" | "beta" | "nightly") 
   };
 }
 export const SCIENT_SERVER_PACKAGE_NAME = "t3";
+/**
+ * The command users run from the server archive. The archive also keeps a `t3`
+ * command for remote setups and scripts that already invoke it.
+ */
+export const SCIENT_SERVER_CLI_NAME = "scient";
 export const SCIENT_SERVER_ALLOWED_INSTALL_SCRIPTS = [
   "node-pty@1.1.0",
   "msgpackr-extract@3.0.4",
@@ -58,7 +63,7 @@ export function scientServerPackageSpec(version: string): string {
 }
 
 export function scientServerNpxCommand(version: string): string {
-  return `npx --yes --allow-scripts=${scientServerAllowedScriptsValue()} --package=${scientServerPackageSpec(version)} ${SCIENT_SERVER_PACKAGE_NAME}`;
+  return `npx --yes --allow-scripts=${scientServerAllowedScriptsValue()} --package=${scientServerPackageSpec(version)} ${SCIENT_SERVER_CLI_NAME}`;
 }
 
 /** Stable and Beta publication accept distinct, canonical version shapes. */
