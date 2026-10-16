@@ -501,7 +501,7 @@ const make = Effect.gen(function* () {
             evidence: input.evidence,
           });
 
-          const bindingId = WorkspaceBindingIdSchema.make(yield* crypto.randomUUIDv4);
+          const bindingId = WorkspaceBindingIdSchema.make(yield* crypto.randomUUIDv4());
           const authorityGeneration = WorkspaceAuthorityGeneration.make(
             existing ? existing.authorityGeneration + 1 : 1,
           );
@@ -578,7 +578,7 @@ const make = Effect.gen(function* () {
             });
           }
 
-          const bindingId = WorkspaceBindingIdSchema.make(yield* crypto.randomUUIDv4);
+          const bindingId = WorkspaceBindingIdSchema.make(yield* crypto.randomUUIDv4());
           const authorityGeneration = WorkspaceAuthorityGeneration.make(
             current.authorityGeneration + 1,
           );

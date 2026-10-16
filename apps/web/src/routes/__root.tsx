@@ -35,6 +35,7 @@ import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAp
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
+import { DesktopUpdateLaunchNotice } from "../components/sidebar/updateEverythingRun";
 import { AnalyticsSharingNotice } from "../scient/analytics/AnalyticsSharingNotice";
 import { SettingsAnalyticsObserver } from "../scient/analytics/SettingsAnalyticsObserver";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
@@ -266,6 +267,7 @@ function RootRouteView() {
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />
           ) : null}
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+          {isElectron ? <DesktopUpdateLaunchNotice /> : null}
           {primaryEnvironmentAuthenticated ? <AnalyticsSharingNotice /> : null}
           {primaryEnvironmentAuthenticated ? <SettingsAnalyticsObserver /> : null}
           {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}

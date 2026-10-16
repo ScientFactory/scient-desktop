@@ -1,12 +1,23 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { DownloadIcon, LoaderCircleIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
-import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useScientDownloadProgress } from "../../hooks/useScientDownloadProgress";
 import { cn } from "../../lib/utils";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
+import { serverEnvironment } from "../../state/server";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   canCheckForUpdate,
@@ -39,7 +50,13 @@ import {
 } from "./DesktopUpdateStatusIcon";
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
 import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
-import { useUpdateEverything } from "./useUpdateEverything";
+import {
+  describeUpdateRun,
+  resolveUpdateRunMachineStatus,
+  type UpdateEverythingRun,
+} from "./updateEverything.logic";
+import { useUpdateEverythingRun } from "./updateEverythingRun";
+import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
 // SCIENT-FORK:START — explicit Restart does not acquire another confirmation.
 import { shouldRunUpdateEverything } from "./updateEverything.logic";
 // SCIENT-FORK:END
@@ -85,27 +102,34 @@ export function openSidebarUpdateReleaseNotesPopoverOnForwardTab(
 function resolveSidebarUpdatePresentation({
   action,
   showsEverything,
+  run,
   isDownloading,
   showCheckIcon,
 }: {
   readonly action: ReturnType<typeof resolveDesktopUpdateButtonAction>;
-  /** Remote work is waiting or running, and this app is not downloading. */
+  /** Remote work is waiting, and this app is not downloading. */
   readonly showsEverything: boolean;
+  /** The running "update everything" pass. Its state sets the icon. */
+  readonly run: UpdateEverythingRun | null;
   readonly isDownloading: boolean;
   readonly showCheckIcon: boolean;
 }) {
-  const showUpdateDetails = action !== "none" || showsEverything || isDownloading;
+  const showUpdateDetails = action !== "none" || showsEverything || run !== null || isDownloading;
   const iconStatus: DesktopUpdateStatusIconState = showCheckIcon
     ? "checking"
     : isDownloading
       ? "downloading"
-      : showsEverything
-        ? "everything"
-        : action === "install"
+      : run !== null
+        ? run.localVersion !== null && action === "install"
           ? "downloaded"
-          : action === "download"
-            ? "available"
-            : "idle";
+          : "everything"
+        : showsEverything
+          ? "everything"
+          : action === "install"
+            ? "downloaded"
+            : action === "download"
+              ? "available"
+              : "idle";
 
   return {
     iconStatus,
@@ -134,11 +158,23 @@ function SidebarUpdateArchitectureWarningContent() {
   );
 }
 
+const toastUpdateError: ReportLocalUpdateError = (title, description) => {
+  toastManager.add(stackedThreadToast({ type: "error", title, description }));
+};
+
 /** Downloads this app's update. Resolves true when it is ready to install;
-    failures toast and resolve false. */
+    failures go to `reportError` (a toast by default) and resolve false. */
 async function downloadLocalUpdate(
   bridge: DesktopBridge,
-  onDownloaded?: (state: DesktopUpdateState) => void,
+  {
+    // SCIENT-FORK:START — a finished download offers Restart in place (see handleAction).
+    onDownloaded,
+    // SCIENT-FORK:END
+    reportError = toastUpdateError,
+  }: {
+    readonly onDownloaded?: (state: DesktopUpdateState) => void;
+    readonly reportError?: ReportLocalUpdateError;
+  } = {},
 ): Promise<boolean> {
   try {
     const result = await bridge.downloadUpdate();
@@ -146,26 +182,52 @@ async function downloadLocalUpdate(
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
-    if (actionError) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not download update",
-          description: actionError,
-        }),
-      );
-    }
+    if (actionError) reportError("Could not download update", actionError);
     return result.completed;
   } catch (error) {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: "Could not start update download",
-        description: error instanceof Error ? error.message : "An unexpected error occurred.",
-      }),
+    reportError(
+      "Could not start update download",
+      error instanceof Error ? error.message : "An unexpected error occurred.",
     );
     return false;
   }
+}
+
+/** Tooltip lines for a running pass: this app first, then one per machine. */
+function useUpdateRunTooltip(
+  run: UpdateEverythingRun | null,
+  state: DesktopUpdateState | null,
+  localReady: boolean,
+): string | null {
+  const statusesAtom = useMemo(
+    () =>
+      Atom.make((get) =>
+        run === null
+          ? []
+          : run.machines.map((machine) => ({
+              label: machine.label,
+              status: resolveUpdateRunMachineStatus(
+                machine,
+                run.phase,
+                get(serverEnvironment.updateStateAtom(machine.environmentId)),
+              ),
+            })),
+      ),
+    [run],
+  );
+  const statuses = useAtomValue(statusesAtom);
+  if (run === null) return null;
+  const local =
+    run.localVersion === null
+      ? null
+      : state?.status === "downloading"
+        ? `downloading${state.downloadPercent === null ? "" : ` ${Math.floor(state.downloadPercent)}%`}`
+        : run.phase === "installing"
+          ? "restarting"
+          : localReady
+            ? "restarts last"
+            : "waiting";
+  return describeUpdateRun(statuses, local).join("\n");
 }
 
 /**
@@ -181,7 +243,6 @@ export function SidebarUpdatePill() {
 function SidebarUpdateControl() {
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
-  const [isUpdatingEverything, setIsUpdatingEverything] = useState(false);
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [isCheckAnimationLatched, setIsCheckAnimationLatched] = useState(false);
@@ -192,11 +253,15 @@ function SidebarUpdateControl() {
   // SCIENT-FORK:START — one ready notice and install owner, anchored to this control.
   const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
   useEffect(() => () => updateReadyNoticeRef.current?.close(), []);
-  const installFromFooter = useCallback((bridge: NonNullable<typeof window.desktopBridge>) => {
-    updateReadyNoticeRef.current?.close();
-    setIsActionPending(true);
-    return installDesktopUpdateNow(bridge).finally(() => setIsActionPending(false));
-  }, []);
+  // Resolves true when the app is relaunching; a bulk pass passes `reportError` for its summary.
+  const installFromFooter = useCallback(
+    (bridge: NonNullable<typeof window.desktopBridge>, reportError?: ReportLocalUpdateError) => {
+      updateReadyNoticeRef.current?.close();
+      setIsActionPending(true);
+      return installDesktopUpdateNow(bridge, reportError).finally(() => setIsActionPending(false));
+    },
+    [],
+  );
   // SCIENT-FORK:END
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const displayedDownloadPercent = useScientDownloadProgress({
@@ -222,7 +287,9 @@ function SidebarUpdateControl() {
   const everything = useUpdateEverything(localUpdateVersion);
   const runsEverything = shouldRunUpdateEverything(everything.hasUpdates, isDownloading, action);
   // Providers leave the list once queued, so the run keeps its own state.
-  const isRunningEverything = isUpdatingEverything && !isDownloading;
+  const run = useUpdateEverythingRun();
+  const isRunningEverything = run !== null;
+  const runTooltip = useUpdateRunTooltip(run, state, action === "install");
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
     isChecking: state?.status === "checking",
@@ -230,21 +297,23 @@ function SidebarUpdateControl() {
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
     action,
-    showsEverything: runsEverything || isRunningEverything,
+    showsEverything: runsEverything,
+    run,
     isDownloading,
     showCheckIcon,
   });
-  const tooltip = isRunningEverything
-    ? "Updating…"
-    : runsEverything
-      ? everything.summary
-      : showUpdateDetails
-        ? state
-          ? getDesktopUpdateButtonTooltip(state)
-          : "Update available"
-        : showCheckIcon
-          ? "Checking for updates…"
-          : "Check for updates";
+  const tooltip =
+    runTooltip !== null
+      ? runTooltip
+      : runsEverything
+        ? everything.summary
+        : showUpdateDetails
+          ? state
+            ? getDesktopUpdateButtonTooltip(state)
+            : "Update available"
+          : showCheckIcon
+            ? "Checking for updates…"
+            : "Check for updates";
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -252,11 +321,10 @@ function SidebarUpdateControl() {
       : showUpdateDetails
         ? isDesktopUpdateButtonDisabled(state)
         : !canCheckForUpdate(state);
-  const isInteractionDisabled = disabled || isActionPending;
-  const showReleaseNotesPopover = shouldUseSidebarUpdateReleaseNotesPopover(
-    showUpdateDetails,
-    state,
-  );
+  const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
+  // During a run the tooltip shows its progress instead of release notes.
+  const showReleaseNotesPopover =
+    !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
 
   useEffect(() => {
     if (!showReleaseNotesPopover) {
@@ -283,33 +351,35 @@ function SidebarUpdateControl() {
     setIsActionPending(true);
 
     if (action === "download") {
-      void downloadLocalUpdate(bridge, (downloadedState) => {
-        // SCIENT-FORK:START — offer Restart next to the button that started the download.
-        // The release-notes popover shares this anchor and would cover the notice.
-        // Closing it returns focus to the button only when focus is on the page body or
-        // inside the popover; suppress that one reopen, never a later deliberate focus.
-        if (releaseNotesPopoverHandle.isOpen) {
-          const active = document.activeElement;
-          if (
-            active === null ||
-            active === document.body ||
-            releaseNotesPopupRef.current?.contains(active)
-          ) {
-            suppressReleaseNotesFocusOpen.current = true;
-            window.setTimeout(() => {
-              suppressReleaseNotesFocusOpen.current = false;
-            }, 1_000);
+      void downloadLocalUpdate(bridge, {
+        onDownloaded: (downloadedState) => {
+          // SCIENT-FORK:START — offer Restart next to the button that started the download.
+          // The release-notes popover shares this anchor and would cover the notice.
+          // Closing it returns focus to the button only when focus is on the page body or
+          // inside the popover; suppress that one reopen, never a later deliberate focus.
+          if (releaseNotesPopoverHandle.isOpen) {
+            const active = document.activeElement;
+            if (
+              active === null ||
+              active === document.body ||
+              releaseNotesPopupRef.current?.contains(active)
+            ) {
+              suppressReleaseNotesFocusOpen.current = true;
+              window.setTimeout(() => {
+                suppressReleaseNotesFocusOpen.current = false;
+              }, 1_000);
+            }
+            releaseNotesPopoverHandle.close();
           }
-          releaseNotesPopoverHandle.close();
-        }
-        updateReadyNoticeRef.current?.close();
-        updateReadyNoticeRef.current = showScientUpdateReadyNotice({
-          shell: bridge,
-          state: downloadedState,
-          anchor: document.getElementById(releaseNotesTriggerId),
-          install: () => installFromFooter(bridge),
-        });
-        // SCIENT-FORK:END
+          updateReadyNoticeRef.current?.close();
+          updateReadyNoticeRef.current = showScientUpdateReadyNotice({
+            shell: bridge,
+            state: downloadedState,
+            anchor: document.getElementById(releaseNotesTriggerId),
+            install: () => installFromFooter(bridge),
+          });
+          // SCIENT-FORK:END
+        },
       }).finally(() => setIsActionPending(false));
       return;
     }
@@ -363,14 +433,15 @@ function SidebarUpdateControl() {
     const bridge = window.desktopBridge;
     setIsConfirmingEverything(false);
     setIsActionPending(true);
-    setIsUpdatingEverything(true);
     try {
       await everything.run({
         ...(bridge && action === "download"
-          ? { downloadLocal: () => downloadLocalUpdate(bridge) }
+          ? { downloadLocal: (reportError) => downloadLocalUpdate(bridge, { reportError }) }
           : {}),
         // SCIENT-FORK:START — bulk and explicit Restart share the existing installer.
-        ...(bridge && action !== "none" ? { installLocal: () => installFromFooter(bridge) } : {}),
+        ...(bridge && action !== "none"
+          ? { installLocal: (reportError) => installFromFooter(bridge, reportError) }
+          : {}),
         // SCIENT-FORK:END
       });
     } catch (error) {
@@ -382,7 +453,6 @@ function SidebarUpdateControl() {
         }),
       );
     } finally {
-      setIsUpdatingEverything(false);
       setIsActionPending(false);
     }
   }, [action, everything, installFromFooter]);
@@ -397,16 +467,20 @@ function SidebarUpdateControl() {
   }, [prefersReducedMotion, state?.status]);
 
   // SCIENT-FORK:START — compact labels; remote orchestration preserves local updater state.
-  const updateLabel = isRunningEverything
+  // This app's own download keeps its progress label during a pass.
+  const showsRunLabel = isRunningEverything && !isDownloading;
+  const updateLabel = showsRunLabel
     ? "Updating"
     : runsEverything
       ? "Update"
       : showUpdateIconState && state
         ? getScientDesktopUpdateLabel({ ...state, downloadPercent: displayedDownloadPercent })
         : null;
+  // The shared "Update"/"Updating" labels size the pill, whatever icon a pass shows.
+  const sizesToLabel = showsRunLabel || iconStatus === "everything";
   // SCIENT-FORK:END
   // Web has no local app to check; only eligible remote work exposes the action.
-  if (!isElectron && !runsEverything && !isUpdatingEverything) return null;
+  if (!isElectron && !runsEverything && !isRunningEverything) return null;
 
   const updateButton = (
     <button
@@ -428,7 +502,7 @@ function SidebarUpdateControl() {
               "h-5 rounded-(--control-radius) bg-primary text-2xs font-medium whitespace-nowrap text-primary-foreground",
               // This app's states fit the fixed width; "Update"/"Updating" for other
               // machines and providers grow to their label with even insets.
-              iconStatus === "everything" ? "min-w-16 gap-1 px-1.5" : "w-16 gap-0.5 px-0.5",
+              sizesToLabel ? "min-w-16 gap-1 px-1.5" : "w-16 gap-0.5 px-0.5",
               !isInteractionDisabled && "hover:bg-primary/90",
             )
           : cn(
@@ -436,7 +510,7 @@ function SidebarUpdateControl() {
               "size-5 rounded-full text-(--sidebar-icon-color)",
               !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
             ),
-        ((disabled && !showUpdateIconState) || isRunningEverything) && "opacity-60",
+        disabled && !showUpdateIconState && "opacity-60",
       )}
       onClick={handleAction}
       onBlur={() => {
@@ -543,7 +617,9 @@ function SidebarUpdateControl() {
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >
-              <span className={showUpdateDetails ? "text-wrap" : undefined}>{tooltip}</span>
+              <span className={cn("whitespace-pre-line", showUpdateDetails && "text-wrap")}>
+                {tooltip}
+              </span>
             </TooltipPopup>
           ) : null}
         </Tooltip>
@@ -578,6 +654,7 @@ function SidebarUpdateControl() {
         summary={everything.summary}
         lines={everything.lines}
         restarts={everything.restarts}
+        skipped={everything.skipped}
         onConfirm={() => void runEverything()}
       />
     </SidebarMenuItem>

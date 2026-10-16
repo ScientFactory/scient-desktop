@@ -658,7 +658,7 @@ const make = Effect.gen(function* () {
     ) {
       return yield* reject("delivery-unsupported", "Only text-only Markdown can be copied.");
     }
-    const exportId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const exportId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     const exported = DateTime.formatIso(yield* DateTime.now);
     switch (request.format) {
       case "scic":

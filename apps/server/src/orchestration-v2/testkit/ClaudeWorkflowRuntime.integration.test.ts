@@ -73,6 +73,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
                   }),
                 ).pipe(Effect.andThen(Deferred.succeed(offered, undefined)), Effect.asVoid),
               setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
               interrupt: Effect.void,
               close: Queue.shutdown(messages),
             }),

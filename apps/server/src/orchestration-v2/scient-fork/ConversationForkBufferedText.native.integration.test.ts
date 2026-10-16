@@ -241,6 +241,11 @@ function makeCodexReplayTranscript(input: {
     entries: input.entries,
   };
 }
+// A provider turn's terminal event lands before the run's final write, which
+// enqueues its checkpoint effect; drain only once the run has left `running`.
+const providerTurnSettled =
+  (status: "completed" | "interrupted") => (p: OrchestrationV2ThreadProjection) =>
+    p.providerTurns.some((turn) => turn.status === status) && p.runs[0]?.status !== "running";
 const waitFor = Effect.fnUntraced(function* (
   threadId: ThreadId,
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
@@ -1340,9 +1345,7 @@ it.live.each(
             yield* capture("ordinaryWithoutRecapture", ordinary);
             gate.releaseAll();
             yield* Fiber.join(starting);
-            yield* waitFor(threadId, (p) =>
-              p.providerTurns.some((turn) => turn.status === "completed"),
-            );
+            yield* waitFor(threadId, providerTurnSettled("completed"));
             yield* worker.drain(12);
             const completed = yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
             const finalItem = completed.turnItems.find((i) => i.id === item.id);
@@ -1396,9 +1399,7 @@ it.live.each(
             yield* Deferred.succeed(releaseEmission, undefined);
             gate.releaseAll();
             yield* Fiber.join(starting);
-            yield* waitFor(threadId, (p) =>
-              p.providerTurns.some((turn) => turn.status === "completed"),
-            );
+            yield* waitFor(threadId, providerTurnSettled("completed"));
             yield* worker.drain(12);
             const completed = yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
             assert.isTrue(completed.messages.some((message) => message.text === prefix + suffix));
@@ -1436,9 +1437,7 @@ it.live.each(
             yield* Deferred.succeed(releaseCarrier, undefined);
             yield* Deferred.succeed(releaseEmission, undefined);
             yield* Fiber.join(starting);
-            yield* waitFor(threadId, (p) =>
-              p.providerTurns.some((turn) => turn.status === "interrupted"),
-            );
+            yield* waitFor(threadId, providerTurnSettled("interrupted"));
             yield* worker.drain(12);
             yield* manager.closeInstance(modelSelection.instanceId);
             return { frozen: null, completed: yield* orchestrator.getThreadProjection(threadId) };
@@ -1476,7 +1475,12 @@ it.live.each(
               replay: yield* Ref.get(driver.state),
             });
             yield* manager.closeInstance(modelSelection.instanceId);
-            return { frozen: null, completed: yield* orchestrator.getThreadProjection(threadId) };
+            // The source's transport ended without a terminal event; closing its
+            // instance fails the run rather than leaving it running.
+            return {
+              frozen: null,
+              completed: yield* waitFor(threadId, (p) => p.runs[0]?.status === "failed"),
+            };
           }
           if (scenario.control === "stop") {
             yield* orchestrator.dispatch({
@@ -1512,9 +1516,7 @@ it.live.each(
               yield* Deferred.succeed(releaseEmission, undefined);
               gate.releaseAll();
               yield* Fiber.join(starting);
-              yield* waitFor(threadId, (p) =>
-                p.providerTurns.some((turn) => turn.status === "completed"),
-              );
+              yield* waitFor(threadId, providerTurnSettled("completed"));
               yield* worker.drain(12);
               yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
               yield* manager.closeInstance(modelSelection.instanceId);
@@ -1542,9 +1544,7 @@ it.live.each(
             yield* Deferred.succeed(releaseEmission, undefined);
             gate.releaseAll();
             yield* Fiber.join(starting);
-            yield* waitFor(threadId, (p) =>
-              p.providerTurns.some((turn) => turn.status === "completed"),
-            );
+            yield* waitFor(threadId, providerTurnSettled("completed"));
             yield* worker.drain(12);
             assert.lengthOf(delegatedStops, 1);
             assert.equal(delegatedStops[0]!.threadId, threadId);
@@ -1565,9 +1565,7 @@ it.live.each(
             yield* Deferred.succeed(releaseEmission, undefined);
             gate.releaseAll();
             yield* Fiber.join(starting);
-            yield* waitFor(threadId, (p) =>
-              p.providerTurns.some((turn) => turn.status === "completed"),
-            );
+            yield* waitFor(threadId, providerTurnSettled("completed"));
             yield* worker.drain(12);
             yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
             yield* manager.closeInstance(modelSelection.instanceId);
@@ -1666,9 +1664,7 @@ it.live.each(
                 yield* Deferred.succeed(releaseEmission, undefined);
                 gate.release("after-normal-frame");
                 gate.release("before-completion");
-                yield* waitFor(threadId, (p) =>
-                  p.providerTurns.some((turn) => turn.status === "completed"),
-                );
+                yield* waitFor(threadId, providerTurnSettled("completed"));
               } else {
                 yield* Deferred.succeed(releaseEmission, undefined);
                 yield* Deferred.await(normalFrame).pipe(Effect.timeout("15 seconds"));
@@ -1780,9 +1776,7 @@ it.live.each(
               yield* Deferred.succeed(releaseEmission, undefined);
               gate.releaseAll();
               yield* Fiber.join(starting);
-              yield* waitFor(threadId, (p) =>
-                p.providerTurns.some((turn) => turn.status === "completed"),
-              );
+              yield* waitFor(threadId, providerTurnSettled("completed"));
               yield* worker.drain(12);
               const completed = yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
               const answer = completed.turnItems.find(
@@ -2004,9 +1998,7 @@ it.live.each(
             );
           }
           gate.releaseAll();
-          yield* waitFor(threadId, (p) =>
-            p.providerTurns.some((turn) => turn.status === "completed"),
-          );
+          yield* waitFor(threadId, providerTurnSettled("completed"));
           yield* Fiber.join(starting);
           yield* worker.drain(12);
           const completed = yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");

@@ -190,6 +190,7 @@ export function fallbackTextGenerationProvider(settings: ServerSettings): Server
       resolveProviderInstanceEnabled(
         settings.providerInstances[instanceId] ?? { driver, config: {} },
       ),
+    { defaultModelSelection: settings.defaultModelSelection },
   );
   return selection === null ? settings : { ...settings, textGenerationModelSelection: selection };
 }

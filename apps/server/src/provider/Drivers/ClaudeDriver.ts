@@ -137,6 +137,10 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      // Instance-level probes are not tied to a project, so they run in the
+      // server's own state dir. The server cwd is $HOME in packaged desktop
+      // builds, and `claude` wrappers that scope themselves to their cwd refuse
+      // to run there. Workspace probes use the thread cwd via `snapshotForCwd`.
       const serverConfig = yield* ServerConfig.ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
@@ -248,7 +252,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
           Effect.all([
-            probeClaudeCapabilities(effectiveConfig, effectiveProcessEnv, serverConfig.cwd),
+            probeClaudeCapabilities(effectiveConfig, effectiveProcessEnv, serverConfig.stateDir),
             ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
           ]).pipe(
             Effect.map(([capabilities, workspaceId]) =>
@@ -260,7 +264,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
         effectiveConfig,
-        serverConfig.cwd,
+        serverConfig.stateDir,
         effectiveProcessEnv,
       );
       const connectionActions = yield* makeClaudeInstanceConnectionActions({
@@ -281,7 +285,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
                 effectiveConfig,
                 () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
                 effectiveProcessEnv,
-                serverConfig.cwd,
+                serverConfig.stateDir,
                 catalog,
                 scopedLimitNames,
                 (version) =>

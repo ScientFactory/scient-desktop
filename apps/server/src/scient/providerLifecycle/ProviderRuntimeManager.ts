@@ -426,7 +426,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           message: "The provider setup plan changed. Review it again before continuing.",
         });
       }
-      const operationId = `runtime-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
+      const operationId = `runtime-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
       const reserved = yield* lifecycleCoordinator.reserve({
         instanceId: input.instanceId,
         provider: target.provider,
@@ -777,7 +777,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     // Wait without holding the lifecycle reservation, so user actions stay
     // available while turns run; re-check once reserved.
     yield* waitForIdleTurns(provider, Effect.void);
-    const operationId = `reselect-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
+    const operationId = `reselect-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId,
       provider,

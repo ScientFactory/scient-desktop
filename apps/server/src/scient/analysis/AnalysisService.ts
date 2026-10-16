@@ -593,16 +593,18 @@ const make = Effect.gen(function* () {
             const startedAt = yield* Clock.currentTimeMillis;
             const verifiedAt = yield* nowIso;
             const verificationRunId = ExecutionRunId.make(
-              yield* crypto.randomUUIDv4.pipe(
-                Effect.mapError((cause) =>
-                  analysisError(
-                    "verify",
-                    "operation-failed",
-                    "Unable to create the runtime verification identifier.",
-                    cause,
+              yield* crypto
+                .randomUUIDv4()
+                .pipe(
+                  Effect.mapError((cause) =>
+                    analysisError(
+                      "verify",
+                      "operation-failed",
+                      "Unable to create the runtime verification identifier.",
+                      cause,
+                    ),
                   ),
                 ),
-              ),
             );
             const outputsRef = yield* Ref.make<ReadonlyArray<ExecutionProcessOutput>>([]);
             const outputBytesRef = yield* Ref.make(0);
@@ -1471,16 +1473,18 @@ const make = Effect.gen(function* () {
         const runId =
           input.runId ??
           ExecutionRunId.make(
-            yield* crypto.randomUUIDv4.pipe(
-              Effect.mapError((cause) =>
-                analysisError(
-                  "start",
-                  "operation-failed",
-                  "Unable to create the analysis run identifier.",
-                  cause,
+            yield* crypto
+              .randomUUIDv4()
+              .pipe(
+                Effect.mapError((cause) =>
+                  analysisError(
+                    "start",
+                    "operation-failed",
+                    "Unable to create the analysis run identifier.",
+                    cause,
+                  ),
                 ),
               ),
-            ),
           );
         const startedAt = yield* nowIso;
         const queuedRunCount = (yield* Ref.get(runtimeQueuesRef)).get(adapter.id)?.length ?? 0;

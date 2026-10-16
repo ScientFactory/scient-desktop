@@ -9,6 +9,7 @@ import { CursorAgentSdkRunner } from "@t3tools/provider-cursor/server/CursorAgen
 import type { CursorDriverEnv } from "@t3tools/provider-cursor/server";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { Agent } from "@cursor/sdk";
+import { SqliteLocalAgentStore } from "@cursor/sdk/sqlite";
 import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -52,6 +53,11 @@ const testLayer = Layer.mergeAll(
     createAgentPlatform: () => {
       throw new Error("Cursor composition must not create a real SDK platform");
     },
+    SqliteLocalAgentStore: new Proxy(SqliteLocalAgentStore, {
+      get() {
+        throw new Error("Cursor composition must not open a real SDK store");
+      },
+    }),
   }),
   Layer.succeed(CursorAgentSdkRunner, {
     assertComplete: Effect.void,

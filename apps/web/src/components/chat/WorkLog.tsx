@@ -1,4 +1,11 @@
-import { createContext, use, type ComponentProps, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useLayoutEffect,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { cn } from "../../lib/utils";
 
 const GroupedRows = createContext(false);
@@ -122,17 +129,38 @@ export function WorkLogRow({
   );
 }
 
+/** Distance from the end, in px, that still counts as reading the newest text. */
+const LIVE_EDGE_PX = 4;
+
 export function WorkLogDetails({
   children,
   kind = "text",
+  followLive = false,
 }: {
   children: ReactNode;
   // SCIENT-FORK:START — reasoning details get Scient's reasoning trace styling (scient-reasoning-trace.css).
   kind?: "text" | "reasoning" | "panel" | "media";
   // SCIENT-FORK:END
+  /** Keep streamed text in view. Scrolling up pauses this until the reader returns to the end. */
+  followLive?: boolean;
 }) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const atLiveEdgeRef = useRef(true);
+  // No deps: each streamed chunk re-renders this, and pinning before paint
+  // shows the new text without a visible jump.
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    if (followLive && atLiveEdgeRef.current && scroller) {
+      scroller.scrollTop = scroller.scrollHeight;
+    }
+  });
   return (
     <div
+      ref={scrollerRef}
+      onScroll={(event) => {
+        const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
+        atLiveEdgeRef.current = scrollHeight - scrollTop - clientHeight <= LIVE_EDGE_PX;
+      }}
       // SCIENT-FORK:START — reasoning reads like text, with its own trace styling.
       data-scient-reasoning-trace={kind === "reasoning" || undefined}
       className={cn(

@@ -521,7 +521,7 @@ export const AntigravityDriver: ScientProviderDriver<
         instanceId,
         authMethod: auth.authMethod,
         authFlow,
-        randomUUID: crypto.randomUUIDv4,
+        randomUUID: crypto.randomUUIDv4(),
       });
       // SCIENT-FORK:END
 

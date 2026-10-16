@@ -26,7 +26,9 @@ const testState = vi.hoisted(() => ({
   sessions: new Map<string, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState, never>>>(),
   updateStateAtom: undefined as Atom.Atom<{ status: "idle" }> | undefined,
   availability: undefined as AsyncResult.AsyncResult<boolean, string> | undefined,
-  updateProviders: vi.fn<() => Promise<void>>(),
+  updateProviders: vi.fn<() => Promise<ReadonlyArray<never>>>(),
+  settleMachine: vi.fn<(environmentId: string, failed: boolean) => void>(),
+  showResult: vi.fn<(result: { readonly failures: ReadonlyArray<string> }) => void>(),
   updateServer:
     vi.fn<
       (request: {
@@ -75,6 +77,13 @@ vi.mock("~/scient/desktopUpdate/serverReleaseAvailability", async (importOrigina
   };
 });
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+vi.mock("./updateEverythingRun", () => ({
+  setUpdateEverythingRun: () => {},
+  settleUpdateRunMachine: testState.settleMachine,
+  showUpdateEverythingResult: testState.showResult,
+  saveUpdateEverythingResult: () => {},
+  clearSavedUpdateEverythingResult: () => {},
+}));
 
 import { useUpdateEverything } from "./useUpdateEverything";
 
@@ -142,7 +151,9 @@ beforeEach(() => {
   );
   testState.updateStateAtom = Atom.make({ status: "idle" as const });
   testState.availability = AsyncResult.success(true);
-  testState.updateProviders.mockReset().mockResolvedValue(undefined);
+  testState.updateProviders.mockReset().mockResolvedValue([]);
+  testState.settleMachine.mockReset();
+  testState.showResult.mockReset();
   testState.updateServer
     .mockReset()
     .mockImplementation(async ({ input }) =>
@@ -161,8 +172,8 @@ async function holdPass() {
   let finishProviders = () => {};
   testState.updateProviders.mockImplementationOnce(
     () =>
-      new Promise<void>((resolve) => {
-        finishProviders = resolve;
+      new Promise<ReadonlyArray<never>>((resolve) => {
+        finishProviders = () => resolve([]);
       }),
   );
   await act(() => {
@@ -291,6 +302,15 @@ it("retires an unmounted held pass without disabling a newly confirmed pass", as
   });
   await pass.finish();
   expect(testState.updateServer).not.toHaveBeenCalled();
+  // The withdrawn servers settle and are named in the summary instead of waiting forever.
+  expect(testState.settleMachine.mock.calls).toEqual([
+    ["service", true],
+    ["desktop", true],
+  ]);
+  expect(testState.showResult.mock.calls[0]?.[0].failures).toEqual([
+    "service: Not updated; it was no longer eligible when servers updated.",
+    "desktop: Not updated; it was no longer eligible when servers updated.",
+  ]);
 
   testState.availability = AsyncResult.success(true);
   await act(() => renderer!.update(<Probe />));

@@ -13,6 +13,7 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 
+// SCIENT-FORK:START — every state carries `refresh`, so a failed signed URL can be re-minted.
 export type AssetUrlState =
   | { readonly _tag: "Loading"; readonly refresh: () => void }
   | {
@@ -20,6 +21,8 @@ export type AssetUrlState =
       readonly refresh: () => void;
       /** A refresh of the failed URL is in flight. */
       readonly waiting?: boolean;
+      /** Set when the session lacks `filesystem:read`; the file itself may be fine. */
+      readonly reason?: "missing-file-access";
     }
   | {
       readonly _tag: "Success";
@@ -29,11 +32,14 @@ export type AssetUrlState =
       readonly imageDimensions?: AssetImageDimensions;
       readonly refresh: () => void;
     };
+// SCIENT-FORK:END
 
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): AssetUrlState {
+  // SCIENT-FORK:START — Scient gates `environment-file` too and returns `refresh` in every state;
+  // `reason` mirrors client-runtime's `blockedAssetUrlState`.
   const fileAccess = useFilesystemReadAccess(environmentId);
   const canReadResource =
     fileAccess.canReadFiles ||
@@ -48,7 +54,13 @@ export function useAssetUrlState(
       : assetEnvironment.createUrl({ environmentId, input: { resource } });
   const result = useAtomValue(assetAtom);
   const refresh = useAtomRefresh(assetAtom);
-  if (!canReadResource) return { _tag: fileAccess.isPending ? "Loading" : "Failure", refresh };
+  if (!canReadResource) {
+    if (fileAccess.isPending) return { _tag: "Loading", refresh };
+    // An error means the session check itself failed, such as when offline.
+    return fileAccess.error === null
+      ? { _tag: "Failure", refresh, reason: "missing-file-access" }
+      : { _tag: "Failure", refresh };
+  }
   if (result._tag === "Failure") {
     return { _tag: "Failure", refresh, waiting: result.waiting };
   }
@@ -68,6 +80,7 @@ export function useAssetUrlState(
           ? { imageDimensions: result.value.imageDimensions }
           : {}),
       };
+  // SCIENT-FORK:END
 }
 
 export function useAssetUrlRefresh(

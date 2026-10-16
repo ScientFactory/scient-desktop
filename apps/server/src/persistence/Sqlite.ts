@@ -17,6 +17,8 @@ import {
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
+  readonly readerWorker?: boolean;
+  readonly checkpointWorker?: boolean;
   readonly spanAttributes?: Record<string, unknown>;
   // SCIENT-FORK:START — open options for the Overleaf state store's own SQLite file.
   /**
@@ -66,6 +68,9 @@ const layerSetup = (filesystemPaths?: RetiredThreadFilesystemPaths) =>
       // SCIENT-FORK:START — preserve committed scientific work across power loss.
       yield* sql`PRAGMA synchronous = FULL;`;
       // SCIENT-FORK:END
+      // macOS fsync() does not flush the drive cache. F_FULLFSYNC makes checkpoints
+      // reach disk; other platforms ignore it. Per-commit fullfsync stays off.
+      yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
       // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
       // largest size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
@@ -96,6 +101,10 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
     }),
     makeRuntimeSqliteLayer({
       filename: dbPath,
+      readerWorker: true,
+      // Checkpoints sync the database, with F_FULLFSYNC on macOS. Run them off
+      // the event loop so a slow flush cannot stall clients.
+      checkpointWorker: true,
       spanAttributes: {
         "db.name": path.basename(dbPath),
         "service.name": "t3code-server",

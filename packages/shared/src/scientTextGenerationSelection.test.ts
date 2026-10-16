@@ -58,4 +58,75 @@ describe("Scient writer fallback across scopes", () => {
     const selected = fallbackScientTextGenerationModelSelection(instances, (id) => enabled.has(id));
     expect(selected?.instanceId).toBe("codex-a");
   });
+
+  // A backend behind a custom model may refuse the built-in default (upstream #12651).
+  it("uses the thread default only when it is a custom model on the chosen instance", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const claudeWork = ProviderInstanceId.make("claude-work");
+    const custom = "z-ai/glm-5.3-flash";
+    const instances = {
+      ...disabled,
+      [claude]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        config: { customModels: [custom] },
+      },
+      [claudeWork]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        config: { customModels: ["work-model"] },
+      },
+    };
+    const enabled = new Set<string>([claude, claudeWork]);
+    const isEnabled = (id: ProviderInstanceId) => enabled.has(id);
+    const threadDefault = {
+      instanceId: claude,
+      model: custom,
+      options: [{ id: "thinking", value: false }],
+    };
+
+    expect(
+      fallbackScientTextGenerationModelSelection(instances, isEnabled, {
+        defaultModelSelection: threadDefault,
+      }),
+    ).toEqual(threadDefault);
+    // A built-in thread default keeps the cheap writer model.
+    expect(
+      fallbackScientTextGenerationModelSelection(instances, isEnabled, {
+        defaultModelSelection: { instanceId: claude, model: "claude-fable-5-1" },
+      }),
+    ).toEqual({ instanceId: claude, model: "claude-haiku-5-5" });
+    // Routed by instance, not driver: another Claude account's custom model is not borrowed.
+    expect(
+      fallbackScientTextGenerationModelSelection(instances, isEnabled, {
+        defaultModelSelection: { instanceId: claudeWork, model: "work-model" },
+      }),
+    ).toEqual({ instanceId: claude, model: "claude-haiku-5-5" });
+  });
+
+  it("uses a project's custom thread default for its writer fallback", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const custom = "z-ai/glm-5.3-flash";
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      providerInstances: {
+        ...disabled,
+        [claude]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: false,
+          config: { customModels: [custom] },
+        },
+      },
+      textGenerationModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "prior",
+      },
+      projectSettingsOverrides: {
+        [projectId]: {
+          providerInstances: { [claude]: { enabled: true } },
+          defaultModelSelection: { instanceId: claude, model: custom },
+        },
+      },
+    });
+    expect(
+      resolveProjectSettings(settings, projectId).settings.textGenerationModelSelection,
+    ).toEqual({ instanceId: claude, model: custom });
+  });
 });
