@@ -102,6 +102,12 @@ round found no blocking issue:
   confirmed version and mechanism; its test suite was repaired for the handoff API.
 - The orchestrator MCP documentation names Scient's pending-request tools.
 
+The first hosted run found that upstream's server configuration now reads
+`apps/server/package.json`; the managed-runtime publication guard for the Scient
+Agent and OMP runtimes now covers it, so a version change on main voids a stale
+qualification. That workflow test cannot run on Windows (it compares
+backslash paths), which is why the local checks did not report it.
+
 Follow-ups, not changed here: storage cleanup filters stopped sessions before its
 liveness check, so a session whose physical close timed out can be missed (this
 predates the range); a withdrawn update target loses Retry for the rest of the pass,
