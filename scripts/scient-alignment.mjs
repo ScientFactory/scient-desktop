@@ -326,8 +326,12 @@ export function startAlignment(plan) {
 export function alignmentFacts(merge, { cwd = process.cwd() } = {}) {
   const root = output(cwd, ["rev-parse", "--show-toplevel"]);
   const commit = output(root, ["rev-parse", "--verify", "--end-of-options", `${merge}^{commit}`]);
-  if (!isAncestor(root, commit, "HEAD"))
-    throw new Error("HEAD does not contain the upstream merge");
+  const firstParents = new Set(
+    output(root, ["rev-list", "--first-parent", "HEAD"]).split("\n").filter(Boolean),
+  );
+  if (!firstParents.has(commit)) {
+    throw new Error("Run facts on the alignment branch: the upstream merge is not on its mainline");
+  }
   const [, base, target, ...extraParents] = output(root, [
     "rev-list",
     "--parents",
@@ -361,7 +365,13 @@ export function alignmentFacts(merge, { cwd = process.cwd() } = {}) {
   } catch (error) {
     if (!/No names found|No tags can describe/u.test(error.message)) throw error;
   }
-  // A later merge of official history extends the alignment; any other merge catches up owned main.
+  // A later merge of official history extends the alignment; any other merge catches up owned
+  // main. Owned commits never appear in official history, even after main lands the alignment.
+  const officialMain = output(root, [
+    "rev-parse",
+    "--verify",
+    "refs/remotes/upstream/main^{commit}",
+  ]);
   const laterMerges = output(root, [
     "rev-list",
     "--reverse",
@@ -377,7 +387,7 @@ export function alignmentFacts(merge, { cwd = process.cwd() } = {}) {
       return {
         merge: later,
         merged,
-        kind: isAncestor(root, target, merged) ? "official-extension" : "owned-main-catch-up",
+        kind: isAncestor(root, merged, officialMain) ? "official-extension" : "owned-main-catch-up",
       };
     });
   return {

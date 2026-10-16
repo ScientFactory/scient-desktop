@@ -90,9 +90,20 @@ describe("alignment workflow", () => {
     f.git("add", "official-later.txt");
     f.git("commit", "-qm", "later upstream behavior");
     const laterTarget = f.git("rev-parse", "HEAD");
+    f.git("update-ref", "refs/remotes/upstream/main", laterTarget);
     f.git("switch", "-q", "codex/facts");
     f.git("merge", "-q", "--no-ff", "-m", "extend", laterTarget);
     const extension = f.git("rev-parse", "HEAD");
+    // Main lands the alignment and moves on; catching up with it is still an owned merge.
+    f.git("switch", "-q", "main");
+    f.git("merge", "-q", "--no-ff", "-m", "land alignment", extension);
+    NodeFS.writeFileSync(NodePath.join(f.root, "owned-later.txt"), "owned work after landing\n");
+    f.git("add", "owned-later.txt");
+    f.git("commit", "-qm", "owned main after landing");
+    const landedMain = f.git("rev-parse", "HEAD");
+    f.git("switch", "-q", "codex/facts");
+    f.git("merge", "-q", "--no-ff", "-m", "catch up after landing", landedMain);
+    const laterCatchUp = f.git("rev-parse", "HEAD");
 
     const facts = alignmentFacts(merge, { cwd: f.root });
     expect(facts).toMatchObject({
@@ -109,9 +120,13 @@ describe("alignment workflow", () => {
       laterMerges: [
         { merge: catchUp, merged: ownedMain, kind: "owned-main-catch-up" },
         { merge: extension, merged: laterTarget, kind: "official-extension" },
+        { merge: laterCatchUp, merged: landedMain, kind: "owned-main-catch-up" },
       ],
     });
     expect(() => alignmentFacts(f.base, { cwd: f.root })).toThrow(/exactly two parents/u);
+    // On main the alignment arrived through a second parent, so its continuation is elsewhere.
+    f.git("switch", "-q", "main");
+    expect(() => alignmentFacts(merge, { cwd: f.root })).toThrow(/not on its mainline/u);
   });
 
   it("freezes ancestry, lists overlaps, and simulates conflicts without touching the checkout", () => {
