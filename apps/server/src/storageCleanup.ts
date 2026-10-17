@@ -2,6 +2,7 @@ import {
   GitCommandError,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
+  ProviderSessionId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -709,23 +710,24 @@ const make = Effect.gen(function* () {
           )
             return "thread activity or shared worktree changed since check";
           // Sessions can outlive their run and can be shared across app threads.
-          const sessionRows = yield* sql<{ payload_json: string }>`
-            SELECT payload_json FROM orchestration_v2_projection_provider_sessions
-            WHERE status != 'stopped'
+          // SCIENT-FORK:START retiring-session-worktree-retention — a session recorded
+          // stopped after its physical close timed out can still run its process, and
+          // isLive reports it; ask every stored session, decoding only live ones.
+          const sessionRows = yield* sql<{ provider_session_id: string; payload_json: string }>`
+            SELECT provider_session_id, payload_json
+            FROM orchestration_v2_projection_provider_sessions
           `;
-          const sessions = yield* Effect.forEach(sessionRows, (row) =>
-            decodeCleanupSession(row.payload_json),
-          );
           // A stored session can stay ready after its runtime was released,
           // for example once every thread detached; only a live one holds it.
-          for (const session of sessions) {
+          for (const row of sessionRows) {
+            if (!(yield* providerSessions.isLive(ProviderSessionId.make(row.provider_session_id))))
+              continue;
+            const session = yield* decodeCleanupSession(row.payload_json);
             const cwd = path.resolve(session.cwd);
-            if (
-              (cwd === worktreePath || inside(worktreePath, cwd)) &&
-              (yield* providerSessions.isLive(session.id))
-            )
+            if (cwd === worktreePath || inside(worktreePath, cwd))
               return "provider session is still open";
           }
+          // SCIENT-FORK:END retiring-session-worktree-retention
           return null;
         });
         // Most cancelled removals are caught here, before the worktree is walked.

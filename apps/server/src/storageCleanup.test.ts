@@ -282,6 +282,7 @@ const cleanupFixture = (
     let recreateOriginal = false;
     let isolatedPath: string | undefined;
     let openSessionCwd: string | null = null;
+    let openSessionStatus: OrchestrationV2ProviderSession["status"] = "ready";
     let sessionLive = true;
     let fullStatusCalls = 0;
     let snapshotReads = 0;
@@ -356,14 +357,19 @@ const cleanupFixture = (
         Effect.sync(() =>
           strings.join("").includes("orchestration_v2_projection_runs")
             ? queuedThreadIds.map((threadId) => ({ thread_id: threadId }))
-            : openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
+            : openSessionCwd !== null &&
+                strings.join("").includes("projection_provider_sessions") &&
+                // Honors a recorded-status filter, as the real table would.
+                !(openSessionStatus === "stopped" && strings.join("").includes("'stopped'"))
               ? [
                   {
+                    provider_session_id: "session-1",
+                    status: openSessionStatus,
                     payload_json: JSON.stringify({
                       id: "session-1",
                       driver: "codex",
                       providerInstanceId: "codex",
-                      status: "ready",
+                      status: openSessionStatus,
                       cwd: openSessionCwd,
                       model: null,
                       capabilities: CodexProviderCapabilitiesV2,
@@ -442,6 +448,9 @@ const cleanupFixture = (
       },
       setOpenSessionCwd: (cwd: string | null) => {
         openSessionCwd = cwd;
+      },
+      setOpenSessionStatus: (status: OrchestrationV2ProviderSession["status"]) => {
+        openSessionStatus = status;
       },
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
@@ -729,6 +738,48 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  // SCIENT-FORK:START retiring-session-worktree-retention — a session recorded stopped
+  // after its physical close timed out still holds its worktree while its process runs.
+  it.live("keeps a worktree under a session recorded stopped whose process is still live", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setOpenSessionCwd(fixture.worktree);
+        fixture.setOpenSessionStatus("stopped");
+        const kept = yield* fixture.service.runNow;
+        expect(kept.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Provider session is still open",
+          bytes: null,
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+        // Once its physical close ends, the stopped session no longer holds it.
+        fixture.setSessionLive(false);
+        const removed = yield* fixture.service.runNow;
+        expect(removed.entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
+  it.live("keeps a worktree when a session recorded stopped opens on it during measurement", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* pausedMeasurementFixture();
+        const cleanup = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.measuring);
+        fixture.setOpenSessionCwd(fixture.worktree);
+        fixture.setOpenSessionStatus("stopped");
+        yield* Deferred.succeed(fixture.resume, undefined);
+        const report = yield* Fiber.join(cleanup);
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Provider session is still open",
+          bytes: null,
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+  // SCIENT-FORK:END retiring-session-worktree-retention
   it.live("compares the checked-out branch without a full status", () =>
     runCleanupTest(
       Effect.gen(function* () {
