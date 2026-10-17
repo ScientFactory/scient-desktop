@@ -5,9 +5,7 @@ edition = "2024"
 license = "MIT"
 publish = false
 
-# SCIENT-FORK:START — ship the binary under the Scient helper name while the
-# crate keeps T3's package name (and Cargo.lock entry). Keep it equal to
-# SCIENT_HELPER_EXECUTABLES in packages/shared/src/scientDesktopIdentity.ts.
+# SCIENT-FORK:START — Scient binary name; the crate keeps T3's package name.
 [[bin]]
 name = "scient-resource-monitor"
 path = "src/main.rs"

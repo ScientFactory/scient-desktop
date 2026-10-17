@@ -7,12 +7,6 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 import type { DesktopCaptureHelperState } from "@t3tools/contracts";
-// SCIENT-FORK:START — Scient helper executable names.
-import {
-  LEGACY_CAPTURE_HELPER_EXECUTABLES,
-  SCIENT_HELPER_EXECUTABLES,
-} from "@t3tools/shared/scientDesktopIdentity";
-// SCIENT-FORK:END
 
 import { escapeDesktopEntryExecArgument } from "../app/DesktopLinuxUrlHandler.ts";
 import type { LinuxWindowSnapshot } from "./LinuxSnapShot.ts";
@@ -20,11 +14,10 @@ import { readPortalPng } from "./linuxCaptureSession.ts";
 import { startNativeCaptureFeedback } from "./NativeCaptureFeedback.ts";
 export { isKdeCaptureSession } from "./linuxCaptureSession.ts";
 
-// SCIENT-FORK:START — the helper ships under its Scient name; earlier releases
-// installed it under T3's name in the same directory.
-export const KDE_CAPTURE_EXECUTABLE = SCIENT_HELPER_EXECUTABLES.kdeCapture;
+export const KDE_CAPTURE_EXECUTABLE = "scient-kde-snap-shot";
+// SCIENT-FORK:START — earlier releases installed the helper under T3's name.
 const legacyExecutable = (executable: string) =>
-  NodePath.join(NodePath.dirname(executable), LEGACY_CAPTURE_HELPER_EXECUTABLES.kdeCapture);
+  NodePath.join(NodePath.dirname(executable), "t3-kde-snap-shot");
 // SCIENT-FORK:END
 const DESKTOP_FILE = "com.scientfactory.scient.KdeCapture.desktop";
 const MARKER = "X-Scient-Capture-Helper=true";

@@ -6,23 +6,16 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 import type { DesktopCaptureHelperState } from "@t3tools/contracts";
-// SCIENT-FORK:START — Scient helper executable names.
-import {
-  LEGACY_CAPTURE_HELPER_EXECUTABLES,
-  SCIENT_HELPER_EXECUTABLES,
-} from "@t3tools/shared/scientDesktopIdentity";
-// SCIENT-FORK:END
 import type { LinuxWindowSnapshot } from "./LinuxSnapShot.ts";
 import { readPortalPng } from "./linuxCaptureSession.ts";
 import { startNativeCaptureFeedback } from "./NativeCaptureFeedback.ts";
 import { HYPRLAND_CAPTURE_ACTION } from "./linuxCaptureSession.ts";
 export { isHyprlandCaptureSession } from "./linuxCaptureSession.ts";
 
-// SCIENT-FORK:START — the helper ships under its Scient name; earlier releases
-// installed it under T3's name in the same directory.
-export const HYPRLAND_CAPTURE_EXECUTABLE = SCIENT_HELPER_EXECUTABLES.hyprlandCapture;
+export const HYPRLAND_CAPTURE_EXECUTABLE = "scient-hyprland-snap-shot";
+// SCIENT-FORK:START — earlier releases installed the helper under T3's name.
 const legacyExecutable = (executable: string) =>
-  NodePath.join(NodePath.dirname(executable), LEGACY_CAPTURE_HELPER_EXECUTABLES.hyprlandCapture);
+  NodePath.join(NodePath.dirname(executable), "t3-hyprland-snap-shot");
 // SCIENT-FORK:END
 export type HyprlandCapturePaths = { readonly bundle: string; readonly dataHome: string };
 export function hyprlandCaptureExecutable(paths: HyprlandCapturePaths) {

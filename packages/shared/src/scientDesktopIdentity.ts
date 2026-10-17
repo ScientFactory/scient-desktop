@@ -48,29 +48,3 @@ export const SCIENT_DESKTOP_IDENTITY = {
 } as const;
 
 export type ScientDesktopIdentity = typeof SCIENT_DESKTOP_IDENTITY;
-
-/**
- * File names of the native helpers Scient ships beside the app (T3 names them
- * `t3-*`). Process lists such as Windows Task Manager show these names, so they
- * carry the product name. Windows adds `.exe` to the resource monitor.
- *
- * The Rust crates keep T3's package names; each `native/<crate>/Cargo.toml`
- * declares a matching `[[bin]] name`. Packaging, runtime lookup, and release
- * staging read these values. See UPSTREAM.md, "Scient-owned release seam".
- */
-export const SCIENT_HELPER_EXECUTABLES = {
-  resourceMonitor: "scient-resource-monitor",
-  browserSecret: "scient-browser-secret",
-  kdeCapture: "scient-kde-snap-shot",
-  hyprlandCapture: "scient-hyprland-snap-shot",
-} as const;
-
-/**
- * Capture helpers that releases before the rename installed into the user's
- * data directory. Setup reports them as needing an update and removes them
- * when the helper is reinstalled or removed.
- */
-export const LEGACY_CAPTURE_HELPER_EXECUTABLES = {
-  kdeCapture: "t3-kde-snap-shot",
-  hyprlandCapture: "t3-hyprland-snap-shot",
-} as const;

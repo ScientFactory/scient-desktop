@@ -173,30 +173,4 @@ describe("ResourceMonitorBinary", () => {
       assert.instanceOf(error, ResourceMonitorBinary.ResourceMonitorBinaryUnsupported);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-
-  it.effect("looks for the bundled monitor under its Scient name", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-resource-monitor-binary-",
-      });
-      const service = yield* ResourceMonitorBinary.make().pipe(
-        Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(HostProcess.Architecture, "arm64"),
-        Effect.provideService(HostProcess.Environment, {}),
-      );
-      // A local monitor build may exist, so either outcome names the looked-up files.
-      const paths = yield* service.resolve.pipe(
-        Effect.match({
-          onFailure: (error) =>
-            error._tag === "ResourceMonitorBinaryNotFound" ? error.candidates : [],
-          onSuccess: (path) => [path],
-        }),
-      );
-
-      assert.isNotEmpty(paths);
-      for (const path of paths) assert.match(path, /[\\/]scient-resource-monitor\.exe$/u);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
 });

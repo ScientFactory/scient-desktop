@@ -1339,12 +1339,12 @@ Codex desktop handoff and its return addresses use Scient's registered
 Native helpers ship as `scient-resource-monitor` (`.exe` on Windows),
 `scient-kde-snap-shot`, `scient-hyprland-snap-shot` and `scient-browser-secret`,
 because process lists such as Windows Task Manager show those names.
-`SCIENT_HELPER_EXECUTABLES` in `packages/shared/src/scientDesktopIdentity.ts`
-owns them for packaging, release staging tests and runtime lookup. The Rust
+Upstream files spell the names in place, like other user-visible renames. The Rust
 crates keep T3's package names and `Cargo.lock` entries; a marked `[[bin]]` in
 each manifest sets the file name, so T3 dependency updates still merge cleanly.
-When an alignment brings a new `t3-*` helper path (for example in `release.yml`),
-use the Scient name. Capture setup reports a helper installed under T3's name
+`scripts/scient-release-machinery.test.ts` checks each lookup, build, release and
+packaging site, and fails on a `t3-*` helper name outside marked migration code,
+so an alignment that brings a new helper path must use the Scient name. Capture setup reports a helper installed under T3's name
 as needing an update, and deletes it on reinstall or removal. Development
 checkouts look only for the Scient names, so rebuild older local helper builds.
 The Wayland layer namespace `t3-snap-shot` and the portal shortcut id

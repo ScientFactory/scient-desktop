@@ -1,7 +1,4 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
-// SCIENT-FORK:START — Scient helper executable names.
-import { SCIENT_HELPER_EXECUTABLES } from "@t3tools/shared/scientDesktopIdentity";
-// SCIENT-FORK:END
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -62,10 +59,7 @@ export class ResourceMonitorBinary extends Context.Service<
 >()("t3/resourceTelemetry/ResourceMonitorBinary") {}
 
 function binaryName(platform: NodeJS.Platform): string {
-  // SCIENT-FORK:START — the resource monitor ships under its Scient name.
-  const name = SCIENT_HELPER_EXECUTABLES.resourceMonitor;
-  return platform === "win32" ? `${name}.exe` : name;
-  // SCIENT-FORK:END
+  return platform === "win32" ? "scient-resource-monitor.exe" : "scient-resource-monitor";
 }
 
 export type ResourceMonitorLinuxLibc = "gnu" | "musl";

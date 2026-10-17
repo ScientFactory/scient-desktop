@@ -2,9 +2,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-// SCIENT-FORK:START — Scient helper executable names.
-import { SCIENT_HELPER_EXECUTABLES } from "@t3tools/shared/scientDesktopIdentity";
-// SCIENT-FORK:END
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 
@@ -20,10 +17,7 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "linux") return undefined;
     const fileSystem = yield* FileSystem.FileSystem;
-    // SCIENT-FORK:START — the helper ships under its Scient name.
-    const executable = SCIENT_HELPER_EXECUTABLES.browserSecret;
-    // SCIENT-FORK:END
-    const relative = environment.path.join("browser-secret", executable);
+    const relative = environment.path.join("browser-secret", "scient-browser-secret");
     const candidates = environment.isPackaged
       ? [environment.path.join(environment.resourcesPath, relative)]
       : [
@@ -33,7 +27,7 @@ export const layer = Layer.effect(
             "browser-secret",
             "build",
             environment.processArch,
-            executable,
+            "scient-browser-secret",
           ),
           ...environment.resolveResourcePathCandidates(relative),
         ];

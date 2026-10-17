@@ -22,10 +22,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
-import {
-  SCIENT_DESKTOP_IDENTITY,
-  SCIENT_HELPER_EXECUTABLES,
-} from "@t3tools/shared/scientDesktopIdentity";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
 import {
   scientAnalyticsMetadata,
@@ -203,10 +200,7 @@ const logBackendObservabilitySettingsReadFailure = (
 };
 
 function resourceMonitorBinaryName(platform: NodeJS.Platform): string {
-  // SCIENT-FORK:START — the resource monitor ships under its Scient name.
-  const name = SCIENT_HELPER_EXECUTABLES.resourceMonitor;
-  return platform === "win32" ? `${name}.exe` : name;
-  // SCIENT-FORK:END
+  return platform === "win32" ? "scient-resource-monitor.exe" : "scient-resource-monitor";
 }
 
 const resolveResourceMonitorPath = Effect.fn(
