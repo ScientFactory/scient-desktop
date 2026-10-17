@@ -9,7 +9,17 @@ import { checkEnvironment, selectBoundaries } from "./scient-alignment-checks.mj
 
 const cli = NodeURL.fileURLToPath(new URL("./scient-alignment-checks.mjs", import.meta.url));
 const ids = (paths) => selectBoundaries(paths).boundaries.map((row) => row.id);
-const all = ["provider", "stop", "queue", "settings", "persistence", "fork", "ownership", "reader"];
+const all = [
+  "provider",
+  "stop",
+  "adapters",
+  "queue",
+  "settings",
+  "persistence",
+  "fork",
+  "ownership",
+  "reader",
+];
 const directories = [];
 afterEach(() => {
   for (const directory of directories.splice(0))
@@ -81,6 +91,32 @@ test("adapter, session and ChatView changes include their untouched authority co
     "reader",
   ]);
   NodeAssert.ok(ids(["apps/web/src/components/chat/ModelPickerContent.tsx"]).includes("settings"));
+});
+
+test("adapter protocol and run-lifecycle changes select every adapter suite", () => {
+  for (const path of [
+    "packages/effect-codex-app-server/src/protocol.ts",
+    "apps/server/src/orchestration-v2/RunExecutionService.ts",
+  ]) {
+    const adapters = selectBoundaries([path]).boundaries.find((row) => row.id === "adapters");
+    NodeAssert.ok(adapters.checks.server.includes("src/orchestration-v2/Adapters/"), path);
+  }
+});
+
+test("every native provider integration suite belongs to a boundary", () => {
+  const directory = new URL("../apps/server/src/orchestration-v2/", import.meta.url);
+  const { boundaries } = JSON.parse(
+    NodeFS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url), "utf8"),
+  );
+  const mapped = new Set(boundaries.flatMap((row) => row.checks.server ?? []));
+  const native = NodeFS.readdirSync(directory).filter((name) =>
+    /(Native\w*|\.native)\.integration\.test\.ts$/u.test(name),
+  );
+  NodeAssert.ok(native.includes("PiNativeCloseConjunctions.integration.test.ts"));
+  NodeAssert.deepEqual(
+    native.filter((name) => !mapped.has(`src/orchestration-v2/${name}`)),
+    [],
+  );
 });
 
 test("composer hosts include settings, Stop and queue consumers and existing client witnesses", () => {
@@ -278,6 +314,16 @@ test("missing target suite refuses execution before running a substring-filtered
   );
   NodeAssert.equal(result.status, 2);
   NodeAssert.match(result.stderr, /Unavailable check in target checkout/);
+  const adapters = NodeChildProcess.spawnSync(
+    process.execPath,
+    [cli, "--cwd", cwd, "--boundary", "adapters", "--run"],
+    { encoding: "utf8" },
+  );
+  NodeAssert.equal(adapters.status, 2);
+  NodeAssert.match(
+    adapters.stderr,
+    /Unavailable check in target checkout: src\/orchestration-v2\/Adapters\//,
+  );
 });
 
 test("a failing group does not hide later groups", () => {

@@ -140,6 +140,46 @@
       ]
     },
     {
+      "id": "adapters",
+      "triggers": [
+        "apps/server/src/orchestration-v2/Adapters/",
+        "apps/server/src/orchestration-v2/RunExecutionService",
+        "apps/server/src/orchestration-v2/ProviderSessionManager",
+        "apps/server/src/orchestration-v2/ProviderEventIngestor",
+        "apps/server/src/provider/",
+        "apps/server/src/mcp/",
+        "packages/provider-",
+        "packages/effect-acp/",
+        "packages/effect-codex-app-server/",
+        "packages/effect-omp-rpc/"
+      ],
+      "consumers": [
+        "RunExecutionService run lifecycle and terminal handling -> every provider adapter's native stream, Stop and background work",
+        "ProviderSessionManager session release and server shutdown -> native subscriptions and processes",
+        "Scient MCP server configuration -> each adapter's spawn parameters"
+      ],
+      "decidingAssertions": [
+        "Every suite under orchestration-v2/Adapters runs: each adapter's spawn parameters (including MCP configuration and tool timeouts), event translation, Stop and background-work containment against the shared run lifecycle. OmpBackground.native contains a background Stop that arrives before a wake run's native start.",
+        "Every orchestration-v2 integration suite that drives a native provider process is mapped to a boundary. PiNativeCloseConjunctions keeps native ownership truthful across administrative close and reuse, and server shutdown interrupts a pending native subscription and fences its positive acknowledgement for restart recovery; the OMP native suites cover preparation, process ownership, recovery and retirement."
+      ],
+      "checks": {
+        "server": [
+          "src/orchestration-v2/Adapters/",
+          "src/orchestration-v2/PiNativeCloseConjunctions.integration.test.ts",
+          "src/orchestration-v2/PiObservedEffort.native.integration.test.ts",
+          "src/orchestration-v2/OmpNativePreparation.integration.test.ts",
+          "src/orchestration-v2/OmpNativeProcess.integration.test.ts",
+          "src/orchestration-v2/OmpNativeRecovery.integration.test.ts",
+          "src/orchestration-v2/OmpNativeRetirement.integration.test.ts",
+          "src/orchestration-v2/OpenCodeCapturedDispatch.native.integration.test.ts"
+        ]
+      },
+      "limits": [
+        "Adapter and native suites use synthetic provider processes and protocol fixtures, not authenticated providers. Live suites under Adapters skip without their binaries; Pi's real runtime runs only through --native.",
+        "OmpNativeProcess skips on Windows; hosted Linux CI runs it."
+      ]
+    },
+    {
       "id": "queue",
       "triggers": [
         "apps/server/src/orchestration-v2/",

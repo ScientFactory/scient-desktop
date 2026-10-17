@@ -215,7 +215,9 @@ export function main(argv) {
   // suite is unavailable evidence, never a substring-filtered empty success.
   for (const command of commands.filter((command) => command.included)) {
     for (const file of command.files) {
-      if (!NodeFS.statSync(NodePath.join(command.cwd, file), { throwIfNoEntry: false })?.isFile()) {
+      const entry = NodeFS.statSync(NodePath.join(command.cwd, file), { throwIfNoEntry: false });
+      // A trailing `/` names every suite in a directory the boundary owns.
+      if (!(file.endsWith("/") ? entry?.isDirectory() : entry?.isFile())) {
         throw new Error(`Unavailable check in target checkout: ${file}`);
       }
     }
