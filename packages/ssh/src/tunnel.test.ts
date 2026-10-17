@@ -389,15 +389,10 @@ describe("ssh tunnel scripts", () => {
       launch.indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
     // SCIENT-FORK: the pinned package spec reaches both generated scripts.
-    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
-    assert.include(
-      SshTunnel.buildRemotePairingScript(stateKey, { packageSpec: "t3@nightly" }),
-      "t3@nightly",
-    );
-    assert.include(
-      SshTunnel.buildRemoteLaunchScript({ packageSpec: "t3@nightly" }),
-      "T3_ARCHIVE_MODE=0",
-    );
+    const packageSpec = scientServerPackageSpec("0.6.21");
+    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec }), packageSpec);
+    assert.include(SshTunnel.buildRemotePairingScript(stateKey, { packageSpec }), packageSpec);
+    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec }), "T3_ARCHIVE_MODE=0");
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
@@ -493,7 +488,9 @@ describe("ssh tunnel scripts", () => {
 
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
-        SshTunnel.launchOrReuseRemoteServer(target, undefined, { packageSpec: "t3@nightly" }),
+        SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+          packageSpec: scientServerPackageSpec("0.6.21"),
+        }),
       );
       yield* Effect.yieldNow;
       yield* TestClock.adjust(Duration.seconds(95));
