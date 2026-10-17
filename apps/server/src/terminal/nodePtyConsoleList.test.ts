@@ -30,10 +30,7 @@ function getConsoleProcessList(
   return WindowsPtyAgent.prototype._getConsoleProcessList.call({ _innerPid: SHELL_PID });
 }
 
-// SCIENT-FORK:START — Scient stays on node-pty ^1.1.0 without upstream's patch
-// (pnpm-workspace.yaml), so this helper is not the one Scient runs.
-describe.skip("node-pty console process list helper", () => {
-  // SCIENT-FORK:END
+describe("node-pty console process list helper", () => {
   afterEach(() => {
     childProcess.fork = originalFork;
   });
