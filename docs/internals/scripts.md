@@ -132,6 +132,8 @@ such as `SCIENT_PI_TEST_BINARY` pass through.
 the same environment, each gate with its own temporary home. It continues past failures,
 writes `results.json` and a log per gate to a new temporary directory after every gate,
 and prints a Markdown table with the candidate commit, tree, platform and tool versions.
+The knip gate runs `knip:check`, the unused files, dependencies and exports check that hosted
+CI runs before `vp check`.
 Typecheck uses `pnpm -r --no-bail`, so one run reports every failing package. A desktop
 smoke run that leaves its temporary home empty resolved state elsewhere and fails.
 `--only fmt,lint` runs a subset and labels the result partial.
