@@ -18,7 +18,7 @@ work. The full product suite also runs for documentation-only changes so every p
 is present and the repository cannot merge around its own branch policy.
 
 For every pull request, merge-queue candidate (`merge_group`), and push to `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs these quality
-gates:
+gates (a main push may reuse the exact queue qualification described below):
 
 - **Check**: `knip:check` rejects unused files/dependencies repository-wide and unused exports in the enabled application/runtime workspaces. `brand:check` verifies Scient product identity. `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
@@ -60,6 +60,26 @@ gates:
   packages before starting a root script, which would reintroduce a whole-repository install.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
+
+A push to `main` reuses expensive product checks only when a completed, successful run of
+this CI workflow on `merge_group` has the exact same commit **and comparison base**. Its
+queue-only receipt must match the repository, workflow revision, run and attempt, and certify
+all applicable lanes, including layout and mobile static analysis. PR and queue runs always
+execute their normal checks. Documentation and upstream provenance keep their event-specific
+checks; required check names and branch protections are unchanged.
+On valid reuse, the expensive main-push jobs are skipped; `Test` reports the source qualification
+and `Transfer report artifact` still verifies the restored measurement.
+
+Before confirming reuse, the main run validates and republishes `thread-transfer-results` and
+all six Vitest JSON reports under the normal artifact names, using the destination run attempt.
+The reuse job and `Test` summaries link to the original queue run. This preserves the successful
+main-push baseline consumed by the transfer reporter. Native packaging artifacts remain on the
+linked queue run; releases still build their own artifacts.
+
+Missing, expired, malformed or mismatched proof/reports, API failures, and restoration failures
+run normal CI. A partially restored report is overwritten by the fresh test result on fallback.
+Older queue runs without this receipt are ineligible. Reuse never chains through another push
+run, and an unavailable or failed probe cannot suppress the normal suites.
 
 [`.github/workflows/windows-tests.yml`](../../.github/workflows/windows-tests.yml) is a manual
 Windows lane (`workflow_dispatch` only) on Scient's GitHub-hosted Windows 2025 runner family. The suite does not
