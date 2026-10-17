@@ -8,6 +8,9 @@ const mapping = JSON.parse(
   NodeFS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url)),
 );
 const matches = (path, prefix) => path.startsWith(prefix);
+const WEB_UNIT_LANE_COST =
+  "Opt-in: every web unit suite, about 14 minutes on a Windows 11 workstation. Compare with " +
+  "--web-unit-baseline from the same run on the unmodified base; a flaky test can still appear new.";
 
 /**
  * Child environment for local checks. A Scient desktop host gives its agents
@@ -83,22 +86,25 @@ function parseArgs(argv) {
     run: false,
     native: false,
     all: false,
+    webUnit: false,
+    webUnitBaseline: null,
   };
   const seen = new Set();
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
     if (key === "--") continue;
-    if (["--all", "--run", "--native"].includes(key)) {
+    if (["--all", "--run", "--native", "--web-unit"].includes(key)) {
       if (seen.has(key)) throw new Error(`Duplicate argument: ${key}`);
-      args[key.slice(2)] = true;
-    } else if (["--cwd", "--base", "--path", "--boundary"].includes(key)) {
+      args[key === "--web-unit" ? "webUnit" : key.slice(2)] = true;
+    } else if (["--cwd", "--base", "--path", "--boundary", "--web-unit-baseline"].includes(key)) {
       const value = argv[++i];
       if (!value || value.startsWith("--")) throw new Error(`Missing value: ${key}`);
-      if (["--cwd", "--base"].includes(key) && seen.has(key)) {
+      if (["--cwd", "--base", "--web-unit-baseline"].includes(key) && seen.has(key)) {
         throw new Error(`Duplicate argument: ${key}`);
       }
       if (key === "--path") args.paths.push(value);
       else if (key === "--boundary") args.boundaries.push(value);
+      else if (key === "--web-unit-baseline") args.webUnitBaseline = NodePath.resolve(value);
       else args[key.slice(2)] = value;
     } else throw new Error(`Unsupported argument: ${key}`);
     seen.add(key);
@@ -108,10 +114,14 @@ function parseArgs(argv) {
     Number(Boolean(args.base)) +
     Number(args.paths.length > 0) +
     Number(args.boundaries.length > 0);
-  if (modes !== 1)
+  // The full web unit lane may run alone or beside one boundary selection.
+  if (modes > 1 || (modes === 0 && !args.webUnit))
     throw new Error(
-      "Choose exactly one of --all, --base REF, --path PATH (repeatable), or --boundary ID (repeatable)",
+      "Choose exactly one of --all, --base REF, --path PATH (repeatable), or --boundary ID (repeatable); --web-unit may run alone",
     );
+  if (args.webUnitBaseline && !args.webUnit) {
+    throw new Error("--web-unit-baseline compares a --web-unit run");
+  }
   for (const path of args.paths) {
     if (
       NodePath.posix.normalize(path) !== path ||
@@ -193,6 +203,14 @@ export function main(argv) {
       },
     ];
   });
+  const webUnitLane = args.webUnit
+    ? {
+        cwd: NodePath.join(cwd, mapping.groups["web-unit"].cwd),
+        argv: ["pnpm", ...mapping.groups["web-unit"].args],
+        baseline: args.webUnitBaseline,
+        cost: WEB_UNIT_LANE_COST,
+      }
+    : null;
   const plan = {
     scope: mapping.scope,
     cwd,
@@ -203,6 +221,7 @@ export function main(argv) {
     unknown: selection.unknown,
     boundaries: selection.boundaries.map((row) => row.id),
     commands,
+    webUnitLane,
     limits: selection.boundaries.flatMap((row) => row.limits),
   };
   console.log(JSON.stringify(plan, null, 2));
@@ -225,33 +244,108 @@ export function main(argv) {
       throw new Error(`Native checks require ${command.requiredEnv}; no native pass claimed`);
     }
   }
-  if (!commands.some((command) => command.included)) {
+  const baseline = webUnitLane?.baseline ? readBaseline(webUnitLane.baseline) : null;
+  if (!webUnitLane && !commands.some((command) => command.included)) {
     console.log("No mapped checks selected; no behavioral qualification claimed.");
   }
   // Run every group so one pass reports all failing boundaries.
   const failed = [];
   for (const command of commands.filter((command) => command.included)) {
-    const start = performance.now();
-    const home = makeCheckHome();
-    let result;
-    try {
-      result = runTool(command.argv, { cwd: command.cwd, home });
-    } finally {
-      NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
-    }
-    console.log(
-      JSON.stringify({
-        check: command.id,
-        exit: result.status,
-        signal: result.signal,
-        elapsedSeconds: (performance.now() - start) / 1000,
-      }),
-    );
-    if (result.error) throw result.error;
+    const result = runCheck(command.id, command.argv, command.cwd);
     if (result.status !== 0) failed.push(command.id);
+  }
+  if (webUnitLane) {
+    const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-web-unit-lane-"));
+    const report = NodePath.join(out, "vitest.json");
+    const result = runCheck(
+      "web-unit-lane",
+      [...webUnitLane.argv, "--reporter=default", "--reporter=json", `--outputFile.json=${report}`],
+      webUnitLane.cwd,
+    );
+    const failures = readVitestFailures(report, webUnitLane.cwd, result.status);
+    const failuresPath = NodePath.join(out, "web-unit-failures.json");
+    NodeFS.writeFileSync(failuresPath, `${JSON.stringify({ head, cwd, failures }, null, 2)}\n`);
+    const comparison = baseline ? compareFailures(failures, baseline.failures) : null;
+    console.log(
+      JSON.stringify(
+        { check: "web-unit-lane", failures: failuresPath, baseline: baseline?.path, ...comparison },
+        null,
+        2,
+      ),
+    );
+    if (comparison ? comparison.new.length > 0 : failures.length > 0) failed.push("web-unit-lane");
   }
   if (failed.length) console.log(`Failed checks: ${failed.join(", ")}`);
   return failed.length ? 1 : 0;
+}
+
+/** Run one check command with a fresh synthetic home and report its exit and duration. */
+function runCheck(id, argv, cwd) {
+  const start = performance.now();
+  const home = makeCheckHome();
+  let result;
+  try {
+    result = runTool(argv, { cwd, home });
+  } finally {
+    NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
+  }
+  console.log(
+    JSON.stringify({
+      check: id,
+      exit: result.status,
+      signal: result.signal,
+      elapsedSeconds: (performance.now() - start) / 1000,
+    }),
+  );
+  if (result.error) throw result.error;
+  return result;
+}
+
+function readBaseline(path) {
+  let failures;
+  try {
+    ({ failures } = JSON.parse(NodeFS.readFileSync(path, "utf8")));
+  } catch (error) {
+    throw new Error(`Unreadable --web-unit-baseline ${path}: ${error.message}`, { cause: error });
+  }
+  if (!Array.isArray(failures) || failures.some((id) => typeof id !== "string")) {
+    throw new Error(`--web-unit-baseline ${path} has no failures list from a --web-unit run`);
+  }
+  return { path, failures };
+}
+
+/**
+ * Failed tests in a Vitest JSON report as `file > full test name`, with a file
+ * that failed outside its tests (an import error) by its path alone. A failing
+ * exit without a readable report or a failed test is itself a failure.
+ */
+export function readVitestFailures(reportPath, cwd, exit) {
+  let report;
+  try {
+    report = JSON.parse(NodeFS.readFileSync(reportPath, "utf8"));
+  } catch {
+    return [`(no Vitest report; exit ${exit})`];
+  }
+  const failures = report.testResults.flatMap((file) => {
+    const path = NodePath.relative(cwd, file.name).split(NodePath.sep).join("/");
+    const tests = file.assertionResults
+      .filter((test) => test.status === "failed")
+      .map((test) => `${path} > ${test.fullName}`);
+    return tests.length === 0 && file.status === "failed" ? [path] : tests;
+  });
+  if (failures.length === 0 && exit !== 0) return [`(exit ${exit} without a failed test)`];
+  return [...new Set(failures)].sort();
+}
+
+/** New failures fail the lane; pre-existing ones and baseline failures that now pass are reported. */
+export function compareFailures(failures, baseline) {
+  const before = new Set(baseline);
+  const after = new Set(failures);
+  return {
+    new: failures.filter((id) => !before.has(id)),
+    preexisting: failures.filter((id) => before.has(id)),
+    nowPassing: baseline.filter((id) => !after.has(id)),
+  };
 }
 
 if (

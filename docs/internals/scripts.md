@@ -128,6 +128,26 @@ Every command runs without the variables a Scient desktop host gives its agents
 temporary directory, so a check cannot fall back to a live profile. Explicit test inputs
 such as `SCIENT_PI_TEST_BINARY` pass through.
 
+`--web-unit` adds the whole web `unit` project, which hosted CI shards as Test Web and the
+boundary map otherwise samples only through mapped suites (a source-text assertion elsewhere
+in it is otherwise first seen in hosted CI). It runs alone or beside one selection mode. It is
+opt-in because it is slow: about 14 minutes (811 s measured) on a Windows 11 workstation,
+where a few suites also fail or flake on unmodified main. With `--run` it writes the failing
+tests (`file > test name`, or the file alone when it failed to load) to `web-unit-failures.json`
+in a new temporary directory. Run it once against an unmodified base checkout with `--cwd`,
+then pass that file to the candidate's run:
+
+```sh
+node /absolute/candidate/scripts/scient-alignment-checks.mjs \
+  --cwd /absolute/base-checkout --web-unit --run
+pnpm alignment:checks --base <owned-base-sha> --web-unit \
+  --web-unit-baseline /absolute/tmp/scient-web-unit-lane-XXXX/web-unit-failures.json --run
+```
+
+With a baseline the lane fails only on failures the baseline lacks, and reports pre-existing
+failures and baseline failures that now pass. A flaky test can still appear new; rerun its
+file before attributing it to the candidate.
+
 ## Alignment gates and receipt facts
 
 `pnpm alignment:gates` runs the final local gate list from the
