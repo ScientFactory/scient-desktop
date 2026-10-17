@@ -503,8 +503,9 @@ it("counts new answers below the reader once while streaming, then clears them o
         .querySelector<HTMLElement>('[data-message-id="message-20"] .chat-markdown')
         ?.style.getPropertyValue("--reveal-front") || "0",
     );
-  await expect.poll(revealFront, { timeout: 3000 }).toBeGreaterThan(0);
-  await expect.poll(() => onUnreadBelowChange.mock.lastCall?.[0]).toBe(0);
+  // The reveal runs on the clock after its wait; a slow runner needs more than the default second.
+  await expect.poll(revealFront, { timeout: 5000 }).toBeGreaterThan(0);
+  await expect.poll(() => onUnreadBelowChange.mock.lastCall?.[0], { timeout: 5000 }).toBe(0);
   await listRef.current!.scrollToOffset({ offset: 250, animated: false });
   render(
     "geometry:unread",

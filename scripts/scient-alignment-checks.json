@@ -19,6 +19,9 @@
     "apps/mobile/src/",
     "apps/server/src/provider/",
     "packages/provider-",
+    "packages/effect-acp/",
+    "packages/effect-codex-app-server/",
+    "packages/effect-omp-rpc/",
     "apps/web/src/components/chat/ChatComposer",
     "apps/web/src/components/chat/ComposerPrimaryActions"
   ],
@@ -114,7 +117,8 @@
         "NativeStopConjunctions captures exact control request, truthful close-failure owner and real child-process ESRCH after successful shutdown, preserving peer process/queue.",
         "StopDuringPreparation exercises public Stop through the actual Git checkpoint and EventSink/worker path: the blocked local baseline is interrupted before a native offer, while the workspace lock remains reusable and original untracked bytes remain intact. PendingStartPreparation covers already-declined eligibility and the cursor/subscription gap, exact owner eligibility, listener retirement before native offering, and failed ownership reads.",
         "useStopGeneration and StopGenerationAcknowledgement cover preparation-time control admission, exact request/attempt identity, late and A-B-A failures, retry and focus; these controlled React hook/transport witnesses do not mount the complete composer or establish native interruption.",
-        "ComposerPrimaryActions markup asserts Stop availability and Queue alongside Stop for a running turn with sendable content; it does not invoke Stop/Resume callbacks or qualify native interruption."
+        "ComposerPrimaryActions markup asserts Stop availability and Queue alongside Stop for a running turn with sendable content; it does not invoke Stop/Resume callbacks or qualify native interruption.",
+        "TaskCancelNativeSubagent ends a delegated child's background native subagent through task_cancel."
       ],
       "checks": {
         "server": [
@@ -125,7 +129,8 @@
           "src/orchestration-v2/NativeStopConjunctions.integration.test.ts",
           "src/orchestration-v2/StopDuringPreparation.integration.test.ts",
           "src/orchestration-v2/scient-fork/PendingStartPreparation.test.ts",
-          "src/orchestration-v2/RunExecutionService.test.ts"
+          "src/orchestration-v2/RunExecutionService.test.ts",
+          "src/mcp/TaskCancelNativeSubagent.integration.test.ts"
         ],
         "web-unit": [
           "src/components/chat/ComposerPrimaryActions.test.tsx",
@@ -137,6 +142,52 @@
         "Synthetic Claude SDK child-process traffic proves physical ownership for those fixtures, not authenticated providers, packaged desktop or mobile shutdown.",
         "No universal exactly-once external execution guarantee; final provider/platform checks remain range-dependent.",
         "Existing ComposerPrimaryActions tests assert control availability/labels only; Stop/Resume callback interaction is a remaining client gap, not established by backend ownership tests."
+      ]
+    },
+    {
+      "id": "adapters",
+      "triggers": [
+        "apps/server/src/orchestration-v2/Adapters/",
+        "apps/server/src/orchestration-v2/RunExecutionService",
+        "apps/server/src/orchestration-v2/ProviderSessionManager",
+        "apps/server/src/orchestration-v2/ProviderEventIngestor",
+        "apps/server/src/provider/",
+        "apps/server/src/mcp/",
+        "packages/provider-",
+        "packages/effect-acp/",
+        "packages/effect-codex-app-server/",
+        "packages/effect-omp-rpc/"
+      ],
+      "consumers": [
+        "RunExecutionService run lifecycle and terminal handling -> every provider adapter's native stream, Stop and background work",
+        "ProviderSessionManager session release and server shutdown -> native subscriptions and processes",
+        "Scient MCP server configuration -> each adapter's spawn parameters"
+      ],
+      "decidingAssertions": [
+        "Every suite under orchestration-v2/Adapters runs: each adapter's spawn parameters (including MCP configuration and tool timeouts), event translation, Stop and background-work containment against the shared run lifecycle. OmpBackground.native contains a background Stop that arrives before a wake run's native start.",
+        "Every server integration suite that drives a native provider process is mapped to a boundary. PiNativeCloseConjunctions keeps native ownership truthful across administrative close and reuse, and server shutdown interrupts a pending native subscription and fences its positive acknowledgement for restart recovery; the OMP native suites cover preparation, process ownership, recovery and retirement.",
+        "The testkit native suites carry an adapter's pre-wire receipt through the worker, a native question's answer through fork history and recovery, and a partial native reply through acknowledged Stop, close and SQLite reopen."
+      ],
+      "checks": {
+        "server": [
+          "src/orchestration-v2/Adapters/",
+          "src/orchestration-v2/PiNativeCloseConjunctions.integration.test.ts",
+          "src/orchestration-v2/PiObservedEffort.native.integration.test.ts",
+          "src/orchestration-v2/OmpNativePreparation.integration.test.ts",
+          "src/orchestration-v2/OmpNativeProcess.integration.test.ts",
+          "src/orchestration-v2/OmpNativeRecovery.integration.test.ts",
+          "src/orchestration-v2/OmpNativeRetirement.integration.test.ts",
+          "src/orchestration-v2/OpenCodeCapturedDispatch.native.integration.test.ts",
+          "src/orchestration-v2/testkit/NativePreflightReceipt.integration.test.ts",
+          "src/orchestration-v2/testkit/NativeQuestionHandoff.integration.test.ts",
+          "src/orchestration-v2/testkit/NativeQuestionRecovery.integration.test.ts",
+          "src/orchestration-v2/testkit/NativeReadingIdentity.integration.test.ts"
+        ]
+      },
+      "limits": [
+        "Adapter and native suites use synthetic provider processes and protocol fixtures, not authenticated providers. A directory entry excludes *.live.test.ts suites, so live suites under Adapters run only as listed native checks behind --native.",
+        "OmpNativeProcess skips on Windows; hosted Linux CI runs it.",
+        "On Windows, fixtures that spawn a script directly (Droid, Pi native close and shutdown, among others) fail with spawn EFTYPE on the unmodified base as well, often after long timeouts; attribute only failures the base lacks, and leave those suites to Linux or hosted CI."
       ]
     },
     {
@@ -280,21 +331,27 @@
         "apps/server/src/orchestration-v2/scient-fork/",
         "apps/server/src/orchestration-v2/Adapters/",
         "apps/server/src/persistence/",
+        "packages/effect-acp/",
         "packages/effect-codex-app-server/"
       ],
       "consumers": [
         "ConversationForkService -> native buffered-text capture through the real Codex adapter replay -> guarded SQL acknowledgement -> forked thread history"
       ],
       "decidingAssertions": [
-        "A fork of a running thread freezes received and coalescer-held native text through the guarded SQL owner, rolls back on SQL failure, survives cancellation and stalled consumers without stopping the source, and forks saved history rather than newer unacknowledged text."
+        "A fork of a running thread freezes received and coalescer-held native text through the guarded SQL owner, rolls back on SQL failure, survives cancellation and stalled consumers without stopping the source, and forks saved history rather than newer unacknowledged text.",
+        "The other native fork suites fork an ACP answer through its persisted node, keep a completed reply across an interrupted or failed run, retain the selected prefix when a retained-turn rewind commits after planning, and refuse a source-ID native fork while delivering its frozen prefix once to a fresh portable destination."
       ],
       "checks": {
         "server": [
-          "src/orchestration-v2/scient-fork/ConversationForkBufferedText.native.integration.test.ts"
+          "src/orchestration-v2/scient-fork/ConversationForkBufferedText.native.integration.test.ts",
+          "src/orchestration-v2/scient-fork/ConversationForkNativeAnswer.integration.test.ts",
+          "src/orchestration-v2/scient-fork/ConversationForkNativeContinuity.integration.test.ts",
+          "src/orchestration-v2/scient-fork/ConversationForkRetainedNativeTurnRewindRace.integration.test.ts",
+          "src/orchestration-v2/scient-fork/SourceNativeForkRefusal.integration.test.ts"
         ]
       },
       "limits": [
-        "Controlled Codex app-server replay, not an authenticated Codex session; other providers' native capture is not exercised."
+        "Controlled Codex app-server and ACP replay, not authenticated sessions; other providers' native capture is not exercised."
       ]
     },
     {
