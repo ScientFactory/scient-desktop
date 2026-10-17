@@ -50,7 +50,11 @@ import {
   SshReadinessError,
 } from "./errors.ts";
 // SCIENT-FORK:START
-import { buildScientHomeMigrationStep } from "./scientRemoteHome.ts";
+import {
+  buildScientHomeCheckStep,
+  migrateRemoteScientHome,
+  SCIENT_HOME_MIGRATION_REQUIRED,
+} from "./scientRemoteHome.ts";
 // SCIENT-FORK:END
 
 const DEFAULT_REMOTE_PORT = 3773;
@@ -660,10 +664,11 @@ const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
 # SCIENT-FORK:START — Scient's own remote home, never ~/.t3, so only a
-# Scient server is ever adopted. An earlier Scient home in ~/.t3 is copied once.
+# Scient server is ever adopted. An earlier Scient home in ~/.t3 is copied once,
+# by a separate step, before anything creates the new home.
 DEFAULT_SERVER_HOME="$HOME/.scient-next"
 STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/$STATE_KEY"
-@@SCIENT_HOME_MIGRATION_STEP@@
+@@SCIENT_HOME_CHECK_STEP@@
 # SCIENT-FORK:END
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
@@ -989,8 +994,8 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
-    // SCIENT-FORK: the one-time copy of an earlier Scient home out of ~/.t3.
-    SCIENT_HOME_MIGRATION_STEP: buildScientHomeMigrationStep(remoteRunnerMode(input) === "archive"),
+    // SCIENT-FORK: defers to the one-time copy of an earlier Scient home.
+    SCIENT_HOME_CHECK_STEP: buildScientHomeCheckStep(remoteRunnerMode(input) === "archive"),
   });
 }
 
@@ -1029,7 +1034,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...sshRunnerLogFields(runner),
       stateKey,
     });
-    const result = yield* runSshCommand(target, {
+    const launchCommand = {
       remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs:
@@ -1039,7 +1044,16 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
-    });
+    };
+    let result = yield* runSshCommand(target, launchCommand);
+    // SCIENT-FORK:START — the launch stopped before creating Scient's home
+    // because an earlier one in ~/.t3 may need copying. The copy runs with its
+    // own budget, then the launch runs again.
+    if (getLastNonEmptyOutputLine(result.stdout) === SCIENT_HOME_MIGRATION_REQUIRED) {
+      yield* migrateRemoteScientHome(target, stateKey, buildRemoteNodeEnvScript(runner), input);
+      result = yield* runSshCommand(target, launchCommand);
+    }
+    // SCIENT-FORK:END
     if (!getLastNonEmptyOutputLine(result.stdout)) {
       return yield* new SshLaunchError({
         message: "SSH launch did not return a remote port.",

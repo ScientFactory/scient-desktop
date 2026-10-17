@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Runs the generated remote Node
-// script against synthetic SQLite homes, the way the launch script runs it.
+// script against synthetic SQLite homes, the way the migration step runs it.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -8,10 +8,13 @@ import * as NodeSqlite from "node:sqlite";
 
 import { afterEach, assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as DateTime from "effect/DateTime";
 
 import {
-  buildScientHomeMigrationStep,
+  buildRemoteScientHomeMigrationScript,
+  buildScientHomeCheckStep,
   REMOTE_SCIENT_HOME_MIGRATION_SCRIPT,
+  SCIENT_HOME_MIGRATION_REQUIRED,
 } from "./scientRemoteHome.ts";
 
 const STATE_KEY = "0123456789abcdef";
@@ -29,6 +32,11 @@ const T3_LEDGER = [
   [41, "AuthSessionClientConnection"],
   [42, "ProjectionThreadLinkedPullRequest"],
 ] as const;
+const LEDGER_TABLE = `CREATE TABLE effect_sql_migrations (
+  migration_id integer PRIMARY KEY NOT NULL,
+  created_at datetime NOT NULL DEFAULT current_timestamp,
+  name VARCHAR(255) NOT NULL
+);`;
 
 const roots: Array<string> = [];
 const openDatabases: Array<NodeSqlite.DatabaseSync> = [];
@@ -39,6 +47,11 @@ afterEach(() => {
   for (const child of children.splice(0)) if (child.exitCode === null) child.kill("SIGKILL");
   for (const root of roots.splice(0)) NodeFS.rmSync(root, { recursive: true, force: true });
 });
+
+// A runtime record's start time, as a server writes it: the real wall clock,
+// because the script compares it with the process start time `ps` reports.
+const isoMinutesFromNow = (minutes: number) =>
+  DateTime.formatIso(DateTime.add(DateTime.nowUnsafe(), { minutes }));
 
 function makeHost() {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-home-migration-"));
@@ -52,6 +65,14 @@ function makeHost() {
 }
 
 type Host = ReturnType<typeof makeHost>;
+
+function insertLedger(
+  db: NodeSqlite.DatabaseSync,
+  ledger: ReadonlyArray<readonly [number, string]>,
+) {
+  const insert = db.prepare("INSERT INTO effect_sql_migrations (migration_id, name) VALUES (?, ?)");
+  for (const [id, name] of ledger) insert.run(id, name);
+}
 
 // A legacy home with a ledger, data a user would miss, and the per-server
 // files that must not follow it. Leaves the database open when asked, so its
@@ -68,14 +89,9 @@ function writeLegacyHome(
   NodeFS.mkdirSync(NodePath.join(host.legacy, "ssh-launch", STATE_KEY), { recursive: true });
   const db = new NodeSqlite.DatabaseSync(NodePath.join(host.userdata, "statev2.sqlite"));
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;
-CREATE TABLE effect_sql_migrations (
-  migration_id integer PRIMARY KEY NOT NULL,
-  created_at datetime NOT NULL DEFAULT current_timestamp,
-  name VARCHAR(255) NOT NULL
-);
+${LEDGER_TABLE}
 CREATE TABLE threads (id TEXT PRIMARY KEY, worktree TEXT);`);
-  const insert = db.prepare("INSERT INTO effect_sql_migrations (migration_id, name) VALUES (?, ?)");
-  for (const [id, name] of ledger) insert.run(id, name);
+  insertLedger(db, ledger);
   db.prepare("INSERT INTO threads VALUES (?, ?)").run(
     "thread-1",
     NodePath.join(host.legacy, "worktrees", "repo", "feature"),
@@ -90,11 +106,49 @@ CREATE TABLE threads (id TEXT PRIMARY KEY, worktree TEXT);`);
   NodeFS.writeFileSync(NodePath.join(host.legacy, "worktrees", "repo", "feature", "f.txt"), "w");
 }
 
+// A database left by a crashed server: every row still in the WAL, and no
+// shared-memory index beside it.
+function writeCrashedDatabase(host: Host, ledger: ReadonlyArray<readonly [number, string]>) {
+  const scratch = NodePath.join(host.root, "crash");
+  NodeFS.mkdirSync(scratch);
+  NodeFS.mkdirSync(host.userdata, { recursive: true });
+  const db = new NodeSqlite.DatabaseSync(NodePath.join(scratch, "statev2.sqlite"));
+  db.exec(`PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; ${LEDGER_TABLE}`);
+  insertLedger(db, ledger);
+  for (const suffix of ["", "-wal"]) {
+    NodeFS.copyFileSync(
+      NodePath.join(scratch, `statev2.sqlite${suffix}`),
+      NodePath.join(host.userdata, `statev2.sqlite${suffix}`),
+    );
+  }
+  db.close();
+}
+
 function writeRuntime(host: Host, runtime: Record<string, unknown>) {
   NodeFS.writeFileSync(
     NodePath.join(host.userdata, "server-runtime.json"),
     JSON.stringify(runtime),
   );
+}
+
+function startManagedServer(host: Host, startedAt: string | undefined) {
+  const server = NodeChildProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  children.push(server);
+  const pid = server.pid ?? 0;
+  const launch = NodePath.join(host.legacy, "ssh-launch", STATE_KEY);
+  NodeFS.writeFileSync(NodePath.join(launch, "pid"), `${pid}\n`);
+  NodeFS.writeFileSync(NodePath.join(launch, "port"), "3773\n");
+  NodeFS.writeFileSync(NodePath.join(launch, "managed"), "managed\n");
+  writeRuntime(host, {
+    version: 1,
+    pid,
+    port: 3773,
+    origin: "http://127.0.0.1:3773",
+    ...(startedAt === undefined ? {} : { startedAt }),
+  });
+  return { pid, launch };
 }
 
 // Async so this test process keeps reaping a server the script stops.
@@ -141,12 +195,16 @@ function isAlive(pid: number) {
   }
 }
 
+function assertEmptyNewHome(host: Host) {
+  assert.deepEqual(NodeFS.readdirSync(host.home), []);
+}
+
 describe("Scient remote home migration", () => {
-  it("leaves a fresh host without either home alone", async () => {
+  it("creates an empty home when there is nothing to copy", async () => {
     const host = makeHost();
     const result = await runMigration(host);
     assert.equal(result.code, 0, result.stderr);
-    assert.isFalse(NodeFS.existsSync(host.home));
+    assertEmptyNewHome(host);
     assert.isFalse(NodeFS.existsSync(host.legacy));
   });
 
@@ -167,9 +225,11 @@ describe("Scient remote home migration", () => {
     }
     assert.isTrue(NodeFS.existsSync(NodePath.join(copied, "attachments", "a.txt")));
     // The live server's discovery record, lock and logs stay behind, as do
-    // worktrees and the launcher's state.
+    // worktrees and the launcher's state. The database arrives as one
+    // standalone file from the backup, without the source's WAL.
     assert.isFalse(NodeFS.existsSync(NodePath.join(copied, "server-runtime.json")));
     assert.isFalse(NodeFS.existsSync(NodePath.join(copied, "server-owner.sqlite")));
+    assert.isFalse(NodeFS.existsSync(NodePath.join(copied, "statev2.sqlite-wal")));
     assert.isFalse(NodeFS.existsSync(NodePath.join(copied, "logs")));
     assert.isFalse(NodeFS.existsSync(NodePath.join(host.home, "worktrees")));
     assert.isFalse(NodeFS.existsSync(NodePath.join(host.home, "ssh-launch")));
@@ -179,6 +239,7 @@ describe("Scient remote home migration", () => {
     // absolute worktree path, which still resolves in place.
     const copy = new NodeSqlite.DatabaseSync(NodePath.join(copied, "statev2.sqlite"));
     openDatabases.push(copy);
+    assert.equal(copy.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
     const thread = copy.prepare("SELECT worktree FROM threads").get();
     assert.equal(thread?.worktree, NodePath.join(host.legacy, "worktrees", "repo", "feature"));
     assert.isTrue(NodeFS.existsSync(String(thread?.worktree)));
@@ -205,8 +266,30 @@ describe("Scient remote home migration", () => {
     const before = snapshot(host.legacy);
     const result = await runMigration(host);
     assert.equal(result.code, 0, result.stderr);
-    assert.isFalse(NodeFS.existsSync(host.home));
+    assertEmptyNewHome(host);
     assert.deepEqual(snapshot(host.legacy), before);
+  });
+
+  it("reads WAL-only ledger rows without adding files beside T3 Code's database", async () => {
+    const host = makeHost();
+    writeCrashedDatabase(host, T3_LEDGER);
+    const before = snapshot(host.legacy);
+    const result = await runMigration(host);
+    assert.equal(result.code, 0, result.stderr);
+    assertEmptyNewHome(host);
+    assert.deepEqual(snapshot(host.legacy), before);
+  });
+
+  it("recognizes and copies a Scient database whose ledger is only in its WAL", async () => {
+    const host = makeHost();
+    writeCrashedDatabase(host, SCIENT_LEDGER);
+    const result = await runMigration(host);
+    assert.equal(result.code, 0, result.stderr);
+    const copy = new NodeSqlite.DatabaseSync(
+      NodePath.join(host.home, "userdata", "statev2.sqlite"),
+    );
+    openDatabases.push(copy);
+    assert.lengthOf(copy.prepare("SELECT * FROM effect_sql_migrations").all(), 3);
   });
 
   it("starts fresh when the ~/.t3 database cannot be read", async () => {
@@ -216,7 +299,7 @@ describe("Scient remote home migration", () => {
     const before = snapshot(host.legacy);
     const result = await runMigration(host);
     assert.equal(result.code, 0, result.stderr);
-    assert.isFalse(NodeFS.existsSync(host.home));
+    assertEmptyNewHome(host);
     assert.deepEqual(snapshot(host.legacy), before);
   });
 
@@ -226,7 +309,37 @@ describe("Scient remote home migration", () => {
     NodeFS.mkdirSync(host.home);
     const result = await runMigration(host);
     assert.equal(result.code, 0, result.stderr);
-    assert.deepEqual(NodeFS.readdirSync(host.home), []);
+    assertEmptyNewHome(host);
+  });
+
+  it("refuses to copy a state directory that contains a symbolic link", async () => {
+    const host = makeHost();
+    writeLegacyHome(host, SCIENT_LEDGER);
+    const outside = NodePath.join(host.root, "outside");
+    NodeFS.mkdirSync(outside);
+    // A junction needs no privilege on Windows and is a symbolic link elsewhere.
+    NodeFS.symlinkSync(outside, NodePath.join(host.userdata, "attachments", "shared"), "junction");
+
+    const result = await runMigration(host);
+    assert.equal(result.code, 1);
+    assert.include(result.stderr, "is a symbolic link");
+    assert.include(result.stderr, `create an empty ${host.home} folder`);
+    assert.isFalse(NodeFS.existsSync(host.home));
+    assert.deepEqual(stagingLeftovers(host), []);
+  });
+
+  it("refuses to copy a state directory that is itself a symbolic link", async () => {
+    const host = makeHost();
+    const real = NodePath.join(host.root, "real-state");
+    const hostWithRealState = { ...host, userdata: real };
+    NodeFS.mkdirSync(host.legacy, { recursive: true });
+    writeLegacyHome(hostWithRealState, SCIENT_LEDGER);
+    NodeFS.symlinkSync(real, host.userdata, "junction");
+
+    const result = await runMigration(host);
+    assert.equal(result.code, 1);
+    assert.include(result.stderr, "is a symbolic link");
+    assert.isFalse(NodeFS.existsSync(host.home));
   });
 
   it("refuses to copy while a server holds the old home's ownership lock", async () => {
@@ -252,7 +365,7 @@ describe("Scient remote home migration", () => {
       pid: process.pid,
       port: 3773,
       origin: "http://127.0.0.1:3773",
-      startedAt: new Date().toISOString(),
+      startedAt: isoMinutesFromNow(0),
     });
     const result = await runMigration(host);
     assert.equal(result.code, 1);
@@ -260,45 +373,51 @@ describe("Scient remote home migration", () => {
     assert.isFalse(NodeFS.existsSync(host.home));
   });
 
-  it("stops the server this launcher started on the old home before copying", async () => {
+  // Confirming a process's identity needs `ps`.
+  it.skipIf(windowsHost)(
+    "stops the server this launcher started on the old home before copying",
+    async () => {
+      const host = makeHost();
+      writeLegacyHome(host, SCIENT_LEDGER);
+      const { pid, launch } = startManagedServer(host, isoMinutesFromNow(1));
+
+      const result = await runMigration(host);
+      assert.equal(result.code, 0, result.stderr);
+      assert.isFalse(isAlive(pid));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(launch, "pid")));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(host.home, "userdata", "statev2.sqlite")));
+    },
+  );
+
+  it.skipIf(windowsHost)("never signals a process that reused a stale record's PID", async () => {
     const host = makeHost();
     writeLegacyHome(host, SCIENT_LEDGER);
-    const server = NodeChildProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-      stdio: "ignore",
-    });
-    children.push(server);
-    const pid = server.pid ?? 0;
-    const launch = NodePath.join(host.legacy, "ssh-launch", STATE_KEY);
-    NodeFS.writeFileSync(NodePath.join(launch, "pid"), `${pid}\n`);
-    NodeFS.writeFileSync(NodePath.join(launch, "port"), "3773\n");
-    NodeFS.writeFileSync(NodePath.join(launch, "managed"), "managed\n");
-    writeRuntime(host, { version: 1, pid, port: 3773, origin: "http://127.0.0.1:3773" });
+    // The record predates this process, so the PID now names something else.
+    const { pid } = startManagedServer(host, "2000-01-01T00:00:00.000Z");
 
     const result = await runMigration(host);
     assert.equal(result.code, 0, result.stderr);
-    assert.isFalse(isAlive(pid));
-    assert.isFalse(NodeFS.existsSync(NodePath.join(launch, "pid")));
+    assert.isTrue(isAlive(pid));
     assert.isTrue(NodeFS.existsSync(NodePath.join(host.home, "userdata", "statev2.sqlite")));
+  });
+
+  it("does not signal a recorded server whose identity cannot be confirmed", async () => {
+    const host = makeHost();
+    writeLegacyHome(host, SCIENT_LEDGER);
+    const { pid } = startManagedServer(host, undefined);
+
+    const result = await runMigration(host);
+    assert.equal(result.code, 1);
+    assert.include(result.stderr, `could not confirm that PID ${pid}`);
+    assert.isTrue(isAlive(pid));
+    assert.isFalse(NodeFS.existsSync(host.home));
   });
 
   it("leaves an external server it did not start running", async () => {
     const host = makeHost();
     writeLegacyHome(host, SCIENT_LEDGER);
-    const server = NodeChildProcess.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-      stdio: "ignore",
-    });
-    children.push(server);
-    const pid = server.pid ?? 0;
-    const launch = NodePath.join(host.legacy, "ssh-launch", STATE_KEY);
-    NodeFS.writeFileSync(NodePath.join(launch, "pid"), `${pid}\n`);
+    const { pid, launch } = startManagedServer(host, isoMinutesFromNow(1));
     NodeFS.writeFileSync(NodePath.join(launch, "managed"), "external\n");
-    writeRuntime(host, {
-      version: 1,
-      pid,
-      port: 3773,
-      origin: "http://127.0.0.1:3773",
-      startedAt: new Date(Date.now() + 60_000).toISOString(),
-    });
 
     const result = await runMigration(host);
     assert.equal(result.code, 1);
@@ -340,14 +459,16 @@ describe("Scient remote home migration", () => {
     },
   );
 
-  it("runs in the launch script only for runners that have Node", () => {
-    assert.equal(buildScientHomeMigrationStep(true), "");
-    const step = buildScientHomeMigrationStep(false);
+  it("defers the copy to its own step, only for runners that have Node", () => {
+    assert.equal(buildScientHomeCheckStep(true), "");
+    const check = buildScientHomeCheckStep(false);
     assert.include(
-      step,
+      check,
       'if [ ! -e "$DEFAULT_SERVER_HOME" ] && [ -f "$HOME/.t3/userdata/statev2.sqlite" ]; then',
     );
-    assert.include(step, 'node --no-warnings - "$HOME/.t3" "$DEFAULT_SERVER_HOME" "$STATE_KEY"');
+    assert.include(check, `printf '%s\\n' '${SCIENT_HOME_MIGRATION_REQUIRED}'`);
+    const step = buildRemoteScientHomeMigrationScript("ensure_remote_node_path() { :; }");
+    assert.include(step, 'node --no-warnings - "$HOME/.t3" "$DEFAULT_SERVER_HOME" "$1"');
     assert.include(step, REMOTE_SCIENT_HOME_MIGRATION_SCRIPT.trimEnd());
   });
 });

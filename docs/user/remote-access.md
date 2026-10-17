@@ -56,11 +56,16 @@ still use it, but the two folders do not share later changes. A `~/.t3` that
 another app wrote, or that Scient cannot read, is never changed, and Scient
 starts with an empty `~/.scient-next`.
 
-Before copying, Scient stops the server it started on `~/.t3` for this
-connection. If another older Scient server is still using `~/.t3`, the
-connection fails without copying anything: disconnect older Scient apps from
-the host, then reconnect. To start fresh instead of copying, create an empty
-`~/.scient-next` folder on the host before connecting.
+The copy runs before the server starts, so that first connection can take
+longer; Scient allows it up to 15 minutes. Before copying, Scient stops the
+server it started on `~/.t3` for this connection, once it has confirmed that
+process is that server. The connection fails without copying anything if
+another older Scient server is still using `~/.t3`, if Scient cannot confirm
+which process its old server is, or if `~/.t3/userdata` contains a symbolic
+link, which the copy would share with the old folder. Disconnect older Scient
+apps from the host or stop that server, then reconnect. To start fresh instead
+of copying, create an empty `~/.scient-next` folder on the host before
+connecting.
 
 ## Direct and private-network access
 

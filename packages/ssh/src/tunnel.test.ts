@@ -28,6 +28,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as SshAuth from "./auth.ts";
 import { SshCommandError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
+// SCIENT-FORK:START
+import {
+  buildRemoteScientHomeMigrationScript,
+  SCIENT_HOME_MIGRATION_REQUIRED,
+} from "./scientRemoteHome.ts";
+// SCIENT-FORK:END
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
@@ -328,14 +334,55 @@ describe("ssh tunnel scripts", () => {
     assert.include(stop, `STATE_DIR="$HOME/.scient-next/ssh-launch/${stateKey}"`);
     assert.notInclude(pairing, "$HOME/.t3");
     assert.notInclude(stop, "$HOME/.t3");
-    // The copy runs before anything can create the new home, and it is the
-    // only part of the launch that reads ~/.t3.
-    const migration = launch.indexOf('node --no-warnings - "$HOME/.t3"');
-    assert.isAbove(migration, 0);
-    assert.isBelow(migration, launch.indexOf('mkdir -p "$STATE_DIR"'));
-    assert.lengthOf(launch.match(/\$HOME\/\.t3/gu) ?? [], 2);
+    // The launch hands over to the copy before anything can create the new
+    // home, and that check is the only part of the launch that reads ~/.t3.
+    const handover = launch.indexOf(`printf '%s\\n' '{"scientHomeMigration":"required"}'`);
+    assert.isAbove(handover, 0);
+    assert.isBelow(handover, launch.indexOf('mkdir -p "$STATE_DIR"'));
+    assert.lengthOf(launch.match(/\$HOME\/\.t3/gu) ?? [], 1);
     // The archive runner has no Node, so it never copies.
     assert.notInclude(SshTunnel.buildRemoteLaunchScript(ARCHIVE), "$HOME/.t3");
+  });
+
+  it.effect("copies an earlier Scient home as its own step, then launches again", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const spawnedCommands: Array<ReadonlyArray<string>> = [];
+    // The copy outlasts the launch budget; it has its own.
+    const outputs = [
+      makeSuccessfulProcess('loaded nvm default\n{"scientHomeMigration":"required"}\n'),
+      makeDelayedSuccessfulProcess("", 600_000),
+      makeSuccessfulProcess('{"remotePort":3774,"serverKind":"managed"}\n'),
+    ];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        spawnedCommands.push(commandArgs(command));
+        return outputs[spawnedCommands.length - 1] ?? makeSuccessfulProcess("");
+      }),
+    );
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner, TestClock.layer());
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+          packageSpec: scientServerPackageSpec("0.6.21"),
+        }),
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.minutes(10));
+
+      const result = yield* Fiber.join(fiber);
+      assert.deepEqual(result, { remotePort: 3774, remoteServerKind: "managed" });
+      assert.lengthOf(spawnedCommands, 3);
+      for (const args of spawnedCommands) {
+        assert.deepEqual(args.slice(-5, -1), ["sh", "-l", "-s", "--"]);
+      }
+    }).pipe(Effect.provide(layerProcess));
   });
   // SCIENT-FORK:END
 
@@ -1139,7 +1186,13 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
   fs.mkdirSync(userdata, { recursive: true });
   fs.writeFileSync(
     path.join(userdata, "server-runtime.json"),
-    JSON.stringify({ version: 1, pid: process.pid, port, origin: "http://127.0.0.1:" + port }),
+    JSON.stringify({
+      version: 1,
+      pid: process.pid,
+      port,
+      origin: "http://127.0.0.1:" + port,
+      startedAt: new Date().toISOString(),
+    }),
   );
   console.log(port);
 });
@@ -1497,7 +1550,8 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const { home, launchManaged, startDefaultHomeServer } = yield* prepareLaunch;
+        const { home, runLaunchScript, launchManaged, startDefaultHomeServer } =
+          yield* prepareLaunch;
         yield* fs.remove(`${home}/.scient-next`, { recursive: true });
         const legacyState = `${home}/.t3/userdata`;
         const legacyLaunch = `${home}/.t3/ssh-launch/test-state`;
@@ -1522,6 +1576,19 @@ INSERT INTO effect_sql_migrations (migration_id, name) VALUES (41, 'ProjectlessT
         yield* fs.writeFileString(`${legacyLaunch}/port`, `${legacyPort}\n`);
         yield* fs.writeFileString(`${legacyLaunch}/managed`, "managed\n");
 
+        // The launch hands over before creating anything; the copy runs as
+        // its own step, and the launch then runs again.
+        const handover = yield* runLaunchScript;
+        assert.equal(handover.exitCode, 0, handover.stderr);
+        assert.equal(handover.stdout.trim(), SCIENT_HOME_MIGRATION_REQUIRED);
+        assert.isFalse(yield* fs.exists(`${home}/.scient-next`));
+        const migration = `${home}/../migrate.sh`;
+        yield* fs.writeFileString(
+          migration,
+          buildRemoteScientHomeMigrationScript(SshTunnel.buildRemoteNodeEnvScript()),
+        );
+        const migrated = yield* runScript(home, [migration, "test-state"]);
+        assert.equal(migrated.exitCode, 0, migrated.stderr);
         yield* launchManaged;
         assert.isFalse(yield* isListening(legacyPort));
         assert.equal(
