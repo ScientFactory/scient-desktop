@@ -100,7 +100,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     // A failed server's Retry rechecks the same eligibility. `servers` is rebuilt on
     // every render; publishing an equal list notifies no one.
     publishQualifiedUpdateRunServers(servers);
-  }, [servers]);
+  }, [committedServersRef, servers]);
   useLayoutEffect(
     () => () => {
       // A delayed pass or retry cannot retain eligibility after its sidebar owner leaves.
