@@ -176,7 +176,8 @@
       },
       "limits": [
         "Adapter and native suites use synthetic provider processes and protocol fixtures, not authenticated providers. Live suites under Adapters skip without their binaries; Pi's real runtime runs only through --native.",
-        "OmpNativeProcess skips on Windows; hosted Linux CI runs it."
+        "OmpNativeProcess skips on Windows; hosted Linux CI runs it.",
+        "On Windows, fixtures that spawn a script directly (Droid, Pi native close and shutdown, among others) fail with spawn EFTYPE on the unmodified base as well, often after long timeouts; attribute only failures the base lacks, and leave those suites to Linux or hosted CI."
       ]
     },
     {
