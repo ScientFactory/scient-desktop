@@ -65,6 +65,12 @@ export interface ManagedRuntimeArtifactPolicy {
   readonly executablePath: string;
   /** Additional reviewed payload files that must exist and be executable. */
   readonly auxiliaryExecutablePaths?: ReadonlyArray<string> | undefined;
+  /** Complete app-owned companion list when package contents vary by stable version. */
+  readonly auxiliaryExecutableRules?: ReadonlyArray<{
+    readonly path: string;
+    readonly minimumVersion?: string;
+    readonly maximumVersionExclusive?: string;
+  }>;
   /** Optional alternate smoke-test entry point inside the extracted payload. */
   readonly smokeExecutablePath?: string | undefined;
   /** Optional payload-relative working directory for the smoke test. */
@@ -145,6 +151,8 @@ export function hydrateManagedRuntimeArtifact(
   receipt: ManagedRuntimeArtifactReceipt,
 ): ManagedRuntimeArtifact | undefined {
   if (
+    (policy.auxiliaryExecutableRules !== undefined &&
+      !isSupportedManagedRuntimeStableVersion(receipt.version, "0.0.0")) ||
     (policy.minimumVersion !== undefined &&
       (policy.smokeVersionFormat === "muse"
         ? (compareManagedMuseVersions(policy.minimumVersion, receipt.version) ?? -1) < 0
@@ -204,6 +212,19 @@ export function hydrateManagedRuntimeArtifact(
   }
   return {
     ...policy,
+    ...(policy.auxiliaryExecutableRules !== undefined
+      ? {
+          auxiliaryExecutablePaths: policy.auxiliaryExecutableRules
+            .filter(
+              (rule) =>
+                (rule.minimumVersion === undefined ||
+                  compareSemverVersions(receipt.version, rule.minimumVersion) >= 0) &&
+                (rule.maximumVersionExclusive === undefined ||
+                  compareSemverVersions(receipt.version, rule.maximumVersionExclusive) < 0),
+            )
+            .map((rule) => rule.path),
+        }
+      : {}),
     version: receipt.version,
     supersedes: isValidManagedRuntimeSupersedes(
       receipt.provider,

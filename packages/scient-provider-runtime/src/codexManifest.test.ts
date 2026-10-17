@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveReviewedCodexArtifact } from "./codexManifest.ts";
+import {
+  hydrateManagedRuntimeArtifact,
+  managedRuntimeArtifactReceipt,
+} from "./managedRuntimeArtifact.ts";
 
 const DARWIN_COMPANIONS = [
   "bin/codex-code-mode-host",
@@ -72,6 +76,31 @@ const reviewedPackages = [
 ] as const;
 
 describe("reviewed Codex runtime manifest", () => {
+  it.each(reviewedPackages)(
+    "resolves both layouts for $target.platform-$target.arch-$target.libc",
+    ({ target, auxiliaryExecutablePaths }) => {
+      const policy = resolveReviewedCodexArtifact(target)!;
+      for (const version of ["0.149.1", "0.162.1", "0.163.0", "0.164.0"]) {
+        const receipt = {
+          ...managedRuntimeArtifactReceipt(policy),
+          version,
+          url: policy.url.replace("rust-v0.149.1/", `rust-v${version}/`),
+        };
+        const current = hydrateManagedRuntimeArtifact(policy, receipt)!;
+        expect(current.auxiliaryExecutablePaths).toEqual(
+          version === "0.163.0" || version === "0.164.0"
+            ? auxiliaryExecutablePaths.filter((path) => path !== "codex-resources/zsh/bin/zsh")
+            : auxiliaryExecutablePaths,
+        );
+        expect(current.extractionLimits).toEqual(policy.extractionLimits);
+        expect(
+          hydrateManagedRuntimeArtifact(current, managedRuntimeArtifactReceipt(policy))
+            ?.auxiliaryExecutablePaths,
+        ).toEqual(auxiliaryExecutablePaths);
+      }
+    },
+  );
+
   it("keeps every reviewed Codex target within the same bounded extraction budget", () => {
     for (const { target } of reviewedPackages) {
       expect(resolveReviewedCodexArtifact(target)?.extractionLimits).toEqual({
