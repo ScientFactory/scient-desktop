@@ -191,7 +191,6 @@ export function verifySignedConversationPreview(app: string): void {
   verifyPreviewEntitlements(extension, extensionTeam, childId);
 }
 
-/** Sign files with matching options together instead of spawning codesign for each file. */
 export default async function sign(options: SignOptions): Promise<void> {
   await signApplication({
     ...fileExchangeSignOptions(conversationPreviewSignOptions(options)),

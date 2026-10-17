@@ -194,7 +194,6 @@ it.effect("uses one narrow read for a linked pull request summary", () =>
 
     expect(summary.state).toBe("open");
     expect(summaryReads).toBe(1);
-    // The author's avatar comes from the login-shaped URL, not a second request.
     expect(summary.author?.avatarUrl).toBe("https://github.com/octocat.png?size=80");
   }),
 );
@@ -269,7 +268,6 @@ describe("gitHubViewerPermissions", () => {
         didAuthor: false,
       }),
     ).toEqual({
-      // Arming a merge for later is the merge, so it travels with it.
       // SCIENT-FORK:START pull-request-branch-deletion-gate — "delete-branch" is not offered.
       actions: [
         // SCIENT-FORK:END pull-request-branch-deletion-gate
@@ -293,8 +291,6 @@ describe("gitHubViewerPermissions", () => {
   });
 
   it("leaves a passer-by on a repository they can only read nothing but the review", () => {
-    // Every open-source pull request somebody else opened: GitHub says no to all five actions
-    // and to resolving, and yes to commenting and to every verdict.
     expect(
       gitHubViewerPermissions({
         canWrite: false,
@@ -307,7 +303,6 @@ describe("gitHubViewerPermissions", () => {
       comment: true,
       resolve: false,
       verdicts: ["comment", "approve", "request-changes"],
-      // Asking somebody else to review is the one thing read access never stretches to.
       requestReviewers: false,
       labels: false,
     });
@@ -334,11 +329,9 @@ describe("gitHubViewerPermissions", () => {
         didAuthor: true,
       }),
     ).toEqual({
-      // Merging is the one thing writing is needed for, now or later; the rest an author may do.
       actions: ["ready", "draft", "close", "reopen"],
       comment: true,
       resolve: true,
-      // GitHub refuses an author's approval of their own change, so the page does not offer one.
       verdicts: ["comment"],
       requestReviewers: false,
       labels: false,
@@ -1103,8 +1096,6 @@ describe("loginAvatarUrl", () => {
   });
 
   it("has nothing for an app, which names no page", () => {
-    // `dependabot[bot]` has a picture, but not at `/dependabot[bot].png` — a guess that 404s is
-    // worse than the initials it would replace.
     expect(loginAvatarUrl("dependabot[bot]", "github.com")).toBeNull();
   });
 

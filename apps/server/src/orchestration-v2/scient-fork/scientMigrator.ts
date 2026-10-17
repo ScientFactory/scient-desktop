@@ -67,9 +67,6 @@ import Migration023 from "./migrations/023_ForkHistoryLookups.ts";
 import Migration024 from "./migrations/024_LegacySourceReconciliation.ts";
 import Migration025 from "./migrations/025_ContextHistorySources.ts";
 import Migration026 from "./migrations/026_CompactArchivedProjectionHandoffs.ts";
-// ---------------------------------------------------------------------------
-// Error types
-// ---------------------------------------------------------------------------
 
 export class ScientMigrationError extends Data.TaggedError("ScientMigrationError")<{
   readonly kind: "BadState" | "Duplicates" | "Failed" | "ImportError" | "Locked";
@@ -83,10 +80,6 @@ const fromMigrationError = (error: Migrator.MigrationError): ScientMigrationErro
     message: error.message,
     cause: error.cause,
   });
-
-// ---------------------------------------------------------------------------
-// Migration manifest
-// ---------------------------------------------------------------------------
 
 export interface ScientMigration {
   readonly id: number;
@@ -141,9 +134,7 @@ const loader = Migrator.fromRecord(
   ),
 );
 
-// ---------------------------------------------------------------------------
 // Preflight: legacy ledger reconciliation (applied_at -> created_at)
-// ---------------------------------------------------------------------------
 
 const LEDGER_TABLE = "scient_schema_migrations";
 
@@ -195,9 +186,7 @@ const reconcileLedger = Effect.fn("reconcileScientLedger")(function* (sql: SqlCl
   );
 });
 
-// ---------------------------------------------------------------------------
 // Preflight: exact former import-17 development ledger
-// ---------------------------------------------------------------------------
 
 interface LedgerRow {
   readonly migration_id: number;
@@ -251,9 +240,7 @@ const reconcileFormerImport17 = Effect.fn("reconcileFormerImport17")(function* (
   );
 });
 
-// ---------------------------------------------------------------------------
 // Preflight: strict ledger integrity validation
-// ---------------------------------------------------------------------------
 
 /**
  * Validate that the recorded ledger is a contiguous prefix of
@@ -307,10 +294,6 @@ const validateLedger = Effect.fn("validateScientLedger")(function* (sql: SqlClie
     }
   }
 });
-
-// ---------------------------------------------------------------------------
-// Public runner
-// ---------------------------------------------------------------------------
 
 const migrator = Migrator.make({});
 // Multiple service layers may initialize separate connections concurrently.

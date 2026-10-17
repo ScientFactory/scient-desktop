@@ -20,7 +20,6 @@ const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 // SCIENT-FORK: Keep this ownership marker stable so older Scient launchers remain recognizable.
 export const MARKER = "Written by Scient: runs the desktop app's bundled t3 CLI.";
 
-/** Server entry inside the app, relative to its server root (an asar archive when packaged). */
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
 
 const shellWord = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -59,9 +58,9 @@ export const renderCliShim = (input: {
       `rem ${MARKER}`,
       // Delayed expansion would rewrite `!name!` in paths and arguments.
       "setlocal EnableExtensions DisableDelayedExpansion",
-      // The file is UTF-8. Only a non-ASCII path needs the console switched to
-      // UTF-8 to read it; a Ctrl-C that ends the batch skips the restore, so the
-      // switch is left out for the common all-ASCII install.
+      // Only a non-ASCII path needs the console switched to UTF-8 to read it; a
+      // Ctrl-C that ends the batch skips the restore, so the switch is left out
+      // for the common all-ASCII install.
       ...(utf8
         ? [
             `for /f "tokens=2 delims=:." %%c in ('chcp') do set "t3_codepage=%%c"`,
@@ -73,6 +72,8 @@ export const renderCliShim = (input: {
       `if not defined SCIENT_NEXT_HOME set "SCIENT_NEXT_HOME=${cmdText(input.t3Home)}"`,
       // SCIENT-FORK-END
       'set "ELECTRON_RUN_AS_NODE=1"',
+      // Electron's Windows executable starts without stdin; this tells the CLI to reopen the console.
+      'set "T3CODE_DESKTOP_CLI_LAUNCHER=1"',
       // A goto, not a parenthesized block: "Program Files (x86)" would close the block early.
       `if exist ${cmdWord(target.executable)} goto run`,
       ...restore,
@@ -216,7 +217,6 @@ export const install = Effect.gen(function* () {
           appImage,
           executableName: path.basename(process.execPath),
         }),
-        // macOS and .deb installs live at a fixed path, so the launcher runs the app directly.
         onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
       });
   const legacyPath = path.join(path.dirname(shimPath), windows ? "t3.cmd" : "t3");

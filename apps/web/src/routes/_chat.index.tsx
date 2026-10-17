@@ -37,11 +37,6 @@ function ChatIndexRouteView() {
   return <ScientGettingStartedGate fallback={<IndexDraftLanding />} />;
 }
 
-/**
- * Landing on the index route drops straight into a draft thread for the most
- * recently active project, so the first screen is a prompt instead of a dead
- * end. Falls back to an add-project hero when no project exists yet.
- */
 function IndexDraftLanding() {
   const projects = useProjects();
   const threads = useThreadShells();
@@ -68,8 +63,6 @@ function IndexDraftLanding() {
       return;
     }
     const projectRef = scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id);
-    // A project removed since this render is gone from the store; the next
-    // render picks another one.
     if (readProject(projectRef) === null) {
       return;
     }
@@ -78,7 +71,6 @@ function IndexDraftLanding() {
     void handleNewThread(projectRef, { replace: true, navigationKind: "automatic" })
       // SCIENT-FORK:END
       .then((opened) => {
-        // The project was removed while its draft started; land on the next one.
         // SCIENT-FORK:START — a superseded automatic claim also resolves null; retrying it
         // would fight the user's own navigation, so only a removed project retries.
         const projectRemoved = opened === null && readProject(projectRef) === null;

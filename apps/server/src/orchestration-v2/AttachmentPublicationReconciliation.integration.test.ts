@@ -45,6 +45,7 @@ import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import { makeReplayServerConfig } from "./testkit/ProviderReplayHarness.ts";
+import { layerGitVcsDriverWithoutBranches } from "./testkit/ProviderRuntimeTestServices.ts";
 
 // The barrier delegates to Node's actual open/read/close operations. ESM namespace
 // exports themselves are immutable, so only this fixture's open seam is replaceable.
@@ -137,7 +138,15 @@ const fixture = Effect.gen(function* () {
       reconciliation,
       ProjectionMaintenance.layer.pipe(Layer.provide(stores)),
       ProviderEventIngestor.layer.pipe(
-        Layer.provide(Layer.mergeAll(stores, sink, reconciliation, IdAllocator.layer)),
+        Layer.provide(
+          Layer.mergeAll(
+            stores,
+            sink,
+            reconciliation,
+            IdAllocator.layer,
+            layerGitVcsDriverWithoutBranches,
+          ),
+        ),
       ),
     ).pipe(
       Layer.provideMerge(Layer.merge(NodeServices.layer, ThreadCommandExecutor.layer)),

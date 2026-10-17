@@ -173,7 +173,6 @@ it("opens the page in the file panel when the thread offers one", async () => {
 });
 // SCIENT-FORK:END
 
-// An inline URL near expiry is minted at mount, and full screen mints another.
 async function renderInlineNearExpiry() {
   cachedUrl.lifeMs = 60_000;
   refresh.mockResolvedValueOnce("https://environment.test/inline.html");

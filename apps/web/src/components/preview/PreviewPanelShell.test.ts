@@ -12,9 +12,6 @@ describe("getPreviewPanelMaxWidth", () => {
   });
 
   it("reserves the sibling column minimum when the flex row is known", () => {
-    // Fullscreen 14" MacBook: viewport 1512, sidebar ~256 → row of 1256.
-    // The 70% fraction (1058) would leave the chat column only ~198px;
-    // the container clamp caps the panel at 1256 − 360 instead.
     expect(getPreviewPanelMaxWidth(1_512, 1_256)).toBe(896);
   });
 
@@ -33,7 +30,6 @@ describe("getPreviewPanelMaxWidth", () => {
   it("never drops below the panel minimum when the row cannot fit both columns", () => {
     // ~1000px window with an expanded sidebar → row of 600. The sibling
     // reservation (600 − 360 = 240) would undercut the panel's own 300
-    // minimum and invert the resize clamp, so the floor wins.
     expect(getPreviewPanelMaxWidth(1_000, 600)).toBe(300);
   });
 

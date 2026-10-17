@@ -9,9 +9,7 @@ import type {
   ComputeRuntimeErrorReport,
 } from "@scientfactory/compute";
 
-// ---------------------------------------------------------------------------
 // Limits (from Phase 2 plan §2.10)
-// ---------------------------------------------------------------------------
 
 const MAX_TRACEBACK_LINES = 200;
 const MAX_TRACEBACK_LINE_BYTES = 4096;
@@ -19,9 +17,7 @@ const MAX_ERROR_NAME_BYTES = 256;
 const MAX_ERROR_VALUE_BYTES = 16384;
 const MAX_DIAGNOSTIC_FRAMES = 64;
 
-// ---------------------------------------------------------------------------
 // ANSI / control sequence stripping
-// ---------------------------------------------------------------------------
 
 // Matches CSI sequences (the most common ANSI escape), single-char C1 controls,
 // and OSC sequences.  Python tracebacks sometimes embed colour codes from
@@ -40,10 +36,6 @@ const SCIENT_SOURCE_PATTERN = /^<scient-compute-source:([0-9a-f]+):[0-9]+>$/;
 function stripAnsi(text: string): string {
   return text.replace(ANSI_PATTERN, "");
 }
-
-// ---------------------------------------------------------------------------
-// Unicode-safe truncation
-// ---------------------------------------------------------------------------
 
 const encoder = new TextEncoder();
 
@@ -179,10 +171,6 @@ function extractFrames(
   }
   return frames;
 }
-
-// ---------------------------------------------------------------------------
-// Normalization
-// ---------------------------------------------------------------------------
 
 /**
  * Normalizes a raw Python error report into one or more `ComputeDiagnostic`

@@ -96,7 +96,6 @@ export const resolveNightlyTargetVersion = (version: string) => {
   return Effect.succeed(`${major}.${minor}.${Number(patch) + 1}`);
 };
 
-/** Prerelease trains that share nightly's date-and-run versioning. */
 export const PrereleaseChannel = Schema.Literals(["nightly", "preview"]);
 export type PrereleaseChannel = typeof PrereleaseChannel.Type;
 

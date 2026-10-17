@@ -39,11 +39,7 @@ export default defineConfig((ctx) => ({
         },
       ],
     },
-    path_filters: [
-      // Vendored read-only reference checkouts of upstream Effect and Alchemy
-      // (see scripts/lib/reference-repos.ts). Nothing imports from them.
-      "!.repos/**",
-    ],
+    path_filters: ["!.repos/**"],
     path_instructions: [
       {
         path: "{apps,packages,infra}/**/*.ts",

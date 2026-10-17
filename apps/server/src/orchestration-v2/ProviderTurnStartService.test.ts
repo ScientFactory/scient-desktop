@@ -195,12 +195,7 @@ function makeLocalCommandHarness(input: {
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
-  /** Opens the session, then fails loading its provider thread. */
   readonly ensureThreadFailure?: unknown;
-  /**
-   * Resumes a thread that has a native ref: resume fails, the fresh-thread
-   * fallback succeeds, then reading history for its handoff fails.
-   */
   readonly historyReadFailureAfterFallback?: unknown;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
