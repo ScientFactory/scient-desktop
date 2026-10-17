@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { assert, describe, expect, it } from "@effect/vitest";
+import { SCIENT_HELPER_EXECUTABLES } from "@t3tools/shared/scientDesktopIdentity";
 
 import { createScientReleaseHandoff } from "./create-scient-release-handoff.ts";
 import {
@@ -197,6 +198,24 @@ describe("Scient release machinery", () => {
 
     assert.include(serverAssetJob, "vp run --filter t3 build");
     assert.notInclude(serverAssetJob, "vp run --filter t3 build:bundle");
+  });
+
+  it("caches and stages the native helpers under their Scient names", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+
+    for (const name of [
+      SCIENT_HELPER_EXECUTABLES.resourceMonitor,
+      SCIENT_HELPER_EXECUTABLES.kdeCapture,
+      SCIENT_HELPER_EXECUTABLES.hyprlandCapture,
+    ]) {
+      assert.include(workflow, `/release/${name}`);
+    }
+    assert.include(workflow, `binary=${SCIENT_HELPER_EXECUTABLES.resourceMonitor}.exe`);
+    assert.include(workflow, `cp "$dir"/${SCIENT_HELPER_EXECUTABLES.resourceMonitor}*`);
+    assert.notMatch(workflow, /\bt3-(resource-monitor|kde-snap-shot|hyprland-snap-shot)\b/u);
   });
 
   it("installs workspace dependencies before running release assembly scripts", () => {

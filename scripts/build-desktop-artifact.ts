@@ -32,7 +32,10 @@ import {
   scientDesktopUpdateFeed,
 } from "@t3tools/shared/scientRelease";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+import {
+  SCIENT_DESKTOP_IDENTITY,
+  SCIENT_HELPER_EXECUTABLES,
+} from "@t3tools/shared/scientDesktopIdentity";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
@@ -179,7 +182,10 @@ export function resolveResourceMonitorRustTargets(
 }
 
 export function resourceMonitorExecutableName(platform: typeof BuildPlatform.Type): string {
-  return platform === "win" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
+  // SCIENT-FORK:START — the resource monitor ships under its Scient name.
+  const name = SCIENT_HELPER_EXECUTABLES.resourceMonitor;
+  return platform === "win" ? `${name}.exe` : name;
+  // SCIENT-FORK:END
 }
 
 const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
@@ -2483,6 +2489,9 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const [rustTarget] = resolveResourceMonitorRustTargets("linux", input.arch);
+  // SCIENT-FORK:START — capture helpers ship under their Scient names.
+  const executableName = SCIENT_HELPER_EXECUTABLES[`${input.backend}Capture` as const];
+  // SCIENT-FORK:END
   // Release CI restores these binaries from a cache keyed on the crate sources and
   // skips the Rust toolchain on a hit, so the build must be skippable too.
   const reuseHelpers = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS").pipe(
@@ -2492,7 +2501,10 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
     input.repoRoot,
     `native/${input.backend}-snap-shot/target`,
     rustTarget!,
-    `release/t3-${input.backend}-snap-shot`,
+    // SCIENT-FORK:START — Scient helper name.
+    "release",
+    executableName,
+    // SCIENT-FORK:END
   );
   if (!reuseHelpers) {
     const spawnCommand = yield* resolveSpawnCommand("cargo", [
@@ -2524,7 +2536,9 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   }
   const destination = path.join(input.stageResourcesDir, `${input.backend}-capture`);
   yield* fs.makeDirectory(destination, { recursive: true });
-  const executable = path.join(destination, `t3-${input.backend}-snap-shot`);
+  // SCIENT-FORK:START — Scient helper name.
+  const executable = path.join(destination, executableName);
+  // SCIENT-FORK:END
   yield* fs.copyFile(binaryPath, executable);
   yield* fs.chmod(executable, 0o755);
   if (input.backend === "hyprland") {
@@ -2647,7 +2661,13 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
         "--arch",
         input.arch === "arm64" ? "arm64" : "x64",
         "--output",
-        path.join(input.stageResourcesDir, "browser-secret", "t3-browser-secret"),
+        // SCIENT-FORK:START — the helper ships under its Scient name.
+        path.join(
+          input.stageResourcesDir,
+          "browser-secret",
+          SCIENT_HELPER_EXECUTABLES.browserSecret,
+        ),
+        // SCIENT-FORK:END
       ],
       { cwd: input.repoRoot },
     ),
@@ -3604,7 +3624,12 @@ export const validatePackagedDesktopRuntimeResources = Effect.fn(
         `whisper-runtime/whisper-server${input.platform === "win" ? ".exe" : ""}`,
         `synctex-runtime/synctex${input.platform === "win" ? ".exe" : ""}`,
         ...(input.platform === "linux"
-          ? ["kde-capture/t3-kde-snap-shot", "hyprland-capture/t3-hyprland-snap-shot"]
+          ? [
+              // SCIENT-FORK:START — capture helpers ship under their Scient names.
+              `kde-capture/${SCIENT_HELPER_EXECUTABLES.kdeCapture}`,
+              `hyprland-capture/${SCIENT_HELPER_EXECUTABLES.hyprlandCapture}`,
+              // SCIENT-FORK:END
+            ]
           : []),
       ];
       for (const relative of requiredExecutables) {
@@ -3865,7 +3890,9 @@ export const validateWindowsPackagedPayload = Effect.fn(
     return yield* new WindowsPackagedPayloadValidationError({
       reason: "resource-monitor-missing",
       packagedAppDir,
-      missingFiles: ["resource-monitor/t3-resource-monitor.exe"],
+      // SCIENT-FORK:START — report the Scient helper name.
+      missingFiles: [`resource-monitor/${resourceMonitorExecutableName("win")}`],
+      // SCIENT-FORK:END
     });
   }
   const syncTexFiles = ["synctex.exe", "provenance.json", "LICENSE.synctex", "LICENSE.zlib"];
