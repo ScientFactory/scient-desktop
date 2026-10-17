@@ -17,6 +17,7 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/chat/useProjectScriptEditing.ts",
   "apps/web/src/components/chat/useUsageLimitsPanel.ts",
   "apps/web/src/components/chat/useWorktreeSetup.ts",
+  "apps/web/src/components/chat/useThreadTimelineEntries.ts",
   "apps/web/src/components/preview/useAgentOpenedPreviews.ts",
   "apps/web/src/components/pullRequest/useThreadLinkedPullRequest.ts",
   "apps/web/src/components/terminal/**",

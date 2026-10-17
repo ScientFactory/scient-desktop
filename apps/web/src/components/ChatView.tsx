@@ -138,7 +138,6 @@ import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thr
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
-  codexFeedbackMessage,
   parseCodexFeedbackCommand,
   shouldShowLoadEarlierControl,
   submitCodexFeedback,
@@ -356,7 +355,6 @@ import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
 import {
   deriveQueueAcknowledgedUserMessages,
   pendingQueueAdmissionPreviews,
-  optimisticTimelineMessages,
   settleQueueAdmissionPreview,
   shouldPreviewQueueAdmission,
   type OptimisticUserMessage,
@@ -551,7 +549,7 @@ import {
 } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
-import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
+import { useThreadTimelineEntries } from "./chat/useThreadTimelineEntries";
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { useAgentOpenedPreviews } from "./preview/useAgentOpenedPreviews";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
@@ -3194,46 +3192,16 @@ function ChatViewContent(props: ChatViewProps) {
     serverAttachmentUrlById,
     serverVisibleTurnItems,
   ]);
-  const timelineAttachmentUrlById = (() => {
-    const urls = new Map(serverAttachmentUrlById);
-    for (const row of serverVisibleTurnItems) {
-      if (row.item.type !== "user_message") continue;
-      const handoffUrls = attachmentPreviewHandoffByMessageId[row.item.messageId];
-      if (handoffUrls === undefined) continue;
-      let imageIndex = 0;
-      for (const attachment of row.item.attachments) {
-        if (attachment.type !== "image") continue;
-        const handoffUrl = handoffUrls[imageIndex];
-        imageIndex += 1;
-        if (handoffUrl !== undefined) urls.set(attachment.id, handoffUrl);
-      }
-    }
-    return urls;
-  })();
-  const anchoredTimelineMessages = feedbackSubmissions.flatMap((submission) =>
-    submission.status === "interrupted"
-      ? []
-      : [
-          { ...codexFeedbackMessage(submission), runId: null },
-          { ...codexFeedbackMessage(submission, "assistant"), runId: null },
-        ],
-  );
-  // SCIENT-FORK:START — a queue-admission preview renders in the queue strip, not the timeline.
-  const timelineOptimisticMessages = optimisticTimelineMessages(optimisticUserMessages);
-  // SCIENT-FORK:END
-  const serverTimelineEntries = useIncrementalTimelineEntries(activeThreadKey, {
-    visibleTurnItems: serverVisibleTurnItems,
-    optimisticMessages: timelineOptimisticMessages,
-    anchoredMessages: anchoredTimelineMessages,
-    attachmentUrlById: timelineAttachmentUrlById,
-    ...(serverProjection === null
-      ? {}
-      : {
-          attempts: serverProjection.attempts,
-          nodes: serverProjection.nodes,
-          plans: serverProjection.plans,
-        }),
-  });
+  const { serverEntries: serverTimelineEntries, optimisticMessages: timelineOptimisticMessages } =
+    useThreadTimelineEntries({
+      threadKey: activeThreadKey,
+      visibleTurnItems: serverVisibleTurnItems,
+      projection: serverProjection,
+      serverAttachmentUrlById,
+      attachmentPreviewHandoffByMessageId,
+      feedbackSubmissions,
+      optimisticMessages: optimisticUserMessages,
+    });
   const draftTimelineEntries = timelineOptimisticMessages.map(
     (message) =>
       ({
