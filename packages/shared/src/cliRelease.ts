@@ -34,8 +34,7 @@ export function cliReleaseChannelOf(version: string): CliReleaseChannel {
 }
 
 /**
- * One page of GitHub's list-releases endpoint, newest first. Callers walk pages
- * until a channel match turns up; a busy nightly train can push the newest
+ * Callers walk pages until a channel match turns up; a busy nightly train can push the newest
  * preview or stable release past any single page.
  */
 export function cliReleaseIndexPageUrl(
@@ -48,10 +47,7 @@ export function cliReleaseIndexPageUrl(
 }
 
 /**
- * Picks the newest version on a channel from the release index. Tags are
- * `v<version>`; the channel is decided by the same rule the runtime uses, so
- * a preview tag never satisfies a nightly lookup and vice versa. Drafts are
- * skipped because their assets are not downloadable.
+ * Drafts are skipped because their assets are not downloadable.
  */
 export function newestCliReleaseVersion(
   releases: ReadonlyArray<{

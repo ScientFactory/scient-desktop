@@ -1,6 +1,7 @@
 import { resolveThreadLastVisitedAt } from "./Sidebar.logic";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
+import { isThreadWokeUnseen, mergeDirectPreviewAnnotation } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
 // SCIENT-FORK:START — the reading-end rule and send framing (chat/readerScrollPolicy.ts).
 import {
@@ -48,6 +49,10 @@ import {
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useStableCallback } from "../hooks/useStableCallback";
+import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
+import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
+import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
+import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -55,34 +60,29 @@ import {
   latestRootProviderFailure,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
-import {
-  collectProviderUsageLimits,
-  hasProviderUsageLimits,
-  isUsageLimitsCommand,
-} from "@t3tools/shared/usageLimits";
+import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
-import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { hasCommittedConversationMessages } from "./chat/composerModelPickerFork";
 // SCIENT-FORK:START — imported-conversation notice.
 import { useConversationImportBanner } from "./chat/scient-import/ConversationImportBanner";
 // SCIENT-FORK:END
-import { useApprovalResponse } from "./chat/useApprovalResponse";
-import { handleQueuedRunShortcut } from "./chat/queuedRunShortcuts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
+import { useWorktreeSetup } from "./chat/useWorktreeSetup";
+import { useChatShortcuts, type ChatShortcutHandler } from "./chat/useChatShortcuts";
+import {
+  eventPathContainsSelector,
+  pasteTextToFocusComposer,
+  shouldRedirectInputToComposer,
+  TYPE_TO_FOCUS_EDITABLE_SELECTOR,
+  TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
+} from "./chat/composerFocusRedirect";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
-  questionAttachmentDraftId,
-  questionAttachmentDraftPrefix,
-  clearQuestionAttachmentDraft,
-  useQuestionAttachmentPreparation,
-} from "../questionAttachments";
-import { useAttachmentUploadStore } from "../lib/attachmentUploadQueue";
-import {
   AuthOrchestrationOperateScope,
-  AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthTerminalReadScope,
@@ -92,7 +92,6 @@ import {
   CommandId,
   DEFAULT_MODEL,
   isProviderNativeSubagentThread,
-  EnvironmentAuthorizationError,
   type EnvironmentId,
   MessageId,
   PlanId,
@@ -103,21 +102,16 @@ import {
   type PreviewAnnotationPayload,
   ProviderInstanceId,
   type ServerProvider,
-  type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   ThreadId,
-  type ThreadLinkedPullRequest,
   type RunId,
   type RuntimeRequestId,
-  type KeybindingCommand,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
   ProviderDriverKind,
   resolveEnvironmentMachineKind,
   resolveProjectProviderInstanceEnabled,
   RuntimeMode,
-  TerminalOpenInput,
-  type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import {
@@ -144,13 +138,11 @@ import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thr
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
-  codexFeedbackMessage,
   parseCodexFeedbackCommand,
   shouldShowLoadEarlierControl,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
-import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -164,11 +156,7 @@ import {
   resolvePromptInjectedEffort,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
-import {
-  projectScriptCwd,
-  projectScriptRuntimeEnv,
-  resolveProjectScripts,
-} from "@t3tools/shared/projectScripts";
+import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 // SCIENT-FORK:START — placement uses the timeline's own anchor offset (CHAT_TIMELINE_ANCHOR_OFFSET).
 // SCIENT-FORK:END
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -180,7 +168,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
-import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 // SCIENT-FORK:START — the Scroll to end control and its unread count (chat/useTimelineEndControl.ts).
 import { followModeAfterEndTransition, useTimelineEndControl } from "./chat/useTimelineEndControl";
 // SCIENT-FORK:END
@@ -188,15 +176,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
   Fragment,
-  lazy,
-  memo,
   type SetStateAction,
-  Suspense,
-  useCallback,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -215,7 +198,6 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
@@ -229,14 +211,11 @@ import {
 } from "../composer-logic";
 import {
   derivePhase,
-  deriveTimelineEntriesFromVisibleTurnItemsWithState,
   selectHandoffImageResources,
-  type TimelineEntriesProjection,
   deriveActivePlanState,
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestRunSettled,
-  type PendingUserInput,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
@@ -266,18 +245,8 @@ import {
   useForkTimelineBaseline,
 } from "~/scient/fork/chatViewFork";
 // SCIENT-FORK:END
-import {
-  buildPendingUserInputAnswers,
-  carryDisplacedCustomAnswerIntoPrompt,
-  derivePendingUserInputProgress,
-  projectPendingUserInputAnswer,
-  setPendingUserInputCustomAnswer,
-  togglePendingUserInputOptionSelection,
-  type PendingUserInputDraftAnswer,
-} from "../pendingUserInput";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import type { CitationHistoryPage } from "./chat/useAssistantCitationTarget";
-import { seedUserInputDraftAnswers } from "@t3tools/client-runtime/state/thread-requests";
 import { useUiStateStore } from "../uiStateStore";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import {
@@ -308,7 +277,6 @@ import {
 } from "../rightPanelLayout";
 import { PopoverCreateHandle } from "./ui/popover";
 import {
-  pullRequestSurface,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadPanelOpen,
@@ -321,14 +289,10 @@ import {
   setActivePreviewTab,
   useThreadPreviewState,
 } from "../previewStateStore";
-// SCIENT-FORK:START — tagged browser presentation intent owner.
-import { useScientBrowserPresentation } from "../scient/previewPresentation/useScientBrowserPresentation";
-// SCIENT-FORK:END
 import { BrowserSettingsReadError } from "../browser/openFileInPreview";
 
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
-import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
@@ -344,13 +308,7 @@ import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
-import {
-  pullRequestPanelContext,
-  threadPullRequestPanelTarget,
-} from "./pullRequest/pullRequestDetail.logic";
-import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
-import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
-import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
+import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
 import { RightPanelTabs } from "./RightPanelTabs";
 import {
   copyFilePathToClipboard,
@@ -358,10 +316,8 @@ import {
   type FilePathCopyFormat,
   type FileSurfacePath,
 } from "./files/filePathClipboard";
-import { resolveFileTabPath } from "./files/filePath";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
-import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -371,8 +327,7 @@ import { shortcutLabelForCommand } from "../keybindings";
 
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { resolveChatShortcutCommand } from "../keybindings";
-import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import { PersistentThreadTerminalDrawer } from "./PersistentThreadTerminals";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
@@ -400,27 +355,19 @@ import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
 import {
   deriveQueueAcknowledgedUserMessages,
   pendingQueueAdmissionPreviews,
-  optimisticTimelineMessages,
   settleQueueAdmissionPreview,
   shouldPreviewQueueAdmission,
   type OptimisticUserMessage,
 } from "~/scient/threadQueue/optimisticQueuePresentation";
 import { useThreadQueue } from "~/scient/threadQueue/useThreadQueue";
+import {
+  editQueuedMessageShortcut,
+  steerQueuedMessageShortcut,
+} from "~/scient/threadQueue/queueShortcuts";
 import type { ScientThreadQueueItem } from "@t3tools/contracts";
 // SCIENT-FORK:END
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import {
-  decodeProjectScriptKeybindingRule,
-  keybindingValueForCommand,
-} from "~/lib/projectScriptKeybindings";
-import { type NewProjectScriptInput } from "./ProjectScriptsControl";
-import {
-  buildProjectScript,
-  commandForProjectScript,
-  nextProjectScriptId,
-  projectScriptIdFromCommand,
-  releaseClaimedRoles,
-} from "~/projectScripts";
+import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import { getProviderModelCapabilities } from "../providerModels";
@@ -443,7 +390,8 @@ import {
   useFileHistoryIssue,
 } from "../scient/chat/ScientRevertDialogDiagnostics";
 // per-request response errors.
-import { useRequestResponseErrors } from "../scient/chat/useRequestResponseErrors";
+// file panel props Scient adds.
+import { scientFilePanelProps } from "../scient/fileSurfaces/scientFilePanelProps";
 // agents panel model.
 import { useAgentPanelModel } from "../scient/chat/useAgentPanelModel";
 // token-limit stop notice.
@@ -459,13 +407,9 @@ import {
   getComposerPromptInjectionState,
   getComposerProviderState,
 } from "./chat/composerProviderState";
-import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
+import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
-import {
-  preventRepeatedTerminalCloseShortcut,
-  preventTerminalCloseShortcut,
-} from "../lib/terminalCloseShortcut";
 import {
   resolveNewDraftStartFromOrigin,
   resolveStaleDraftDefaultModelSelection,
@@ -524,10 +468,7 @@ import {
   primaryServerKeybindingsAtom,
   serverEnvironment,
 } from "../state/server";
-import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
-import { workspacePreparationRetryRunIds } from "@t3tools/client-runtime/state/turn-item-presentation";
-
 import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
@@ -557,7 +498,6 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
-import { ChatCanvas } from "./chat/ChatCanvas";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
@@ -571,9 +511,7 @@ import {
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
-  resolveWorktreeSetupProgress,
 } from "./ChatView.logic";
-import { worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -609,7 +547,11 @@ import {
   type QueuedRunsControlHandle,
   type EditQueuedRunRequest,
 } from "./chat/QueuedRunsControl";
-import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
+import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
+import { useProactivePanels } from "../hooks/useProactivePanels";
+import { useThreadTimelineEntries } from "./chat/useThreadTimelineEntries";
+import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
+import { useAgentOpenedPreviews } from "./preview/useAgentOpenedPreviews";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
 import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
@@ -635,10 +577,8 @@ import {
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
-  agentControlledBrowserCloseConfirmation,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
-  buildProjectThreadTerminalOpenInput,
   buildLocalDraftThread,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
@@ -652,9 +592,6 @@ import {
   shouldDockDraftHeroForSubmission,
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
-  shouldOpenProactivePullRequest,
-  shouldRetargetThreadPullRequestPanel,
-  shouldOpenProactiveTurnDiff,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldRenderPreviewMiniPlayer,
   getStartedThreadModelChangeBlockReason,
@@ -673,16 +610,12 @@ import {
   resolveComposerProviderSelection,
   getAntigravitySendBlockReason,
   resolveDraftHeroState,
-  resolveProjectThreadTerminalTarget,
-  resolveVisibleWorktreeSetup,
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
-  observeProactivePanelUserChoice,
-  resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveThreadWorkspaceRoot,
@@ -770,7 +703,6 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
-const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(
   isDraftHeroState: boolean,
   animationsActive: boolean,
@@ -781,16 +713,9 @@ function useDraftHeroLayoutTransition(
   const previousStateRef = useRef(isDraftHeroState);
   const previousComposerRectRef = useRef<DOMRect | null>(null);
   const animationRef = useRef<Animation | null>(null);
-  const attachTransitionGroupRef = (element: HTMLDivElement | null) => {
-    transitionGroupRef.current = element;
-  };
-  const attachComposerAnchorRef = (element: HTMLDivElement | null) => {
-    composerAnchorRef.current = element;
-  };
-
-  const captureComposerRect = () => {
+  const captureComposerRect = useStableCallback(() => {
     previousComposerRectRef.current = composerAnchorRef.current?.getBoundingClientRect() ?? null;
-  };
+  });
 
   useLayoutEffect(() => {
     const transitionGroup = transitionGroupRef.current;
@@ -838,119 +763,215 @@ function useDraftHeroLayoutTransition(
     previousComposerRectRef.current = nextComposerRect;
   }, [animationDurationMs, animationsActive, isDraftHeroState]);
 
-  return {
-    transitionGroupRef: attachTransitionGroupRef,
-    composerAnchorRef: attachComposerAnchorRef,
-    captureComposerRect,
-  } as const;
+  return { transitionGroupRef, composerAnchorRef, captureComposerRect } as const;
 }
 
-const PreviewPanel = lazy(() =>
-  import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
-);
-const DiffPanel = lazy(() => import("./DiffPanel"));
-const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
-  settings.browserAutoShowFloatingPreview;
-const DevicePanel = lazy(() =>
-  import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
-);
-const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
-const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
-  "input",
-  "textarea",
-  "select",
-  '[contenteditable="true"]',
-  '[contenteditable="plaintext-only"]',
-  '[role="textbox"]',
-].join(",");
-const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
-  "button",
-  "a[href]",
-  "summary",
-  '[role="button"]',
-  '[role="checkbox"]',
-  '[role="menuitem"]',
-  '[role="option"]',
-  '[role="radio"]',
-  '[role="switch"]',
-  '[role="tab"]',
-].join(",");
-// Popups match only while open or closing: some stay mounted when closed,
-// such as the chat header actions menu.
-const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = [
-  '[role="dialog"][aria-modal="true"]',
-  '[data-slot="alert-dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="command-dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="sheet-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="sidebar"][data-mobile="true"]:is([data-open],[data-ending-style])',
-  '[data-slot="menu-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="select-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="popover-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="combobox-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="autocomplete-popup"]:is([data-open],[data-ending-style])',
-].join(",");
-
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly connection: EnvironmentConnectionPresentation;
 };
 
-function eventPathContainsSelector(event: Event, selector: string): boolean {
-  const path = event.composedPath();
-  if (path.length === 0 && event.target) {
-    path.push(event.target);
-  }
-  return path.some((target) => target instanceof Element && target.closest(selector));
-}
-
-const SECRET_REQUEST_SELECTOR = '[data-v2-item-type="secret_request"]';
-
-/**
- * Whether input that landed outside any editable or interactive element
- * should be redirected into the composer. Shared by type-to-focus and
- * paste-to-focus so both honour the same surfaces.
- */
-function shouldRedirectInputToComposer(event: Event): boolean {
-  if (event.defaultPrevented) return false;
-  // Near a pending secret request, input is meant for its private field: it
-  // must never land in the composer draft, which is persisted and sent.
-  if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
-  if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
-  if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
-  if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
-  return true;
-}
-
-function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
-  if (event.isComposing) return false;
-  if (event.metaKey || event.ctrlKey || event.altKey) return false;
-  if (event.key.length !== 1) return false;
-  if (!shouldRedirectInputToComposer(event)) return false;
-
-  return true;
-}
-
-/**
- * Plain text pasted with nothing editable focused, such as after the resting
- * composer blurred. Files are left to the composer's own paste handler.
- */
-function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
-  if (!event.clipboardData || event.clipboardData.files.length > 0) return null;
-  if (!shouldRedirectInputToComposer(event)) return null;
-  const text = event.clipboardData.getData("text/plain");
-  return text.length > 0 ? text : null;
-}
-
-const draftFanoutStateAtom = Atom.family((_routeKey: string) =>
-  Atom.make({
-    selections: null as ReadonlyArray<ModelSelection> | null,
-    sendInFlight: { current: false },
-    uncertainSubmissions: { current: new Map<string, ThreadId>() },
-  }).pipe(Atom.keepAlive),
+// Kept per route so a send in flight, and the multiple-model selections, survive
+// ChatView remounting while the user navigates.
+const draftFanoutSelectionsAtom = Atom.family((_routeKey: string) =>
+  Atom.make<ReadonlyArray<ModelSelection> | null>(null).pipe(Atom.keepAlive),
 );
+const draftSendStateByRouteKey = new Map<
+  string,
+  {
+    readonly sendInFlight: { current: boolean };
+    readonly uncertainSubmissions: { current: Map<string, ThreadId> };
+  }
+>();
+function draftSendState(routeKey: string) {
+  let state = draftSendStateByRouteKey.get(routeKey);
+  if (!state) {
+    state = { sendInFlight: { current: false }, uncertainSubmissions: { current: new Map() } };
+    draftSendStateByRouteKey.set(routeKey, state);
+  }
+  return state;
+}
+
+/**
+ * Starts one thread of a multiple-model send. A request that may have
+ * reached the server before failing is remembered by `retryKey`, so sending
+ * again cannot silently create a duplicate thread; its failure toast offers
+ * to open that thread or to allow the retry.
+ */
+async function startFanoutThread(input: {
+  readonly retryKey: string;
+  readonly model: string;
+  readonly uncertainSubmissions: Map<string, ThreadId>;
+  readonly start: (threadId: ThreadId) => Promise<AtomCommandResult<unknown, unknown>>;
+  readonly openThread: (threadId: ThreadId) => void;
+}): Promise<boolean> {
+  const { retryKey, uncertainSubmissions } = input;
+  const uncertainThreadId = uncertainSubmissions.get(retryKey);
+  const targetThreadId = uncertainThreadId ?? newThreadId();
+  let requestMayHaveStarted = false;
+  try {
+    if (uncertainThreadId) {
+      throw new Error(
+        "The previous request may have started. Open its thread to check before sending again.",
+      );
+    }
+    requestMayHaveStarted = true;
+    const result = await input.start(targetThreadId);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      if (wasBootstrapThreadDeleted(error) || wasBootstrapThreadNotCreated(error)) {
+        requestMayHaveStarted = false;
+      }
+      throw error;
+    }
+    return true;
+  } catch (error) {
+    if (requestMayHaveStarted && !uncertainSubmissions.has(retryKey)) {
+      uncertainSubmissions.set(retryKey, targetThreadId);
+    }
+    const retainedThreadId = uncertainSubmissions.get(retryKey);
+    const failureToastId = toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: `Could not start ${input.model}`,
+        description: error instanceof Error ? error.message : "Failed to send message.",
+        ...(retainedThreadId
+          ? {
+              timeout: 0,
+              data: {
+                secondaryActionProps: {
+                  children: "Allow retry",
+                  onClick: () => {
+                    void readLocalApi()
+                      ?.dialogs.confirm(
+                        "The previous request may already be running. Check its thread first. Allow another send that could create a duplicate thread?",
+                      )
+                      .then(
+                        (confirmed) => {
+                          if (
+                            confirmed &&
+                            uncertainSubmissions.get(retryKey) === retainedThreadId
+                          ) {
+                            uncertainSubmissions.delete(retryKey);
+                            toastManager.close(failureToastId);
+                          }
+                        },
+                        () => undefined,
+                      );
+                  },
+                },
+              },
+              actionProps: {
+                children: "Open thread",
+                onClick: () => input.openThread(retainedThreadId),
+              },
+            }
+          : {}),
+      }),
+    );
+    return false;
+  }
+}
+
+/**
+ * Reverts the thread to before `message` and puts that message's text and
+ * attachments back in the composer draft. Returns the restored prompt, or the
+ * error to show; on error the draft is untouched.
+ */
+async function rewindToMessage(input: {
+  readonly message: ChatMessage;
+  readonly environmentId: EnvironmentId;
+  readonly routeThreadRef: ScopedThreadRef;
+  readonly threadId: ThreadId;
+  readonly turnCount: number;
+  readonly restoreFiles: boolean;
+  readonly draftTarget: ScopedThreadRef | DraftId;
+  readonly composerHasPendingAttachments: boolean;
+  readonly createAssetUrl: Parameters<
+    typeof prepareRevertedMessageAttachments
+  >[0]["createAssetUrl"];
+  readonly revertThreadCheckpoint: (value: {
+    environmentId: EnvironmentId;
+    input: { commandId: CommandId; threadId: ThreadId; turnCount: number; restoreFiles: boolean };
+  }) => Promise<AtomCommandResult<unknown, unknown>>;
+}): Promise<
+  | { readonly error: string; readonly prompt?: never }
+  | { readonly error: null; readonly prompt: string }
+> {
+  const { message, environmentId, draftTarget } = input;
+  try {
+    if (input.composerHasPendingAttachments) {
+      throw new Error("Wait for attachments to finish preparing before rewinding.");
+    }
+    const connection = readPreparedConnection(environmentId);
+    if (!connection) throw new Error("The environment is not connected.");
+    const files = await prepareRevertedMessageAttachments({
+      message,
+      environmentId,
+      httpBaseUrl: connection.httpBaseUrl,
+      createAssetUrl: input.createAssetUrl,
+    });
+    const store = useComposerDraftStore.getState();
+    const draft = store.getComposerDraft(draftTarget);
+    if (
+      (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
+      PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+    ) {
+      throw new Error("Make room for this message's attachments in the composer before rewinding.");
+    }
+    const commandId = CommandId.make(randomUUID());
+    await waitForRevertedMessage(
+      input.routeThreadRef,
+      message.id,
+      input.turnCount,
+      commandId,
+      async () => {
+        const result = await input.revertThreadCheckpoint({
+          environmentId,
+          input: {
+            commandId,
+            threadId: input.threadId,
+            turnCount: input.turnCount,
+            restoreFiles: input.restoreFiles,
+          },
+        });
+        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      },
+    );
+    const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
+    const restoredPrompt = recallableComposerPrompt(message.text);
+    const nextPrompt =
+      restoredPrompt.length === 0
+        ? currentPrompt
+        : currentPrompt.length > 0
+          ? `${currentPrompt}\n\n${restoredPrompt}`
+          : restoredPrompt;
+    store.setPrompt(draftTarget, nextPrompt);
+    const images: ComposerImageAttachment[] = [];
+    const restoredFiles: ComposerFileAttachment[] = [];
+    files.forEach((file, index) => {
+      const attachment = {
+        id: randomUUID(),
+        name: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        file,
+      };
+      if (message.attachments?.[index]?.type === "image") {
+        images.push({ ...attachment, type: "image", previewUrl: URL.createObjectURL(file) });
+      } else {
+        restoredFiles.push({ ...attachment, type: "file" });
+      }
+    });
+    store.addImages(draftTarget, images, { allowDuplicates: true });
+    store.addFiles(draftTarget, restoredFiles, { allowDuplicates: true });
+    return { error: null, prompt: nextPrompt };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Failed to revert thread state." };
+  }
+}
 
 function formatOutgoingPrompt(params: {
   provider: ProviderDriverKind;
@@ -997,8 +1018,6 @@ interface TerminalLaunchContext {
   worktreePath: string | null;
 }
 
-type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "worktreePath">;
-
 function useLocalDispatchState(input: {
   activeThread: Thread | undefined;
   activeLatestRun: Thread["latestRun"] | null;
@@ -1010,54 +1029,41 @@ function useLocalDispatchState(input: {
 }) {
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
 
-  const resetLocalDispatch = useCallback(() => {
+  const resetLocalDispatch = () => {
     setLocalDispatch(null);
-  }, []);
+  };
 
-  const serverAcknowledgedLocalDispatch = useMemo(
-    () =>
-      hasServerAcknowledgedLocalDispatch({
-        localDispatch,
-        phase: input.phase,
-        latestRun: input.activeLatestRun,
-        latestUserMessageId: input.latestUserMessageId,
-        runtime: input.activeThread?.runtime ?? null,
-        hasPendingApproval: input.activePendingApproval !== null,
-        hasPendingUserInput: input.activePendingUserInput !== null,
-        threadError: input.threadError,
-      }),
-    [
-      input.activeLatestRun,
-      input.latestUserMessageId,
-      input.activePendingApproval,
-      input.activePendingUserInput,
-      input.activeThread?.runtime,
-      input.phase,
-      input.threadError,
-      localDispatch,
-    ],
-  );
+  const serverAcknowledgedLocalDispatch = hasServerAcknowledgedLocalDispatch({
+    localDispatch,
+    phase: input.phase,
+    latestRun: input.activeLatestRun,
+    latestUserMessageId: input.latestUserMessageId,
+    runtime: input.activeThread?.runtime ?? null,
+    hasPendingApproval: input.activePendingApproval !== null,
+    hasPendingUserInput: input.activePendingUserInput !== null,
+    threadError: input.threadError,
+  });
   const activeLocalDispatch = serverAcknowledgedLocalDispatch ? null : localDispatch;
-  const beginLocalDispatch = useCallback(
-    (options?: { preparingWorktree?: boolean; submissionIntent?: ComposerSubmissionIntent }) => {
-      const preparingWorktree = Boolean(options?.preparingWorktree);
-      setLocalDispatch((current) => {
-        const active = serverAcknowledgedLocalDispatch ? null : current;
-        if (active) {
-          const submissionIntent = options?.submissionIntent ?? active.submissionIntent;
-          return active.preparingWorktree === preparingWorktree &&
-            active.submissionIntent === submissionIntent
-            ? active
-            : { ...active, preparingWorktree, submissionIntent };
-        }
-        return createLocalDispatchSnapshot(input.activeThread, {
-          ...options,
-          latestUserMessageId: input.latestUserMessageId,
-        });
+  const beginLocalDispatch = (options?: {
+    preparingWorktree?: boolean;
+    submissionIntent?: ComposerSubmissionIntent;
+  }) => {
+    const preparingWorktree = Boolean(options?.preparingWorktree);
+    setLocalDispatch((current) => {
+      const active = serverAcknowledgedLocalDispatch ? null : current;
+      if (active) {
+        const submissionIntent = options?.submissionIntent ?? active.submissionIntent;
+        return active.preparingWorktree === preparingWorktree &&
+          active.submissionIntent === submissionIntent
+          ? active
+          : { ...active, preparingWorktree, submissionIntent };
+      }
+      return createLocalDispatchSnapshot(input.activeThread, {
+        ...options,
+        latestUserMessageId: input.latestUserMessageId,
       });
-    },
-    [input.activeThread, input.latestUserMessageId, serverAcknowledgedLocalDispatch],
-  );
+    });
+  };
 
   return {
     beginLocalDispatch,
@@ -1072,634 +1078,6 @@ function useLocalDispatchState(input: {
     backgroundSubmissionPending: activeLocalDispatch?.submissionIntent === "background",
   };
 }
-
-/** Same terminal ids (order ignored) — avoids reconcile when only server session ordering differs. */
-function terminalIdListsEqual(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  if (left.length === 0) {
-    return true;
-  }
-  const sortedLeft = left.toSorted((a, b) => a.localeCompare(b));
-  const sortedRight = right.toSorted((a, b) => a.localeCompare(b));
-  for (let index = 0; index < sortedLeft.length; index += 1) {
-    if (sortedLeft[index] !== sortedRight[index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Server knows about fewer sessions than the client, but every server id still exists locally.
- * Typical right after `terminal.open`: known-session list lags; reconciling would drop the new id
- * and later re-add it as a separate group (no split layout).
- */
-function serverTerminalIdsStrictSubsetOfClient(
-  serverIds: readonly string[],
-  clientIds: readonly string[],
-): boolean {
-  if (serverIds.length >= clientIds.length || clientIds.length === 0) {
-    return false;
-  }
-  const clientSet = new Set(clientIds);
-  for (const id of serverIds) {
-    if (!clientSet.has(id)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-interface PersistentThreadTerminalDrawerProps {
-  threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
-  threadId: ThreadId;
-  active: boolean;
-  launchContext: PersistentTerminalLaunchContext | null;
-  focusRequestId: number;
-  splitShortcutLabel: string | undefined;
-  splitVerticalShortcutLabel: string | undefined;
-  newShortcutLabel: string | undefined;
-  closeShortcutLabel: string | undefined;
-  keybindings: ResolvedKeybindingsConfig;
-  onAddTerminalContext: (selection: TerminalContextSelection) => void;
-}
-
-const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
-  threadRef,
-  threadId,
-  active,
-  launchContext,
-  focusRequestId,
-  splitShortcutLabel,
-  splitVerticalShortcutLabel,
-  newShortcutLabel,
-  closeShortcutLabel,
-  keybindings,
-  onAddTerminalContext,
-}: PersistentThreadTerminalDrawerProps) {
-  const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
-  const hasTerminalWriteAccess = useCallback(
-    () => readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope),
-    [threadRef.environmentId],
-  );
-  const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
-  const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
-  const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
-  const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  // Hidden drawers stay mounted (see MAX_HIDDEN_MOUNTED_TERMINAL_THREADS), so they read only
-  // the shell: a detail subscription would keep each hidden thread's history in memory. The
-  // active drawer shares ChatView's detail, which also covers archived threads (no shell).
-  const activeServerThread = useThread(active ? threadRef : null, {
-    waitForShell: draftThread !== null,
-  });
-  const serverThreadShell = useThreadShell(threadRef);
-  // The merged detail already carries the shell's authoritative workspace
-  // metadata on its projected thread; the shell branch reads it directly.
-  const serverThreadProjectId =
-    activeServerThread?.projection.thread.projectId ?? serverThreadShell?.projectId ?? null;
-  const projectRef = serverThreadProjectId
-    ? scopeProjectRef(threadRef.environmentId, serverThreadProjectId)
-    : draftThread?.projectId
-      ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
-      : null;
-  const project = useProject(projectRef);
-  const terminalUiState = useTerminalUiStateStore((state) =>
-    selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
-  );
-  const visible = active && terminalUiState.terminalOpen;
-  const knownTerminalSessions = useKnownTerminalSessions({
-    environmentId: threadRef.environmentId,
-    threadId,
-  });
-  const panelSurfaces = useRightPanelStore(
-    (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
-  );
-  const panelTerminalIds = useMemo(
-    () =>
-      new Set(
-        panelSurfaces.flatMap((surface) =>
-          surface.kind === "terminal" ? surface.terminalIds : [],
-        ),
-      ),
-    [panelSurfaces],
-  );
-  const drawerTerminalSessions = useMemo(
-    () =>
-      knownTerminalSessions?.filter(
-        (session) => !panelTerminalIds.has(session.target.terminalId),
-      ) ?? [],
-    [knownTerminalSessions, panelTerminalIds],
-  );
-  const terminalLabelsById = useMemo(() => {
-    const next = new Map<string, string>();
-    for (const session of drawerTerminalSessions) {
-      next.set(
-        session.target.terminalId,
-        resolveTerminalSessionLabel(session.target.terminalId, session.state.summary),
-      );
-    }
-    return next;
-  }, [drawerTerminalSessions]);
-  const terminalLaunchLocationsById = useMemo(() => {
-    const next = new Map<
-      string,
-      {
-        readonly cwd: string;
-        readonly worktreePath: string | null;
-        readonly runtimeEnv: Record<string, string>;
-      }
-    >();
-    for (const session of drawerTerminalSessions) {
-      const summary = session.state.summary;
-      if (!summary) {
-        continue;
-      }
-      const worktreePathForLaunch =
-        launchContext !== null ? launchContext.worktreePath : summary.worktreePath;
-      next.set(session.target.terminalId, {
-        cwd: launchContext?.cwd ?? summary.cwd,
-        worktreePath: worktreePathForLaunch,
-        runtimeEnv: project
-          ? projectScriptRuntimeEnv({
-              project: { cwd: project.workspaceRoot },
-              worktreePath: worktreePathForLaunch,
-            })
-          : {},
-      });
-    }
-
-    return next;
-  }, [drawerTerminalSessions, launchContext, project]);
-  const serverOrderedTerminalIds = useMemo(
-    () => drawerTerminalSessions.map((session) => session.target.terminalId),
-    [drawerTerminalSessions],
-  );
-  // Every client-side id source participates in allocation: the server list
-  // lags fresh opens, and panel terminals are filtered out of the drawer's
-  // sessions — an id collision attaches two viewports to one PTY session.
-  const allocatableTerminalIds = useMemo(
-    () => [
-      ...new Set([
-        ...serverOrderedTerminalIds,
-        ...terminalUiState.terminalIds,
-        ...panelTerminalIds,
-      ]),
-    ],
-    [panelTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds],
-  );
-  const allocateTerminalId = useCallback(
-    () =>
-      nextTerminalId(
-        allocatableTerminalIds,
-        knownTerminalSessions === null ||
-          !readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope)
-          ? randomUUID()
-          : undefined,
-      ),
-    [allocatableTerminalIds, knownTerminalSessions, threadRef.environmentId],
-  );
-  const storeSetTerminalHeight = useTerminalUiStateStore((state) => state.setTerminalHeight);
-  const storeSplitTerminal = useTerminalUiStateStore((state) => state.splitTerminal);
-  const storeSplitTerminalVertical = useTerminalUiStateStore(
-    (state) => state.splitTerminalVertical,
-  );
-  const storeNewTerminal = useTerminalUiStateStore((state) => state.newTerminal);
-  const storeSetActiveTerminal = useTerminalUiStateStore((state) => state.setActiveTerminal);
-  const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
-  const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
-
-  useEffect(() => {
-    if (terminalIdListsEqual(serverOrderedTerminalIds, terminalUiState.terminalIds)) {
-      return;
-    }
-    if (
-      serverTerminalIdsStrictSubsetOfClient(serverOrderedTerminalIds, terminalUiState.terminalIds)
-    ) {
-      return;
-    }
-    reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
-  }, [reconcileTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds, threadRef]);
-  const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
-  const worktreePath =
-    activeServerThread?.projection.thread.worktreePath ??
-    serverThreadShell?.worktreePath ??
-    draftThread?.worktreePath ??
-    null;
-  const effectiveWorktreePath = useMemo(() => {
-    if (launchContext !== null) {
-      return launchContext.worktreePath;
-    }
-    return worktreePath;
-  }, [launchContext, worktreePath]);
-  const cwd = useMemo(
-    () =>
-      launchContext?.cwd ??
-      (project
-        ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
-            worktreePath: effectiveWorktreePath,
-          })
-        : null),
-    [effectiveWorktreePath, launchContext?.cwd, project],
-  );
-  const runtimeEnv = useMemo(
-    () =>
-      project
-        ? projectScriptRuntimeEnv({
-            project: { cwd: project.workspaceRoot },
-            worktreePath: effectiveWorktreePath,
-          })
-        : {},
-    [effectiveWorktreePath, project],
-  );
-
-  const bumpFocusRequestId = useCallback(() => {
-    if (!visible) {
-      return;
-    }
-    setLocalFocusRequestId((value) => value + 1);
-  }, [visible]);
-
-  const setTerminalHeight = useCallback(
-    (height: number) => {
-      storeSetTerminalHeight(threadRef, height);
-    },
-    [storeSetTerminalHeight, threadRef],
-  );
-
-  const splitTerminal = useCallback(() => {
-    if (!hasTerminalWriteAccess() || !cwd) {
-      return;
-    }
-    const terminalId = allocateTerminalId();
-    storeSplitTerminal(threadRef, terminalId);
-    bumpFocusRequestId();
-    void openTerminal({
-      environmentId: threadRef.environmentId,
-      input: {
-        threadId,
-        terminalId,
-        cwd,
-        ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-        env: runtimeEnv,
-      },
-    });
-  }, [
-    allocateTerminalId,
-    bumpFocusRequestId,
-    cwd,
-    effectiveWorktreePath,
-    runtimeEnv,
-    storeSplitTerminal,
-    threadId,
-    threadRef,
-    openTerminal,
-    hasTerminalWriteAccess,
-  ]);
-  const splitTerminalVertical = useCallback(() => {
-    if (!hasTerminalWriteAccess() || !cwd) {
-      return;
-    }
-    const terminalId = allocateTerminalId();
-    storeSplitTerminalVertical(threadRef, terminalId);
-    bumpFocusRequestId();
-    void openTerminal({
-      environmentId: threadRef.environmentId,
-      input: {
-        threadId,
-        terminalId,
-        cwd,
-        ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-        env: runtimeEnv,
-      },
-    });
-  }, [
-    allocateTerminalId,
-    bumpFocusRequestId,
-    cwd,
-    effectiveWorktreePath,
-    openTerminal,
-    hasTerminalWriteAccess,
-    runtimeEnv,
-    storeSplitTerminalVertical,
-    threadId,
-    threadRef,
-  ]);
-
-  const createNewTerminal = useCallback(() => {
-    if (!hasTerminalWriteAccess() || !cwd) {
-      return;
-    }
-    const terminalId = allocateTerminalId();
-    storeNewTerminal(threadRef, terminalId);
-    bumpFocusRequestId();
-    void openTerminal({
-      environmentId: threadRef.environmentId,
-      input: {
-        threadId,
-        terminalId,
-        cwd,
-        ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
-        env: runtimeEnv,
-      },
-    });
-  }, [
-    bumpFocusRequestId,
-    cwd,
-    effectiveWorktreePath,
-    allocateTerminalId,
-    runtimeEnv,
-    storeNewTerminal,
-    threadId,
-    threadRef,
-    openTerminal,
-    hasTerminalWriteAccess,
-  ]);
-
-  const activateTerminal = useCallback(
-    (terminalId: string) => {
-      storeSetActiveTerminal(threadRef, terminalId);
-      bumpFocusRequestId();
-    },
-    [bumpFocusRequestId, storeSetActiveTerminal, threadRef],
-  );
-
-  const closeTerminal = useCallback(
-    (terminalId: string) => {
-      if (!hasTerminalWriteAccess()) return;
-      const fallbackExitWrite = () =>
-        writeTerminal({
-          environmentId: threadRef.environmentId,
-          input: { threadId, terminalId, data: "exit\n" },
-        });
-
-      void (async () => {
-        const closeResult = await closeTerminalMutation({
-          environmentId: threadRef.environmentId,
-          input: {
-            threadId,
-            terminalId,
-            deleteHistory: true,
-          },
-        });
-        if (
-          closeResult._tag === "Failure" &&
-          !isAtomCommandInterrupted(closeResult) &&
-          hasTerminalWriteAccess()
-        ) {
-          await fallbackExitWrite();
-        }
-      })();
-
-      storeCloseTerminal(threadRef, terminalId);
-      bumpFocusRequestId();
-    },
-    [
-      bumpFocusRequestId,
-      storeCloseTerminal,
-      threadId,
-      threadRef,
-      closeTerminalMutation,
-      hasTerminalWriteAccess,
-      writeTerminal,
-    ],
-  );
-
-  const handleAddTerminalContext = useCallback(
-    (selection: TerminalContextSelection) => {
-      if (!visible) {
-        return;
-      }
-      onAddTerminalContext(selection);
-    },
-    [onAddTerminalContext, visible],
-  );
-
-  if (!project || (!terminalUiState.terminalOpen && !active) || !cwd) {
-    return null;
-  }
-
-  return (
-    <div
-      className={cn(
-        "grid shrink-0 overflow-clip",
-        active ? (visible ? "grid-rows-[1fr]" : "grid-rows-[0fr]") : "hidden",
-        active &&
-          "[[data-panel-animations=true]_&]:transition-[grid-template-rows] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
-        active && visible && "[[data-panel-animations=true]_&]:starting:grid-rows-[0fr]!",
-      )}
-    >
-      <div className="min-h-0 overflow-clip">
-        <ThreadTerminalDrawer
-          threadRef={threadRef}
-          threadId={threadId}
-          cwd={cwd}
-          worktreePath={effectiveWorktreePath}
-          runtimeEnv={runtimeEnv}
-          visible={visible}
-          height={terminalUiState.terminalHeight}
-          // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
-          terminalIds={canOperateTerminal ? terminalUiState.terminalIds : serverOrderedTerminalIds}
-          activeTerminalId={terminalUiState.activeTerminalId}
-          terminalGroups={terminalUiState.terminalGroups}
-          activeTerminalGroupId={terminalUiState.activeTerminalGroupId}
-          focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
-          onSplitTerminal={splitTerminal}
-          onSplitTerminalVertical={splitTerminalVertical}
-          onNewTerminal={createNewTerminal}
-          splitShortcutLabel={visible ? splitShortcutLabel : undefined}
-          splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
-          newShortcutLabel={visible ? newShortcutLabel : undefined}
-          closeShortcutLabel={visible ? closeShortcutLabel : undefined}
-          keybindings={keybindings}
-          onActiveTerminalChange={activateTerminal}
-          onCloseTerminal={closeTerminal}
-          onHeightChange={setTerminalHeight}
-          onAddTerminalContext={handleAddTerminalContext}
-          terminalLabelsById={terminalLabelsById}
-          terminalLaunchLocationsById={terminalLaunchLocationsById}
-        />
-      </div>
-    </div>
-  );
-});
-
-interface PersistentThreadTerminalPanelProps {
-  visible: boolean;
-  threadRef: ScopedThreadRef;
-  surface: Extract<RightPanelSurface, { kind: "terminal" }>;
-  launchContext: PersistentTerminalLaunchContext | null;
-  focusRequestId: number;
-  keybindings: ResolvedKeybindingsConfig;
-  onAddTerminalContext: (selection: TerminalContextSelection) => void;
-  onSplitTerminal: () => void;
-  onSplitTerminalVertical: () => void;
-  onNewTerminal: () => void;
-  onActiveTerminalChange: (terminalId: string) => void;
-  onCloseTerminal: (terminalId: string) => void;
-  splitShortcutLabel?: string | undefined;
-  splitVerticalShortcutLabel?: string | undefined;
-  newShortcutLabel?: string | undefined;
-  closeShortcutLabel?: string | undefined;
-}
-
-const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
-  visible,
-  threadRef,
-  surface,
-  launchContext,
-  focusRequestId,
-  keybindings,
-  onAddTerminalContext,
-  onSplitTerminal,
-  onSplitTerminalVertical,
-  onNewTerminal,
-  onActiveTerminalChange,
-  onCloseTerminal,
-  splitShortcutLabel,
-  splitVerticalShortcutLabel,
-  newShortcutLabel,
-  closeShortcutLabel,
-}: PersistentThreadTerminalPanelProps) {
-  const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
-  const projectRef = serverThread
-    ? scopeProjectRef(serverThread.environmentId, serverThread.projection.thread.projectId)
-    : draftThread?.projectId
-      ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
-      : null;
-  const project = useProject(projectRef);
-  const knownTerminalSessions = useKnownTerminalSessions({
-    environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
-  });
-  const threadWorktreePath =
-    serverThread?.projection.thread.worktreePath ?? draftThread?.worktreePath ?? null;
-  const activeSummary =
-    knownTerminalSessions?.find((session) => session.target.terminalId === surface.activeTerminalId)
-      ?.state.summary ?? null;
-  const worktreePath =
-    launchContext?.worktreePath ?? activeSummary?.worktreePath ?? threadWorktreePath;
-  const cwd = useMemo(
-    () =>
-      launchContext?.cwd ??
-      activeSummary?.cwd ??
-      (project
-        ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
-            worktreePath,
-          })
-        : null),
-    [activeSummary?.cwd, launchContext?.cwd, project, worktreePath],
-  );
-  const runtimeEnv = useMemo(
-    () =>
-      project
-        ? projectScriptRuntimeEnv({
-            project: { cwd: project.workspaceRoot },
-            worktreePath,
-          })
-        : {},
-    [project, worktreePath],
-  );
-  const terminalLabelsById = useMemo(() => {
-    const labels = new Map<string, string>();
-    for (const terminalId of surface.terminalIds) {
-      const summary =
-        knownTerminalSessions?.find((session) => session.target.terminalId === terminalId)?.state
-          .summary ?? null;
-      labels.set(terminalId, resolveTerminalSessionLabel(terminalId, summary));
-    }
-    return labels;
-  }, [knownTerminalSessions, surface.terminalIds]);
-  const terminalLaunchLocationsById = useMemo(() => {
-    const locations = new Map<
-      string,
-      {
-        readonly cwd: string;
-        readonly worktreePath: string | null;
-        readonly runtimeEnv: Record<string, string>;
-      }
-    >();
-    for (const terminalId of surface.terminalIds) {
-      const summary =
-        knownTerminalSessions?.find((session) => session.target.terminalId === terminalId)?.state
-          .summary ?? null;
-      const terminalWorktreePath =
-        launchContext?.worktreePath ?? summary?.worktreePath ?? threadWorktreePath;
-      const terminalCwd =
-        launchContext?.cwd ??
-        summary?.cwd ??
-        (project
-          ? projectScriptCwd({
-              project: { cwd: project.workspaceRoot },
-              worktreePath: terminalWorktreePath,
-            })
-          : null);
-      if (!terminalCwd) continue;
-      locations.set(terminalId, {
-        cwd: terminalCwd,
-        worktreePath: terminalWorktreePath,
-        runtimeEnv: project
-          ? projectScriptRuntimeEnv({
-              project: { cwd: project.workspaceRoot },
-              worktreePath: terminalWorktreePath,
-            })
-          : {},
-      });
-    }
-    return locations;
-  }, [
-    knownTerminalSessions,
-    launchContext?.cwd,
-    launchContext?.worktreePath,
-    project,
-    surface.terminalIds,
-    threadWorktreePath,
-  ]);
-
-  if (!cwd) return null;
-
-  return (
-    <ThreadTerminalDrawer
-      mode="panel"
-      visible={visible}
-      threadRef={threadRef}
-      threadId={threadRef.threadId}
-      cwd={cwd}
-      worktreePath={worktreePath}
-      runtimeEnv={runtimeEnv}
-      height={0}
-      terminalIds={surface.terminalIds}
-      activeTerminalId={surface.activeTerminalId}
-      terminalGroups={[
-        {
-          id: surface.id,
-          terminalIds: surface.terminalIds,
-          ...(surface.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
-        },
-      ]}
-      activeTerminalGroupId={surface.id}
-      focusRequestId={focusRequestId}
-      onSplitTerminal={onSplitTerminal}
-      onSplitTerminalVertical={onSplitTerminalVertical}
-      onNewTerminal={onNewTerminal}
-      splitShortcutLabel={splitShortcutLabel}
-      splitVerticalShortcutLabel={splitVerticalShortcutLabel}
-      newShortcutLabel={newShortcutLabel}
-      closeShortcutLabel={closeShortcutLabel}
-      onActiveTerminalChange={onActiveTerminalChange}
-      onCloseTerminal={onCloseTerminal}
-      onHeightChange={() => undefined}
-      onAddTerminalContext={onAddTerminalContext}
-      terminalLabelsById={terminalLabelsById}
-      terminalLaunchLocationsById={terminalLaunchLocationsById}
-      keybindings={keybindings}
-    />
-  );
-});
 
 // Errors surface through two maps (draft-keyed and thread-keyed) whose entries
 // can race around promotion, so each write carries its time to let the latest
@@ -1719,15 +1097,24 @@ const noopHeldTurnDiff = (_turnId: RunId, _filePath?: string) => {};
 const noopHeldRevert = (_targetTurnCount: number) => {};
 const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
 
+// SCIENT-FORK:START — Legend can defer a scroll request during layout; the offset is read when
+// the request runs, so cancelling never overwrites the reader's intervening movement.
+function liveScrollOffsetRequest(node: { readonly scrollTop: number }) {
+  return {
+    get offset() {
+      return node.scrollTop;
+    },
+    animated: false,
+  };
+}
+// SCIENT-FORK:END
+
 /** Release reserved space only for explicit navigation or once it is below the viewport. */
 function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
   current: T,
 ): T {
   return current.messageId === null ? current : { ...current, messageId: null };
 }
-
-/** Runs with a workspace preparation retry in flight, across ChatView instances. */
-const retryingWorkspacePreparationRunIds = new Set<RunId>();
 
 // The factories below build functions ChatView calls during render, or hands
 // to ChatComposer, which can call them after an await. They live outside the
@@ -1776,41 +1163,6 @@ function makeThreadErrorSetter(input: {
   };
 }
 
-/** Writes the custom answer for a question of the pending user input the making render saw. */
-function makePendingCustomAnswerSetter(input: {
-  readonly activePendingUserInput: PendingUserInput | null;
-  readonly activePendingRequestKey: string;
-  readonly promptRef: { current: string };
-  readonly setPendingUserInputAnswersByRequestId: (
-    update: SetStateAction<Record<string, Record<string, PendingUserInputDraftAnswer>>>,
-  ) => void;
-}) {
-  return (questionId: string, value: string) => {
-    const { activePendingUserInput, activePendingRequestKey } = input;
-    if (!activePendingUserInput) {
-      return;
-    }
-    const question = activePendingUserInput.questions.find((entry) => entry.id === questionId);
-    if (!question || question.allowCustomAnswer === false) {
-      return;
-    }
-    input.promptRef.current = value;
-    input.setPendingUserInputAnswersByRequestId((existing) => ({
-      ...existing,
-      [activePendingRequestKey]: {
-        ...existing[activePendingRequestKey],
-        [questionId]: setPendingUserInputCustomAnswer(
-          existing[activePendingRequestKey]?.[questionId],
-          value,
-          question,
-        ),
-      },
-    }));
-    // The editor owns this selection. Resetting it before the answer renders
-    // can re-enter Lexical with offsets from the previous skill token.
-  };
-}
-
 /** Why the model picker should disable a model, or null when it can be chosen. */
 function makeModelDisabledReason(
   context: Omit<
@@ -1845,11 +1197,8 @@ function ChatViewContent(props: ChatViewProps) {
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
-  const routeThreadRef = useMemo(
-    () => scopeThreadRef(environmentId, threadId),
-    [environmentId, threadId],
-  );
-  const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const routeThreadRef = scopeThreadRef(environmentId, threadId);
+  const routeThreadKey = scopedThreadKey(routeThreadRef);
   const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
   useLayoutEffect(() => {
     currentRouteThreadKeyRef.current = routeThreadKey;
@@ -1857,18 +1206,6 @@ function ChatViewContent(props: ChatViewProps) {
       currentRouteThreadKeyRef.current = null;
     };
   }, [routeThreadKey]);
-  const updateProjectScriptSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    reportFailure: false,
-  });
-  const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
-    reportFailure: false,
-  });
-  const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
-    reportFailure: false,
-  });
-  const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
-  const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
-  const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -1902,12 +1239,6 @@ function ChatViewContent(props: ChatViewProps) {
     label: "load earlier thread history",
     reportFailure: false,
   });
-  const respondToThreadUserInput = useOrchestrationCommand(threadEnvironment.respondToUserInput, {
-    reportFailure: false,
-  });
-  const dismissThreadUserInput = useAtomCommand(threadEnvironment.dismissUserInput, {
-    reportFailure: false,
-  });
   const revertThreadCheckpoint = useOrchestrationCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
@@ -1915,7 +1246,6 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
-  const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   // SCIENT-FORK:START — compute session commands used when compute-owned tabs close.
   const computeSessionCommands = useComputeSessionCommands();
   // SCIENT-FORK:END
@@ -1926,12 +1256,13 @@ function ChatViewContent(props: ChatViewProps) {
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
   });
-  const environmentById = useMemo(
-    () => new Map(environments.map((environment) => [environment.environmentId, environment])),
-    [environments],
+  const environmentById = new Map(
+    environments.map((environment) => [environment.environmentId, environment]),
   );
   const baseComposerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
+  // SCIENT-FORK:START — queued edits live in Scient edit sessions (scient/threadQueue/editSession);
+  // the composer keeps the thread's own draft target throughout.
   const queueEditsReady = useQueueEditSessions((state) => state.ready);
   const queueEditStorageError = useQueueEditSessions((state) =>
     state.error &&
@@ -1947,6 +1278,7 @@ function ChatViewContent(props: ChatViewProps) {
     void loadQueueEdits();
   }, []);
   const composerDraftTarget = baseComposerDraftTarget;
+  // SCIENT-FORK:END
   const draftThread = useComposerDraftStore((store) =>
     routeKind === "server"
       ? store.getDraftSessionByRef(routeThreadRef)
@@ -1961,6 +1293,9 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  const promptRef = useRef("");
+  const localComposerRef = useRef<ChatComposerHandle | null>(null);
+  const composerRef = useComposerHandleContext() ?? localComposerRef;
   const reportedModelSelection = serverProjection
     ? deriveReportedModelSelection(serverProjection)
     : null;
@@ -1971,13 +1306,12 @@ function ChatViewContent(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
-  const activeThreadLiveTokenUsage = useMemo(
-    () => latestProviderTurnTokenUsage(serverProjection?.providerTurns ?? []),
-    [serverProjection?.providerTurns],
+  const activeThreadLiveTokenUsage = latestProviderTurnTokenUsage(
+    serverProjection?.providerTurns ?? [],
   );
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
-  const threadHistoryControls = useMemo<MessagesTimelineHistoryControls | undefined>(() => {
+  const threadHistoryControls = (() => {
     if (routeThreadDetailRef === null || !shouldShowLoadEarlierControl(serverThreadHistory)) {
       return undefined;
     }
@@ -1995,8 +1329,9 @@ function ChatViewContent(props: ChatViewProps) {
         });
       },
     };
-  }, [loadEarlierThreadHistory, routeThreadDetailRef, serverThreadHistory]);
-  const loadEarlierTurns = useMemo<CitationHistoryPage | null>(() => {
+  })() as MessagesTimelineHistoryControls | undefined;
+  // SCIENT-FORK:START — older pages for the reading-position restore and for citations.
+  const loadEarlierTurns = ((): CitationHistoryPage | null => {
     if (routeThreadDetailRef === null || !shouldShowLoadEarlierControl(serverThreadHistory)) {
       return null;
     }
@@ -2010,31 +1345,25 @@ function ChatViewContent(props: ChatViewProps) {
         });
       },
     };
-  }, [loadEarlierThreadHistory, routeThreadDetailRef, serverThreadHistory]);
-  const committedServerMessageIds = useMemo(
-    () => deriveCommittedServerUserMessageIds(serverVisibleTurnItems),
-    [serverVisibleTurnItems],
-  );
+  })();
+  // SCIENT-FORK:END
+  const committedServerMessageIds = deriveCommittedServerUserMessageIds(serverVisibleTurnItems);
   // Queued messages have no turn item until their run starts, so the
   // turn-item-derived set alone can never retire their optimistic rows —
   // cancelling such a run would leave a phantom "pending" queue row behind.
-  // Union in the projection's user messages: once the server holds the
-  // message, the optimistic copy is redundant everywhere it could render.
-  const serverAcknowledgedUserMessageIds = useMemo(() => {
+  const serverAcknowledgedUserMessageIds = (() => {
     const ids = new Set(committedServerMessageIds);
     for (const message of serverProjection?.messages ?? []) {
       if (message.role === "user") ids.add(message.id);
     }
     return ids;
-  }, [committedServerMessageIds, serverProjection]);
+  })();
   // SCIENT-FORK:START — the queue strip hides a preview once the server owns
   // the message; the acknowledged user rows are that source of truth.
-  const serverAcknowledgedUserMessages = useMemo(
-    () => deriveQueueAcknowledgedUserMessages(serverProjection?.messages ?? []),
-    [serverProjection],
+  const serverAcknowledgedUserMessages = deriveQueueAcknowledgedUserMessages(
+    serverProjection?.messages ?? [],
   );
   // SCIENT-FORK:END
-  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
   const clientSettingsHydrated = useClientSettingsHydrated();
   const setStickyComposerModelSelection = useComposerDraftStore(
@@ -2042,23 +1371,25 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
-  const citationLocation = useLocation({
-    select: (location) => ({
-      href: location.href,
-      key:
-        location.state.fileCitationActivation ??
-        location.state.assistantCitationActivation ??
-        location.state.__TSR_key,
-    }),
+  // Selects primitives: an object here is new on every router store update, which
+  // re-renders ChatView on unrelated navigation state changes.
+  const citationHref = useLocation({ select: (location) => location.href });
+  // SCIENT-FORK:START — a file citation activation re-keys the request too.
+  const citationKey = useLocation({
+    select: (location) =>
+      location.state.fileCitationActivation ??
+      location.state.assistantCitationActivation ??
+      location.state.__TSR_key,
   });
-  const citationRequest = useMemo<AssistantCitationRequest | null>(() => {
+  // SCIENT-FORK:END
+  const citationLocation = { href: citationHref, key: citationKey };
+  const citationRequest = (() => {
     const citation = assistantCitationFromLocation(citationLocation.href);
     return citation && citation.environmentId === environmentId && citation.threadId === threadId
       ? { citation, key: citationLocation.key ?? citationLocation.href }
       : null;
-  }, [citationLocation.href, citationLocation.key, environmentId, threadId]);
+  })() as AssistantCitationRequest | null;
   const { resolvedTheme } = useTheme();
-  // Granular store selectors — avoid subscribing to prompt changes.
   const composerExtractedIntent = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.extractedIntent,
   );
@@ -2081,7 +1412,6 @@ function ChatViewContent(props: ChatViewProps) {
     const draft = store.getComposerDraft(composerDraftTarget);
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
   });
-  // Anything beyond the prompt text: attachments, terminal or element contexts, annotations.
   const composerHasNonPromptContent = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
@@ -2111,12 +1441,9 @@ function ChatViewContent(props: ChatViewProps) {
   const setLogicalProjectDraftThreadId = useComposerDraftStore(
     (store) => store.setLogicalProjectDraftThreadId,
   );
-  const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
-  const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  const composerRef = useComposerHandleContext() ?? localComposerRef;
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
@@ -2148,27 +1475,11 @@ function ChatViewContent(props: ChatViewProps) {
     return () => revokeBlobPreviewUrl(src);
   }, [expandedImage]);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<OptimisticUserMessage[]>([]);
-  // Last live snapshot from the setup stream. The server drops a finished
-  // snapshot after a grace period and emits null; holding it here bridges the
-  // gap until the settled activity arrives on the thread projection.
-  const [worktreeSetupRef, setWorktreeSetupRef] = useState<{
-    environmentId: EnvironmentId;
-    threadId: ThreadId;
-    ownerKey: string;
-  } | null>(null);
-  const [heldWorktreeSetup, setHeldWorktreeSetup] = useState<WorktreeSetupSnapshot | null>(null);
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
   // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
   // moving to another draft drops it without an effect.
   const [workLocallyResendDraftId, setWorkLocallyResendDraftId] = useState<DraftId | null>(null);
-  // The draft route reuses this component across drafts, so a resend recorded
-  // for one draft must not fire when the user comes back to it later.
-  useEffect(() => {
-    if (workLocallyResendDraftId !== null && workLocallyResendDraftId !== draftId) {
-      setWorkLocallyResendDraftId(null);
-    }
-  }, [draftId, workLocallyResendDraftId]);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
@@ -2178,7 +1489,9 @@ function ChatViewContent(props: ChatViewProps) {
     (submission) => submission.status === "uploading",
   );
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
-  optimisticUserMessagesRef.current = optimisticUserMessages;
+  useLayoutEffect(() => {
+    optimisticUserMessagesRef.current = optimisticUserMessages;
+  });
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, LocalThreadErrorEntry>
   >({});
@@ -2189,12 +1502,13 @@ function ChatViewContent(props: ChatViewProps) {
   const isRevertingCheckpoint = useComposerDraftStore((store) =>
     store.rewindingThreadKeys.has(routeThreadKey),
   );
-  const userInputResponsesInFlight = useRef(new Set<string>());
-  const [respondingRequestIds, setRespondingRequestIds] = useState<RuntimeRequestId[]>([]);
 
-  useEffect(() => {
+  const workspaceFileDragRouteKey = `${routeThreadKey}:${draftId ?? ""}`;
+  const [workspaceFileDragRoute, setWorkspaceFileDragRoute] = useState(workspaceFileDragRouteKey);
+  if (workspaceFileDragRoute !== workspaceFileDragRouteKey) {
+    setWorkspaceFileDragRoute(workspaceFileDragRouteKey);
     setIsWorkspaceFileDragActive(false);
-  }, [draftId, routeThreadKey]);
+  }
 
   useEffect(() => {
     if (!isWorkspaceFileDragActive) return;
@@ -2202,21 +1516,10 @@ function ChatViewContent(props: ChatViewProps) {
     window.addEventListener("dragend", clearWorkspaceFileDrag);
     return () => window.removeEventListener("dragend", clearWorkspaceFileDrag);
   }, [isWorkspaceFileDragActive]);
-  const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
-    RuntimeRequestId[]
-  >([]);
-  const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
-    Record<string, Record<string, PendingUserInputDraftAnswer>>
-  >({});
-  const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
-    useState<Record<string, number>>({});
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
-  // Tracks whether the user explicitly dismissed the sidebar for the active turn.
-  // When set, the thread-change reset effect will open the sidebar instead of closing it.
-  // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
@@ -2225,9 +1528,15 @@ function ChatViewContent(props: ChatViewProps) {
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
-  const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
-    useState<DraftThreadEnvMode | null>(null);
-  const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
+  // Overrides chosen before a server thread's first turn; they belong to that thread only.
+  const [pendingServerThreadEnvModeEntry, setPendingServerThreadEnvModeEntry] = useState<{
+    readonly threadId: ThreadId;
+    readonly mode: DraftThreadEnvMode;
+  } | null>(null);
+  const [pendingServerThreadBranchEntry, setPendingServerThreadBranchEntry] = useState<{
+    readonly threadId: ThreadId;
+    readonly branch: string | null;
+  } | null>(null);
   const [
     pendingServerThreadStartFromOriginByThreadId,
     setPendingServerThreadStartFromOriginByThreadId,
@@ -2241,45 +1550,36 @@ function ChatViewContent(props: ChatViewProps) {
   const getTimelineScrollableNode = () => legendListRef.current?.getScrollableNode() ?? null;
   const getTimelineScrollableNodeStable = useStableCallback(getTimelineScrollableNode);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
-  // Space the timeline keeps clear above its end. Tracks the overlay while the
-  // composer is expanded and holds that height while it rests, so the resting
-  // composer never exposes rows that its expansion will cover.
   const [composerTimelineInset, setComposerTimelineInset] = useState(0);
   const composerTimelineInsetRef = useRef(0);
   const composerRestingRef = useRef(false);
-  // False while a status bar stands in for the composer (a native subagent).
   const composerMountedRef = useRef(true);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
   const isAtEndRef = useRef(true);
   // SCIENT-FORK:START — isTimelineAtLogicalEnd uses the reading-end rule; it is defined
   // with readerAtEndNow below, where the composer inset is known.
   // SCIENT-FORK:END
-  // Whether the timeline's rows extend past the viewport above the composer.
-  // The composer only rests when there is reading space to give back.
   const [timelineOverflows, setTimelineOverflows] = useState(false);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
-  const fanoutStateAtom = draftFanoutStateAtom(routeThreadKey);
-  const fanoutState = useAtomValue(fanoutStateAtom);
-  const sendInFlightRef = fanoutState.sendInFlight;
+  const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
+  const { sendInFlight: sendInFlightRef, uncertainSubmissions: uncertainMultipleSubmissionsRef } =
+    draftSendState(routeThreadKey);
   const [resumingThreadKeys, setResumingThreadKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const isResuming = resumingThreadKeys.has(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
-  const uncertainMultipleSubmissionsRef = fanoutState.uncertainSubmissions;
-  const multipleModelSelections = fanoutState.selections;
+  const multipleModelSelections = useAtomValue(fanoutSelectionsAtom);
   const setMultipleModelSelections = (
     selections: SetStateAction<ReadonlyArray<ModelSelection> | null>,
   ) => {
-    appAtomRegistry.update(fanoutStateAtom, (current) => ({
-      ...current,
-      selections: typeof selections === "function" ? selections(current.selections) : selections,
-    }));
+    appAtomRegistry.update(fanoutSelectionsAtom, (current) =>
+      typeof selections === "function" ? selections(current) : selections,
+    );
   };
   const setMultipleModelSelectionsStable = useStableCallback(setMultipleModelSelections);
-  const multipleModelSelectionsRef = useRef(multipleModelSelections);
-  multipleModelSelectionsRef.current = multipleModelSelections;
+  const readMultipleModelSelections = () => appAtomRegistry.get(fanoutSelectionsAtom);
   const environmentUnavailableSendToastSlotRef = useRef(0);
   const feedbackUploadsInFlightRef = useRef(new Set<string>());
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
@@ -2303,24 +1603,16 @@ function ChatViewContent(props: ChatViewProps) {
   const storeSetActiveTerminal = useTerminalUiStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const serverThreadRefs = useThreadRefs();
-  const serverThreadKeys = useMemo(() => serverThreadRefs.map(scopedThreadKey), [serverThreadRefs]);
+  const serverThreadKeys = serverThreadRefs.map(scopedThreadKey);
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
-  const draftThreadKeys = useMemo(
-    () =>
-      Object.values(draftThreadsByThreadKey).map((draftThread) =>
-        scopedThreadKey(scopeThreadRef(draftThread.environmentId, draftThread.threadId)),
-      ),
-    [draftThreadsByThreadKey],
+  const draftThreadKeys = Object.values(draftThreadsByThreadKey).map((draftThread) =>
+    scopedThreadKey(scopeThreadRef(draftThread.environmentId, draftThread.threadId)),
   );
   const [mountedTerminalThreadKeys, setMountedTerminalThreadKeys] = useState<string[]>([]);
-  const mountedTerminalThreadRefs = useMemo(
-    () =>
-      mountedTerminalThreadKeys.flatMap((mountedThreadKey) => {
-        const mountedThreadRef = parseScopedThreadKey(mountedThreadKey);
-        return mountedThreadRef ? [{ key: mountedThreadKey, threadRef: mountedThreadRef }] : [];
-      }),
-    [mountedTerminalThreadKeys],
-  );
+  const mountedTerminalThreadRefs = mountedTerminalThreadKeys.flatMap((mountedThreadKey) => {
+    const mountedThreadRef = parseScopedThreadKey(mountedThreadKey);
+    return mountedThreadRef ? [{ key: mountedThreadKey, threadRef: mountedThreadRef }] : [];
+  });
 
   const fallbackDraftProjectRef = draftThread?.projectId
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
@@ -2330,105 +1622,70 @@ function ChatViewContent(props: ChatViewProps) {
     ? null
     : ((draftId ? localDraftErrorsByDraftId[draftId]?.message : null) ?? null);
   const localServerError = localServerErrorsByThreadKey[routeThreadKey]?.message ?? null;
-  // Draft errors are keyed by draftId while server errors are keyed by thread
-  // key, so a pending draft entry must migrate when the server thread loads or
-  // a failed send would silently disappear on promotion. When both keys hold
-  // an entry, the most recent write wins.
-  useEffect(() => {
-    if (!serverThread || !draftId) {
-      return;
+  // A draft promoted to its server thread carries its pending error across.
+  const promotedDraftError =
+    serverThread && draftId ? localDraftErrorsByDraftId[draftId] : undefined;
+  if (promotedDraftError !== undefined && draftId) {
+    const remainingDraftErrors = { ...localDraftErrorsByDraftId };
+    delete remainingDraftErrors[draftId];
+    setLocalDraftErrorsByDraftId(remainingDraftErrors);
+    const currentEntry = localServerErrorsByThreadKey[routeThreadKey];
+    if (
+      currentEntry === undefined ||
+      (currentEntry.at <= promotedDraftError.at &&
+        currentEntry.message !== promotedDraftError.message)
+    ) {
+      setLocalServerErrorsByThreadKey({
+        ...localServerErrorsByThreadKey,
+        [routeThreadKey]: promotedDraftError,
+      });
     }
-    const pendingDraftEntry = localDraftErrorsByDraftId[draftId];
-    if (pendingDraftEntry === undefined) {
-      return;
-    }
-    setLocalDraftErrorsByDraftId((existing) => {
-      if (existing[draftId] === undefined) {
-        return existing;
-      }
-      const next = { ...existing };
-      delete next[draftId];
-      return next;
-    });
-    setLocalServerErrorsByThreadKey((existing) => {
-      const currentEntry = existing[routeThreadKey];
-      if (
-        currentEntry !== undefined &&
-        (currentEntry.at > pendingDraftEntry.at ||
-          currentEntry.message === pendingDraftEntry.message)
-      ) {
-        return existing;
-      }
-      return {
-        ...existing,
-        [routeThreadKey]: pendingDraftEntry,
-      };
-    });
-  }, [draftId, localDraftErrorsByDraftId, routeThreadKey, serverThread]);
-  const localDraftThread = useMemo(
-    () =>
-      draftThread
-        ? buildLocalDraftThread(
-            threadId,
-            draftThread,
-            resolveProjectSettings(
-              settings,
-              fallbackDraftProject?.id ?? null,
-              fallbackDraftProject ?? undefined,
-            ).settings.defaultModelSelection ?? NO_PROVIDER_MODEL_SELECTION,
-          )
-        : undefined,
-    [draftThread, fallbackDraftProject, settings, threadId],
-  );
+  }
+  const localDraftThread = draftThread
+    ? buildLocalDraftThread(
+        threadId,
+        draftThread,
+        resolveProjectSettings(
+          settings,
+          fallbackDraftProject?.id ?? null,
+          fallbackDraftProject ?? undefined,
+        ).settings.defaultModelSelection ?? NO_PROVIDER_MODEL_SELECTION,
+      )
+    : undefined;
   // Promotion is data-driven: the draft route keeps rendering while the
   // server thread (same pre-allocated ref) starts, so live state must not
   // depend on which route is mounted.
   // SCIENT-FORK:START — archived routes can have detail without an active shell.
   // Use the same conversion as the server, never a V1-shaped loading thread.
   const routedServerThread = useThread(routeThreadRef, { waitForShell: draftThread !== null });
-  const activeServerThread = useMemo(
-    () =>
-      serverThread ??
-      (routedServerThread === null
-        ? null
-        : presentThreadShell(
-            routedServerThread.environmentId,
-            threadShellFromProjection(routedServerThread.projection),
-          )),
-    [routedServerThread, serverThread],
-  );
+  const activeServerThread =
+    serverThread ??
+    (routedServerThread === null
+      ? null
+      : presentThreadShell(
+          routedServerThread.environmentId,
+          threadShellFromProjection(routedServerThread.projection),
+        ));
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
   // SCIENT-FORK:END
-  const serverRuntime = useMemo(
-    () => (serverProjection === null ? null : deriveThreadRuntime(serverProjection)),
-    [serverProjection],
-  );
-  const serverLatestRun = useMemo(
-    () => (serverProjection === null ? null : deriveLatestThreadRun(serverProjection)),
-    [serverProjection],
-  );
-  const serverActivityRun = useMemo(
-    () => (serverProjection === null ? null : deriveThreadActivityRun(serverProjection)),
-    [serverProjection],
-  );
-  const runlessWorkStartedAt = useMemo(
-    () => (serverProjection === null ? null : deriveRunlessWorkStartedAt(serverProjection)),
-    [serverProjection],
-  );
-  const providerSubagentStatus = useMemo(
-    () => (serverProjection === null ? null : deriveProviderSubagentStatus(serverProjection)),
-    [serverProjection],
-  );
+  const serverLatestRun =
+    serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
+  const serverActivityRun =
+    serverProjection === null ? null : deriveThreadActivityRun(serverProjection);
+  const serverRuntime = serverProjection === null ? null : deriveThreadRuntime(serverProjection);
+  const runlessWorkStartedAt =
+    serverProjection === null ? null : deriveRunlessWorkStartedAt(serverProjection);
+  const providerSubagentStatus =
+    serverProjection === null ? null : deriveProviderSubagentStatus(serverProjection);
   const isProviderSubagent =
     activeServerThread !== null && isProviderNativeSubagentThread(activeServerThread.source);
-  const supportsProviderSwitchingViaHandoff = useMemo(
-    () => threadSupportsProviderHandoff(serverProjection),
-    [serverProjection],
-  );
+  const supportsProviderSwitchingViaHandoff = threadSupportsProviderHandoff(serverProjection);
+  // SCIENT-FORK:START — an archived route's detail stands in for its missing shell.
   const activeLatestRun = serverLatestRun ?? activeThread?.latestRun ?? null;
   const activeActivityRun = serverActivityRun ?? activeThread?.latestRun ?? null;
   const activeRuntime = serverRuntime ?? activeThread?.runtime ?? null;
+  // SCIENT-FORK:END
   const activeRunningTurnId = activeRuntime?.activeRunId ?? null;
   const hasHeldQueuedRuns =
     isServerThread &&
@@ -2436,7 +1693,7 @@ function ChatViewContent(props: ChatViewProps) {
       true;
   // A run the user can pick back up: an interrupted turn, or one that failed
   // because the provider's usage limit was hit.
-  const resumableRunId = useMemo(() => {
+  const resumableRunId = (() => {
     if (!isServerThread || serverProjection === null) return null;
     const run = latestExecutedRun(serverProjection.runs);
     if (run?.status === "interrupted") return run.id;
@@ -2445,30 +1702,26 @@ function ChatViewContent(props: ChatViewProps) {
       latestRootProviderFailure(run, serverProjection.turnItems)?.class === "usage_limit"
       ? run.id
       : null;
-  }, [isServerThread, serverProjection, serverRuntime?.lastErrorClass]);
-  // A subagent thread links back to the parent that spawned it.
+  })();
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
       ? activeThread.lineage.parentThreadId
       : null;
   const parentSubagentEnvironmentId = activeThread?.environmentId ?? null;
-  const parentSubagentThreadRef = useMemo(() => {
+  const parentSubagentThreadRef = (() => {
     if (parentSubagentEnvironmentId === null || parentSubagentThreadId === null) {
       return null;
     }
     return scopeThreadRef(parentSubagentEnvironmentId, parentSubagentThreadId);
-  }, [parentSubagentEnvironmentId, parentSubagentThreadId]);
+  })();
   const parentSubagentThread = useThreadShell(parentSubagentThreadRef);
-  const parentThreadLink = useMemo(
-    () =>
-      parentSubagentThreadRef === null
-        ? null
-        : {
-            threadId: parentSubagentThreadRef.threadId,
-            title: parentSubagentThread?.title ?? "Parent thread",
-          },
-    [parentSubagentThread?.title, parentSubagentThreadRef],
-  );
+  const parentThreadLink =
+    parentSubagentThreadRef === null
+      ? null
+      : {
+          threadId: parentSubagentThreadRef.threadId,
+          title: parentSubagentThread?.title ?? "Parent thread",
+        };
   const hasProjectWorkspace = activeThread?.projectId != null;
   // SCIENT-FORK:START — fork dialog target, preview and command state.
   const forkCommand = useChatViewForkCommand({ activeThread, navigate, serverConfigs });
@@ -2477,15 +1730,13 @@ function ChatViewContent(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
-  // Dismissals can only mask the shown error, never clear it: a server thread
-  // keeps its error in session.lastError, so clearing the local shadow would
-  // just fall through to the persisted one. Mask the current error until a
-  // different error arrives, mirroring the provider status banner.
+  // SCIENT-FORK:START — the banner key includes the run, so a new run's error shows again.
   const threadErrorBannerKey = getThreadErrorBannerKey(
     routeThreadKey,
     threadError,
     activeLatestRun?.runId,
   );
+  // SCIENT-FORK:END
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,
     threadError,
@@ -2503,16 +1754,9 @@ function ChatViewContent(props: ChatViewProps) {
     runtimeStatus: activeRuntime?.status,
   });
   // SCIENT-FORK:END
-  // Dismissing only mutates the session-scoped mask set, which does not
-  // trigger a render on its own; setThreadError(null) can also bail when the
-  // local shadow is already empty and the banner is driven purely by
-  // session.lastError. Bump a tick so the banner hides immediately. Mirrors
-  // the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
-  // Implicit drafts follow their current project/environment, including retargets.
-  // Explicit composer choices and existing server threads retain their permissions.
   const runtimeMode =
     composerRuntimeMode ??
     (isServerThread ? activeThread?.runtimeMode : undefined) ??
@@ -2525,16 +1769,13 @@ function ChatViewContent(props: ChatViewProps) {
   const activeMessageCount = isServerThread
     ? Math.max(committedServerMessageIds.size, serverProjection?.messages.length ?? 0)
     : 0;
-  const hasConversationMessages = useMemo(
-    () =>
-      isServerThread &&
-      hasCommittedConversationMessages({
-        messages: serverProjection?.messages ?? [],
-        runs: serverProjection?.runs ?? [],
-        items: serverVisibleTurnItems.map(({ item }) => item),
-      }),
-    [isServerThread, serverProjection, serverVisibleTurnItems],
-  );
+  const hasConversationMessages =
+    isServerThread &&
+    hasCommittedConversationMessages({
+      messages: serverProjection?.messages ?? [],
+      runs: serverProjection?.runs ?? [],
+      items: serverVisibleTurnItems.map(({ item }) => item),
+    });
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   // SCIENT-FORK:START — a fork target belongs to the thread it was opened on.
   useClearForkCommandOnThreadChange(
@@ -2551,23 +1792,21 @@ function ChatViewContent(props: ChatViewProps) {
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
   });
-  const activeThreadKnownSessions = useMemo(() => {
+  const activeThreadKnownSessions = (() => {
     if (activeThreadId === null || activeThreadKnownSessionsRaw === null) {
       return [];
     }
     return activeThreadKnownSessionsRaw.filter(
       (session) => session.target.threadId === activeThreadId,
     );
-  }, [activeThreadId, activeThreadKnownSessionsRaw]);
-  const activeServerOrderedTerminalIds = useMemo(
-    () => activeThreadKnownSessions.map((session) => session.target.terminalId),
-    [activeThreadKnownSessions],
+  })();
+  const activeServerOrderedTerminalIds = activeThreadKnownSessions.map(
+    (session) => session.target.terminalId,
   );
-  const activeKnownTerminalIds = useMemo(
-    () => [...new Set([...activeServerOrderedTerminalIds, ...terminalUiState.terminalIds])],
-    [activeServerOrderedTerminalIds, terminalUiState.terminalIds],
-  );
-  const activeTerminalLabelsById = useMemo(() => {
+  const activeKnownTerminalIds = [
+    ...new Set([...activeServerOrderedTerminalIds, ...terminalUiState.terminalIds]),
+  ];
+  const activeTerminalLabelsById = (() => {
     const labels = new Map<string, string>();
     for (const session of activeThreadKnownSessions) {
       labels.set(
@@ -2576,13 +1815,15 @@ function ChatViewContent(props: ChatViewProps) {
       );
     }
     return labels;
-  }, [activeThreadKnownSessions]);
+  })();
   const activeThreadRef = useActiveThreadRef(activeThread);
+  // SCIENT-FORK:START — archived threads (detail, no shell) keep their terminals.
+  const terminalActions = useThreadTerminalActions(activeThreadRef, { includeDetail: true });
+  // SCIENT-FORK:END
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeEnvironmentServerBrowser = useEnvironmentSupportsServerBrowser(
     activeThreadRef?.environmentId ?? null,
   );
-  // Electron hosts its own browser tabs; other clients need the environment to host them.
   const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
   const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
     container: workspaceLayoutElement,
@@ -2620,19 +1861,13 @@ function ChatViewContent(props: ChatViewProps) {
   // end is an unfinished turn's latest content, otherwise the latest answer's text; up to
   // its last three lines may be hidden (chat/readerScrollPolicy.ts).
   const turnUnfinishedRef = useRef(false);
-  const readerAtEndNow = useCallback(
-    () =>
-      readerAtReadingEnd(
-        legendListRef.current?.getState(),
-        composerTimelineInset,
-        turnUnfinishedRef.current,
-      ),
-    [composerTimelineInset],
-  );
-  const isTimelineAtLogicalEnd = useCallback(
-    () => readerAtEndNow() ?? isAtEndRef.current,
-    [readerAtEndNow],
-  );
+  const readerAtEndNow = () =>
+    readerAtReadingEnd(
+      legendListRef.current?.getState(),
+      composerTimelineInset,
+      turnUnfinishedRef.current,
+    );
+  const isTimelineAtLogicalEnd = () => readerAtEndNow() ?? isAtEndRef.current;
   const isTimelineAtLogicalEndStable = useStableCallback(isTimelineAtLogicalEnd);
   // SCIENT-FORK:END
   const activeRightPanelKind = useRightPanelStore((state) =>
@@ -2643,8 +1878,6 @@ function ChatViewContent(props: ChatViewProps) {
   useLayoutEffect(() => {
     const explicitThreadRef = explicitDiffOpenRef.current;
     explicitDiffOpenRef.current = null;
-    // Generic openings always show Changes, including tab fallbacks and thread changes.
-    // A timeline click instead opens the specific turn/file the user requested.
     if (diffOpen && activeThreadRef && explicitThreadRef !== activeThreadRef) {
       useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     }
@@ -2664,13 +1897,9 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
   const previewSessionsReady = !activeEnvironmentServerBrowser || activePreviewState.listLoaded;
-  const resolvePreviewRuntimeTabId = useMemo(
-    () =>
-      activeThreadRef
-        ? (tabId: string) => previewRuntimeTabId(activeThreadRef, activePreviewServerEpoch, tabId)
-        : undefined,
-    [activeThreadRef, activePreviewServerEpoch],
-  );
+  const resolvePreviewRuntimeTabId = activeThreadRef
+    ? (tabId: string) => previewRuntimeTabId(activeThreadRef, activePreviewServerEpoch, tabId)
+    : undefined;
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
   );
@@ -2680,27 +1909,12 @@ function ChatViewContent(props: ChatViewProps) {
     activePreviewMiniPlayer,
   );
   // SCIENT-FORK:END
-  const panelTerminalIds = useMemo(
-    () =>
-      new Set(
-        rightPanelState.surfaces.flatMap((surface) =>
-          surface.kind === "terminal" ? surface.terminalIds : [],
-        ),
-      ),
-    [rightPanelState.surfaces],
-  );
-  const allocatableActiveTerminalIds = useMemo(
-    () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
-    [activeKnownTerminalIds, panelTerminalIds],
+  const panelTerminalIds = new Set(
+    rightPanelState.surfaces.flatMap((surface) =>
+      surface.kind === "terminal" ? surface.terminalIds : [],
+    ),
   );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
-  const allocateTerminalId = () =>
-    nextTerminalId(
-      allocatableActiveTerminalIds,
-      canReuseTerminal && readEnvironmentScope(environmentId, AuthTerminalReadScope)
-        ? undefined
-        : randomUUID(),
-    );
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
@@ -2712,13 +1926,10 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadKey,
     panelAnimationDurationMs,
   );
-  const rightPanelPresenceValue = useMemo(
-    () => ({
-      activeSurface: activeRightPanelSurface,
-      surfaces: rightPanelState.surfaces,
-    }),
-    [activeRightPanelSurface, rightPanelState.surfaces],
-  );
+  const rightPanelPresenceValue = {
+    activeSurface: activeRightPanelSurface,
+    surfaces: rightPanelState.surfaces,
+  };
   const rightPanelPresence = usePanelPresence(
     rightPanelOpen && activeThreadRef !== null,
     rightPanelPresenceValue,
@@ -2801,34 +2012,33 @@ function ChatViewContent(props: ChatViewProps) {
     previewSessionsReady,
   ]);
 
-  const existingOpenTerminalThreadKeys = useMemo(() => {
+  const existingOpenTerminalThreadKeys = (() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
-  }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
+  })();
+  // SCIENT-FORK:START — an open thread acknowledges its answer (visits, unread, Dock badge).
   useAcknowledgeAnswer(routedServerThread);
-  useEffect(() => {
-    setMountedTerminalThreadKeys((currentThreadIds) => {
-      const nextThreadIds = reconcileMountedTerminalThreadIds({
-        currentThreadIds,
-        openThreadIds: existingOpenTerminalThreadKeys,
-        activeThreadId: activeThreadKey,
-        activeThreadTerminalOpen: activeTerminalDrawerPresence.present,
-        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
-      });
-      return currentThreadIds.length === nextThreadIds.length &&
-        currentThreadIds.every((nextThreadId, index) => nextThreadId === nextThreadIds[index])
-        ? currentThreadIds
-        : nextThreadIds;
-    });
-  }, [activeTerminalDrawerPresence.present, activeThreadKey, existingOpenTerminalThreadKeys]);
+  // SCIENT-FORK:END
+  const reconciledMountedTerminalThreadKeys = reconcileMountedTerminalThreadIds({
+    currentThreadIds: mountedTerminalThreadKeys,
+    openThreadIds: existingOpenTerminalThreadKeys,
+    activeThreadId: activeThreadKey,
+    activeThreadTerminalOpen: activeTerminalDrawerPresence.present,
+    maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  });
+  if (
+    reconciledMountedTerminalThreadKeys.length !== mountedTerminalThreadKeys.length ||
+    reconciledMountedTerminalThreadKeys.some(
+      (threadKey, index) => threadKey !== mountedTerminalThreadKeys[index],
+    )
+  ) {
+    setMountedTerminalThreadKeys(reconciledMountedTerminalThreadKeys);
+  }
   const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
-  const activePlan = useMemo(
-    () => deriveActivePlanState(serverProjection, activeActivityRun?.runId),
-    [activeActivityRun?.runId, serverProjection],
-  );
-  // Tasks progress for the running run's own plan only — deriveActivePlanState
+  const activePlan = deriveActivePlanState(serverProjection, activeActivityRun?.runId);
+  // Tasks progress for the running turn's own plan only — deriveActivePlanState
   // falls back to older runs' plans, which must not label fresh work.
-  const activeComposerTasksProgress = useMemo(() => {
+  const activeComposerTasksProgress = (() => {
     if (
       isLatestRunSettled(activeActivityRun, activeRuntime) ||
       !activePlan ||
@@ -2844,36 +2054,23 @@ function ChatViewContent(props: ChatViewProps) {
       activePlan.steps.find((candidate) => candidate.status === "pending")?.step ??
       activePlan.steps.at(-1)!.step;
     return { step, completedSteps, totalSteps };
-  }, [activeActivityRun, activePlan, activeRuntime]);
+  })();
   const activeComposerTaskSteps =
     activeComposerTasksProgress && activePlan ? activePlan.steps : null;
-  const activeThreadTargetRef = useMemo(
-    () =>
-      activeThread?.projectId
-        ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
-        : null,
-    [activeThread?.environmentId, activeThread?.projectId],
-  );
-  const activeProjectRef = useMemo(
-    () =>
-      activeThread?.projectId
-        ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
-        : null,
-    [activeThread?.environmentId, activeThread?.projectId],
-  );
+  const activeThreadProjectId = activeThread?.projectId;
+  // SCIENT-FORK:START — a thread without a project has no project ref.
+  const activeProjectRef =
+    activeThreadEnvironmentId !== null && activeThreadProjectId
+      ? scopeProjectRef(activeThreadEnvironmentId, activeThreadProjectId)
+      : null;
+  // SCIENT-FORK:END
   const activeProject = useProject(activeProjectRef);
-  // Environment settings with the active project's overrides applied.
-  const activeProjectSettings = useMemo(
-    () => resolveProjectSettings(settings, activeProject?.id ?? null, activeProject ?? undefined),
-    [activeProject, settings],
+  const activeProjectSettings = resolveProjectSettings(
+    settings,
+    activeProject?.id ?? null,
+    activeProject ?? undefined,
   );
-  const activeProjectScripts = useMemo(
-    () => (activeProject ? resolveProjectScripts(settings, activeProject) : []),
-    [activeProject, settings],
-  );
-  // A project added by cloning exists before its files do. The draft stays
-  // editable throughout; only sending waits for the clone, and a failed
-  // clone offers its retry right where the user is looking.
+  const activeProjectScripts = activeProject ? resolveProjectScripts(settings, activeProject) : [];
   const activeProjectClone = useProjectClone(activeProjectRef);
   const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
     reportFailure: false,
@@ -2882,8 +2079,6 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const removeClonedProject = useRemoveClonedProject();
-  // The banner mirrors the server's clone state, so a request that never got
-  // there needs its own feedback.
   const runProjectCloneAction = async (
     title: string,
     action: () => Promise<AtomCommandResult<unknown, unknown>>,
@@ -2909,7 +2104,7 @@ function ChatViewContent(props: ChatViewProps) {
         : activeProjectClone.phase === "done"
           ? null
           : "Repository not cloned";
-  const projectCloneBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+  const projectCloneBannerItem = (() => {
     if (!activeProjectClone || !activeProjectRef || activeProjectClone.phase === "done") {
       return null;
     }
@@ -2968,14 +2163,7 @@ function ChatViewContent(props: ChatViewProps) {
         </>
       ),
     };
-  }, [
-    activeProjectClone,
-    activeProjectRef,
-    cancelProjectClone,
-    removeClonedProject,
-    retryProjectClone,
-    runProjectCloneActionStable,
-  ]);
+  })() as ComposerBannerStackItem | null;
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
   // An unpicked draft follows a default changed in Settings. ChatView
   // remounts on return, so this compares state rather than watching changes.
@@ -2990,7 +2178,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [activeProjectDefaultModelSelection, draftId, isServerThread, setComposerDraftModelSelection]);
   const handleNewThreadInActiveProject = () => {
-    startNewThreadForProject(activeThreadTargetRef, handleNewThread);
+    startNewThreadForProject(activeProjectRef, handleNewThread);
   };
   const handleNewThreadInActiveProjectStable = useStableCallback(handleNewThreadInActiveProject);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -3070,10 +2258,7 @@ function ChatViewContent(props: ChatViewProps) {
     handleMarkdownAttention,
   });
   // SCIENT-FORK:END
-  const configuredPreviewUrls = useMemo(
-    () => getConfiguredPreviewUrls(activeProjectScripts),
-    [activeProjectScripts],
-  );
+  const configuredPreviewUrls = getConfiguredPreviewUrls(activeProjectScripts);
 
   useEffect(() => {
     if (!activeThreadRef || !activeEnvironmentBootstrapComplete) return;
@@ -3082,8 +2267,6 @@ function ChatViewContent(props: ChatViewProps) {
       .reconcileFileSurfaces(activeThreadRef, activeWorkspaceKeyRoot !== undefined);
   }, [activeEnvironmentBootstrapComplete, activeThreadRef, activeWorkspaceKeyRoot]);
 
-  // Compute the list of environments this logical project spans, used to
-  // drive the environment picker in BranchToolbar.
   const allProjects = useProjects();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   useEffect(() => {
@@ -3102,19 +2285,27 @@ function ChatViewContent(props: ChatViewProps) {
       : null;
   const [reconnectWarningGraceElapsedEnvironmentId, setReconnectWarningGraceElapsedEnvironmentId] =
     useState<EnvironmentId | null>(null);
+  // Each reconnect attempt gets its own grace period, including a later one to
+  // the same environment.
+  const [graceReconnectingEnvironmentId, setGraceReconnectingEnvironmentId] = useState(
+    activeReconnectingEnvironmentId,
+  );
+  if (graceReconnectingEnvironmentId !== activeReconnectingEnvironmentId) {
+    setGraceReconnectingEnvironmentId(activeReconnectingEnvironmentId);
+    setReconnectWarningGraceElapsedEnvironmentId(null);
+  }
   const reconnectWarningGraceElapsed = hasEnvironmentReconnectWarningGraceElapsed(
     activeReconnectingEnvironmentId,
     reconnectWarningGraceElapsedEnvironmentId,
   );
   useEffect(() => {
-    setReconnectWarningGraceElapsedEnvironmentId(null);
     if (activeReconnectingEnvironmentId === null) return;
     return scheduleEnvironmentReconnectWarning(() =>
       setReconnectWarningGraceElapsedEnvironmentId(activeReconnectingEnvironmentId),
     );
   }, [activeReconnectingEnvironmentId]);
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
-  const activeEnvironmentUnavailableState = useMemo<EnvironmentUnavailableState | null>(() => {
+  const activeEnvironmentUnavailableState = (() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
       return null;
     }
@@ -3124,7 +2315,7 @@ function ChatViewContent(props: ChatViewProps) {
       label: activeEnvironmentUnavailableLabel,
       connection: activeEnvironment.connection,
     };
-  }, [activeEnvironment, activeEnvironmentUnavailable, activeEnvironmentUnavailableLabel]);
+  })() as EnvironmentUnavailableState | null;
   const handleReconnectActiveEnvironment = async (environmentId: EnvironmentId) => {
     const result = await retryEnvironment(environmentId);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -3179,7 +2370,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeProject,
       environmentById.get(activeProject.environmentId)?.serverConfig?.scratchWorkspaceRoot ?? null,
     );
-  const logicalProjectEnvironments = useMemo(() => {
+  const logicalProjectEnvironments = (() => {
     if (!activeProject) return [];
     const envs: EnvironmentOption[] = [];
     const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
@@ -3193,11 +2384,8 @@ function ChatViewContent(props: ChatViewProps) {
       });
     };
     if (activeProjectIsScratch && draftId) {
-      // Each machine keeps its own "No project" folder at its own path, so they
-      // never group as one logical project. Offer every machine that has one.
       for (const environment of environments) {
         const scratchRoot = scratchWorkspaceRootFor(environment.environmentId);
-        // Keep the current machine visible so an offline source can still switch away.
         if (scratchRoot === null && environment.environmentId !== activeProject.environmentId)
           continue;
         const scratchProject =
@@ -3223,26 +2411,13 @@ function ChatViewContent(props: ChatViewProps) {
         pushEnvironment(p.environmentId, p.id);
       }
     }
-    // Sort: primary first, then alphabetical
     envs.sort((a, b) => {
       if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
       return a.label.localeCompare(b.label);
     });
     return envs;
-  }, [
-    activeProject,
-    activeProjectIsScratch,
-    allProjects,
-    draftId,
-    environments,
-    projectGroupingSettings,
-    primaryEnvironmentId,
-    environmentById,
-    scratchWorkspaceRootFor,
-  ]);
+  })();
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
-  // Auto balance retargets to an existing project; a machine's "No project"
-  // folder may not exist until it is picked.
   const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
@@ -3343,8 +2518,6 @@ function ChatViewContent(props: ChatViewProps) {
   };
   const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);
 
-  // Once a thread selects an environment, never substitute the primary
-  // environment's config while the selected environment is still loading.
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
@@ -3389,16 +2562,12 @@ function ChatViewContent(props: ChatViewProps) {
     (!draftThread?.branch || draftThread.environmentSelection === "auto") &&
     !draftThread?.worktreePath,
   );
-  const autoUpdateEnvironments = useMemo(
-    () =>
-      automaticEnvironment
-        ? logicalProjectEnvironments.flatMap(({ environmentId }) => {
-            const environment = environmentById.get(environmentId);
-            return environment ? [environment] : [];
-          })
-        : [],
-    [automaticEnvironment, logicalProjectEnvironments, environmentById],
-  );
+  const autoUpdateEnvironments = automaticEnvironment
+    ? logicalProjectEnvironments.flatMap(({ environmentId }) => {
+        const environment = environmentById.get(environmentId);
+        return environment ? [environment] : [];
+      })
+    : [];
   const autoBalanceUpdateBanner = useAutoBalanceUpdateBanner(autoUpdateEnvironments);
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
@@ -3432,7 +2601,7 @@ function ChatViewContent(props: ChatViewProps) {
   const serverUpdateFailureDismissed =
     serverUpdateState === dismissedServerUpdateState ||
     isServerUpdateFailureDismissed(serverUpdateState);
-  const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+  const systemComposerBannerItems = (() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
     const unavailableConnection = activeEnvironmentUnavailableState?.connection ?? null;
@@ -3456,9 +2625,6 @@ function ChatViewContent(props: ChatViewProps) {
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
-    // While an update runs, transient connect blips are expected (the server
-    // restarts) and the update banner already shows progress. Hard failure
-    // phases still surface so the Reconnect action stays reachable.
     const suppressUnavailableBanner =
       environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
     if (activeEnvironmentUnavailableState && unavailableConnection && !suppressUnavailableBanner) {
@@ -3499,7 +2665,6 @@ function ChatViewContent(props: ChatViewProps) {
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
         variant: updateFailed ? "error" : "default",
-        // Prioritize update progress over passive notices, but keep activity attached.
         priority: updateInProgress ? "urgent" : "notice",
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
         title:
@@ -3569,62 +2734,26 @@ function ChatViewContent(props: ChatViewProps) {
     }
     if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
     return items;
-  }, [
-    automaticEnvironment,
-    autoBalanceUpdateBanner,
-    activeEnvironmentUnavailableState,
-    handleReconnectActiveEnvironmentStable,
-    canDisconnectActiveEnvironment,
-    disconnectingEnvironment,
-    handleDisconnectActiveEnvironmentStable,
-    setDismissedVersionMismatchKey,
-    showVersionMismatchBanner,
-    reconnectWarningGraceElapsed,
-    serverUpdateFailureDismissed,
-    serverUpdateState,
-    versionMismatch,
-    versionMismatchDismissKey,
-    serverUpdateEnvironmentId,
-    versionMismatchSelfUpdate,
-    versionMismatchInstallation,
-    versionMismatchDesktopAppUpdate,
-    versionMismatchThreadContinuation,
-    versionMismatchServerLabel,
-  ]);
-  const providerInstanceEntries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(
-          deriveProviderInstanceEntries(providerStatuses),
-          settings,
-          activeProject?.id ?? null,
-        ),
-      ),
-    [providerStatuses, settings, activeProject?.id],
+  })() as ComposerBannerStackItem[];
+  const providerInstanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providerStatuses),
+      settings,
+      activeProject?.id ?? null,
+    ),
   );
-  const { selectedProviderEntry, requestedDriverKind } = useMemo(
-    () =>
-      resolveComposerProviderSelection({
-        entries: providerInstanceEntries,
-        candidateInstanceIds: [
-          selectedProviderByThreadId,
-          activeRuntime?.providerInstanceId,
-          activeThread?.modelSelection.instanceId,
-          activeProjectDefaultModelSelection?.instanceId,
-        ],
-        lockedProvider,
-        lockedInstanceId:
-          activeRuntime?.providerInstanceId ?? activeThread?.modelSelection.instanceId,
-      }),
-    [
-      activeProjectDefaultModelSelection?.instanceId,
-      activeThread?.modelSelection.instanceId,
-      activeRuntime?.providerInstanceId,
-      lockedProvider,
-      providerInstanceEntries,
+  const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
+  const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
+    entries: providerInstanceEntries,
+    candidateInstanceIds: [
       selectedProviderByThreadId,
+      activeRuntime?.providerInstanceId,
+      activeThreadModelInstanceId,
+      activeProjectDefaultModelSelection?.instanceId,
     ],
-  );
+    lockedProvider,
+    lockedInstanceId: activeRuntime?.providerInstanceId ?? activeThreadModelInstanceId,
+  });
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
@@ -3651,24 +2780,23 @@ function ChatViewContent(props: ChatViewProps) {
     threadBusy: phase === "running",
   });
   const queueContextKeyRef = useRef(activeThreadKey);
-  queueContextKeyRef.current = activeThreadKey;
+  useLayoutEffect(() => {
+    queueContextKeyRef.current = activeThreadKey;
+  });
   // SCIENT-FORK:END
-  // V2 derives these from projected turn items and checkpoint scopes; the V1
-  // activity stream the fork used to read no longer exists on the wire.
-  const activeContextWindow = useMemo(
-    () =>
-      deriveLatestContextWindowSnapshot(
-        serverVisibleTurnItems,
-        activeThreadLiveTokenUsage,
-        serverProjection?.providerThreads.find(
-          (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
-        ),
-      ),
-    [activeThreadLiveTokenUsage, serverVisibleTurnItems, serverProjection],
+  const activeContextWindow = deriveLatestContextWindowSnapshot(
+    serverVisibleTurnItems,
+    activeThreadLiveTokenUsage,
+    serverProjection?.providerThreads.find(
+      (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
+    ),
   );
   const { turnDiffSummaries } = useTurnDiffSummaries(serverProjection);
-  const latestCheckpointCompletedAt = turnDiffSummaries.at(-1)?.completedAt ?? null;
-  const workspaceMutationId = useMemo(() => {
+  /**
+   * File tools are explicit; completed commands are included because a shell
+   * command can mutate the workspace without reporting the paths it touched.
+   */
+  const workspaceMutationId = (() => {
     let itemId: string | null = null;
     for (let index = serverVisibleTurnItems.length - 1; index >= 0; index -= 1) {
       const item = serverVisibleTurnItems[index]?.item;
@@ -3680,194 +2808,75 @@ function ChatViewContent(props: ChatViewProps) {
       itemId = item.id;
       break;
     }
+    const latestCheckpointCompletedAt = turnDiffSummaries.at(-1)?.completedAt ?? null;
     return itemId === null && latestCheckpointCompletedAt === null
       ? null
       : JSON.stringify([itemId, latestCheckpointCompletedAt]);
-  }, [serverVisibleTurnItems, latestCheckpointCompletedAt]);
+  })();
+  // SCIENT-FORK:START — a rewind failure stays in its dialog rather than the thread banner.
   const [pendingRevert, setPendingRevert] = useState<{
     turnCount: number;
     messageId: MessageId;
     routeThreadKey: string;
     error?: string;
   } | null>(null);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — a checkpoint the server could not capture leaves a
   // diagnostics affordance in the revert dialog so a missing diff is
   // explainable rather than silent.
   const fileHistoryIssue = useFileHistoryIssue(turnDiffSummaries);
   // SCIENT-FORK:END
-  const pendingRequestModel = useMemo(
-    () =>
-      serverProjection === null
-        ? { approvals: [], userInputs: [] }
-        : derivePendingThreadRequests(serverProjection),
-    [serverProjection],
-  );
   // SCIENT-FORK:START — the agents panel model.
   const agentPanelModel = useAgentPanelModel(serverProjection);
-  // a failed response stays visible on the request it
-  // belongs to, so the composer can explain the failure without a global
-  // thread error.
-  const { setRequestResponseError, pendingApprovals, pendingUserInputs } = useRequestResponseErrors(
-    { environmentId, activeThreadId, pendingRequestModel },
-  );
   // SCIENT-FORK:END
-  const activePendingUserInput = pendingUserInputs[0] ?? null;
-  const activePendingRequestKey = JSON.stringify([
-    environmentId,
-    activeThreadId,
-    activePendingUserInput?.requestId,
-  ]);
-  const activePendingAnswerDrafts =
-    pendingUserInputAnswersByRequestId[activePendingRequestKey] ?? EMPTY_PENDING_USER_INPUT_ANSWERS;
-  if (
-    activePendingUserInput &&
-    seedUserInputDraftAnswers(activePendingUserInput.questions, activePendingAnswerDrafts) !==
-      activePendingAnswerDrafts
-  ) {
-    setPendingUserInputAnswersByRequestId((existing) => {
-      const drafts = existing[activePendingRequestKey] ?? EMPTY_PENDING_USER_INPUT_ANSWERS;
-      const seeded = seedUserInputDraftAnswers(activePendingUserInput.questions, drafts);
-      return seeded === drafts ? existing : { ...existing, [activePendingRequestKey]: seeded };
-    });
-  }
-  const pendingQuestionDraftKeys = useMemo(
-    () =>
-      activeThreadId
-        ? pendingUserInputs.flatMap((request) =>
-            request.questions.map((question) =>
-              questionAttachmentDraftId(
-                environmentId,
-                activeThreadId,
-                request.requestId,
-                question.id,
-              ),
-            ),
-          )
-        : [],
-    [activeThreadId, environmentId, pendingUserInputs],
-  );
-  const questionComposerDrafts = useComposerDraftStore(
-    useShallow((state) =>
-      Object.fromEntries(
-        pendingQuestionDraftKeys.map((key) => [key, state.draftsByThreadKey[key]]),
-      ),
-    ),
-  );
-  const questionUploadsBlocked = useAttachmentUploadStore(
-    useShallow((state) =>
-      Object.fromEntries(
-        pendingQuestionDraftKeys.map((key) => {
-          const draft = questionComposerDrafts[key];
-          const attachments = draft ? [...draft.images, ...draft.files] : [];
-          return [
-            key,
-            attachments.some((attachment) => {
-              const upload = state.uploadsByImageId[attachment.id];
-              return upload?.status !== "ready" || upload.environmentId !== environmentId;
-            }),
-          ];
-        }),
-      ),
-    ),
-  );
-  const questionPreparations = useQuestionAttachmentPreparation(
-    useShallow((state) =>
-      Object.fromEntries(pendingQuestionDraftKeys.map((key) => [key, state.counts[key] ?? 0])),
-    ),
-  );
-  useEffect(() => {
-    if (!activeThread) return;
-    const questionThread = activeThread;
-    const currentRequests = pendingUserInputs;
-    const prefix = questionAttachmentDraftPrefix(environmentId, questionThread.id);
-    const retained = new Set(
-      currentRequests.flatMap((request) =>
-        request.questions.map((question) =>
-          questionAttachmentDraftId(
-            environmentId,
-            questionThread.id,
-            request.requestId,
-            question.id,
-          ),
-        ),
-      ),
-    );
-    const keys = new Set([
-      ...Object.keys(useComposerDraftStore.getState().draftsByThreadKey),
-      ...Object.keys(useQuestionAttachmentPreparation.getState().counts),
-    ]);
-    for (const key of keys) {
-      if (key.startsWith(prefix) && !retained.has(DraftId.make(key)))
-        clearQuestionAttachmentDraft(DraftId.make(key));
-    }
-  }, [environmentId, activeThread, pendingUserInputs]);
-  const activePendingDraftAnswers = useMemo(() => {
-    if (!activePendingUserInput || !activeThreadId) return EMPTY_PENDING_USER_INPUT_ANSWERS;
-    return Object.fromEntries(
-      activePendingUserInput.questions.map((question) => {
-        const key = questionAttachmentDraftId(
-          environmentId,
-          activeThreadId,
-          activePendingUserInput.requestId,
-          question.id,
-        );
-        const draft = questionComposerDrafts[key];
-        const attachments = draft ? [...draft.images, ...draft.files] : [];
-        return [
-          question.id,
-          {
-            ...pendingUserInputAnswersByRequestId[activePendingRequestKey]?.[question.id],
-            attachmentCount: attachments.length,
-            attachmentsBlocked:
-              (attachments.length > 0 && !supportsQuestionAttachments) ||
-              (questionPreparations[key] ?? 0) > 0 ||
-              questionUploadsBlocked[key] === true,
-          },
-        ];
-      }),
-    );
-  }, [
+  const serverThreadId = serverThread?.id;
+  const serverThreadEnvironmentId = serverThread?.environmentId;
+  const setThreadError = makeThreadErrorSetter({
+    routeThreadRef,
+    routeThreadKey,
+    draftId,
+    serverThreadRef:
+      serverThreadId !== undefined && serverThreadEnvironmentId !== undefined
+        ? { threadId: serverThreadId, environmentId: serverThreadEnvironmentId }
+        : null,
+    setLocalServerErrorsByThreadKey,
+    setLocalDraftErrorsByDraftId,
+  });
+  const {
+    pendingApprovals,
+    pendingUserInputs,
+    activePendingApproval,
     activePendingUserInput,
-    activeThreadId,
+    activePendingDraftAnswers,
+    activePendingQuestionIndex,
+    activePendingProgress,
+    activePendingResolvedAnswers,
+    activePendingIsResponding,
+    respondingRequestIds,
+    onRespondToApproval: onRespondToApprovalStable,
+    onDismissUserInput: onDismissUserInputStable,
+    onSelectActivePendingUserInputOption: onSelectActivePendingUserInputOptionStable,
+    onChangeActivePendingUserInputCustomAnswer,
+    onAdvanceActivePendingUserInput,
+    onAdvanceActivePendingUserInputStable,
+    onPreviousActivePendingUserInputQuestion: onPreviousActivePendingUserInputQuestionStable,
+  } = usePendingThreadRequests({
     environmentId,
-    questionComposerDrafts,
-    questionUploadsBlocked,
+    activeThreadId,
+    activeThread,
+    serverProjection,
     supportsQuestionAttachments,
-    questionPreparations,
-    pendingUserInputAnswersByRequestId,
-    activePendingRequestKey,
-  ]);
-  const activePendingQuestionIndex = activePendingUserInput
-    ? (pendingUserInputQuestionIndexByRequestId[activePendingRequestKey] ?? 0)
-    : 0;
-  const activePendingProgress = useMemo(
-    () =>
-      activePendingUserInput
-        ? derivePendingUserInputProgress(
-            activePendingUserInput.questions,
-            activePendingDraftAnswers,
-            activePendingQuestionIndex,
-          )
-        : null,
-    [activePendingDraftAnswers, activePendingQuestionIndex, activePendingUserInput],
-  );
-  const activePendingResolvedAnswers = useMemo(
-    () =>
-      activePendingUserInput
-        ? buildPendingUserInputAnswers(activePendingUserInput.questions, activePendingDraftAnswers)
-        : null,
-    [activePendingDraftAnswers, activePendingUserInput],
-  );
-  const activePendingIsResponding = activePendingUserInput
-    ? activePendingUserInput.responseCapability === "not_resumable" ||
-      respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
-    : false;
-  const activeProposedPlan = useMemo(() => {
+    composerDraftTarget,
+    setComposerDraftPrompt,
+    promptRef,
+    composerRef,
+  });
+  const activeProposedPlan = (() => {
     if (!latestRunSettled) {
       return null;
     }
     return findLatestProposedPlan(serverProjection, activeLatestRun?.runId ?? null);
-  }, [activeLatestRun?.runId, latestRunSettled, serverProjection]);
+  })();
   const showPlanFollowUpPrompt = shouldShowPlanFollowUpPrompt({
     pendingUserInputCount: pendingUserInputs.length,
     interactionMode,
@@ -3875,19 +2884,6 @@ function ChatViewContent(props: ChatViewProps) {
     hasActionableProposedPlan: hasActionableProposedPlan(activeProposedPlan),
     hasComposerAttachments: composerHasAttachments,
   });
-  const activePendingApproval = pendingApprovals[0] ?? null;
-  // The open /usage-limits panel for this thread, model and turn. Only the open
-  // moment is stored: the rows read live provider data, so a redeemed reset
-  // credit or refreshed probe shows through. Anything that spends quota closes
-  // it: a new turn from any source, or the agent resuming after an approval or
-  // answered question.
-  const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
-    readonly key: string;
-    readonly threadKey: string;
-    readonly now: number;
-  } | null>(null);
-  // Null while the provider list or the thread itself is unavailable, such as
-  // during a reconnect; the panel then stays hidden rather than being dropped.
   // A pending approval or question is part of the key: once it is answered,
   // from this client or any other, the agent resumes and spends quota.
   const usageLimitsKey =
@@ -3899,80 +2895,20 @@ function ChatViewContent(props: ChatViewProps) {
           activeThread?.latestRun?.runId ?? "",
           activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? "",
         ].join(":");
-  // Drop the snapshot as soon as the thread or model changes so it cannot resurface stale.
-  if (
-    usageLimitsPanel !== null &&
-    usageLimitsKey !== null &&
-    usageLimitsPanel.key !== usageLimitsKey
-  ) {
-    setUsageLimitsPanel(null);
-  }
-  const usageLimitSources = serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES;
-  const usageLimitsReport = useMemo(
-    () =>
-      usageLimitsPanel !== null &&
-      usageLimitsKey !== null &&
-      usageLimitsPanel.key === usageLimitsKey &&
-      activeProviderInstanceId !== null
-        ? collectProviderUsageLimits(
-            activeProviderInstanceId,
-            providerStatuses,
-            usageLimitSources,
-            usageLimitsPanel.now,
-          )
-        : null,
-    [
-      activeProviderInstanceId,
-      providerStatuses,
-      usageLimitSources,
-      usageLimitsKey,
-      usageLimitsPanel,
-    ],
-  );
-  const usageLimitsBanner = useMemo(
-    () =>
-      usageLimitsReport !== null && usageLimitsPanel !== null
-        ? // A fresh id per opening: the stack keeps the last dismissed id as "exiting".
-          usageLimitsBannerItem(
-            `usage-limits:${usageLimitsPanel.key}:${usageLimitsPanel.now}`,
-            usageLimitsReport,
-            environmentId,
-            () => setUsageLimitsPanel(null),
-          )
-        : null,
-    [environmentId, usageLimitsPanel, usageLimitsReport],
-  );
-  // T3 owns /usage-limits only where Limits has data for the selected provider;
-  // elsewhere the name stays the provider's own and is sent through untouched.
-  const usageLimitsOffered =
-    activeProviderStatus !== null &&
-    hasProviderUsageLimits(activeProviderStatus.driver, providerStatuses, usageLimitSources);
-  // Answered locally from the last Limits snapshot; the agent never sees it.
-  const openUsageLimits = () => {
-    const now = Date.now();
-    const report =
-      activeProviderInstanceId !== null && usageLimitsKey !== null
-        ? collectProviderUsageLimits(
-            activeProviderInstanceId,
-            providerStatuses,
-            usageLimitSources,
-            now,
-          )
-        : null;
-    if (report && usageLimitsKey !== null) {
-      setUsageLimitsPanel({ key: usageLimitsKey, threadKey: routeThreadKey, now });
-      return true;
-    }
-    setUsageLimitsPanel(null);
-    toastManager.add({ type: "info", title: "Usage limits are unavailable for this provider" });
-    return false;
-  };
-  const openUsageLimitsStable = useStableCallback(openUsageLimits);
-  // Responses can resolve after navigating away; only the originating thread's panel clears.
-  const clearUsageLimitsFor = (threadKey: string) =>
-    setUsageLimitsPanel((current) =>
-      current !== null && current.threadKey === threadKey ? null : current,
-    );
+  const {
+    banner: usageLimitsBanner,
+    offered: usageLimitsOffered,
+    open: openUsageLimits,
+    clearFor: clearUsageLimitsFor,
+  } = useUsageLimitsPanel({
+    environmentId,
+    threadKey: routeThreadKey,
+    panelKey: usageLimitsKey,
+    providerInstanceId: activeProviderInstanceId,
+    providerDriver: activeProviderStatus?.driver ?? null,
+    providers: providerStatuses,
+    sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
+  });
   const {
     beginLocalDispatch,
     resetLocalDispatch,
@@ -4021,55 +2957,7 @@ function ChatViewContent(props: ChatViewProps) {
   const sendQueuesBehindSetup =
     isServerThread && (activeRunPreparing || activeActivityRun?.status === "starting");
   const [setupQueueSendThreadKey, setSetupQueueSendThreadKey] = useState<string | null>(null);
-  const worktreeSetupOwnerKey = draftId ?? routeThreadKey;
-  const worktreeSetupActive =
-    worktreeSetupRef !== null && worktreeSetupRef.ownerKey === worktreeSetupOwnerKey;
-  // Keep the sending environment during local draft setup; revisiting a
-  // canonical thread subscribes by its durable identity.
-  const setupTarget = worktreeSetupActive ? worktreeSetupRef : routeThreadRef;
-  const worktreeSetupQuery = useEnvironmentQuery(
-    worktreeSetupActive ||
-      (activeThread?.id === routeThreadRef.threadId &&
-        (isLocallyPreparingWorktree || activeRunPreparing || activeThread.worktreePath !== null))
-      ? vcsEnvironment.worktreeSetup({
-          environmentId: setupTarget.environmentId,
-          input: { threadId: setupTarget.threadId },
-        })
-      : null,
-  );
-  const latestWorktreeSetup = worktreeSetupQuery.data;
-  useEffect(() => {
-    if (!latestWorktreeSetup) return;
-    setHeldWorktreeSetup((current) =>
-      current?.threadId === latestWorktreeSetup.threadId &&
-      current.sequence > latestWorktreeSetup.sequence
-        ? current
-        : latestWorktreeSetup,
-    );
-  }, [latestWorktreeSetup]);
-  useEffect(() => {
-    setHeldWorktreeSetup(null);
-  }, [routeThreadKey]);
-  const { snapshot: liveWorktreeSetup, isPreparingWorktree } = resolveWorktreeSetupProgress({
-    threadId: setupTarget.threadId,
-    localPreparing: isLocallyPreparingWorktree,
-    runStatus: activeActivityRun?.status,
-    latest: latestWorktreeSetup,
-    held: heldWorktreeSetup,
-  });
-  // Durable V2 setup snapshots also cover reloads before the first run starts.
-  const awaitingBootstrapTurn =
-    activeServerThread !== null &&
-    activeServerThread.id === routeThreadRef.threadId &&
-    activeLatestRun === null &&
-    liveWorktreeSetup?.phase === "running";
-  const isOriginWorking =
-    phase === "running" || isSendBusy || isConnecting || isCompacting || awaitingBootstrapTurn;
-  const isWorking = isOriginWorking || isForkingThread;
-  // SCIENT-FORK:START — the reading end follows the latest turn's state.
-  turnUnfinishedRef.current = latestTurnUnfinished(activeRunningTurnId, activeLatestRun?.status);
-  // SCIENT-FORK:END
-  const pendingBackgroundTasks = useMemo(() => {
+  const pendingBackgroundTasks = (() => {
     if (serverProjection === null || serverProjection === undefined) {
       return [];
     }
@@ -4093,31 +2981,10 @@ function ChatViewContent(props: ChatViewProps) {
         pullRequests: serverProjection.thread.pullRequests,
       }),
     ];
-  }, [serverProjection]);
+  })();
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
-  // SCIENT-FORK:START — the timeline's working row waits for the prompt being sent, and stays
-  // while its run starts (chat/timelineWorkingState.ts).
-  const timelineWorking = useTimelineWorking({
-    threadWorking: isWorking,
-    onlySendBusy: isOnlySendBusy({
-      isSendBusy,
-      phase,
-      isConnecting,
-      isCompacting,
-      awaitingBootstrapTurn,
-      isForkingThread,
-      isRevertingCheckpoint,
-      isPreparingWorktree,
-    }),
-    dispatchBaselineUserMessageId: localDispatchLatestUserMessageId,
-    projection: serverProjection,
-    optimisticMessages: optimisticUserMessages,
-  });
-  // SCIENT-FORK:END
-  // Server-side workspace preparation: unlike the local-dispatch flag this
-  // survives reloads and shows on remote viewers of the same thread.
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -4215,30 +3082,22 @@ function ChatViewContent(props: ChatViewProps) {
     }
   };
   const openFileAttachmentStable = useStableCallback(openFileAttachment);
-  const serverAttachmentResources = useMemo(
-    () =>
-      selectHandoffImageResources(
-        Object.keys(attachmentPreviewHandoffByMessageId).length === 0
-          ? undefined
-          : serverVisibleTurnItems.flatMap(({ item }) =>
-              item.type === "user_message"
-                ? [{ id: item.messageId, role: "user" as const, attachments: item.attachments }]
-                : [],
-            ),
-        attachmentPreviewHandoffByMessageId,
-      ),
-    [serverVisibleTurnItems, attachmentPreviewHandoffByMessageId],
+  const serverAttachmentResources = selectHandoffImageResources(
+    Object.keys(attachmentPreviewHandoffByMessageId).length === 0
+      ? undefined
+      : serverVisibleTurnItems.flatMap(({ item }) =>
+          item.type === "user_message"
+            ? [{ id: item.messageId, role: "user" as const, attachments: item.attachments }]
+            : [],
+        ),
+    attachmentPreviewHandoffByMessageId,
   );
   const serverAttachmentUrls = useAssetUrls(environmentId, serverAttachmentResources);
-  const serverAttachmentUrlById = useMemo(
-    () =>
-      new Map(
-        serverAttachmentResources.flatMap((resource, index) => {
-          const url = serverAttachmentUrls[index];
-          return url ? [[resource.attachmentId, url] as const] : [];
-        }),
-      ),
-    [serverAttachmentResources, serverAttachmentUrls],
+  const serverAttachmentUrlById = new Map(
+    serverAttachmentResources.flatMap((resource, index) => {
+      const url = serverAttachmentUrls[index];
+      return url ? [[resource.attachmentId, url] as const] : [];
+    }),
   );
   useEffect(() => {
     if (typeof Image === "undefined" || serverVisibleTurnItems.length === 0) {
@@ -4333,83 +3192,28 @@ function ChatViewContent(props: ChatViewProps) {
     serverAttachmentUrlById,
     serverVisibleTurnItems,
   ]);
-  const timelineAttachmentUrlById = useMemo(() => {
-    const urls = new Map(serverAttachmentUrlById);
-    for (const row of serverVisibleTurnItems) {
-      if (row.item.type !== "user_message") continue;
-      const handoffUrls = attachmentPreviewHandoffByMessageId[row.item.messageId];
-      if (handoffUrls === undefined) continue;
-      let imageIndex = 0;
-      for (const attachment of row.item.attachments) {
-        if (attachment.type !== "image") continue;
-        const handoffUrl = handoffUrls[imageIndex];
-        imageIndex += 1;
-        if (handoffUrl !== undefined) urls.set(attachment.id, handoffUrl);
-      }
-    }
-    return urls;
-  }, [attachmentPreviewHandoffByMessageId, serverAttachmentUrlById, serverVisibleTurnItems]);
-  const anchoredTimelineMessages = useMemo(
-    () =>
-      feedbackSubmissions.flatMap((submission) =>
-        submission.status === "interrupted"
-          ? []
-          : [
-              { ...codexFeedbackMessage(submission), runId: null },
-              { ...codexFeedbackMessage(submission, "assistant"), runId: null },
-            ],
-      ),
-    [feedbackSubmissions],
-  );
-  const timelineProjectionRef = useRef<{
-    readonly threadKey: string | null;
-    readonly projection: TimelineEntriesProjection;
-  } | null>(null);
-  const serverTimelineEntries = useMemo(() => {
-    const previous = timelineProjectionRef.current;
-    const projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(
-      {
-        visibleTurnItems: serverVisibleTurnItems,
-        optimisticMessages: optimisticTimelineMessages(optimisticUserMessages),
-        anchoredMessages: anchoredTimelineMessages,
-        attachmentUrlById: timelineAttachmentUrlById,
-        ...(serverProjection === null
-          ? {}
-          : {
-              attempts: serverProjection.attempts,
-              nodes: serverProjection.nodes,
-              plans: serverProjection.plans,
-            }),
-      },
-      previous?.threadKey === activeThreadKey ? previous.projection : null,
-    );
-    timelineProjectionRef.current = { threadKey: activeThreadKey, projection };
-    return projection.entries;
-  }, [
-    activeThreadKey,
-    anchoredTimelineMessages,
-    optimisticUserMessages,
-    serverVisibleTurnItems,
-    serverProjection,
-    timelineAttachmentUrlById,
-  ]);
-  const draftTimelineEntries = useMemo(
-    () =>
-      optimisticTimelineMessages(optimisticUserMessages).map(
-        (message) =>
-          ({
-            id: message.id,
-            kind: "message",
-            createdAt: message.createdAt,
-            message,
-          }) as const,
-      ),
-    [optimisticUserMessages],
+  const { serverEntries: serverTimelineEntries, optimisticMessages: timelineOptimisticMessages } =
+    useThreadTimelineEntries({
+      threadKey: activeThreadKey,
+      visibleTurnItems: serverVisibleTurnItems,
+      projection: serverProjection,
+      serverAttachmentUrlById,
+      attachmentPreviewHandoffByMessageId,
+      feedbackSubmissions,
+      optimisticMessages: optimisticUserMessages,
+    });
+  const draftTimelineEntries = timelineOptimisticMessages.map(
+    (message) =>
+      ({
+        id: message.id,
+        kind: "message",
+        createdAt: message.createdAt,
+        message,
+      }) as const,
   );
   const timelineEntries = isServerThread ? serverTimelineEntries : draftTimelineEntries;
-  const timelineMessages = useMemo(
-    () => timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
-    [timelineEntries],
+  const timelineMessages = timelineEntries.flatMap((entry) =>
+    entry.kind === "message" ? [entry.message] : [],
   );
   // SCIENT-FORK:START — a fork opened from the fork dialog shows once, in place.
   const forkLanding = useForkLanding(routeThreadKey);
@@ -4439,73 +3243,66 @@ function ChatViewContent(props: ChatViewProps) {
     timelineEmpty: timelineEntries.length === 0,
   });
   // SCIENT-FORK:END
-  const worktreeSetup = resolveVisibleWorktreeSetup({
-    live: liveWorktreeSetup,
-    recorded: null,
-    turnStarted: activeActivityRun?.startedAt != null,
+  const {
+    worktreeSetup,
+    // SCIENT-FORK:START — a bootstrap still setting up counts as working before its run exists.
+    liveSnapshot: liveWorktreeSetup,
+    // SCIENT-FORK:END
+    isPreparingWorktree,
+    blocksSend: worktreeSetupBlocksSend,
+    retryableRunIds: retryableWorkspacePreparationRunIds,
+    begin: beginWorktreeSetup,
+    cancel: cancelWorktreeSetup,
+    retryPreparation: onRetryWorkspacePreparationStable,
+    openSetupTerminal: onOpenWorktreeSetupTerminal,
+  } = useWorktreeSetup({
+    routeThreadRef,
+    ownerKey: draftId ?? routeThreadKey,
+    activeThread,
+    threadRef: activeThreadRef,
+    serverProjection,
+    activityRun: activeActivityRun,
+    localPreparing: isLocallyPreparingWorktree,
+    sendQueuesBehindSetup,
     // Counts the optimistic send too, so the row retires the moment the
     // follow-up is on screen rather than when the server echoes it back.
     followUpSent: timelineMessages.filter((message) => message.role === "user").length > 1,
   });
-  // Sends wait for the agent handoff, not for the setup script: an async
-  // script keeps the snapshot running while the agent already works, and a
-  // follow-up must not be held behind a slow install. Before the first
-  // snapshot arrives the starting session stands in for it. Once the server
-  // has the thread, a send queues behind the setup run instead.
-  const worktreeSetupBlocksSend =
-    !sendQueuesBehindSetup &&
-    (worktreeSetup !== null
-      ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
-      : isPreparingWorktree);
-  const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
-    reportFailure: false,
+  // SCIENT-FORK:START — working state: a bootstrap still setting up and a fork being prepared
+  // count as work, and the reading end follows the latest turn's state.
+  // Durable V2 setup snapshots also cover reloads before the first run starts.
+  const awaitingBootstrapTurn =
+    activeServerThread !== null &&
+    activeServerThread.id === routeThreadRef.threadId &&
+    activeLatestRun === null &&
+    liveWorktreeSetup?.phase === "running";
+  const isOriginWorking =
+    phase === "running" || isSendBusy || isConnecting || isCompacting || awaitingBootstrapTurn;
+  const isWorking = isOriginWorking || isForkingThread;
+  const turnUnfinished = latestTurnUnfinished(activeRunningTurnId, activeLatestRun?.status);
+  useLayoutEffect(() => {
+    turnUnfinishedRef.current = turnUnfinished;
   });
-  const retryWorkspacePreparation = useAtomCommand(threadEnvironment.retryWorkspacePreparation);
-  const retryableRunIdsKey = useMemo(
-    () =>
-      [
-        ...workspacePreparationRetryRunIds(
-          serverProjection?.runs ?? [],
-          serverProjection?.turnItems ?? [],
-        ),
-      ].join("\n"),
-    [serverProjection?.runs, serverProjection?.turnItems],
-  );
-  // Keyed by content so the timeline context only changes when a retry appears or clears.
-  const retryableWorkspacePreparationRunIds = useMemo(
-    () => new Set(retryableRunIdsKey === "" ? [] : (retryableRunIdsKey.split("\n") as RunId[])),
-    [retryableRunIdsKey],
-  );
-  const onRetryWorkspacePreparation = (runId: RunId) => {
-    // One retry per failed run: a second click lands after the run is preparing again.
-    if (!activeThreadRef || retryingWorkspacePreparationRunIds.has(runId)) return;
-    retryingWorkspacePreparationRunIds.add(runId);
-    void retryWorkspacePreparation({
-      environmentId: activeThreadRef.environmentId,
-      input: { threadId: activeThreadRef.threadId, runId },
-    }).finally(() => retryingWorkspacePreparationRunIds.delete(runId));
-  };
-  const onRetryWorkspacePreparationStable = useStableCallback(onRetryWorkspacePreparation);
-  const onCancelWorktreeSetup = () => {
-    if (!worktreeSetup || worktreeSetup.phase !== "running") return;
-    void cancelWorktreeSetup({
-      environmentId: setupTarget.environmentId,
-      input: { threadId: worktreeSetup.threadId },
-    });
-  };
-  const onCancelWorktreeSetupStable = useStableCallback(onCancelWorktreeSetup);
-  // The setup terminal belongs to the thread that was set up. A failed
-  // bootstrap deletes that thread and closes its terminals, so only offer the
-  // terminal while the setup thread is still the active one.
-  const onOpenWorktreeSetupTerminal = useMemo(() => {
-    if (!worktreeSetup || !activeThreadRef || worktreeSetup.threadId !== activeThreadRef.threadId) {
-      return null;
-    }
-    const setupThreadRef = activeThreadRef;
-    return (terminalId: string) => {
-      storeEnsureTerminal(setupThreadRef, terminalId, { open: true, active: true });
-    };
-  }, [activeThreadRef, storeEnsureTerminal, worktreeSetup]);
+  // The timeline's working row waits for the prompt being sent, and stays while its run starts
+  // (chat/timelineWorkingState.ts).
+  const timelineWorking = useTimelineWorking({
+    threadWorking: isWorking,
+    onlySendBusy: isOnlySendBusy({
+      isSendBusy,
+      phase,
+      isConnecting,
+      isCompacting,
+      awaitingBootstrapTurn,
+      isForkingThread,
+      isRevertingCheckpoint,
+      isPreparingWorktree,
+    }),
+    dispatchBaselineUserMessageId: localDispatchLatestUserMessageId,
+    projection: serverProjection,
+    optimisticMessages: optimisticUserMessages,
+  });
+  // SCIENT-FORK:END
+  const onCancelWorktreeSetupStable = useStableCallback(() => void cancelWorktreeSetup());
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -4520,14 +3317,17 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — the draft composer's move always animates, unless motion is reduced.
   const draftHeroMotion = useDraftHeroMotion();
   // SCIENT-FORK:END
-  const draftHeroTransition = useDraftHeroLayoutTransition(
+  const {
+    transitionGroupRef: draftHeroTransitionGroupRef,
+    composerAnchorRef: draftHeroComposerAnchorRef,
+    captureComposerRect: captureDraftHeroComposerRect,
+  } = useDraftHeroLayoutTransition(
     isDraftHeroState,
     // SCIENT-FORK:START — not the opt-in panel animation setting (chat/timelineEntranceMotion.ts).
     draftHeroMotion.animate,
     draftHeroMotion.durationMs,
     // SCIENT-FORK:END
   );
-  const captureDraftHeroComposerRect = draftHeroTransition.captureComposerRect;
   // SCIENT-FORK:START — the composer's fork command.
   const onForkConversation = useForkConversationCommand({
     timelineEntries,
@@ -4579,42 +3379,27 @@ function ChatViewContent(props: ChatViewProps) {
     availableEditors,
     openInCwd: gitCwd,
   });
-  const manualCompactionProviderAvailable = useMemo(
-    () =>
-      hasAvailableCompactionProvider({
-        providers: providerInstanceEntries,
-        driverKind: selectedProvider,
-        instanceId: activeProviderInstanceId,
-        lockedInstanceId: lockedProvider
-          ? (activeRuntime?.providerInstanceId ?? activeThread?.modelSelection.instanceId ?? null)
-          : null,
-      }),
-    [
-      activeProviderInstanceId,
-      activeThread?.modelSelection.instanceId,
-      activeRuntime?.providerInstanceId,
-      lockedProvider,
-      providerInstanceEntries,
-      selectedProvider,
-    ],
-  );
+  const manualCompactionProviderAvailable = hasAvailableCompactionProvider({
+    providers: providerInstanceEntries,
+    driverKind: selectedProvider,
+    instanceId: activeProviderInstanceId,
+    lockedInstanceId: lockedProvider
+      ? (activeRuntime?.providerInstanceId ?? activeThread?.modelSelection.instanceId ?? null)
+      : null,
+  });
   const [resumeCompactionPermanentlyDismissed, setResumeCompactionPermanentlyDismissed] =
     useLocalStorage(
       `t3code:resume-compaction-dismissed:${environmentId}:${activeProviderInstanceId ?? "claudeAgent"}`,
       false,
       Schema.Boolean,
     );
-  const nativeResumeCompactionDismissed = useMemo(
-    () =>
-      hasDismissedResumeCompaction(
-        (serverProjection?.runtimeRequests ?? [])
-          .filter((request) => request.kind === "user_input" && request.status === "resolved")
-          .map((request) => ({
-            kind: "user-input.resolved",
-            payload: { answers: request.answers },
-          })),
-      ),
-    [serverProjection?.runtimeRequests],
+  const nativeResumeCompactionDismissed = hasDismissedResumeCompaction(
+    (serverProjection?.runtimeRequests ?? [])
+      .filter((request) => request.kind === "user_input" && request.status === "resolved")
+      .map((request) => ({
+        kind: "user-input.resolved",
+        payload: { answers: request.answers },
+      })),
   );
   useEffect(() => {
     if (nativeResumeCompactionDismissed && !resumeCompactionPermanentlyDismissed) {
@@ -4640,11 +3425,9 @@ function ChatViewContent(props: ChatViewProps) {
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
   >(null);
-  useEffect(() => {
-    if (providerStatusBannerKey === null && dismissedProviderStatusBannerKey !== null) {
-      setDismissedProviderStatusBannerKey(null);
-    }
-  }, [dismissedProviderStatusBannerKey, providerStatusBannerKey]);
+  if (providerStatusBannerKey === null && dismissedProviderStatusBannerKey !== null) {
+    setDismissedProviderStatusBannerKey(null);
+  }
   const visibleProviderStatus = shouldShowProviderStatusBanner(
     activeProviderStatus,
     dismissedProviderStatusBannerKey,
@@ -4671,17 +3454,6 @@ function ChatViewContent(props: ChatViewProps) {
     activeWorkspaceRoot,
   );
   // SCIENT-FORK:END
-  const activeTerminalTarget = useMemo(
-    () =>
-      hasProjectWorkspace
-        ? resolveProjectThreadTerminalTarget({
-            projectWorkspaceRoot: activeProjectCwd,
-            gitCwd,
-            worktreePath: activeThreadWorktreePath,
-          })
-        : null,
-    [activeProjectCwd, activeThreadWorktreePath, gitCwd, hasProjectWorkspace],
-  );
   useLayoutEffect(() => {
     if (
       threadDetailLoading ||
@@ -4702,10 +3474,6 @@ function ChatViewContent(props: ChatViewProps) {
     : null;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
-  // Git status arrives after the composer paints. A checkout seen earlier in
-  // this session answers from memory, so a non-Git project does not mount the
-  // branch strip and then drop it. A never-seen checkout assumes Git, which
-  // is what nearly every project is.
   const liveIsGitRepo = gitStatusQuery.data?.isRepo;
   const gitUnavailable = gitStatusQuery.data?.gitAvailability === "missing";
   useEffect(() => {
@@ -4713,10 +3481,12 @@ function ChatViewContent(props: ChatViewProps) {
       rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
     }
   }, [environmentId, gitStatusCwd, gitUnavailable, liveIsGitRepo]);
+  // SCIENT-FORK:START — a missing Git install reads as no repository; diffs need a project.
   const isGitRepo = gitUnavailable
     ? false
     : (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
   const diffAvailable = hasProjectWorkspace && isServerThread && isGitRepo;
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — fork baseline and new-worktree availability.
   const {
     hasForkBaseline,
@@ -4733,9 +3503,6 @@ function ChatViewContent(props: ChatViewProps) {
     timelineEntries,
   });
   // SCIENT-FORK:END
-  // Keep a hidden, off-flow strip mounted for existing threads so the composer
-  // can measure whether its relocated controls fit. The visible chrome remains
-  // content-driven: Git/environment context or controls that actually fit.
   // A provider-native subagent cannot take messages: a status bar replaces the
   // composer and its strips. Its approvals and questions are asked on the
   // top-level parent thread.
@@ -4783,31 +3550,31 @@ function ChatViewContent(props: ChatViewProps) {
   const mountComposerModelStrip =
     routeKind === "server" && !mountComposerContextStrip && !showProviderSubagentBar;
   const showComposerModelStrip = mountComposerModelStrip && restingComposerControlsVisible;
-  const terminalShortcutLabelOptions = useMemo(
-    () => ({
-      context: {
-        terminalFocus: true,
-        terminalOpen: Boolean(terminalUiState.terminalOpen),
-      },
-    }),
-    [terminalUiState.terminalOpen],
+  const terminalShortcutLabelOptions = {
+    context: {
+      terminalFocus: true,
+      terminalOpen: Boolean(terminalUiState.terminalOpen),
+    },
+  };
+  const splitTerminalShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "terminal.split",
+    terminalShortcutLabelOptions,
   );
-  const splitTerminalShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "terminal.split", terminalShortcutLabelOptions),
-    [keybindings, terminalShortcutLabelOptions],
+  const splitTerminalVerticalShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "terminal.splitVertical",
+    terminalShortcutLabelOptions,
   );
-  const splitTerminalVerticalShortcutLabel = useMemo(
-    () =>
-      shortcutLabelForCommand(keybindings, "terminal.splitVertical", terminalShortcutLabelOptions),
-    [keybindings, terminalShortcutLabelOptions],
+  const newTerminalShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "terminal.new",
+    terminalShortcutLabelOptions,
   );
-  const newTerminalShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "terminal.new", terminalShortcutLabelOptions),
-    [keybindings, terminalShortcutLabelOptions],
-  );
-  const closeTerminalShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "terminal.close", terminalShortcutLabelOptions),
-    [keybindings, terminalShortcutLabelOptions],
+  const closeTerminalShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "terminal.close",
+    terminalShortcutLabelOptions,
   );
   const onToggleDiff = () => {
     if (!diffAvailable) {
@@ -4824,46 +3591,34 @@ function ChatViewContent(props: ChatViewProps) {
   const onToggleDiffStable = useStableCallback(onToggleDiff);
 
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
-  const loadBalancingCandidates = useMemo(
-    () =>
-      needsLoadBalancing
-        ? logicalProjectEnvironments
-            .filter((candidate) => {
-              const environment = environmentById.get(candidate.environmentId);
-              return (
-                environment?.connection.phase === "connected" &&
-                (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
-                environment.serverConfig?.providers.some(
-                  (provider) =>
-                    (activeProviderInstanceId === null ||
-                      provider.instanceId === activeProviderInstanceId) &&
-                    provider.driver === selectedProvider &&
-                    // The destination project may override the machine switch.
-                    (environment.serverConfig?.settings
-                      ? resolveProjectProviderInstanceEnabled(
-                          environment.serverConfig.settings,
-                          candidate.projectId,
-                          provider.instanceId,
-                        )
-                      : provider.enabled) &&
-                    provider.installed &&
-                    provider.status !== "error" &&
-                    provider.auth.status !== "unauthenticated" &&
-                    provider.availability !== "unavailable",
-                )
-              );
-            })
-            .map((candidate) => candidate.environmentId)
-        : [],
-    [
-      needsLoadBalancing,
-      logicalProjectEnvironments,
-      environmentById,
-      loadBalancingSettings.loadBalancingWeights,
-      activeProviderInstanceId,
-      selectedProvider,
-    ],
-  );
+  const loadBalancingCandidates = needsLoadBalancing
+    ? logicalProjectEnvironments
+        .filter((candidate) => {
+          const environment = environmentById.get(candidate.environmentId);
+          return (
+            environment?.connection.phase === "connected" &&
+            (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
+            environment.serverConfig?.providers.some(
+              (provider) =>
+                (activeProviderInstanceId === null ||
+                  provider.instanceId === activeProviderInstanceId) &&
+                provider.driver === selectedProvider &&
+                (environment.serverConfig?.settings
+                  ? resolveProjectProviderInstanceEnabled(
+                      environment.serverConfig.settings,
+                      candidate.projectId,
+                      provider.instanceId,
+                    )
+                  : provider.enabled) &&
+                provider.installed &&
+                provider.status !== "error" &&
+                provider.auth.status !== "unauthenticated" &&
+                provider.availability !== "unavailable",
+            )
+          );
+        })
+        .map((candidate) => candidate.environmentId)
+    : [];
   const loadBalancing = useLoadBalancedEnvironment(
     loadBalancingCandidates,
     loadBalancingSettings.loadBalancingWeights,
@@ -4885,6 +3640,7 @@ function ChatViewContent(props: ChatViewProps) {
     loadBalancing.environmentId,
     draftId,
     logicalProjectEnvironments,
+    sendInFlightRef,
     setDraftThreadContext,
   ]);
   const onAutoEnvironment = () => {
@@ -4920,15 +3676,38 @@ function ChatViewContent(props: ChatViewProps) {
           : "Auto balance"
     : undefined;
 
-  // The machine an in-flight switch is heading to; a newer switch replaces it.
-  const environmentChangeRef = useRef<{ readonly environmentId: EnvironmentId } | null>(null);
-  const [isEnvironmentChanging, setIsEnvironmentChanging] = useState(false);
+  // A change in flight belongs to the draft and project it started on.
+  // SCIENT-FORK:START — the project, not its workspace key (a worktree path change keeps it).
+  const environmentChangeScope = `${draftId ?? ""}:${activeProject?.id ?? ""}`;
+  // SCIENT-FORK:END
+  const environmentChangeRef = useRef<{
+    readonly environmentId: EnvironmentId;
+    readonly scope: string;
+  } | null>(null);
+  const environmentChangeScopeRef = useRef("");
   useLayoutEffect(() => {
-    return () => {
-      environmentChangeRef.current = null;
-      setIsEnvironmentChanging(false);
-    };
-  }, [draftId, activeProject?.id]);
+    environmentChangeScopeRef.current = environmentChangeScope;
+  });
+  // Leaving the scope, or unmounting, abandons a change still in flight.
+  useLayoutEffect(
+    () => () => {
+      if (environmentChangeRef.current?.scope === environmentChangeScope) {
+        environmentChangeRef.current = null;
+      }
+    },
+    [environmentChangeScope],
+  );
+  const readPendingEnvironmentChange = () => {
+    const pending = environmentChangeRef.current;
+    return pending !== null && pending.scope === environmentChangeScopeRef.current ? pending : null;
+  };
+  // The busy state belongs to the request that set it, so an older request settling late
+  // (abandoned, or superseded by a newer switch) can never clear a newer one's.
+  const [busyEnvironmentChange, setBusyEnvironmentChange] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly scope: string;
+  } | null>(null);
+  const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
 
   const onEnvironmentChange = (nextEnvironmentId: EnvironmentId) => {
     if (envLocked || !draftId || sendInFlightRef.current) return;
@@ -4938,13 +3717,14 @@ function ChatViewContent(props: ChatViewProps) {
       (env) => env.environmentId === nextEnvironmentId,
     );
     if (!target) return;
-    const request = { environmentId: target.environmentId };
+    const request = { environmentId: target.environmentId, scope: environmentChangeScope };
     environmentChangeRef.current = request;
-    setIsEnvironmentChanging(false);
+    setBusyEnvironmentChange(null);
     const retarget = (project: (typeof allProjects)[number]) => {
       const currentDraft = getDraftSession(draftId);
       if (
         environmentChangeRef.current !== request ||
+        environmentChangeScopeRef.current !== request.scope ||
         sendInFlightRef.current ||
         !currentDraft ||
         currentDraft.promotedTo ||
@@ -4954,7 +3734,6 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       const projectRef = scopeProjectRef(target.environmentId, project.id);
       if (activeProjectIsScratch) {
-        // Scratch projects are machine-local, so move their logical mapping too.
         setLogicalProjectDraftThreadId(
           deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
           projectRef,
@@ -4970,10 +3749,8 @@ function ChatViewContent(props: ChatViewProps) {
       }
     };
     const finish = () => {
-      if (environmentChangeRef.current === request) {
-        environmentChangeRef.current = null;
-        setIsEnvironmentChanging(false);
-      }
+      if (environmentChangeRef.current === request) environmentChangeRef.current = null;
+      setBusyEnvironmentChange((busy) => (busy === request ? null : busy));
     };
     if (target.projectId !== null) {
       const project = allProjects.find(
@@ -4984,8 +3761,7 @@ function ChatViewContent(props: ChatViewProps) {
       finish();
       return;
     }
-    // Keep send disabled until the destination Scratch project is ready.
-    setIsEnvironmentChanging(true);
+    setBusyEnvironmentChange(request);
     void openScratchProject(target.environmentId, "Could not switch machine")
       .then((project) => {
         if (project) retarget(project);
@@ -5004,20 +3780,6 @@ function ChatViewContent(props: ChatViewProps) {
     null;
   const hasReachedSplitLimit =
     (activeTerminalGroup?.terminalIds.length ?? 0) >= MAX_TERMINALS_PER_GROUP;
-  const setThreadError = useMemo(
-    () =>
-      makeThreadErrorSetter({
-        routeThreadRef,
-        routeThreadKey,
-        draftId,
-        serverThreadRef: serverThread
-          ? { threadId: serverThread.id, environmentId: serverThread.environmentId }
-          : null,
-        setLocalServerErrorsByThreadKey,
-        setLocalDraftErrorsByDraftId,
-      }),
-    [draftId, routeThreadKey, routeThreadRef, serverThread?.id, serverThread?.environmentId],
-  );
 
   const composerIdentity = composerTargetKey(composerDraftTarget);
   const previousComposerIdentity = useRef({ thread: activeThreadKey, draft: composerIdentity });
@@ -5093,8 +3855,6 @@ function ChatViewContent(props: ChatViewProps) {
     scheduleComposerFocus();
   };
   const useArtifactTemplateStable = useStableCallback(useArtifactTemplate);
-  // An MCP App's approved `ui/message`: queued like a typed message, so it
-  // never steers or interrupts a running turn.
   const sendAppMessage = async (text: string) => {
     if (!isServerThread || activeThreadId === null) {
       throw new Error("Messages from apps need a started thread.");
@@ -5116,6 +3876,7 @@ function ChatViewContent(props: ChatViewProps) {
   };
   const sendAppMessageStable = useStableCallback(sendAppMessage);
   const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
+  // SCIENT-FORK:START — a native queued run is edited through a Scient edit session.
   const beginEditingQueuedRun = (request: EditQueuedRunRequest) => {
     if (!activeThread || serverProjection === null) return;
     const run = serverProjection.runs.find(
@@ -5135,6 +3896,7 @@ function ChatViewContent(props: ChatViewProps) {
       .catch((cause) => setThreadError(activeThread.id, chatActionErrorMessage(cause)));
   };
   const beginEditingQueuedRunStable = useStableCallback(beginEditingQueuedRun);
+  // SCIENT-FORK:END
   const addTerminalContextToDraft = (selection: TerminalContextSelection) => {
     composerRef.current?.addTerminalContext(selection);
   };
@@ -5163,94 +3925,40 @@ function ChatViewContent(props: ChatViewProps) {
         storeEnsureTerminal(activeThreadRef, existingTerminalId, { open: true, active: true });
         return;
       }
-      if (!activeThreadId || activeTerminalTarget === null) return;
-      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
-      storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
-      void openTerminal({
-        environmentId,
-        input: buildProjectThreadTerminalOpenInput({
-          target: activeTerminalTarget,
-          threadId: activeThreadId,
-          terminalId,
-        }),
-      });
+      void terminalActions.launchTerminal({
+        place: (terminalId) => storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
+      })?.result;
       return;
     }
     setTerminalOpen(nextOpen);
   };
   const toggleTerminalVisibilityStable = useStableCallback(toggleTerminalVisibility);
   const splitTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
-    if (
-      !hasTerminalWriteAccess() ||
-      !activeThreadRef ||
-      hasReachedSplitLimit ||
-      !activeThreadId ||
-      activeTerminalTarget === null
-    ) {
-      return;
-    }
-    const terminalId = allocateTerminalId();
-    if (direction === "vertical") {
-      storeSplitTerminalVertical(activeThreadRef, terminalId);
-    } else {
-      storeSplitTerminal(activeThreadRef, terminalId);
-    }
-    setTerminalFocusRequestId((value) => value + 1);
-    void openTerminal({
-      environmentId,
-      input: buildProjectThreadTerminalOpenInput({
-        target: activeTerminalTarget,
-        threadId: activeThreadId,
-        terminalId,
-      }),
+    if (!activeThreadRef || hasReachedSplitLimit) return;
+    const launched = terminalActions.launchTerminal({
+      place: (terminalId) =>
+        direction === "vertical"
+          ? storeSplitTerminalVertical(activeThreadRef, terminalId)
+          : storeSplitTerminal(activeThreadRef, terminalId),
     });
+    if (!launched) return;
+    setTerminalFocusRequestId((value) => value + 1);
+    void launched.result;
   };
   const splitTerminalStable = useStableCallback(splitTerminal);
   const createNewTerminal = () => {
-    if (
-      !hasTerminalWriteAccess() ||
-      !activeThreadRef ||
-      !activeThreadId ||
-      activeTerminalTarget === null
-    )
-      return;
-    const terminalId = nextTerminalId(allocatableActiveTerminalIds);
-    storeNewTerminal(activeThreadRef, terminalId);
-    setTerminalFocusRequestId((value) => value + 1);
-    void openTerminal({
-      environmentId,
-      input: buildProjectThreadTerminalOpenInput({
-        target: activeTerminalTarget,
-        threadId: activeThreadId,
-        terminalId,
-      }),
+    if (!activeThreadRef) return;
+    const launched = terminalActions.launchTerminal({
+      place: (terminalId) => storeNewTerminal(activeThreadRef, terminalId),
     });
+    if (!launched) return;
+    setTerminalFocusRequestId((value) => value + 1);
+    void launched.result;
   };
   const createNewTerminalStable = useStableCallback(createNewTerminal);
   const closeTerminal = (terminalId: string) => {
-    if (!hasTerminalWriteAccess() || !activeThreadId || !activeThreadRef) return;
-    const fallbackExitWrite = () =>
-      writeTerminal({
-        environmentId,
-        input: { threadId: activeThreadId, terminalId, data: "exit\n" },
-      });
-    void (async () => {
-      const closeResult = await closeTerminalMutation({
-        environmentId,
-        input: {
-          threadId: activeThreadId,
-          terminalId,
-          deleteHistory: true,
-        },
-      });
-      if (
-        closeResult._tag === "Failure" &&
-        !isAtomCommandInterrupted(closeResult) &&
-        hasTerminalWriteAccess()
-      ) {
-        await fallbackExitWrite();
-      }
-    })();
+    if (!hasTerminalWriteAccess() || !activeThreadRef) return;
+    terminalActions.closeTerminalSession(terminalId);
     storeCloseTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   };
@@ -5293,39 +4001,20 @@ function ChatViewContent(props: ChatViewProps) {
     }
     setTerminalFocusRequestId((value) => value + 1);
 
-    const runtimeEnv = projectScriptRuntimeEnv({
-      project: {
-        cwd: activeProject.workspaceRoot,
-      },
-      worktreePath: targetWorktreePath,
+    const launched = terminalActions.launchTerminal({
+      place: (terminalId) =>
+        shouldCreateNewTerminal
+          ? storeNewTerminal(activeThreadRef, terminalId)
+          : storeSetActiveTerminal(activeThreadRef, terminalId),
+      ...(shouldCreateNewTerminal
+        ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
+        : { terminalId: baseTerminalId }),
+      location: { cwd: targetCwd, worktreePath: targetWorktreePath },
       ...(options?.env ? { extraEnv: options.env } : {}),
     });
-    const targetTerminalId = shouldCreateNewTerminal ? allocateTerminalId() : baseTerminalId;
-    const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
-      ? {
-          threadId: activeThreadId,
-          terminalId: targetTerminalId,
-          cwd: targetCwd,
-          ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-          env: runtimeEnv,
-          cols: SCRIPT_TERMINAL_COLS,
-          rows: SCRIPT_TERMINAL_ROWS,
-        }
-      : {
-          threadId: activeThreadId,
-          terminalId: targetTerminalId,
-          cwd: targetCwd,
-          ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-          env: runtimeEnv,
-        };
-
-    if (shouldCreateNewTerminal) {
-      storeNewTerminal(activeThreadRef, targetTerminalId);
-    } else {
-      storeSetActiveTerminal(activeThreadRef, targetTerminalId);
-    }
-
-    const openResult = await openTerminal({ environmentId, input: openTerminalInput });
+    if (!launched) return;
+    const targetTerminalId = launched.terminalId;
+    const openResult = await launched.result;
     if (openResult._tag === "Failure") {
       if (!isAtomCommandInterrupted(openResult)) {
         const error = squashAtomCommandFailure(openResult);
@@ -5337,15 +4026,11 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
-    if (!hasTerminalWriteAccess()) return;
-    const writeResult = await writeTerminal({
-      environmentId,
-      input: {
-        threadId: activeThreadId,
-        terminalId: targetTerminalId,
-        data: `${script.command}\r`,
-      },
-    });
+    const writeResult = await terminalActions.writeToTerminal(
+      targetTerminalId,
+      `${script.command}\r`,
+    );
+    if (!writeResult) return;
     if (writeResult._tag === "Failure") {
       if (!isAtomCommandInterrupted(writeResult)) {
         const error = squashAtomCommandFailure(writeResult);
@@ -5378,225 +4063,16 @@ function ChatViewContent(props: ChatViewProps) {
   };
   const runShellCommandStable = useStableCallback(runShellCommand);
 
-  const supportsProjectSettingsOverrides =
-    environmentById.get(environmentId)?.serverConfig?.environment.capabilities
-      .projectSettingsOverrides === true;
-  const persistProjectScripts = async (input: {
-    projectId: ProjectId;
-    projectCwd: string;
-    previousScripts: ReadonlyArray<ProjectScript>;
-    nextScripts: ReadonlyArray<ProjectScript>;
-    keybinding: NewProjectScriptInput["keybinding"];
-    keybindingCommand: KeybindingCommand | null;
-  }): Promise<AtomCommandResult<void, unknown>> => {
-    const previousKeybinding = keybindingValueForCommand(
-      appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.keybindings ?? [],
-      input.keybindingCommand,
-    );
-    const isDeletingScript = !input.nextScripts.some(
-      (script) => commandForProjectScript(script.id) === input.keybindingCommand,
-    );
-    const changesKeybinding =
-      input.keybinding !== undefined &&
-      (input.keybinding?.trim() || null) !== previousKeybinding &&
-      (!isDeletingScript || readEnvironmentScope(environmentId, AuthSettingsWriteScope));
-    if (changesKeybinding && !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      return AsyncResult.failure(
-        Cause.fail(
-          new EnvironmentAuthorizationError({
-            requiredScope: AuthSettingsWriteScope,
-            message: "This connection cannot change keyboard shortcuts.",
-          }),
-        ),
-      );
-    }
-    const keybindingRule = changesKeybinding
-      ? decodeProjectScriptKeybindingRule({
-          keybinding: input.keybinding,
-          command: input.keybindingCommand,
-        })
-      : null;
-    const updateResult = mapAtomCommandResult(
-      await updateProjectScriptSettings({
-        environmentId,
-        input: {
-          // The canonical key on servers that understand it; the legacy
-          // per-project map is still translated on older ones.
-          patch: supportsProjectSettingsOverrides
-            ? {
-                projectSettingsOverrides: {
-                  [input.projectId]: {
-                    ...settings.projectSettingsOverrides[input.projectId],
-                    defaultProjectScripts: input.nextScripts,
-                  },
-                },
-              }
-            : {
-                projectScriptOverrides: {
-                  [input.projectId]: input.nextScripts,
-                },
-              },
-        },
-      }),
-      () => undefined,
-    );
-    if (updateResult._tag === "Failure") {
-      return updateResult;
-    }
-
-    if (!changesKeybinding) return updateResult;
-    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      return AsyncResult.failure(
-        Cause.fail(
-          new EnvironmentAuthorizationError({
-            requiredScope: AuthSettingsWriteScope,
-            message: isDeletingScript
-              ? "The script was deleted, but its keyboard shortcut could not be removed because permission changed."
-              : "The script was saved, but this connection can no longer change keyboard shortcuts.",
-          }),
-        ),
-      );
-    }
-
-    const scriptId = input.keybindingCommand
-      ? projectScriptIdFromCommand(input.keybindingCommand)
-      : null;
-    if (!keybindingRule && !input.previousScripts.some((script) => script.id === scriptId)) {
-      return updateResult;
-    }
-    const retainedElsewhere =
-      !input.nextScripts.some((script) => script.id === scriptId) &&
-      (settings.defaultProjectScripts.some((script) => script.id === scriptId) ||
-        Object.entries(settings.projectSettingsOverrides).some(
-          ([projectId, entry]) =>
-            projectId !== input.projectId &&
-            entry.defaultProjectScripts?.some((script) => script.id === scriptId),
-        ) ||
-        allProjects.some(
-          (other) =>
-            other.environmentId === environmentId &&
-            other.id !== input.projectId &&
-            resolveProjectScripts(settings, other).some((script) => script.id === scriptId),
-        ));
-    if (!keybindingRule && retainedElsewhere) return updateResult;
-
-    const previousRules = (
-      environmentById.get(environmentId)?.serverConfig?.keybindings ?? []
-    ).flatMap((binding) => {
-      if (binding.command !== input.keybindingCommand || binding.whenAst) return [];
-      const previous = decodeProjectScriptKeybindingRule({
-        keybinding: keybindingValueForCommand([binding], input.keybindingCommand),
-        command: input.keybindingCommand,
-      });
-      return previous ? [previous] : [];
-    });
-    const previous = previousRules.at(-1);
-    for (const rule of keybindingRule ? previousRules.slice(0, -1) : previousRules) {
-      const result = await removeKeybinding({ environmentId, input: rule });
-      if (result._tag === "Failure") return mapAtomCommandResult(result, () => undefined);
-    }
-    return keybindingRule
-      ? mapAtomCommandResult(
-          await upsertKeybinding({
-            environmentId,
-            input:
-              previous && previous.key !== keybindingRule.key
-                ? { ...keybindingRule, replace: previous }
-                : keybindingRule,
-          }),
-          () => undefined,
-        )
-      : updateResult;
-  };
-  const saveProjectScript = async (
-    input: NewProjectScriptInput,
-  ): Promise<AtomCommandResult<void, unknown>> => {
-    if (!activeProject) {
-      return AsyncResult.success(undefined);
-    }
-    const nextId = nextProjectScriptId(
-      input.name,
-      activeProjectScripts.map((script) => script.id),
-    );
-    const nextScript = buildProjectScript(nextId, input);
-    const nextScripts = [
-      ...activeProjectScripts.map((script) => releaseClaimedRoles(script, input)),
-      nextScript,
-    ];
-
-    return persistProjectScripts({
-      projectId: activeProject.id,
-      projectCwd: activeProject.workspaceRoot,
-      previousScripts: activeProjectScripts,
-      nextScripts,
-      keybinding: input.keybinding,
-      keybindingCommand: commandForProjectScript(nextId),
-    });
-  };
-  const saveProjectScriptStable = useStableCallback(saveProjectScript);
-  const updateProjectScript = async (
-    scriptId: string,
-    input: NewProjectScriptInput,
-  ): Promise<AtomCommandResult<void, unknown>> => {
-    if (!activeProject) {
-      return AsyncResult.success(undefined);
-    }
-    const existingScript = activeProjectScripts.find((script) => script.id === scriptId);
-    if (!existingScript) {
-      return AsyncResult.failure(Cause.fail(new Error("Script not found.")));
-    }
-
-    const updatedScript = buildProjectScript(existingScript.id, input);
-    const nextScripts = activeProjectScripts.map((script) =>
-      script.id === scriptId ? updatedScript : releaseClaimedRoles(script, input),
-    );
-
-    return persistProjectScripts({
-      projectId: activeProject.id,
-      projectCwd: activeProject.workspaceRoot,
-      previousScripts: activeProjectScripts,
-      nextScripts,
-      keybinding: input.keybinding,
-      keybindingCommand: commandForProjectScript(scriptId),
-    });
-  };
-  const updateProjectScriptStable = useStableCallback(updateProjectScript);
-  const deleteProjectScript = async (
-    scriptId: string,
-  ): Promise<AtomCommandResult<void, unknown>> => {
-    if (!activeProject) {
-      return AsyncResult.success(undefined);
-    }
-    const nextScripts = activeProjectScripts.filter((script) => script.id !== scriptId);
-
-    const deletedName = activeProjectScripts.find((s) => s.id === scriptId)?.name;
-
-    const result = await persistProjectScripts({
-      projectId: activeProject.id,
-      projectCwd: activeProject.workspaceRoot,
-      previousScripts: activeProjectScripts,
-      nextScripts,
-      keybinding: null,
-      keybindingCommand: commandForProjectScript(scriptId),
-    });
-    if (result._tag === "Success") {
-      toastManager.add({
-        type: "success",
-        title: `Deleted action "${deletedName ?? "Unknown"}"`,
-      });
-    } else if (!isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not delete action",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
-        }),
-      );
-    }
-    return result;
-  };
-  const deleteProjectScriptStable = useStableCallback(deleteProjectScript);
+  const {
+    saveProjectScript: saveProjectScriptStable,
+    updateProjectScript: updateProjectScriptStable,
+    deleteProjectScript: deleteProjectScriptStable,
+  } = useProjectScriptEditing({
+    environmentId,
+    project: activeProject,
+    scripts: activeProjectScripts,
+    settings,
+  });
 
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
     if (mode === runtimeMode) return;
@@ -5720,87 +4196,18 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().open(activeThreadRef, "device");
   };
   const addDeviceSurfaceStable = useStableCallback(addDeviceSurface);
-  // A device the agent opens floats over chat like an agent-driven browser,
-  // or becomes a panel tab when floating previews are off. Sessions opened by
-  // another client arrive the same way; sheet layouts get neither. The first
-  // snapshot is a baseline: persisted tabs restore themselves, and existing
-  // sessions must not resurrect closed tabs. A session whose device summary
-  // has not arrived yet stays out of the baseline so a later snapshot opens it.
-  const autoShowFloatingPreview = useClientSettings(selectAutoShowFloatingPreview);
-  const previousDeviceSessions = useRef(new Map<string, Set<string>>());
-  useEffect(() => {
-    if (!activeThreadRef || !deviceStateLoaded) return;
-    const threadKey = `${activeThreadRef.environmentId}:${activeThreadRef.threadId}`;
-    const sessions = deviceState.sessions.filter(
-      (session) => session.threadId === activeThreadRef.threadId,
-    );
-    const key = (session: (typeof sessions)[number]) => `${session.hostId}:${session.deviceId}`;
-    const deviceFor = (session: (typeof sessions)[number]) =>
-      deviceState.devices.find(
-        (entry) => entry.hostId === session.hostId && entry.id === session.deviceId,
-      );
-    const previous = previousDeviceSessions.current.get(threadKey);
-    previousDeviceSessions.current.set(
-      threadKey,
-      new Set(sessions.filter((session) => deviceFor(session) !== undefined).map(key)),
-    );
-    if (!previous || shouldUsePlanSidebarSheet) return;
-    for (const session of sessions) {
-      if (previous.has(key(session))) continue;
-      const device = deviceFor(session);
-      if (!device) continue;
-      const target = {
-        hostId: session.hostId,
-        deviceId: session.deviceId,
-        platform: device.platform,
-        name: device.name,
-      };
-      if (autoShowFloatingPreview) {
-        usePreviewMiniPlayerStore.getState().open(activeThreadRef, { kind: "device", ...target });
-        continue;
-      }
-      const existing = useRightPanelStore
-        .getState()
-        .byThreadKey[scopedThreadKey(activeThreadRef)]?.surfaces.some(
-          (surface) =>
-            surface.kind === "device" &&
-            surface.target?.hostId === session.hostId &&
-            surface.target.deviceId === session.deviceId,
-        );
-      if (existing) continue;
-      useRightPanelStore.getState().openDevice(activeThreadRef, target, true);
-    }
-  }, [
-    activeThreadRef,
-    autoShowFloatingPreview,
-    deviceStateLoaded,
-    shouldUsePlanSidebarSheet,
-    deviceState.sessions,
-    deviceState.devices,
-  ]);
-  // SCIENT-FORK:START — preserve browser-only suppression on the native preview path.
-  useScientBrowserPresentation({
+  useAgentOpenedPreviews({
     threadRef: activeThreadRef,
-    serverBrowserAvailable: activeEnvironmentServerBrowser,
+    deviceState,
+    deviceStateLoaded,
     previewState: activePreviewState,
-    autoShowFloatingPreview,
-    surfaces: rightPanelState.surfaces,
+    serverBrowserAvailable: activeEnvironmentServerBrowser,
+    panelSurfaces: rightPanelState.surfaces,
+    // SCIENT-FORK:START — the floating player holds tagged content (browser, device or figure).
+    miniPlayerSource: activePreviewMiniPlayer?.content ?? null,
+    // SCIENT-FORK:END
+    sheetLayout: shouldUsePlanSidebarSheet,
   });
-  // SCIENT-FORK:END
-  // A floating device follows its session: once the agent or another client
-  // closes the device there is nothing left to stream.
-  useEffect(() => {
-    if (!activeThreadRef || !deviceStateLoaded) return;
-    const source = activePreviewMiniPlayer?.content;
-    if (source?.kind !== "device") return;
-    const sessionStillExists = deviceState.sessions.some(
-      (session) =>
-        session.threadId === activeThreadRef.threadId &&
-        session.hostId === source.hostId &&
-        session.deviceId === source.deviceId,
-    );
-    if (!sessionStillExists) usePreviewMiniPlayerStore.getState().close(activeThreadRef);
-  }, [activePreviewMiniPlayer, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
   const openFileSurface = (relativePath: string) => {
     runAfterPendingFileSave(`file:${relativePath}`, () => {
       openFileSurfaceNow(relativePath);
@@ -5813,267 +4220,48 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:END
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
-  const persistedLinkedThreadPullRequest = isServerThread
-    ? (activeThreadShell?.linkedPullRequest ?? activeThread?.linkedPullRequest ?? null)
-    : (activeThread?.linkedPullRequest ?? null);
   const activeProjectRepository = sourceControlRepositorySelector(
     activeProject?.repositoryIdentity,
   );
-  const persistedLinkedThreadPullRequestStatus = useLinkedThreadPullRequest(
-    activeThreadRef?.environmentId ?? null,
-    persistedLinkedThreadPullRequest,
-  );
-  const replacementLinkedThreadPullRequest = useMemo(() => {
-    const detected = gitStatusQuery.data?.pr;
-    const threadBranch = activeThread?.branch;
-    const projectId = activeProject?.id;
-    if (
-      persistedLinkedThreadPullRequest === null ||
-      (persistedLinkedThreadPullRequestStatus?.pr.state !== "merged" &&
-        persistedLinkedThreadPullRequestStatus?.pr.state !== "closed") ||
-      gitStatusQuery.data?.refName !== threadBranch ||
-      detected?.state !== "open" ||
-      detected.headRef !== threadBranch ||
-      projectId === undefined ||
-      activeProjectRepository === null ||
-      (persistedLinkedThreadPullRequest.projectId === projectId &&
-        persistedLinkedThreadPullRequest.repository.toLowerCase() ===
-          activeProjectRepository.toLowerCase() &&
-        persistedLinkedThreadPullRequest.number === detected.number)
-    ) {
-      return null;
-    }
-    return {
-      projectId,
-      repository: activeProjectRepository,
-      number: detected.number,
-      url: detected.url,
-    };
-  }, [
-    activeProject?.id,
-    activeProjectRepository,
-    activeThread?.branch,
-    gitStatusQuery.data,
-    persistedLinkedThreadPullRequest,
-    persistedLinkedThreadPullRequestStatus?.pr.state,
-  ]);
-  const linkedThreadPullRequest =
-    replacementLinkedThreadPullRequest ?? persistedLinkedThreadPullRequest;
-  const linkedThreadPullRequestKey = linkedThreadPullRequest
-    ? JSON.stringify([
-        linkedThreadPullRequest.projectId,
-        linkedThreadPullRequest.repository,
-        linkedThreadPullRequest.number,
-      ])
-    : null;
-  const threadPrRelinkKeysRef = useRef(new Map<string, string>());
-  const threadPrRelinkWriteRef = useRef(Promise.resolve());
-  useEffect(() => {
-    if (!isServerThread || activeThreadKey === null || activeThreadRef === null) {
-      return;
-    }
-    if (replacementLinkedThreadPullRequest === null) {
-      threadPrRelinkKeysRef.current.delete(activeThreadKey);
-      return;
-    }
-    const relinkKey = `${replacementLinkedThreadPullRequest.projectId}:${replacementLinkedThreadPullRequest.repository}#${replacementLinkedThreadPullRequest.number}`;
-    if (threadPrRelinkKeysRef.current.get(activeThreadKey) === relinkKey) return;
-    threadPrRelinkKeysRef.current.set(activeThreadKey, relinkKey);
-    const openSurface = selectActiveRightPanelSurface(
-      useRightPanelStore.getState().byThreadKey,
-      activeThreadRef,
-    );
-    if (
-      openSurface?.kind === "pull-request" &&
-      persistedLinkedThreadPullRequest !== null &&
-      openSurface.projectId === persistedLinkedThreadPullRequest.projectId &&
-      openSurface.repository.toLowerCase() ===
-        persistedLinkedThreadPullRequest.repository.toLowerCase() &&
-      openSurface.number === persistedLinkedThreadPullRequest.number
-    ) {
-      useRightPanelStore
-        .getState()
-        .openPullRequest(activeThreadRef, replacementLinkedThreadPullRequest);
-    }
-
-    threadPrRelinkWriteRef.current = threadPrRelinkWriteRef.current.then(async () => {
-      if (threadPrRelinkKeysRef.current.get(activeThreadKey) !== relinkKey) return;
-      const result = await updateThreadMetadata({
-        environmentId: activeThreadRef.environmentId,
-        input: {
-          threadId: activeThreadRef.threadId,
-          linkedPullRequest: replacementLinkedThreadPullRequest,
-        },
-      });
-      if (threadPrRelinkKeysRef.current.get(activeThreadKey) !== relinkKey) return;
-      if (result._tag !== "Failure") return;
-      threadPrRelinkKeysRef.current.delete(activeThreadKey);
-      if (isAtomCommandInterrupted(result)) return;
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to update the thread pull request",
-          description: chatActionErrorMessage(squashAtomCommandFailure(result)),
-        }),
-      );
-    });
-  }, [
-    activeThreadKey,
-    activeThreadRef,
-    isServerThread,
-    persistedLinkedThreadPullRequest,
-    replacementLinkedThreadPullRequest,
-    updateThreadMetadata,
-  ]);
-  const hasLinkedPullRequestDetail = persistedLinkedThreadPullRequest !== null;
+  const {
+    linked: linkedThreadPullRequest,
+    linkedKey: linkedThreadPullRequestKey,
+    hasDetail: hasLinkedPullRequestDetail,
+  } = useThreadLinkedPullRequest({
+    serverThreadRef: isServerThread ? activeThreadRef : null,
+    environmentId: activeThreadRef?.environmentId ?? null,
+    persisted: isServerThread
+      ? (activeThreadShell?.linkedPullRequest ?? activeThread?.linkedPullRequest ?? null)
+      : (activeThread?.linkedPullRequest ?? null),
+    projectId: activeProject?.id ?? null,
+    projectRepository: activeProjectRepository,
+    threadBranch: activeThread?.branch ?? null,
+    gitStatus: gitStatusQuery.data ?? null,
+  });
   const proactivePullRequestsKey = pullRequestsSurfaceAvailable
     ? JSON.stringify(
         visiblePullRequests.map((link) => [link.host, link.repository, link.number]).sort(),
       )
     : linkedThreadPullRequestKey;
-  const proactivePanelObservationRef = useRef<ReturnType<
-    typeof observeProactivePanelUserChoice
-  > | null>(null);
-  const observedThreadPullRequestRef = useRef<{
-    readonly threadKey: string;
-    readonly reference: ThreadLinkedPullRequest | null;
-  } | null>(null);
-  useEffect(() => {
-    if (!isServerThread || activeThreadKey === null || activeThreadRef === null) {
-      proactivePanelObservationRef.current = null;
-      observedThreadPullRequestRef.current = null;
-      return;
-    }
-    const panels = useRightPanelStore.getState();
-    const observation = observeProactivePanelUserChoice(proactivePanelObservationRef.current, {
-      threadKey: activeThreadKey,
-      runningTurnId: activeRunningTurnId,
-      userActionRevision: panels.getUserActionRevision(activeThreadRef),
-    });
-    proactivePanelObservationRef.current = observation;
-    const {
-      runningTurnId: previousRunningTurnId,
-      targetKey: previousTargetKey,
-      userActionRevision,
-    } = observation;
-    const openSurface = selectActiveRightPanelSurface(panels.byThreadKey, activeThreadRef);
-    const previousPullRequest = observedThreadPullRequestRef.current;
-    observedThreadPullRequestRef.current = {
-      threadKey: activeThreadKey,
-      reference: linkedThreadPullRequest,
-    };
-    const followSelectedPullRequest =
-      previousPullRequest?.threadKey === activeThreadKey &&
-      shouldRetargetThreadPullRequestPanel(
-        previousPullRequest.reference,
-        linkedThreadPullRequest,
-        openSurface,
-      );
-    // Following the selected linked PR does not open an unrelated panel, so it
-    // remains available with proactive panels off. It still respects a later choice.
-    if (followSelectedPullRequest && linkedThreadPullRequest !== null) {
-      panels.openProactive(
-        activeThreadRef,
-        pullRequestSurface(linkedThreadPullRequest),
-        userActionRevision,
-      );
-    }
-    if (!clientSettingsHydrated) return;
-
-    const proactivePanelsEnabled = settings.proactivePanelsEnabled && !shouldUsePlanSidebarSheet;
-    const eligibleLink =
-      proactivePanelsEnabled &&
-      shouldOpenProactivePullRequest(previousTargetKey, proactivePullRequestsKey);
-    const shouldDeferLink = eligibleLink && !pullRequestsCapabilityKnown;
-    proactivePanelObservationRef.current = {
-      ...observation,
-      targetKey: shouldDeferLink ? (previousTargetKey ?? null) : proactivePullRequestsKey,
-    };
-    if (eligibleLink && pullRequestsCapabilityKnown) {
-      if (
-        pullRequestsSurfaceAvailable &&
-        (visiblePullRequestCount > 1 || !hasLinkedPullRequestDetail || !supportsPullRequests)
-      ) {
-        panels.openProactive(
-          activeThreadRef,
-          { id: "pull-requests", kind: "pull-requests" },
-          userActionRevision,
-        );
-      } else if (
-        !followSelectedPullRequest &&
-        supportsPullRequests &&
-        linkedThreadPullRequest !== null
-      ) {
-        panels.openProactive(
-          activeThreadRef,
-          pullRequestSurface(linkedThreadPullRequest),
-          userActionRevision,
-        );
-      }
-    }
-    if (threadDetailLoading) return;
-
-    const settledTurnId = latestRunSettled ? (activeLatestRun?.runId ?? null) : null;
-    const newlyCompletedTurnId = shouldOpenProactiveTurnDiff({
-      previousRunningTurnId,
-      runningTurnId: activeRunningTurnId,
-      settledTurnId,
-      turnCompleted: activeLatestRun?.status === "completed",
-    })
-      ? settledTurnId
-      : null;
-    const eligibleCompletion =
-      proactivePanelsEnabled &&
-      newlyCompletedTurnId !== null &&
-      !(
-        proactivePullRequestsKey !== null &&
-        (!pullRequestsCapabilityKnown || supportsPullRequests || pullRequestsSurfaceAvailable)
-      );
-    const completedCheckpoint = eligibleCompletion
-      ? turnDiffSummaries.find((checkpoint) => checkpoint.runId === newlyCompletedTurnId)
-      : undefined;
-    const diffAction = eligibleCompletion
-      ? resolveProactiveTurnDiffAction({
-          checkpoint: completedCheckpoint,
-          isGitRepo: gitStatusQuery.data?.isRepo,
-          activeSurfaceKind: openSurface?.kind ?? null,
-        })
-      : "ignore";
-    proactivePanelObservationRef.current = {
-      ...proactivePanelObservationRef.current,
-      // Preserve first-entry eligibility while capabilities, checkpoint or repository load.
-      runningTurnId:
-        diffAction === "defer" || shouldDeferLink ? previousRunningTurnId : activeRunningTurnId,
-    };
-    if (diffAction !== "open" || newlyCompletedTurnId === null) return;
-    if (!panels.openProactive(activeThreadRef, { id: "diff", kind: "diff" }, userActionRevision)) {
-      return;
-    }
-    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
-    onDiffPanelOpen?.();
-  }, [
-    turnDiffSummaries,
-    activeLatestRun?.runId,
-    activeLatestRun?.status,
-    activeRunningTurnId,
-    activeThreadKey,
-    activeThreadRef,
-    clientSettingsHydrated,
-    gitStatusQuery.data?.isRepo,
-    isServerThread,
+  useProactivePanels({
+    threadRef: isServerThread ? activeThreadRef : null,
+    enabled: settings.proactivePanelsEnabled && !shouldUsePlanSidebarSheet,
+    settingsHydrated: clientSettingsHydrated,
+    threadDetailLoading,
+    runningTurnId: activeRunningTurnId,
+    latestRun: activeLatestRun,
     latestRunSettled,
-    linkedThreadPullRequest,
-    proactivePullRequestsKey,
+    turnDiffSummaries,
+    isGitRepo: gitStatusQuery.data?.isRepo,
+    linkedPullRequest: linkedThreadPullRequest,
     hasLinkedPullRequestDetail,
-    onDiffPanelOpen,
+    pullRequestsKey: proactivePullRequestsKey,
     pullRequestsCapabilityKnown,
+    supportsPullRequests,
     pullRequestsSurfaceAvailable,
     visiblePullRequestCount,
-
-    settings.proactivePanelsEnabled,
-    shouldUsePlanSidebarSheet,
-    threadDetailLoading,
-  ]);
+    onDiffPanelOpen,
+  });
   const closePreviewPanel = () => {
     if (!activeThreadRef) return;
     runAfterPendingFileSave(null, () => {
@@ -6110,53 +4298,38 @@ function ChatViewContent(props: ChatViewProps) {
   };
   const togglePreviewPanelStable = useStableCallback(togglePreviewPanel);
   const addTerminalSurface = () => {
-    if (
-      !hasTerminalWriteAccess() ||
-      !activeThreadRef ||
-      !activeThreadId ||
-      activeTerminalTarget === null
-    ) {
-      return;
-    }
+    if (!activeThreadRef) return;
+    // SCIENT-FORK:START — a pending file save settles before a terminal tab takes over.
     runAfterPendingFileSave(null, () => {
-      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
-      useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
-      void openTerminal({
-        environmentId: activeThreadRef.environmentId,
-        input: buildProjectThreadTerminalOpenInput({
-          target: activeTerminalTarget,
-          threadId: activeThreadId,
-          terminalId,
-        }),
+      const launched = terminalActions.launchTerminal({
+        place: (terminalId) =>
+          useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId),
       });
+      if (!launched) return;
+      setTerminalFocusRequestId((value) => value + 1);
+      void launched.result;
     });
+    // SCIENT-FORK:END
   };
   const addTerminalSurfaceStable = useStableCallback(addTerminalSurface);
   const splitPanelTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
     if (
-      !hasTerminalWriteAccess() ||
       !activeThreadRef ||
-      !activeThreadId ||
-      activeTerminalTarget === null ||
       activeRightPanelSurface?.kind !== "terminal" ||
       activeRightPanelSurface.terminalIds.length >= MAX_TERMINALS_PER_GROUP
     ) {
       return;
     }
-    const terminalId = nextTerminalId(allocatableActiveTerminalIds);
-    useRightPanelStore
-      .getState()
-      .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
-    setTerminalFocusRequestId((value) => value + 1);
-    void openTerminal({
-      environmentId: activeThreadRef.environmentId,
-      input: buildProjectThreadTerminalOpenInput({
-        target: activeTerminalTarget,
-        threadId: activeThreadId,
-        terminalId,
-      }),
+    const surfaceId = activeRightPanelSurface.id;
+    const launched = terminalActions.launchTerminal({
+      place: (terminalId) =>
+        useRightPanelStore
+          .getState()
+          .splitTerminal(activeThreadRef, surfaceId, terminalId, direction),
     });
+    if (!launched) return;
+    setTerminalFocusRequestId((value) => value + 1);
+    void launched.result;
   };
   const splitPanelTerminalStable = useStableCallback(splitPanelTerminal);
   const splitPanelTerminalVertical = () => {
@@ -6178,10 +4351,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeRightPanelSurface?.kind !== "terminal"
     )
       return;
-    void closeTerminalMutation({
-      environmentId: activeThreadRef.environmentId,
-      input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
-    });
+    terminalActions.closeTerminalSession(terminalId);
     storeCloseTerminal(activeThreadRef, terminalId);
     useRightPanelStore
       .getState()
@@ -6239,7 +4409,6 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().toggleThreadPanel(activeThreadRef, threadPanelPresentation);
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
-  // A thread started for a link the OS opened shows its browser maximized, like a browser window.
   useEffect(() => {
     if (!canMaximizeRightPanel) return;
     if (useRightPanelStore.getState().consumeMaximizeRequest(routeThreadRef)) {
@@ -6251,77 +4420,17 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
   };
   const toggleRightPanelMaximizedStable = useStableCallback(toggleRightPanelMaximized);
-  const cleanupRightPanelSurfaces = (surfaces: readonly RightPanelSurface[]) => {
-    if (!activeThreadRef) return;
-    for (const surface of surfaces) {
-      // Without preview access only the local surface goes away. The
-      // server record is in-memory bookkeeping, not a live view, and stays
-      // listed until a client with the scope closes it or the server restarts.
-      if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
-        void closePreviewSession({
-          closePreview,
-          snapshot: activePreviewState.sessions[surface.resourceId] ?? null,
-          tabId: surface.resourceId,
-          threadRef: activeThreadRef,
-        });
-      }
-      if (
-        surface.kind === "terminal" &&
-        readEnvironmentScope(activeThreadRef.environmentId, AuthTerminalOperateScope)
-      ) {
-        for (const terminalId of surface.terminalIds) {
-          storeCloseTerminal(activeThreadRef, terminalId);
-          void closeTerminalMutation({
-            environmentId: activeThreadRef.environmentId,
-            input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
-          });
-        }
-      }
-    }
-  };
-  // SCIENT-FORK:START — compute-owned tabs stop their compute context before closing.
+  // SCIENT-FORK:START — compute-owned tabs stop their compute context before they close, and a
+  // file edited while that happens keeps its tab.
   const closeComputeOwnedSurfaces = useCloseComputeOwnedSurfaces({
     activeThreadRef,
     activeWorkspaceRoot,
     commands: computeSessionCommands,
   });
-  // SCIENT-FORK:END
-  const closeAfterAgentBrowserConfirmation = (
-    surfaces: readonly RightPanelSurface[],
-    closeSurfaces: () => void,
-  ) => {
-    const message = agentControlledBrowserCloseConfirmation(
-      surfaces,
-      activePreviewState.desktopByTabId,
-    );
-    if (!message) {
-      closeSurfaces();
-      return;
-    }
-    const localApi = readLocalApi();
-    if (!localApi) return;
-    void localApi.dialogs.confirm(message, { variant: "destructive" }).then(
-      (confirmed) => {
-        if (confirmed) closeSurfaces();
-      },
-      () => undefined,
-    );
-  };
-  const syncActivePreviewSurface = () => {
-    if (!activeThreadRef) return;
-    const nextActiveSurface = selectActiveRightPanelSurface(
-      useRightPanelStore.getState().byThreadKey,
-      activeThreadRef,
-    );
-    if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
-      setActivePreviewTab(activeThreadRef, nextActiveSurface.resourceId);
-    }
-  };
-  const finishRightPanelSurfaceClose = (surfaces: readonly RightPanelSurface[]) => {
-    if (!activeThreadRef) return;
-    void closeComputeOwnedSurfaces(surfaces)
-      .then((closed) => {
-        if (!closed) return;
+  const prepareRightPanelSurfaceClose = (surfaces: readonly RightPanelSurface[]) =>
+    closeComputeOwnedSurfaces(surfaces).then(
+      (closed) => {
+        if (!closed) return false;
         const pendingSurfaceIds =
           markdownDepartureOptions.getPendingSurfaceIds?.() ?? pendingFileSurfaceIds;
         const latestPendingFiles =
@@ -6338,23 +4447,11 @@ function ChatViewContent(props: ChatViewProps) {
             title: "File kept open",
             description: "The file changed while its compute session was stopping.",
           });
-          return;
+          return false;
         }
-        cleanupRightPanelSurfaces(surfaces);
-        const store = useRightPanelStore.getState();
-        const activeId = selectThreadRightPanelState(
-          store.byThreadKey,
-          activeThreadRef,
-        ).activeSurfaceId;
-        const ordered = surfaces.toSorted(
-          (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
-        );
-        for (const surface of ordered) {
-          store.closeSurface(activeThreadRef, surface.id);
-        }
-        syncActivePreviewSurface();
-      })
-      .catch((error: unknown) => {
+        return true;
+      },
+      (error: unknown) => {
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -6363,74 +4460,48 @@ function ChatViewContent(props: ChatViewProps) {
               error instanceof Error ? error.message : "The panel close could not be completed.",
           }),
         );
-      });
-  };
-  const closeRightPanelSurface = (surface: RightPanelSurface) => {
-    if (!activeThreadRef) return;
-    runAfterPendingSurfaceSave([surface.id], () => {
-      const finishClose = () => finishRightPanelSurfaceClose([surface]);
-      if (surface.kind === "preview") {
-        closeAfterAgentBrowserConfirmation([surface], finishClose);
-        return;
-      }
-      if (
-        surface.kind !== "terminal" ||
-        !readEnvironmentScope(activeThreadRef.environmentId, AuthTerminalOperateScope)
-      ) {
-        finishClose();
-        return;
-      }
-      const activeLabel =
-        activeTerminalLabelsById.get(surface.activeTerminalId) ??
-        getTerminalLabel(surface.activeTerminalId);
-      const otherLabels = surface.terminalIds
-        .filter((terminalId) => terminalId !== surface.activeTerminalId)
-        .map(
-          (terminalId) => activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
-        );
-      void confirmTerminalClose([activeLabel, ...otherLabels]).then((confirmed) => {
-        if (confirmed) finishClose();
-      });
-    });
-  };
-  const closeRightPanelSurfaceStable = useStableCallback(closeRightPanelSurface);
-  const closeOtherRightPanelSurfaces = (surface: RightPanelSurface) => {
-    if (!activeThreadRef) return;
-    const surfaces = rightPanelState.surfaces.filter((entry) => entry.id !== surface.id);
-    runAfterPendingSurfaceSave(
-      surfaces.map((entry) => entry.id),
-      () => {
-        const finishClose = () => finishRightPanelSurfaceClose(surfaces);
-        closeAfterAgentBrowserConfirmation(surfaces, finishClose);
+        return false;
       },
     );
-  };
+  // SCIENT-FORK:END
+  const {
+    closeSurface: closeRightPanelSurfaceNow,
+    closeOtherSurfaces: closeOtherRightPanelSurfacesNow,
+    closeSurfacesToRight: closeRightPanelSurfacesToRightNow,
+    closeAllSurfaces: closeAllRightPanelSurfacesNow,
+  } = useRightPanelSurfaceClose({
+    threadRef: activeThreadRef,
+    terminalLabelsById: activeTerminalLabelsById,
+    // SCIENT-FORK:START
+    prepareClose: prepareRightPanelSurfaceClose,
+    // SCIENT-FORK:END
+  });
+  // SCIENT-FORK:START — a surface with a pending save finishes saving before it closes.
+  const closeRightPanelSurface = (surface: RightPanelSurface) =>
+    runAfterPendingSurfaceSave([surface.id], () => closeRightPanelSurfaceNow(surface));
+  const closeRightPanelSurfaceStable = useStableCallback(closeRightPanelSurface);
+  const closeOtherRightPanelSurfaces = (surface: RightPanelSurface) =>
+    runAfterPendingSurfaceSave(
+      rightPanelState.surfaces.filter((entry) => entry.id !== surface.id).map((entry) => entry.id),
+      () => closeOtherRightPanelSurfacesNow(surface),
+    );
   const closeOtherRightPanelSurfacesStable = useStableCallback(closeOtherRightPanelSurfaces);
   const closeRightPanelSurfacesToRight = (surface: RightPanelSurface) => {
-    if (!activeThreadRef) return;
     const surfaceIndex = rightPanelState.surfaces.findIndex((entry) => entry.id === surface.id);
     if (surfaceIndex < 0) return;
-    const surfaces = rightPanelState.surfaces.slice(surfaceIndex + 1);
     runAfterPendingSurfaceSave(
-      surfaces.map((entry) => entry.id),
-      () => {
-        const finishClose = () => finishRightPanelSurfaceClose(surfaces);
-        closeAfterAgentBrowserConfirmation(surfaces, finishClose);
-      },
+      rightPanelState.surfaces.slice(surfaceIndex + 1).map((entry) => entry.id),
+      () => closeRightPanelSurfacesToRightNow(surface),
     );
   };
   const closeRightPanelSurfacesToRightStable = useStableCallback(closeRightPanelSurfacesToRight);
-  const closeAllRightPanelSurfaces = () => {
-    if (!activeThreadRef) return;
+  const closeAllRightPanelSurfaces = () =>
     runAfterPendingSurfaceSave(
       rightPanelState.surfaces.map((surface) => surface.id),
-      () => {
-        const finishClose = () => finishRightPanelSurfaceClose(rightPanelState.surfaces);
-        closeAfterAgentBrowserConfirmation(rightPanelState.surfaces, finishClose);
-      },
+      () => closeAllRightPanelSurfacesNow(),
     );
-  };
   const closeAllRightPanelSurfacesStable = useStableCallback(closeAllRightPanelSurfaces);
+  // SCIENT-FORK:END
   const moveRightPanelSurface = (surfaceId: string, toIndex: number) => {
     if (activeThreadRef)
       useRightPanelStore.getState().moveSurface(activeThreadRef, surfaceId, toIndex);
@@ -6536,6 +4607,12 @@ function ChatViewContent(props: ChatViewProps) {
   // follow without removing reserved room. Not extracted: these refs are shared with
   // upstream's anchor callbacks below and ChatView has no browser harness.
   const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
+  const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
+  const anchorUserScrollGenerationRef = useRef(0);
+  const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
+  // State mirror of the follow mode refs. The timeline never pins to its end;
+  // this flag only lets tool activity release the first message's anchor.
+  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const {
     showScrollToBottom,
     unreadBelowCount,
@@ -6564,7 +4641,6 @@ function ChatViewContent(props: ChatViewProps) {
       liveFollowUserScrollGenerationRef.current = null;
     },
   });
-  const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
   const [timelinePositioningPending, setTimelinePositioningPending] = useState(false);
   // One owner for the send follow: which prompt's response is followed, settled by that
   // prompt's own V2 run (chat/responseFollow.ts).
@@ -6578,14 +4654,9 @@ function ChatViewContent(props: ChatViewProps) {
   const followSentPrompt = responseFollow.followSent;
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const programmaticScrollPendingRef = useRef(false);
-  const anchorUserScrollGenerationRef = useRef(0);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
-  // State mirror of the follow mode refs. The timeline never pins to its end;
-  // this flag only lets tool activity release the first message's anchor.
-  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);
   const activeTimelineAnchorIndexRef = useRef<number | null>(null);
-  const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
   const pendingAnchorScrollRestoreRef = useRef<{
     readonly messageId: MessageId;
     readonly offset: number;
@@ -6594,22 +4665,14 @@ function ChatViewContent(props: ChatViewProps) {
   const anchorScrollRestoreFrameRef = useRef<number | null>(null);
   // Manual navigation cancels pending placement without removing anchored end space.
   // Collapsing that space during a gesture clamps the viewport back to the end.
-  const cancelTimelinePositioning = useCallback(() => {
+  const cancelTimelinePositioning = () => {
     cancelPositionRestoreRef.current?.();
     anchorUserScrollGenerationRef.current += 1;
     const wasProgrammaticScrollMode = timelineScrollModeRef.current !== "free-scrolling";
     if (positionedTimelineAnchorRef.current !== null || programmaticScrollPendingRef.current) {
       const list = legendListRef.current;
       const node = list?.getScrollableNode();
-      // Legend can defer this request during layout; read the offset when it executes
-      // so cancelling never overwrites the user's intervening wheel/touch movement.
-      if (node)
-        void list?.scrollToOffset({
-          get offset() {
-            return node.scrollTop;
-          },
-          animated: false,
-        });
+      if (node) void list?.scrollToOffset(liveScrollOffsetRequest(node));
     }
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
@@ -6649,7 +4712,7 @@ function ChatViewContent(props: ChatViewProps) {
         scrollNode.scrollTop = currentScrollTop;
       }
     }
-  }, [clearResponseFollow]);
+  };
   const cancelTimelinePositioningRef = useRef(cancelTimelinePositioning);
   useEffect(() => {
     cancelTimelinePositioningRef.current = cancelTimelinePositioning;
@@ -6705,79 +4768,67 @@ function ChatViewContent(props: ChatViewProps) {
   // was at the end and frames the prompt; a queued prompt delivered while at the end gets
   // the same follow (chat/responseFollow.ts).
   // Explicit navigation is a one-shot operation; it never enables live following.
-  const scrollToEnd = useCallback(
-    (animated = false) => {
-      cancelTimelinePositioning();
-      const generation = anchorUserScrollGenerationRef.current;
-      setTimelineAnchor(releaseChatTimelineAnchor);
-      programmaticScrollPendingRef.current = true;
-      setTimelinePositioningPending(true);
-      requestAnimationFrame(() => {
+  const scrollToEnd = (animated = false) => {
+    cancelTimelinePositioning();
+    const generation = anchorUserScrollGenerationRef.current;
+    setTimelineAnchor(releaseChatTimelineAnchor);
+    programmaticScrollPendingRef.current = true;
+    setTimelinePositioningPending(true);
+    requestAnimationFrame(() => {
+      if (generation !== anchorUserScrollGenerationRef.current) return;
+      void Promise.resolve(legendListRef.current?.scrollToEnd({ animated })).then(() => {
         if (generation !== anchorUserScrollGenerationRef.current) return;
-        void Promise.resolve(legendListRef.current?.scrollToEnd({ animated })).then(() => {
-          if (generation !== anchorUserScrollGenerationRef.current) return;
-          programmaticScrollPendingRef.current = false;
-          setTimelinePositioningPending(false);
-          legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
-        });
+        programmaticScrollPendingRef.current = false;
+        setTimelinePositioningPending(false);
+        legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
       });
-    },
-    [cancelTimelinePositioning],
-  );
+    });
+  };
+  const scrollToEndStable = useStableCallback(scrollToEnd);
 
-  const captureSendReadingPosition = useCallback(
-    () => ({
-      atEnd: isDraftHeroState || (readerAtEndNow() ?? isAtEndRef.current),
-      firstMessage:
-        activeLatestRun === null && !timelineMessages.some((message) => message.role === "user"),
-      threadKey: routeThreadKey,
-      navigationGeneration: anchorUserScrollGenerationRef.current,
-    }),
-    [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestRun, readerAtEndNow],
-  );
-  const frameSubmittedMessage = useCallback(
-    (messageId: MessageId, snapshot: ReturnType<typeof captureSendReadingPosition>) => {
-      if (
-        !canApplySendAnchor({
-          ...snapshot,
-          currentThreadKey: currentRouteThreadKeyRef.current ?? "",
-          currentNavigationGeneration: anchorUserScrollGenerationRef.current,
-        })
-      )
-        return;
-      if (!snapshot.firstMessage) {
-        // One bounded controller reveals the prompt and follows its whole response
-        // to the end. Retain existing tail space until it can disappear without
-        // clamping the viewport.
-        cancelTimelinePositioning();
-        // A later prompt's whole response is followed to the end.
-        followSentPrompt(messageId, snapshot.firstMessage);
-        return;
-      }
-      cancelPositionRestoreRef.current?.();
-      // The first prompt keeps its placement; its answer is revealed.
+  const captureSendReadingPosition = () => ({
+    atEnd: isDraftHeroState || (readerAtEndNow() ?? isAtEndRef.current),
+    firstMessage:
+      activeLatestRun === null && !timelineMessages.some((message) => message.role === "user"),
+    threadKey: routeThreadKey,
+    navigationGeneration: anchorUserScrollGenerationRef.current,
+  });
+  const frameSubmittedMessage = (
+    messageId: MessageId,
+    snapshot: ReturnType<typeof captureSendReadingPosition>,
+  ) => {
+    if (
+      !canApplySendAnchor({
+        ...snapshot,
+        currentThreadKey: currentRouteThreadKeyRef.current ?? "",
+        currentNavigationGeneration: anchorUserScrollGenerationRef.current,
+      })
+    )
+      return;
+    if (!snapshot.firstMessage) {
+      // One bounded controller reveals the prompt and follows its whole response
+      // to the end. Retain existing tail space until it can disappear without
+      // clamping the viewport.
+      cancelTimelinePositioning();
       followSentPrompt(messageId, snapshot.firstMessage);
-      timelineScrollModeRef.current = "anchoring-new-turn";
-      setTimelinePositioningPending(true);
-      positionedTimelineAnchorRef.current = null;
-      setTimelineAnchor({ threadKey: activeThreadKey, messageId });
-    },
-    [activeThreadKey, cancelTimelinePositioning, followSentPrompt],
-  );
+      return;
+    }
+    cancelPositionRestoreRef.current?.();
+    // The first prompt keeps its placement; its answer is revealed.
+    followSentPrompt(messageId, snapshot.firstMessage);
+    timelineScrollModeRef.current = "anchoring-new-turn";
+    setTimelinePositioningPending(true);
+    positionedTimelineAnchorRef.current = null;
+    setTimelineAnchor({ threadKey: activeThreadKey, messageId });
+  };
   // A queued prompt the server delivers while the reader is at the end gets the same follow
   // as a send.
-  const latestPrompt = useMemo(
-    () => timelineMessages.findLast((message) => message.role === "user") ?? null,
-    [timelineMessages],
-  );
-  const readerWasAtEnd = useCallback(() => isAtEndRef.current, []);
-  const followDeliveredPrompt = useCallback(
-    (promptId: MessageId) => {
-      cancelTimelinePositioning();
-      startResponseFollow(promptId, true);
-    },
-    [cancelTimelinePositioning, startResponseFollow],
-  );
+  const latestPrompt = timelineMessages.findLast((message) => message.role === "user") ?? null;
+  const readerWasAtEnd = () => isAtEndRef.current;
+  const followDeliveredPrompt = (promptId: MessageId) => {
+    cancelTimelinePositioning();
+    startResponseFollow(promptId, true);
+  };
   useQueuedDeliveryFollow({
     threadKey: routeThreadKey,
     latestPrompt,
@@ -6786,6 +4837,7 @@ function ChatViewContent(props: ChatViewProps) {
   });
   // SCIENT-FORK:END
   useEffect(() => {
+    const composer = composerRef;
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
     const attach = (remainingAttempts: number) => {
@@ -6821,7 +4873,7 @@ function ChatViewContent(props: ChatViewProps) {
           if (event.deltaY > 0) {
             timelineScrollIntentRef.current = "toward-end";
             if (isAtEndRef.current) {
-              composerRef.current?.restoreAfterTimelineReachedEnd();
+              composer.current?.restoreAfterTimelineReachedEnd();
             }
           } else if (event.deltaY < 0) {
             timelineScrollIntentRef.current = "away-from-end";
@@ -6905,7 +4957,7 @@ function ChatViewContent(props: ChatViewProps) {
               timelineScrollIntentRef.current = "away-from-end";
               if (contentScrollsUp()) {
                 handleManualNavigation();
-                composerRef.current?.collapseForTimelineScrollKey(event.key);
+                composer.current?.collapseForTimelineScrollKey(event.key);
               }
               break;
             case "PageDown":
@@ -6913,9 +4965,9 @@ function ChatViewContent(props: ChatViewProps) {
             case "ArrowDown":
               // Moving toward the end never cancels a reveal, like scrolling down.
               timelineScrollIntentRef.current = "toward-end";
-              composerRef.current?.collapseForTimelineScrollKey(event.key);
+              composer.current?.collapseForTimelineScrollKey(event.key);
               if (isTimelineAtLogicalEndStable()) {
-                composerRef.current?.restoreAfterTimelineReachedEnd();
+                composer.current?.restoreAfterTimelineReachedEnd();
               }
               break;
             default:
@@ -6960,12 +5012,18 @@ function ChatViewContent(props: ChatViewProps) {
       }
       removeListeners?.();
     };
-  }, [activeThread?.id, isTimelineAtLogicalEndStable, timelineRealContentOverflowsViewportStable]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A thread switch remounts the list's scroll node, so the listeners reattach.
+    activeThread?.id,
+    composerRef,
+    isTimelineAtLogicalEndStable,
+    timelineRealContentOverflowsViewportStable,
+  ]);
 
   // SCIENT-FORK:START — reader navigation (E): only the first message is placed, by message id at
   // the timeline's anchor offset; measurement updates never restart a finished or cancelled
   // placement, and its end clears the positioning flag.
-  const onTimelineAnchorReady = useCallback((messageId: MessageId, _anchorIndex: number) => {
+  const onTimelineAnchorReady = (messageId: MessageId, _anchorIndex: number) => {
     // Measurement updates may not restart a completed or cancelled placement.
     if (timelineScrollModeRef.current !== "anchoring-new-turn") {
       return;
@@ -7012,7 +5070,8 @@ function ChatViewContent(props: ChatViewProps) {
       });
     };
     requestAnimationFrame(() => positionAnchor(12));
-  }, []);
+  };
+  const onTimelineAnchorReadyStable = useStableCallback(onTimelineAnchorReady);
   // SCIENT-FORK:END
   const onTimelineAnchorSizeChanged = (messageId: MessageId) => {
     if (settledTimelineAnchorRef.current !== messageId) {
@@ -7058,9 +5117,9 @@ function ChatViewContent(props: ChatViewProps) {
   const onTimelineAnchorSizeChangedStable = useStableCallback(onTimelineAnchorSizeChanged);
 
   // SCIENT-FORK:START — reserved room nobody can reach is released (MessagesTimeline reports it).
-  const releaseUnusedTimelineAnchor = useCallback(() => {
+  const releaseUnusedTimelineAnchor = () => {
     setTimelineAnchor(releaseChatTimelineAnchor);
-  }, []);
+  };
   // SCIENT-FORK:END
   const onToolOutputCollapsedAtEnd = () => {
     composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -7083,11 +5142,11 @@ function ChatViewContent(props: ChatViewProps) {
         timelineEntries,
       })
     ) {
-      scrollToEnd();
+      scrollToEndStable();
     }
   }, [
     activeRunningTurnId,
-    scrollToEnd,
+    scrollToEndStable,
     timelineAnchorMessageId,
     timelineEntries,
     timelineLiveFollowEnabled,
@@ -7096,18 +5155,27 @@ function ChatViewContent(props: ChatViewProps) {
 
   // SCIENT-FORK:START — reader navigation (F): a thread switch resets the end control (a thread
   // returned to mid-history shows it right away), the follow and placement, per route thread.
-  useEffect(() => {
-    setPullRequestDialogState(null);
+  // State resets during render; the refs the scroll handlers read catch up after commit.
+  const [timelineThreadReset, setTimelineThreadReset] = useState(() => ({
+    threadKey: routeThreadKey,
+    followEnd: savedPositionIsAtEnd(readTimelinePosition(routeThreadKey)),
+  }));
+  if (timelineThreadReset.threadKey !== routeThreadKey) {
     const followEnd = savedPositionIsAtEnd(readTimelinePosition(routeThreadKey));
+    setTimelineThreadReset({ threadKey: routeThreadKey, followEnd });
+    setPullRequestDialogState(null);
+    setTimelineLiveFollowEnabled(followEnd);
+    setTimelinePositioningPending(false);
+  }
+  useEffect(() => {
+    const { followEnd } = timelineThreadReset;
     resetEndControlForThread(followEnd);
     timelineScrollIntentRef.current = null;
     timelineScrollModeRef.current = followEnd ? "following-end" : "free-scrolling";
     liveFollowUserScrollGenerationRef.current = followEnd
       ? anchorUserScrollGenerationRef.current
       : null;
-    setTimelineLiveFollowEnabled(followEnd);
     clearResponseFollow();
-    setTimelinePositioningPending(false);
     programmaticScrollPendingRef.current = false;
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
@@ -7115,7 +5183,7 @@ function ChatViewContent(props: ChatViewProps) {
     return () => {
       anchorUserScrollGenerationRef.current += 1;
     };
-  }, [routeThreadKey, resetEndControlForThread, clearResponseFollow]);
+  }, [timelineThreadReset, resetEndControlForThread, clearResponseFollow]);
   // SCIENT-FORK:END
 
   useEffect(() => {
@@ -7128,11 +5196,6 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThread?.id, focusComposerStable, terminalUiState.terminalOpen]);
 
-  // Tabbing back into the app lands focus wherever it last was, often the right panel or the
-  // body. Put it in the composer unless something that takes typing already holds it. The
-  // drawer terminal owns keyboard input while it is open, so it opts out here; a right panel
-  // terminal is a surface and is recognized by the predicate instead. Mobile is left alone so
-  // returning to the app does not raise the keyboard.
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen || isMobileViewport) return;
     let frame: number | null = null;
@@ -7144,7 +5207,6 @@ function ChatViewContent(props: ChatViewProps) {
       frame = window.requestAnimationFrame(() => {
         frame = window.requestAnimationFrame(() => {
           frame = null;
-          // A full-screen app owns the page; refocusing the composer would close it.
           if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
           if (shouldRefocusComposerOnWindowFocus(document.activeElement)) focusComposerStable();
         });
@@ -7192,37 +5254,47 @@ function ChatViewContent(props: ChatViewProps) {
     optimisticUserMessages,
   ]);
 
-  // Retire admitted previews permanently so editing/deleting a queue row cannot reveal them again.
-  useEffect(() => {
-    const queuedIds = new Set(
-      isServerThread
-        ? (serverProjection?.runs
-            .filter((run) => run.status === "queued")
-            .map((run) => run.userMessageId) ?? [])
-        : threadQueue.items.map((item) => item.messageId),
-    );
-    if (
-      !optimisticUserMessages.some((message) => message.queueAdmission && queuedIds.has(message.id))
+  // SCIENT-FORK:START — retire admitted previews permanently so editing or deleting a queue row
+  // cannot reveal them again.
+  const queuedAdmissionIds = new Set(
+    isServerThread
+      ? (serverProjection?.runs
+          .filter((run) => run.status === "queued")
+          .map((run) => run.userMessageId) ?? [])
+      : threadQueue.items.map((item) => item.messageId),
+  );
+  if (
+    optimisticUserMessages.some(
+      (message) => message.queueAdmission && queuedAdmissionIds.has(message.id),
     )
-      return;
-    setOptimisticUserMessages((messages) =>
-      messages.filter((message) => !message.queueAdmission || !queuedIds.has(message.id)),
+  ) {
+    setOptimisticUserMessages(
+      optimisticUserMessages.filter(
+        (message) => !message.queueAdmission || !queuedAdmissionIds.has(message.id),
+      ),
     );
-  }, [optimisticUserMessages, threadQueue.items, isServerThread, serverProjection]);
+  }
+  // SCIENT-FORK:END
 
   // Keyed on the thread, not the draft: a draft's promotion to its server
   // route keeps this instance and drops `draftId`, and the send it is still
   // dispatching must survive that swap.
-  useEffect(() => {
-    setOptimisticUserMessages((existing) => {
-      for (const message of existing) {
-        revokeUserMessagePreviewUrls(message);
-      }
-      return [];
-    });
+  const [optimisticThreadId, setOptimisticThreadId] = useState(threadId);
+  const [retiredOptimisticMessages, setRetiredOptimisticMessages] = useState<
+    ReadonlyArray<ChatMessage>
+  >([]);
+  if (optimisticThreadId !== threadId) {
+    setOptimisticThreadId(threadId);
+    setRetiredOptimisticMessages(optimisticUserMessages);
+    setOptimisticUserMessages([]);
     resetLocalDispatch();
     setExpandedImage(null);
-  }, [resetLocalDispatch, threadId]);
+  }
+  useEffect(() => {
+    for (const message of retiredOptimisticMessages) {
+      revokeUserMessagePreviewUrls(message);
+    }
+  }, [retiredOptimisticMessages]);
 
   const closeExpandedImage = () => {
     setExpandedImage(null);
@@ -7243,12 +5315,31 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread.worktreePath === null &&
     !envLocked,
   );
+  if (
+    !canOverrideServerThreadEnvMode &&
+    (pendingServerThreadEnvModeEntry !== null || pendingServerThreadBranchEntry !== null)
+  ) {
+    setPendingServerThreadEnvModeEntry(null);
+    setPendingServerThreadBranchEntry(null);
+  }
+  const pendingServerThreadEnvMode =
+    pendingServerThreadEnvModeEntry !== null &&
+    pendingServerThreadEnvModeEntry.threadId === activeThread?.id
+      ? pendingServerThreadEnvModeEntry.mode
+      : null;
+  const pendingServerThreadBranchEntryForThread =
+    pendingServerThreadBranchEntry?.threadId === activeThread?.id
+      ? pendingServerThreadBranchEntry
+      : null;
+  const setPendingServerThreadBranch = (branch: string | null) => {
+    if (activeThread) setPendingServerThreadBranchEntry({ threadId: activeThread.id, branch });
+  };
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
     : derivedEnvMode;
   const activeThreadBranch =
-    canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
-      ? pendingServerThreadBranch
+    canOverrideServerThreadEnvMode && pendingServerThreadBranchEntryForThread !== null
+      ? pendingServerThreadBranchEntryForThread.branch
       : (activeThread?.branch ?? null);
   const startFromOrigin = isLocalDraftThread
     ? (draftThread?.startFromOrigin ?? false)
@@ -7260,18 +5351,14 @@ function ChatViewContent(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
-  const localCheckoutBranchMismatch = useMemo(
-    () =>
-      isServerThread
-        ? resolveLocalCheckoutBranchMismatch({
-            effectiveEnvMode: envMode,
-            activeWorktreePath,
-            activeThreadBranch,
-            currentGitBranch: gitStatusQuery.data?.refName ?? null,
-          })
-        : null,
-    [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
-  );
+  const localCheckoutBranchMismatch = isServerThread
+    ? resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: envMode,
+        activeWorktreePath,
+        activeThreadBranch,
+        currentGitBranch: gitStatusQuery.data?.refName ?? null,
+      })
+    : null;
   const publishComposerOverlayHeight = (height: number) => {
     const nextHeight = Math.ceil(height);
     if (nextHeight <= 0) return;
@@ -7282,8 +5369,6 @@ function ChatViewContent(props: ChatViewProps) {
     const modelStrip = composerOverlayElement?.querySelector<HTMLElement>(
       '[data-composer-model-strip="true"]',
     );
-    // The model-only strip disappears on expansion; counting it again would
-    // add 32px of timeline padding as soon as the empty composer collapses.
     const restingOnlyHeight =
       modelStrip && isResting
         ? Math.max(
@@ -7327,19 +5412,15 @@ function ChatViewContent(props: ChatViewProps) {
   // The composer reports its resting flag from a layout effect, which runs
   // before this component's own layout effects and before any resize
   // observation, so every measurement below sees the flag for its layout.
-  // Only the flag is stored here: the stored height still belongs to the
-  // previous layout, and the composer publishes the new layout's height
-  // itself once it has measured it.
   const onComposerRestingChange = (resting: boolean) => {
     composerRestingRef.current = resting;
   };
   const onComposerRestingChangeStable = useStableCallback(onComposerRestingChange);
-  // A held reservation belongs to the previous thread's draft. Rebuild it from
-  // this thread's overlay so a tall draft elsewhere does not pad this one.
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
     composerTimelineInsetRef.current = 0;
     publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A thread switch must re-measure the overlay for the new timeline.
   }, [activeThreadKey, composerOverlayElement, publishComposerOverlayHeightStable]);
 
   useLayoutEffect(() => {
@@ -7351,9 +5432,8 @@ function ChatViewContent(props: ChatViewProps) {
 
     updateHeight();
     return observeResize(composerOverlayElement, updateHeight);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The scroll-to-bottom button changes the overlay's height without resizing the observed node first.
   }, [composerOverlayElement, publishComposerOverlayHeightStable, showScrollToBottom]);
-  // Swapping the composer for the status bar (or back) changes what the
-  // overlay holds, so rebuild the reservation from the new content.
   useLayoutEffect(() => {
     if (composerMountedRef.current === composerMounted) return;
     composerMountedRef.current = composerMounted;
@@ -7362,24 +5442,15 @@ function ChatViewContent(props: ChatViewProps) {
     publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
   }, [composerMounted, composerOverlayElement, publishComposerOverlayHeightStable]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
-  const activeThreadReferenceCopyTarget = useMemo(
-    () =>
-      activeThreadId === null || !isServerThread
-        ? null
-        : resolveThreadReferenceCopyTarget({
-            threadId: activeThreadId,
-            openPanelPullRequestUrl,
-            pullRequests: activeThread?.pullRequests,
-            linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
-          }),
-    [
-      activeThreadId,
-      isServerThread,
-      activeThread?.pullRequests,
-      linkedThreadPullRequest?.url,
-      openPanelPullRequestUrl,
-    ],
-  );
+  const activeThreadReferenceCopyTarget =
+    activeThreadId === null || !isServerThread
+      ? null
+      : resolveThreadReferenceCopyTarget({
+          threadId: activeThreadId,
+          openPanelPullRequestUrl,
+          pullRequests: activeThread?.pullRequests,
+          linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
+        });
   const copyActiveThreadReference = () => {
     const target = activeThreadReferenceCopyTarget;
     if (target === null) return;
@@ -7431,7 +5502,6 @@ function ChatViewContent(props: ChatViewProps) {
     effectiveSnoozed(activeThreadShell, { now: new Date().toISOString() });
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   useEffect(() => {
-    void snoozeWakeTick;
     if (!activeThreadSnoozed) return;
     const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
     if (!Number.isFinite(wakeAtMs)) return;
@@ -7440,6 +5510,7 @@ function ChatViewContent(props: ChatViewProps) {
       Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647),
     );
     return () => window.clearTimeout(id);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A tick that lands before the wake time (timer clamping, clock skew) re-arms the timer.
   }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
   const activeThreadWokeAt =
     activeThreadShell !== null && supportsSnooze
@@ -7451,8 +5522,6 @@ function ChatViewContent(props: ChatViewProps) {
     acknowledgeThreadWoke(activeThreadRef, activeThreadWokeAt);
   };
   const acknowledgeActiveThreadWokeStable = useStableCallback(acknowledgeActiveThreadWoke);
-  // Mirror of the sidebar's Woke pill for the open thread. Same watermark as
-  // the sidebar, so an acknowledgement from any device hides it.
   const activeThreadLocalVisitedAt = useUiStateStore((store) =>
     activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
   );
@@ -7460,39 +5529,17 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadShell?.lastVisitedAt,
     activeThreadLocalVisitedAt,
   );
-  const activeThreadWokeVisible = useMemo(() => {
-    if (activeThreadWokeAt === null) return false;
-    if (activeThreadShell?.settledOverride === "settled") return false;
-    const wokeAtMs = Date.parse(activeThreadWokeAt);
-    if (Number.isNaN(wokeAtMs)) return false;
-    // Having the thread open counts as a visit at completedAt (the effect
-    // above stamps it); folding that floor in here keeps a completion-
-    // triggered wake from flashing a banner for one frame before the stamp
-    // lands. An unparseable stored visit counts as never-visited: corrupt
-    // data must not eat the wake signal.
-    const storedVisitMs = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
-    const completedAtMs = activeLatestRun?.completedAt
-      ? Date.parse(activeLatestRun.completedAt)
-      : NaN;
-    const lastVisitedMs = Math.max(
-      Number.isNaN(storedVisitMs) ? -Infinity : storedVisitMs,
-      Number.isNaN(completedAtMs) ? -Infinity : completedAtMs,
-    );
-    return lastVisitedMs < wokeAtMs;
-  }, [
-    activeLatestRun?.completedAt,
-    activeThreadLastVisitedAt,
-    activeThreadShell,
-    activeThreadWokeAt,
-  ]);
+  const activeThreadWokeVisible = isThreadWokeUnseen({
+    wokeAt: activeThreadWokeAt,
+    settled: activeThreadShell?.settledOverride === "settled",
+    lastVisitedAt: activeThreadLastVisitedAt,
+    latestRunCompletedAt: activeLatestRun?.completedAt ?? null,
+  });
   const activeThreadSettled =
     supportsSettlement && activeThreadShell?.settledOverride === "settled";
   const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });
-  // Keyed by thread, not a boolean: the pending state must follow the thread
-  // it belongs to across navigation, and a request resolving for thread A
-  // must never clear (or re-enable) thread B's button.
   const [unsettlingThreadKey, setUnsettlingThreadKey] = useState<string | null>(null);
   const isUnsettling = unsettlingThreadKey !== null && unsettlingThreadKey === activeThreadKey;
   const handleUnsettleActiveThread = async () => {
@@ -7503,24 +5550,22 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     const threadKey = scopedThreadKey(activeThreadRef);
     setUnsettlingThreadKey(threadKey);
-    try {
-      const result = await unsettleThreadMutation({
-        environmentId: activeThreadRef.environmentId,
-        input: { threadId: activeThreadRef.threadId, reason: "user" },
-      });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to un-settle thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    } finally {
-      setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
+    // Commands settle into a result, so this always runs.
+    const result = await unsettleThreadMutation({
+      environmentId: activeThreadRef.environmentId,
+      input: { threadId: activeThreadRef.threadId, reason: "user" },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to un-settle thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     }
+    setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
   };
   const handleUnsettleActiveThreadStable = useStableCallback(handleUnsettleActiveThread);
   const unsnoozeThreadMutation = useOrchestrationCommand(threadEnvironment.unsnooze, {
@@ -7536,47 +5581,41 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     const threadKey = scopedThreadKey(activeThreadRef);
     setUnsnoozingThreadKey(threadKey);
-    try {
-      const recovery = activeThreadShell?.limitRecovery;
-      const recoveryOwnsSnooze =
-        recovery?.snooze === true &&
-        recovery.runId === activeThreadShell?.latestRun?.runId &&
-        activeThreadShell?.snoozedUntil != null &&
-        Date.parse(activeThreadShell.snoozedUntil) === Date.parse(recovery.resetAt);
-      const result = recoveryOwnsSnooze
-        ? await updateThreadMetadata({
-            environmentId: activeThreadRef.environmentId,
-            input: {
-              threadId: activeThreadRef.threadId,
-              limitRecovery: { runId: recovery.runId, resetAt: recovery.resetAt, snooze: false },
-            },
-          })
-        : await unsnoozeThreadMutation({
-            environmentId: activeThreadRef.environmentId,
-            input: { threadId: activeThreadRef.threadId, reason: "user" },
-          });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to wake thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    } finally {
-      setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
+    // Commands settle into a result, so this always runs.
+    const recovery = activeThreadShell?.limitRecovery;
+    const recoveryOwnsSnooze =
+      recovery?.snooze === true &&
+      recovery.runId === activeThreadShell?.latestRun?.runId &&
+      activeThreadShell?.snoozedUntil != null &&
+      Date.parse(activeThreadShell.snoozedUntil) === Date.parse(recovery.resetAt);
+    const result = recoveryOwnsSnooze
+      ? await updateThreadMetadata({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            threadId: activeThreadRef.threadId,
+            limitRecovery: { runId: recovery.runId, resetAt: recovery.resetAt, snooze: false },
+          },
+        })
+      : await unsnoozeThreadMutation({
+          environmentId: activeThreadRef.environmentId,
+          input: { threadId: activeThreadRef.threadId, reason: "user" },
+        });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to wake thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     }
+    setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
   };
   const handleUnsnoozeActiveThreadStable = useStableCallback(handleUnsnoozeActiveThread);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
-  // Once revealed for a given mismatch, the banner stays mounted until the
-  // mismatch changes or resolves, so clearing the draft doesn't flicker it.
   const [revealedBranchMismatchKey, setRevealedBranchMismatchKey] = useState<string | null>(null);
-  // Dismissal lives in a module-level set (survives remounts); this tick just
-  // forces a re-render so the banner leaves immediately.
   const [, setBranchMismatchDismissTick] = useState(0);
   const composerHasDraftContent = useComposerDraftStore((store) =>
     composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
@@ -7592,16 +5631,14 @@ function ChatViewContent(props: ChatViewProps) {
     wasShownForCurrentMismatch:
       revealedBranchMismatchKey !== null && revealedBranchMismatchKey === activeBranchMismatchKey,
   });
-  useEffect(() => {
-    setRevealedBranchMismatchKey((revealed) => {
-      if (showBranchMismatchBanner) {
-        return activeBranchMismatchKey;
-      }
-      // Hysteresis is scoped to an uninterrupted mismatch: reset when the
-      // mismatch resolves or changes so a recurrence re-gates on intent.
-      return revealed !== null && revealed !== activeBranchMismatchKey ? null : revealed;
-    });
-  }, [activeBranchMismatchKey, showBranchMismatchBanner]);
+  const nextRevealedBranchMismatchKey = showBranchMismatchBanner
+    ? activeBranchMismatchKey
+    : revealedBranchMismatchKey !== activeBranchMismatchKey
+      ? null
+      : revealedBranchMismatchKey;
+  if (nextRevealedBranchMismatchKey !== revealedBranchMismatchKey) {
+    setRevealedBranchMismatchKey(nextRevealedBranchMismatchKey);
+  }
   const handleSwitchCheckoutToThread = async () => {
     if (!canWriteSourceControl) return;
     if (
@@ -7663,13 +5700,8 @@ function ChatViewContent(props: ChatViewProps) {
     setIsRestoringThreadBranch(false);
     scheduleComposerFocus();
   };
-  // The stack renders items[0] front-most and tucks the rest behind hover, so
-  // ordering is priority: system banners, then the branch-mismatch notice,
-  // and the informational parked-thread banner last — it must never cover another.
-  // Background work (subagent fleets, workflow runs, watch loops, dev servers) can outlive
-  // the turn; once it settles, the composer stop button is gone, so this
-  // banner is the only visible stop affordance. The interrupt path also
-  // accepts a completed run while its provider still has background work.
+  // The interrupt path also accepts a completed run while its provider still
+  // has background work.
   const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
   const [stoppingBackgroundWorkKey, setStoppingBackgroundWorkKey] = useState<string | null>(null);
   const isStoppingBackgroundWork =
@@ -7705,7 +5737,7 @@ function ChatViewContent(props: ChatViewProps) {
   };
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
   const childThreadInputs = useChildThreadInputs(activeThreadRef);
-  const childInputBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+  const childInputBannerItem = (() => {
     const first = childThreadInputs[0];
     const parentAwaitingUser =
       activePendingApproval || activePendingUserInput || activeThreadShell?.hasPendingUserInput;
@@ -7733,16 +5765,8 @@ function ChatViewContent(props: ChatViewProps) {
         </Button>
       ),
     };
-  }, [
-    childThreadInputs,
-    activePendingApproval,
-    activePendingUserInput,
-    activeThreadShell?.hasPendingUserInput,
-    onOpenRelatedThreadStable,
-  ]);
+  })() as ComposerBannerStackItem | null;
 
-  // Commands such as /compact and /goal clear run as their own turn. The draft
-  // and its attachments stay local.
   const sendStandaloneCommand = async (text: string, failureMessage: string) => {
     if (!activeThread || !clientSettingsHydrated || sendInFlightRef.current) return;
     const context = composerRef.current?.getSendContext();
@@ -7767,51 +5791,45 @@ function ChatViewContent(props: ChatViewProps) {
       },
     ]);
     scrollToEnd();
-    try {
-      const settingsResult = await persistThreadSettingsForNextTurn({
-        threadId,
-        createdAt,
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
-        runtimeMode,
-        interactionMode: context.interactionMode,
-      });
-      const result =
-        settingsResult._tag === "Failure"
-          ? settingsResult
-          : await startThreadTurn({
-              environmentId,
-              input: {
-                threadId,
-                message: { messageId, role: "user", text, attachments: [] },
-                modelSelection: context.selectedModelSelection,
-                runtimeMode,
-                interactionMode: context.interactionMode,
-                createdAt,
-              },
-            });
-      if (result._tag === "Failure") {
-        setOptimisticUserMessages((messages) =>
-          messages.filter((message) => message.id !== messageId),
-        );
-        resetLocalDispatch();
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          setThreadError(threadId, error instanceof Error ? error.message : failureMessage);
-        }
-      } else {
-        clearUsageLimitsFor(routeThreadKey);
+    // Commands settle into a result, so this always runs.
+    const settingsResult = await persistThreadSettingsForNextTurn({
+      threadId,
+      createdAt,
+      ...(localCheckoutBranchMismatch ? { branch: localCheckoutBranchMismatch.currentBranch } : {}),
+      runtimeMode,
+      interactionMode: context.interactionMode,
+    });
+    const result =
+      settingsResult._tag === "Failure"
+        ? settingsResult
+        : await startThreadTurn({
+            environmentId,
+            input: {
+              threadId,
+              message: { messageId, role: "user", text, attachments: [] },
+              modelSelection: context.selectedModelSelection,
+              runtimeMode,
+              interactionMode: context.interactionMode,
+              createdAt,
+            },
+          });
+    if (result._tag === "Failure") {
+      setOptimisticUserMessages((messages) =>
+        messages.filter((message) => message.id !== messageId),
+      );
+      resetLocalDispatch();
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(threadId, error instanceof Error ? error.message : failureMessage);
       }
-    } finally {
-      sendInFlightRef.current = false;
+    } else {
+      clearUsageLimitsFor(routeThreadKey);
     }
+    sendInFlightRef.current = false;
   };
   const sendStandaloneCommandStable = useStableCallback(sendStandaloneCommand);
-  // A native /goal keeps the agent working across turns. Stop pauses a Codex
-  // goal; once the thread is idle the row offers the native follow-ups.
   const activeGoal = activeThreadShell?.goal ?? null;
-  const goalBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+  const goalBannerItem = (() => {
     if (!activeThread || activeGoal === null) return null;
     const presentation = presentProviderGoal(activeGoal, isWorking);
     return {
@@ -7819,7 +5837,6 @@ function ChatViewContent(props: ChatViewProps) {
       variant: "default",
       priority: "activity",
       icon: <TargetIcon />,
-      // Usage stays in the title so a long objective cannot clip it.
       title:
         presentation.usage === null
           ? presentation.title
@@ -7848,9 +5865,9 @@ function ChatViewContent(props: ChatViewProps) {
         </>
       ),
     };
-  }, [activeGoal, activeThread, isWorking, sendStandaloneCommandStable]);
+  })() as ComposerBannerStackItem | null;
 
-  const backgroundWorkBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+  const backgroundWorkBannerItem = (() => {
     const presentation = presentPendingBackgroundWork(activeBackgroundTasks);
     if (presentation === null || !activeThread) {
       return null;
@@ -7859,8 +5876,6 @@ function ChatViewContent(props: ChatViewProps) {
       id: `background-work:${activeThread.id}`,
       variant: "default",
       priority: "activity",
-      // A dev server can run for hours after the agent is done, so only work
-      // that will wake the agent pulses.
       icon: (
         <span
           className={cn(
@@ -7871,7 +5886,6 @@ function ChatViewContent(props: ChatViewProps) {
         />
       ),
       title: presentation.title,
-      // A single named item is already in the title.
       description:
         presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
           ? undefined
@@ -7912,94 +5926,45 @@ function ChatViewContent(props: ChatViewProps) {
         </Button>
       ),
     };
-  }, [
-    activeBackgroundTasks,
-    activeThread,
-    canOperateThread,
-    handleStopBackgroundWorkStable,
-    isStoppingBackgroundWork,
-    onOpenRelatedThreadStable,
-  ]);
-  // Settled, snoozed, and woke are thread state, not composer actions: each
-  // gets one quiet line after the last message instead of a banner. A woken
-  // thread announces itself here, not just in the sidebar pill. Dismissing
-  // marks the wake as seen (same acknowledgment as the pill); sending a
-  // message clears it as a side effect of the send path.
-  // Memoized: it is the timeline's list footer, and a new element re-renders that footer.
-  // nowMinute keeps the relative time fresh.
-  const threadStatusLine = useMemo(() => {
-    void nowMinute;
-    return activeThreadSnoozed ? (
-      <ThreadStatusLine
-        icon={<AlarmClockIcon />}
-        label={
-          activeThreadShell?.snoozedUntil
-            ? `Snoozed, ${formatRelativeTimeUntilLabel(activeThreadShell.snoozedUntil)}`
-            : "Snoozed"
-        }
-        actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
-        actionDisabled={!canOperateThread || isUnsnoozing}
-        onAction={() => void handleUnsnoozeActiveThreadStable()}
-      />
-    ) : activeThreadSettled ? (
-      <ThreadStatusLine
-        icon={<CheckCircle2Icon />}
-        label={
-          activeThreadShell?.settledAt
-            ? `Settled ${formatRelativeTimeLabel(activeThreadShell.settledAt)}`
-            : "Settled"
-        }
-        actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
-        actionDisabled={!canOperateThread || isUnsettling}
-        onAction={() => void handleUnsettleActiveThreadStable()}
-      />
-    ) : activeThreadWokeVisible ? (
-      <ThreadStatusLine
-        icon={<AlarmClockIcon />}
-        label="Woke from snooze"
-        actionLabel="Dismiss"
-        onAction={acknowledgeActiveThreadWokeStable}
-      />
-    ) : null;
-  }, [
-    acknowledgeActiveThreadWokeStable,
-    activeThreadSettled,
-    activeThreadShell?.settledAt,
-    activeThreadShell?.snoozedUntil,
-    activeThreadSnoozed,
-    activeThreadWokeVisible,
-    canOperateThread,
-    handleUnsettleActiveThreadStable,
-    handleUnsnoozeActiveThreadStable,
-    isUnsettling,
-    isUnsnoozing,
-    nowMinute,
-  ]);
-  const [dismissedResumeCompactionKeys, setDismissedResumeCompactionKeys] = useState<
-    ReadonlySet<string>
-  >(new Set());
-  const resumeCompactionKey =
-    activeThread && activeContextWindow
-      ? `${activeThread.id}:${activeContextWindow.updatedAt}`
-      : null;
+  })() as ComposerBannerStackItem | null;
+  // The relative times read the clock; nowMinute re-renders them on the minute.
+  const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
+  const settledAt = activeThreadShell?.settledAt ?? null;
+  const threadStatusLine = activeThreadSnoozed ? (
+    <ThreadStatusLine
+      icon={<AlarmClockIcon />}
+      label={snoozedUntil ? `Snoozed, ${formatRelativeTimeUntilLabel(snoozedUntil)}` : "Snoozed"}
+      clockMinute={nowMinute}
+      actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
+      actionDisabled={!canOperateThread || isUnsnoozing}
+      onAction={() => void handleUnsnoozeActiveThreadStable()}
+    />
+  ) : activeThreadSettled ? (
+    <ThreadStatusLine
+      icon={<CheckCircle2Icon />}
+      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt)}` : "Settled"}
+      clockMinute={nowMinute}
+      actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
+      actionDisabled={!canOperateThread || isUnsettling}
+      onAction={() => void handleUnsettleActiveThreadStable()}
+    />
+  ) : activeThreadWokeVisible ? (
+    <ThreadStatusLine
+      icon={<AlarmClockIcon />}
+      label="Woke from snooze"
+      actionLabel="Dismiss"
+      onAction={acknowledgeActiveThreadWokeStable}
+    />
+  ) : null;
   const activeThreadHasCompactableConversation = serverVisibleTurnItems.some(
     ({ item }) =>
       item.type === "user_message" &&
       (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
   );
-  const pendingHandoff = useMemo(
-    () =>
-      resolvePendingHandoff(
-        serverProjection,
-        composerSelectedModelSelection ?? activeThread?.modelSelection,
-        providerStatuses,
-      ),
-    [
-      serverProjection,
-      composerSelectedModelSelection,
-      activeThread?.modelSelection,
-      providerStatuses,
-    ],
+  const pendingHandoff = resolvePendingHandoff(
+    serverProjection,
+    composerSelectedModelSelection ?? activeThread?.modelSelection,
+    providerStatuses,
   );
   const compactThreadUnavailable =
     !canOperateThread ||
@@ -8029,10 +5994,6 @@ function ChatViewContent(props: ChatViewProps) {
             ? "Compaction is unavailable for this provider"
             : "Compacting is unavailable right now"
     : null;
-  // Tokens a stale Claude session would re-read on its next turn. While set,
-  // the composer shows a Compact chip and Enter compacts first; turning the
-  // chip off sends the next message with full history. Held queues and
-  // multi-model sends never compact first, so the offer hides for them.
   const resumeCompactionTokens =
     activeContextWindow &&
     !resumeCompactionPermanentlyDismissed &&
@@ -8044,14 +6005,11 @@ function ChatViewContent(props: ChatViewProps) {
       provider: selectedProvider,
       usedTokens: activeContextWindow.usedTokens,
       updatedAt: activeContextWindow.updatedAt,
-      // Only the live report carries a TTL, and only when it is the window's source.
       promptCacheTtlMs: activeThreadLiveTokenUsage?.promptCacheTtlMs,
       now: `${nowMinute}:00.000Z`,
     })
       ? activeContextWindow.usedTokens
       : null;
-  // Threads whose Compact chip is turned off. A send that starts its turn
-  // clears its thread's entry; a failed send keeps it for the retry.
   const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -8076,21 +6034,17 @@ function ChatViewContent(props: ChatViewProps) {
     void handleSwitchCheckoutToThread();
   };
   const handleRestoreThreadBranchStable = useStableCallback(handleRestoreThreadBranch);
-  const feedbackBannerItems = useMemo(
-    () =>
-      feedbackSubmissions.flatMap((submission) => {
-        const item = feedbackBannerItem(submission, () => {
-          setFeedbackSubmissionsByThreadKey((current) => ({
-            ...current,
-            [routeThreadKey]: (current[routeThreadKey] ?? []).filter(
-              (entry) => entry.id !== submission.id,
-            ),
-          }));
-        });
-        return item ? [item] : [];
-      }),
-    [feedbackSubmissions, routeThreadKey],
-  );
+  const feedbackBannerItems = feedbackSubmissions.flatMap((submission) => {
+    const item = feedbackBannerItem(submission, () => {
+      setFeedbackSubmissionsByThreadKey((current) => ({
+        ...current,
+        [routeThreadKey]: (current[routeThreadKey] ?? []).filter(
+          (entry) => entry.id !== submission.id,
+        ),
+      }));
+    });
+    return item ? [item] : [];
+  });
   const limitRecoveryBanner =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
@@ -8114,10 +6068,10 @@ function ChatViewContent(props: ChatViewProps) {
   // first provider session starts.
   const conversationImportBanner = useConversationImportBanner(activeServerThread);
   // SCIENT-FORK:END
-  const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+  const composerBannerItems = (() => {
+    // SCIENT-FORK:START — the imported-conversation and token-limit notices.
     const conversationImportItems =
       conversationImportBanner === null ? [] : [conversationImportBanner];
-    // SCIENT-FORK:START — the token-limit notice.
     const tokenLimitItems = tokenLimitBannerItems({
       hasTokenLimitNotice,
       tokenLimitNoticeKey,
@@ -8130,7 +6084,6 @@ function ChatViewContent(props: ChatViewProps) {
       goalBannerItem,
       backgroundWorkBannerItem,
     ].filter((item) => item !== null);
-    // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
@@ -8194,99 +6147,23 @@ function ChatViewContent(props: ChatViewProps) {
         },
       },
     ];
-  }, [
-    activeBranchMismatchKey,
-    activeEnvironmentUnavailable,
-    activePendingProgress,
-    activeThread,
-    backgroundWorkBannerItem,
-    activeThreadShell,
-    serverRuntime?.usageLimitResetAt,
-    canWriteSourceControl,
-    feedbackBannerItems,
-    limitRecoveryBanner,
-    conversationImportBanner,
-    clientSettingsHydrated,
-    hasTokenLimitNotice,
-    tokenLimitNoticeKey,
-    feedbackBannerItems,
-    gitUnavailable,
-    handleRestoreThreadBranchStable,
-    isRestoringThreadBranch,
-    isSendBusy,
-    isWorking,
-    localCheckoutBranchMismatch,
-    onSend,
-    projectCloneBannerItem,
-    queueEditsReady,
-    queueEdit,
-    backgroundWorkBannerItem,
-    childInputBannerItem,
-    goalBannerItem,
-    localCheckoutBranchMismatch,
-    projectCloneBannerItem,
-    showBranchMismatchBanner,
-    selectedProviderEntry,
-    systemComposerBannerItems,
-    threadDetailLoading,
-    usageLimitsBanner,
-  ]);
+  })() as ComposerBannerStackItem[];
 
-  useEffect(() => {
-    setPendingServerThreadEnvMode(null);
-    setPendingServerThreadBranch(undefined);
-  }, [activeThread?.id]);
-
-  useEffect(() => {
-    if (canOverrideServerThreadEnvMode) {
-      return;
-    }
-    setPendingServerThreadEnvMode(null);
-    setPendingServerThreadBranch(undefined);
-  }, [canOverrideServerThreadEnvMode]);
-
-  useEffect(() => {
-    if (!activeThreadId) {
-      setTerminalUiLaunchContext(null);
-      return;
-    }
-    setTerminalUiLaunchContext((current) => {
-      if (!current) return current;
-      if (current.threadId === activeThreadId) return current;
-      return null;
-    });
-  }, [activeThreadId]);
-
-  useEffect(() => {
-    if (!activeThreadId || !activeProjectCwd) {
-      return;
-    }
-    setTerminalUiLaunchContext((current) => {
-      if (!current || current.threadId !== activeThreadId) {
-        return current;
-      }
-      const settledCwd = projectScriptCwd({
-        project: { cwd: activeProjectCwd },
-        worktreePath: activeThreadWorktreePath,
-      });
-      if (
-        settledCwd === current.cwd &&
-        (activeThreadWorktreePath ?? null) === current.worktreePath
-      ) {
-        return null;
-      }
-      return current;
-    });
-  }, [activeProjectCwd, activeThreadId, activeThreadWorktreePath]);
-
-  useEffect(() => {
-    if (terminalUiState.terminalOpen) {
-      return;
-    }
-    setTerminalUiLaunchContext((current) =>
-      current?.threadId === activeThreadId ? null : current,
-    );
-  }, [activeThreadId, terminalUiState.terminalOpen]);
+  // A launch context only overrides the drawer's cwd until the thread's own
+  // location catches up, the drawer closes, or the thread changes.
+  if (
+    terminalUiLaunchContext !== null &&
+    (terminalUiLaunchContext.threadId !== activeThreadId ||
+      !terminalUiState.terminalOpen ||
+      (activeProjectCwd !== null &&
+        projectScriptCwd({
+          project: { cwd: activeProjectCwd },
+          worktreePath: activeThreadWorktreePath,
+        }) === terminalUiLaunchContext.cwd &&
+        (activeThreadWorktreePath ?? null) === terminalUiLaunchContext.worktreePath))
+  ) {
+    setTerminalUiLaunchContext(null);
+  }
 
   useEffect(() => {
     if (!activeThreadKey) return;
@@ -8324,7 +6201,13 @@ function ChatViewContent(props: ChatViewProps) {
     isDesktop: isElectron,
   });
   const getShortcutContextStable = useStableCallback(getShortcutContext);
+  // SCIENT-FORK:START — messages present active Scient skills beside provider-native ones.
   const timelineSkills = effectiveActiveProviderSkills;
+  // SCIENT-FORK:END
+  const timelineProviders =
+    environmentById.get(
+      displayedThreadRef?.environmentId ?? activeThread?.environmentId ?? environmentId,
+    )?.serverConfig?.providers ?? EMPTY_PROVIDERS;
   const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
   const openThreadFind = () => threadFindControlsRef.current?.open();
@@ -8332,379 +6215,155 @@ function ChatViewContent(props: ChatViewProps) {
   const closeThreadFind = () => threadFindControlsRef.current?.close();
   const closeThreadFindStable = useStableCallback(closeThreadFind);
 
-  useEffect(() => {
-    const handler = (event: globalThis.KeyboardEvent) => {
-      if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
-        event.stopPropagation();
-        return;
-      }
-      // Let contextual controls claim Escape before the bubbling find handler.
-      if (isThreadFindActive && event.key === "Escape") return;
-      if (isTerminalCloseConfirmPending() && preventTerminalCloseShortcut(event, keybindings)) {
-        event.stopPropagation();
-        return;
-      }
-      if (!activeThreadId || isCommandPaletteOpen()) {
-        return;
-      }
-      const terminalFocusOwner = getTerminalFocusOwner();
-      if (event.defaultPrevented && terminalFocusOwner === null) {
-        return;
-      }
-      const shortcutContext = getShortcutContextStable(event.target);
-
-      if (
-        !shortcutContext.terminalFocus &&
-        !shortcutContext.modelPickerOpen &&
-        shouldTypeToFocusComposer(event)
-      ) {
-        if (composerRef.current?.insertTextAtEnd(event.key)) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-      }
-
-      const command = resolveChatShortcutCommand(event, keybindings, scriptKeybindings, {
-        context: shortcutContext,
-      });
-      if (!command) return;
-
-      if (command === "thread.copyReference") {
-        event.preventDefault();
-        event.stopPropagation();
+  const toastPinFailure = (title: string) => (result: AtomCommandResult<unknown, unknown>) => {
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    const error = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  };
+  const openTerminalIfClosed = () => {
+    if (!terminalUiState.terminalOpen) setTerminalOpenStable(true);
+  };
+  const openComposerControl = (command: Parameters<ChatComposerHandle["openControl"]>[0]) =>
+    (({ event }) => {
+      if (!event.repeat) composerRef.current?.openControl(command);
+    }) satisfies ChatShortcutHandler;
+  useChatShortcuts({
+    enabled: activeThreadId !== null,
+    keybindings,
+    scriptKeybindings,
+    getShortcutContext: getShortcutContextStable,
+    threadFindActive: isThreadFindActive,
+    typeIntoComposer: (key) => composerRef.current?.insertTextAtEnd(key) === true,
+    closeThreadFind: () => {
+      closeThreadFindStable();
+      focusComposerStable();
+    },
+    commands: {
+      "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReferenceStable();
-        return;
-      }
-
-      if (command === "thread.settle") {
-        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "thread.settle": () => {
+        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
         if (!isServerThread || !activeThreadRef || !supportsSettlement) return;
         if (activeThreadSettled) {
           void handleUnsettleActiveThreadStable();
           return;
         }
-        // Same as the sidebar Settle button: settle, then open the next thread.
         if (settleAndAdvance(activeThreadRef)) return;
-
-        void settleThread(activeThreadRef).then((result) => {
-          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to settle thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        });
-        return;
-      }
-
-      if (command === "thread.pin") {
-        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-        event.preventDefault();
-        event.stopPropagation();
+        void settleThread(activeThreadRef).then(toastPinFailure("Failed to settle thread"));
+      },
+      "thread.pin": () => {
+        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
         if (!isServerThread || !activeThreadRef || !supportsPinning) return;
-        const pinned = activeThreadPinned;
-        void (pinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)).then(
-          (result) => {
-            if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-            const error = squashAtomCommandFailure(result);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: pinned ? "Failed to unpin thread" : "Failed to pin thread",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          },
+        void (
+          activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
+        ).then(
+          toastPinFailure(activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread"),
         );
-        return;
-      }
-
-      if (command === "terminal.toggle") {
-        if (!terminalUiState.terminalOpen && !canReadTerminal && !canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "terminal.toggle": () => {
+        if (!terminalUiState.terminalOpen && !canReadTerminal && !canOperateTerminal) return false;
         toggleTerminalVisibilityStable();
-        return;
-      }
-
-      // Drafts and servers without thread search leave Mod+F to the browser.
-      if (command === "chat.find" && isServerThread && serverConfig?.threadFind === true) {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "chat.find": () => {
+        if (!isServerThread || serverConfig?.threadFind !== true) return false;
         openThreadFindStable();
-        return;
-      }
-
-      if (command === "rightPanel.toggle") {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleRightPanelStable();
-        return;
-      }
-
-      if (command === "rightPanel.toggleMaximized") {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "rightPanel.toggle": () => toggleRightPanelStable(),
+      "rightPanel.toggleMaximized": ({ event }) => {
         if (!event.repeat) toggleRightPanelMaximizedStable();
-        return;
-      }
-
-      if (command === "threadPanel.toggle") {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleThreadPanelStable();
-        return;
-      }
-
-      if (command === "rightPanel.close") {
-        // Nothing open: leave the event alone so the shortcut keeps its
-        // native meaning (close window on desktop, close tab in a browser).
-        if (!activeRightPanelSurface) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "threadPanel.toggle": () => toggleThreadPanelStable(),
+      "rightPanel.close": ({ event }) => {
+        if (!activeRightPanelSurface) return false;
         if (!event.repeat) closeRightPanelSurfaceStable(activeRightPanelSurface);
-        return;
-      }
-
-      if (command === "terminal.split") {
-        // Without operate access the key keeps its native meaning, as it
-        // does when nothing is open.
-        if (!canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (terminalFocusOwner === "right-panel") {
-          splitPanelTerminalStable();
-          return;
-        }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpenStable(true);
-        }
+      },
+      "terminal.split": ({ terminalFocusOwner }) => {
+        if (!canOperateTerminal) return false;
+        if (terminalFocusOwner === "right-panel") return void splitPanelTerminalStable();
+        openTerminalIfClosed();
         splitTerminalStable();
-        return;
-      }
-
-      if (command === "terminal.splitVertical") {
-        // Without operate access the key keeps its native meaning, as it
-        // does when nothing is open.
-        if (!canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (terminalFocusOwner === "right-panel") {
-          splitPanelTerminalStable("vertical");
-          return;
-        }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpenStable(true);
-        }
+      },
+      "terminal.splitVertical": ({ terminalFocusOwner }) => {
+        if (!canOperateTerminal) return false;
+        if (terminalFocusOwner === "right-panel") return void splitPanelTerminalStable("vertical");
+        openTerminalIfClosed();
         splitTerminalStable("vertical");
-        return;
-      }
-
-      if (command === "terminal.close") {
-        // Without operate access the key keeps its native meaning, as it
-        // does when nothing is open.
-        if (!canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "terminal.close": ({ terminalFocusOwner }) => {
+        if (!canOperateTerminal) return false;
         if (terminalFocusOwner === "right-panel" && activeRightPanelSurface?.kind === "terminal") {
           requestClosePanelTerminalStable(activeRightPanelSurface.activeTerminalId);
           return;
         }
-        if (!terminalUiState.terminalOpen) return;
-        requestCloseTerminalStable(terminalUiState.activeTerminalId);
-        return;
-      }
-
-      if (command === "terminal.new") {
-        // Without operate access the key keeps its native meaning, as it
-        // does when nothing is open.
-        if (!canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (terminalFocusOwner === "right-panel") {
-          addTerminalSurfaceStable();
-          return;
-        }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpenStable(true);
-        }
+        if (terminalUiState.terminalOpen)
+          requestCloseTerminalStable(terminalUiState.activeTerminalId);
+      },
+      "terminal.new": ({ terminalFocusOwner }) => {
+        if (!canOperateTerminal) return false;
+        if (terminalFocusOwner === "right-panel") return void addTerminalSurfaceStable();
+        openTerminalIfClosed();
         createNewTerminalStable();
-        return;
-      }
-
-      if (command === "diff.toggle") {
-        event.preventDefault();
-        event.stopPropagation();
-        onToggleDiffStable();
-        return;
-      }
-
-      if (command === "modelPicker.toggle") {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "diff.toggle": () => onToggleDiffStable(),
+      "modelPicker.toggle": ({ event }) => {
         if (!event.repeat) composerRef.current?.toggleModelPicker();
-        return;
-      }
-
-      if (
-        command === "composer.host" ||
-        command === "composer.effort" ||
-        command === "composer.mode" ||
-        command === "composer.workspace"
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!event.repeat) composerRef.current?.openControl(command);
-        return;
-      }
-
-      if (command === "composer.cycleHost") {
-        if (envLocked || !draftId || !hasMultipleEnvironments) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "composer.host": openComposerControl("composer.host"),
+      "composer.effort": openComposerControl("composer.effort"),
+      "composer.mode": openComposerControl("composer.mode"),
+      "composer.workspace": openComposerControl("composer.workspace"),
+      "composer.cycleHost": ({ event }) => {
+        if (envLocked || !draftId || !hasMultipleEnvironments) return false;
         if (event.repeat) return;
-        // Step from where a pending switch is heading, so repeated presses keep advancing.
-        const currentId = environmentChangeRef.current?.environmentId ?? environmentId;
+        const currentId = readPendingEnvironmentChange()?.environmentId ?? environmentId;
         const index = logicalProjectEnvironments.findIndex(
           (env) => env.environmentId === currentId,
         );
         const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
         if (next) onEnvironmentChangeStable(next.environmentId);
-        return;
-      }
-
-      if (command === "composer.branch") {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "composer.branch": ({ event }) => {
         if (!event.repeat) branchToolbarRef.current?.openBranchPicker();
-        return;
-      }
-
-      if (command === "composer.previousWorktree") {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "composer.previousWorktree": ({ event }) => {
         if (!event.repeat) branchToolbarRef.current?.usePreviousWorktree();
-        return;
-      }
-
-      if (handleQueuedRunShortcut(command, event, queuedRunsControlRef.current)) return;
-
-      if (command === "thread.steerQueuedMessage") {
-        const message = threadQueue.items[0];
-        if (!message) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (!event.repeat) {
-          void threadQueue.control("steer", message.queueItemId).catch((cause) => {
-            if (activeThreadId) setThreadError(activeThreadId, chatActionErrorMessage(cause));
-          });
-        }
-        return;
-      }
-
-      if (command === "thread.editQueuedMessage") {
-        return;
-      }
-
-      if (command === "thread.stop") {
-        // An unavailable command should not shadow contextual shortcuts such as Escape to close a dialog.
-        if (!canInterruptRunningThread) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (event.repeat) return;
-        void onInterruptStable();
-        return;
-      }
-
+      },
+      // SCIENT-FORK:START — queue shortcuts are decided by the Scient queue (threadQueue/queueShortcuts).
+      "thread.steerQueuedMessage": ({ event }) =>
+        steerQueuedMessageShortcut({
+          repeat: event.repeat,
+          nativeQueue: queuedRunsControlRef.current,
+          stripHead: threadQueue.items[0],
+          steerStripItem: (item) =>
+            void threadQueue.control("steer", item.queueItemId).catch((cause) => {
+              if (activeThreadId) setThreadError(activeThreadId, chatActionErrorMessage(cause));
+            }),
+        }),
+      "thread.editQueuedMessage": ({ event }) =>
+        editQueuedMessageShortcut({
+          repeat: event.repeat,
+          nativeQueue: queuedRunsControlRef.current,
+        }),
+      // SCIENT-FORK:END
+      "thread.stop": ({ event }) => {
+        if (!canInterruptRunningThread) return false;
+        if (!event.repeat) void onInterruptStable();
+      },
+    },
+    fallback: (command) => {
       const scriptId = projectScriptIdFromCommand(command);
-      if (!scriptId || !activeProject || !canOperateTerminal) return;
+      if (!scriptId || !activeProject || !canOperateTerminal) return undefined;
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
-      if (!script) return;
-      event.preventDefault();
-      event.stopPropagation();
-      void runProjectScriptStable(script);
-    };
-    const dismissFind = (event: KeyboardEvent) => {
-      if (
-        event.key !== "Escape" ||
-        !isThreadFindActive ||
-        event.defaultPrevented ||
-        event.isComposing ||
-        event.keyCode === 229 ||
-        isCommandPaletteOpen()
-      )
-        return;
-      const context = getShortcutContextStable(event.target);
-      if (context.terminalFocus || context.previewFocus || context.modelPickerOpen) return;
-      event.preventDefault();
-      closeThreadFindStable();
-      focusComposerStable();
-    };
-    window.addEventListener("keydown", handler, true);
-    window.addEventListener("keydown", dismissFind);
-    return () => {
-      window.removeEventListener("keydown", handler, true);
-      window.removeEventListener("keydown", dismissFind);
-    };
-  }, [
-    activeProject,
-    activeRightPanelSurface,
-    activeProjectScripts,
-    canReadTerminal,
-    canOperateTerminal,
-    addTerminalSurfaceStable,
-    activeThreadRef,
-    activeThreadPinned,
-    activeThreadSettled,
-    canInterruptRunningThread,
-    terminalUiState.terminalOpen,
-    terminalUiState.activeTerminalId,
-    activeThreadId,
-    closeRightPanelSurfaceStable,
-    requestCloseTerminalStable,
-    requestClosePanelTerminalStable,
-    createNewTerminalStable,
-    setTerminalOpenStable,
-    runProjectScriptStable,
-    splitTerminalStable,
-    splitPanelTerminalStable,
-    keybindings,
-    scriptKeybindings,
-    handleUnsettleActiveThreadStable,
-    isServerThread,
-    serverConfig?.threadFind,
-    onInterruptStable,
-    onToggleDiffStable,
-    pinThread,
-    settleThread,
-    supportsPinning,
-    supportsSettlement,
-    confirmAndUnpinThread,
-    copyActiveThreadReferenceStable,
-    getShortcutContextStable,
-    openThreadFindStable,
-    closeThreadFindStable,
-    isThreadFindActive,
-    toggleRightPanelStable,
-    toggleRightPanelMaximizedStable,
-    toggleThreadPanelStable,
-    toggleTerminalVisibilityStable,
-    composerRef,
-    threadQueue,
-    setThreadError,
-    draftId,
-    environmentId,
-    envLocked,
-    hasMultipleEnvironments,
-    logicalProjectEnvironments,
-    onEnvironmentChangeStable,
-  ]);
+      return script ? () => void runProjectScriptStable(script) : undefined;
+    },
+  });
 
   // A focused desktop browser page forwards these chords as menu actions.
   useEffect(() => {
@@ -8716,7 +6375,6 @@ function ChatViewContent(props: ChatViewProps) {
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
   // so a paste that follows has no editable target and would be dropped.
-  // Route it to the composer like a typed key, which also expands it.
   useEffect(() => {
     const keyHandler = (event: KeyboardEvent) => {
       if (
@@ -8812,86 +6470,40 @@ function ChatViewContent(props: ChatViewProps) {
       rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
     }));
     setThreadError(activeThread.id, null);
-    try {
-      if (composerRef.current?.hasPendingAttachments()) {
-        throw new Error("Wait for attachments to finish preparing before rewinding.");
-      }
-      const connection = readPreparedConnection(environmentId);
-      if (!connection) throw new Error("The environment is not connected.");
-      const files = await prepareRevertedMessageAttachments({
-        message,
-        environmentId,
-        httpBaseUrl: connection.httpBaseUrl,
-        createAssetUrl: createAttachmentAssetUrl,
-      });
-      const store = useComposerDraftStore.getState();
-      const draft = store.getComposerDraft(composerDraftTarget);
-      if (
-        (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
-        PROVIDER_SEND_TURN_MAX_ATTACHMENTS
-      ) {
-        throw new Error(
-          "Make room for this message's attachments in the composer before rewinding.",
-        );
-      }
-      const commandId = CommandId.make(randomUUID());
-      await waitForRevertedMessage(routeThreadRef, messageId, turnCount, commandId, async () => {
-        const result = await revertThreadCheckpoint({
-          environmentId,
-          input: { commandId, threadId: activeThread.id, turnCount, restoreFiles },
-        });
-        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      });
-      const currentPrompt = store.getComposerDraft(composerDraftTarget)?.prompt ?? "";
-      const restoredPrompt = recallableComposerPrompt(message.text);
-      const nextPrompt =
-        restoredPrompt.length === 0
-          ? currentPrompt
-          : currentPrompt.length > 0
-            ? `${currentPrompt}\n\n${restoredPrompt}`
-            : restoredPrompt;
-      store.setPrompt(composerDraftTarget, nextPrompt);
-      const images: ComposerImageAttachment[] = [];
-      const restoredFiles: ComposerFileAttachment[] = [];
-      files.forEach((file, index) => {
-        const attachment = {
-          id: randomUUID(),
-          name: file.name,
-          mimeType: file.type,
-          sizeBytes: file.size,
-          file,
-        };
-        if (message.attachments?.[index]?.type === "image") {
-          images.push({ ...attachment, type: "image", previewUrl: URL.createObjectURL(file) });
-        } else {
-          restoredFiles.push({ ...attachment, type: "file" });
-        }
-      });
-      store.addImages(composerDraftTarget, images, { allowDuplicates: true });
-      store.addFiles(composerDraftTarget, restoredFiles, { allowDuplicates: true });
-      if (currentRouteThreadKeyRef.current === routeThreadKey) {
-        promptRef.current = nextPrompt;
-        composerRef.current?.resetCursorState({ prompt: nextPrompt, cursor: nextPrompt.length });
-        requestAnimationFrame(() => {
-          if (currentRouteThreadKeyRef.current === routeThreadKey)
-            composerRef.current?.focusAtEnd();
-        });
-      }
-      setPendingRevert((current) => (current?.routeThreadKey === routeThreadKey ? null : current));
-    } catch (error) {
-      setPendingRevert((current) =>
-        current?.routeThreadKey === routeThreadKey
-          ? {
-              ...current,
-              error: error instanceof Error ? error.message : "Could not rewind this conversation.",
-            }
-          : current,
-      );
-    } finally {
-      useComposerDraftStore.setState((store) => {
-        const remaining = new Set(store.rewindingThreadKeys);
-        remaining.delete(routeThreadKey);
-        return { rewindingThreadKeys: remaining };
+    const rewind = await rewindToMessage({
+      message,
+      environmentId,
+      routeThreadRef,
+      threadId: activeThread.id,
+      turnCount,
+      restoreFiles,
+      draftTarget: composerDraftTarget,
+      composerHasPendingAttachments: composerRef.current?.hasPendingAttachments() === true,
+      createAssetUrl: createAttachmentAssetUrl,
+      revertThreadCheckpoint,
+    });
+    useComposerDraftStore.setState((store) => {
+      const remaining = new Set(store.rewindingThreadKeys);
+      remaining.delete(routeThreadKey);
+      return { rewindingThreadKeys: remaining };
+    });
+    // SCIENT-FORK:START — the rewind dialog stays open on failure and shows why; success closes it.
+    const rewindError = rewind.error;
+    setPendingRevert((current) =>
+      current?.routeThreadKey !== routeThreadKey
+        ? current
+        : rewindError === null
+          ? null
+          : { ...current, error: rewindError },
+    );
+    if (rewindError !== null) return;
+    // SCIENT-FORK:END
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      const nextPrompt = rewind.prompt;
+      promptRef.current = nextPrompt;
+      composerRef.current?.resetCursorState({ prompt: nextPrompt, cursor: nextPrompt.length });
+      requestAnimationFrame(() => {
+        if (currentRouteThreadKeyRef.current === routeThreadKey) composerRef.current?.focusAtEnd();
       });
     }
   };
@@ -9016,55 +6628,51 @@ function ChatViewContent(props: ChatViewProps) {
       },
     ]);
     frameSubmittedMessage(messageId, readingPositionAtSend);
-    try {
-      const settingsResult = await persistThreadSettingsForNextTurn({
-        threadId,
-        createdAt,
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
-        runtimeMode,
-        interactionMode: context.interactionMode,
-      });
-      const result =
-        settingsResult._tag === "Failure"
-          ? settingsResult
-          : await startThreadTurn({
-              environmentId,
-              input: {
-                threadId,
-                message: { messageId, role: "user", text: "/compact", attachments: [] },
-                modelSelection: context.selectedModelSelection,
-                runtimeMode,
-                interactionMode: context.interactionMode,
-                createdAt,
-              },
-            });
-      if (result._tag === "Failure") {
+    // Commands settle into a result, so this always runs.
+    const settingsResult = await persistThreadSettingsForNextTurn({
+      threadId,
+      createdAt,
+      ...(localCheckoutBranchMismatch ? { branch: localCheckoutBranchMismatch.currentBranch } : {}),
+      runtimeMode,
+      interactionMode: context.interactionMode,
+    });
+    const result =
+      settingsResult._tag === "Failure"
+        ? settingsResult
+        : await startThreadTurn({
+            environmentId,
+            input: {
+              threadId,
+              message: { messageId, role: "user", text: "/compact", attachments: [] },
+              modelSelection: context.selectedModelSelection,
+              runtimeMode,
+              interactionMode: context.interactionMode,
+              createdAt,
+            },
+          });
+    if (result._tag === "Failure") {
+      setOptimisticUserMessages((messages) =>
+        messages.filter((message) => message.id !== messageId),
+      );
+      resetLocalDispatch();
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          threadId,
+          error instanceof Error ? error.message : "Failed to compact context.",
+        );
+      }
+    } else {
+      clearUsageLimitsFor(routeThreadKey);
+      if ("queued" in result.value && result.value.queued === true) {
         setOptimisticUserMessages((messages) =>
           messages.filter((message) => message.id !== messageId),
         );
         resetLocalDispatch();
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          setThreadError(
-            threadId,
-            error instanceof Error ? error.message : "Failed to compact context.",
-          );
-        }
-      } else {
-        clearUsageLimitsFor(routeThreadKey);
-        if ("queued" in result.value && result.value.queued === true) {
-          setOptimisticUserMessages((messages) =>
-            messages.filter((message) => message.id !== messageId),
-          );
-          resetLocalDispatch();
-          void threadQueue.refresh();
-        }
+        void threadQueue.refresh();
       }
-    } finally {
-      sendInFlightRef.current = false;
     }
+    sendInFlightRef.current = false;
   };
 
   const onResume = async () => {
@@ -9086,64 +6694,62 @@ function ChatViewContent(props: ChatViewProps) {
     sendInFlightRef.current = true;
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
     setThreadError(threadId, null);
-    try {
-      const resume = async () => {
-        if (resumableRunId === null) {
-          return resumeThreadQueue({ environmentId, input: { threadId } });
-        }
-        const createdAt = new Date().toISOString();
-        const settingsResult = await persistThreadSettingsForNextTurn({
+    // Commands settle into a result, so this always runs.
+    const resume = async () => {
+      if (resumableRunId === null) {
+        return resumeThreadQueue({ environmentId, input: { threadId } });
+      }
+      const createdAt = new Date().toISOString();
+      const settingsResult = await persistThreadSettingsForNextTurn({
+        threadId,
+        createdAt,
+        ...(localCheckoutBranchMismatch
+          ? { branch: localCheckoutBranchMismatch.currentBranch }
+          : {}),
+        runtimeMode,
+        interactionMode,
+      });
+      if (settingsResult._tag === "Failure") return settingsResult;
+      const turnResult = await startThreadTurn({
+        environmentId,
+        input: {
           threadId,
-          createdAt,
-          ...(localCheckoutBranchMismatch
-            ? { branch: localCheckoutBranchMismatch.currentBranch }
-            : {}),
+          manualContinuationOfRunId: resumableRunId,
+          ...(modelSelection ? { modelSelection } : {}),
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: "Continue where you left off.",
+            attachments: [],
+          },
           runtimeMode,
           interactionMode,
-        });
-        if (settingsResult._tag === "Failure") return settingsResult;
-        const turnResult = await startThreadTurn({
-          environmentId,
-          input: {
-            threadId,
-            manualContinuationOfRunId: resumableRunId,
-            ...(modelSelection ? { modelSelection } : {}),
-            message: {
-              messageId: newMessageId(),
-              role: "user",
-              text: "Continue where you left off.",
-              attachments: [],
-            },
-            runtimeMode,
-            interactionMode,
-            dispatchMode: "start",
-          },
-        });
-        if (turnResult._tag === "Failure" || !hasHeldQueuedRuns) return turnResult;
-        clearUsageLimitsFor(routeThreadKey);
-        return resumeThreadQueue({ environmentId, input: { threadId } });
-      };
-      const result = await resume();
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          setThreadError(
-            threadId,
-            error instanceof Error ? error.message : "Could not resume thread.",
-          );
-        }
-      } else {
-        clearUsageLimitsFor(routeThreadKey);
-        if (currentRouteThreadKeyRef.current === routeThreadKey) scrollToEnd();
-      }
-    } finally {
-      sendInFlightRef.current = false;
-      setResumingThreadKeys((current) => {
-        const next = new Set(current);
-        next.delete(routeThreadKey);
-        return next;
+          dispatchMode: "start",
+        },
       });
+      if (turnResult._tag === "Failure" || !hasHeldQueuedRuns) return turnResult;
+      clearUsageLimitsFor(routeThreadKey);
+      return resumeThreadQueue({ environmentId, input: { threadId } });
+    };
+    const result = await resume();
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          threadId,
+          error instanceof Error ? error.message : "Could not resume thread.",
+        );
+      }
+    } else {
+      clearUsageLimitsFor(routeThreadKey);
+      if (currentRouteThreadKeyRef.current === routeThreadKey) scrollToEnd();
     }
+    sendInFlightRef.current = false;
+    setResumingThreadKeys((current) => {
+      const next = new Set(current);
+      next.delete(routeThreadKey);
+      return next;
+    });
   };
 
   async function onSend(
@@ -9159,12 +6765,13 @@ function ChatViewContent(props: ChatViewProps) {
     // SCIENT-FORK:END
   ) {
     e?.preventDefault();
+    // SCIENT-FORK:START — the composer's queue edit, reading position and direct prompt are
+    // captured before any await.
     let queueEdit =
       useQueueEditSessions.getState().sessions[composerTargetKey(composerDraftTarget)];
     const readingPositionAtSend = captureSendReadingPosition();
     const directPrompt = options?.directPrompt?.trim() || null;
-    // Typed out in full rather than picked from the menu. Attachments or contexts
-    // mean the user is sending a prompt, so those go through as usual.
+    // SCIENT-FORK:END
     if (
       !useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.extractedIntent &&
       usageLimitsOffered &&
@@ -9201,7 +6808,7 @@ function ChatViewContent(props: ChatViewProps) {
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
       threadDetailLoading ||
-      environmentChangeRef.current !== null ||
+      readPendingEnvironmentChange() !== null ||
       sendInFlightRef.current ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
@@ -9211,10 +6818,11 @@ function ChatViewContent(props: ChatViewProps) {
     // Capture before queue recovery yields: submitting releases the typing hold,
     // but a revealed question must not replace this draft's attachment snapshot.
     const sendCtx = composerRef.current?.getSendContext();
-    let extractedIntent: ExtractedIntentRecord | undefined;
+    // SCIENT-FORK:START — an extracted queue intent is retried or bound before this send, and a
+    // queue edit is flushed; both settle before the send continues.
     sendInFlightRef.current = true;
-    try {
-      const intake = await beginExtractedSubmission({
+    const intakeResult = await settlePromise(() =>
+      beginExtractedSubmission({
         target: composerDraftTarget,
         queueEdit,
         hasSeparateAction: () => Boolean(options?.steer || directAnnotation || directPrompt),
@@ -9223,34 +6831,42 @@ function ChatViewContent(props: ChatViewProps) {
           promptRef.current = "";
           composerRef.current?.resetCursorState();
         },
-      });
-      extractedIntent = intake.intent;
-      const retryResult = intake.retryResult;
-      if (retryResult) {
-        const result = retryResult;
-        if (result._tag === "Failure") {
-          setThreadError(activeThread.id, chatActionErrorMessage(squashAtomCommandFailure(result)));
-          return;
-        }
-        return;
-      }
-    } catch (cause) {
-      setThreadError(activeThread.id, chatActionErrorMessage(cause));
+      }),
+    );
+    sendInFlightRef.current = false;
+    if (intakeResult._tag === "Failure") {
+      setThreadError(
+        activeThread.id,
+        chatActionErrorMessage(squashAtomCommandFailure(intakeResult)),
+      );
       return;
-    } finally {
-      sendInFlightRef.current = false;
+    }
+    let extractedIntent: ExtractedIntentRecord | undefined = intakeResult.value.intent;
+    const retryResult = intakeResult.value.retryResult;
+    if (retryResult) {
+      if (retryResult._tag === "Failure") {
+        setThreadError(
+          activeThread.id,
+          chatActionErrorMessage(squashAtomCommandFailure(retryResult)),
+        );
+      }
+      return;
     }
     if (queueEdit && !queueEdit.transferred) {
+      const editToFlush = queueEdit;
       sendInFlightRef.current = true;
-      try {
-        queueEdit = await flushQueueEdit(queueEdit);
-      } catch (cause) {
-        setThreadError(activeThread.id, chatActionErrorMessage(cause));
+      const flushResult = await settlePromise(() => flushQueueEdit(editToFlush));
+      sendInFlightRef.current = false;
+      if (flushResult._tag === "Failure") {
+        setThreadError(
+          activeThread.id,
+          chatActionErrorMessage(squashAtomCommandFailure(flushResult)),
+        );
         return;
-      } finally {
-        sendInFlightRef.current = false;
       }
+      queueEdit = flushResult.value;
     }
+    // SCIENT-FORK:END
     if (needsLoadBalancing) {
       toastManager.add({
         type: "warning",
@@ -9337,44 +6953,20 @@ function ChatViewContent(props: ChatViewProps) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
+    // SCIENT-FORK:START — a direct prompt (e.g. a queue steer) sends only its own text.
     const effectiveSendContextImages = directPrompt === null ? sendContextImages : [];
     const effectiveComposerFiles = directPrompt === null ? composerFiles : [];
     const effectiveComposerTerminalContexts = directPrompt === null ? composerTerminalContexts : [];
     const effectivePreviewAnnotations = directPrompt === null ? sendContextPreviewAnnotations : [];
     const effectiveReviewComments = directPrompt === null ? composerReviewComments : [];
-    const annotationImageAlreadyAttached =
-      directAnnotation?.image !== undefined &&
-      effectiveSendContextImages.some((image) => image.id === directAnnotation.image?.id);
-    // A full composer (e.g. 8 files) cannot take the annotation screenshot;
-    // over the cap the server rejects the whole turn.
-    const annotationImageAppended =
-      directAnnotation?.image !== undefined &&
-      !annotationImageAlreadyAttached &&
-      effectiveSendContextImages.length + effectiveComposerFiles.length <
-        PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
-    const composerImages =
-      directAnnotation?.image && annotationImageAppended
-        ? [...effectiveSendContextImages, directAnnotation.image]
-        : effectiveSendContextImages;
-    const composerPreviewAnnotations =
-      directAnnotation &&
-      !effectivePreviewAnnotations.some(
-        (annotation) => annotation.id === directAnnotation.annotation.id,
-      )
-        ? [
-            ...sendContextPreviewAnnotations,
-            {
-              ...directAnnotation.annotation,
-              // Claim an attached crop only when the screenshot really rides
-              // along; a cap-dropped image must not produce a lying prompt.
-              screenshot:
-                directAnnotation.annotation.screenshot &&
-                (annotationImageAppended || annotationImageAlreadyAttached)
-                  ? { ...directAnnotation.annotation.screenshot, dataUrl: "" }
-                  : null,
-            },
-          ]
-        : effectivePreviewAnnotations;
+    // SCIENT-FORK:END
+    const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
+      mergeDirectPreviewAnnotation({
+        images: effectiveSendContextImages,
+        fileCount: effectiveComposerFiles.length,
+        previewAnnotations: effectivePreviewAnnotations,
+        direct: directAnnotation,
+      });
     // A direct "send annotation" writes the draft and sends in the same tick; the reference
     // must be in the text now, not after the next render.
     const promptForSend =
@@ -9521,12 +7113,15 @@ function ChatViewContent(props: ChatViewProps) {
           prompt: promptForSend,
           terminalContexts: sendableComposerTerminalContexts,
           reviewComments: composerReviewComments,
-          previewAnnotations: composerPreviewAnnotations,
+          previewAnnotations: [...composerPreviewAnnotations],
         }),
       });
+      // SCIENT-FORK:START — an admitted follow-up retires its queue edit and clears its draft.
       if (followUpSubmissionId) {
-        try {
-          if (queueEdit) await finishQueueEdit(queueEdit, draftSnapshotForSend);
+        const editToFinish = queueEdit;
+        const followUpThreadId = activeThread.id;
+        const acknowledged = await settlePromise(async () => {
+          if (editToFinish) await finishQueueEdit(editToFinish, draftSnapshotForSend);
           if (
             composerSubmissionMatchesDraft(
               draftSnapshotForSend,
@@ -9541,16 +7136,25 @@ function ChatViewContent(props: ChatViewProps) {
             }
           }
           acknowledgeQueueSubmission(
-            composerTargetKey(scopeThreadRef(environmentId, activeThread.id)),
+            composerTargetKey(scopeThreadRef(environmentId, followUpThreadId)),
             followUpSubmissionId,
           );
-        } catch (cause) {
-          setThreadError(activeThread.id, chatActionErrorMessage(cause));
+        });
+        if (acknowledged._tag === "Failure") {
+          setThreadError(
+            followUpThreadId,
+            chatActionErrorMessage(squashAtomCommandFailure(acknowledged)),
+          );
+        } else if (
+          submissionIntent === "background" &&
+          currentRouteThreadKeyRef.current === routeThreadKey
+        ) {
+          handleNewThreadInActiveProject();
         }
       }
+      // SCIENT-FORK:END
       return;
     }
-    // Providers without the legacy toggle receive their native commands unchanged.
     const standaloneSlashCommand =
       directPrompt === null &&
       sendInteractionModeEnabled &&
@@ -9629,7 +7233,6 @@ function ChatViewContent(props: ChatViewProps) {
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...effectiveReviewComments];
-    // Expired terminal excerpts are not sent; their chips leave the text with them.
     const messageTextForSend = effectiveComposerTerminalContexts
       .filter((context) => !composerTerminalContextsSnapshot.includes(context))
       .reduce(
@@ -9694,7 +7297,11 @@ function ChatViewContent(props: ChatViewProps) {
       };
     };
 
-    const multipleTargets = [];
+    const multipleTargets: Array<{
+      readonly selection: ModelSelection;
+      readonly text: string;
+      readonly interactionMode: ProviderInteractionMode;
+    }> = [];
     for (const selection of multipleModelSelections ?? []) {
       const provider = providerInstanceEntries.find(
         (entry) => entry.instanceId === selection.instanceId,
@@ -9743,10 +7350,13 @@ function ChatViewContent(props: ChatViewProps) {
     const sendGeneration = ++composerSendGenerationRef.current;
     let submittedMessageId: MessageId | null = null;
     let requestAccepted = false;
-    try {
+    // SCIENT-FORK:START — the attempt runs as one settled unit: anything thrown fails it, and the
+    // release below still runs, like the finally it replaces.
+    const sendAttempt = await settlePromise(async () => {
       if (extractedIntent)
         extractedIntent = await prepareExtractedDraftIntent(extractedIntent.intentId);
       if (queueEdit) await flushQueueEdit(queueEdit);
+      // SCIENT-FORK:END
       const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
       if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {
         sendInFlightRef.current = false;
@@ -9783,11 +7393,13 @@ function ChatViewContent(props: ChatViewProps) {
         }
       }
 
+      // SCIENT-FORK:START — a multiple-model send from a draft is a background submission.
       const resolvedSubmissionIntent =
         (multipleModelSelections !== null || submissionIntent === "background") &&
         isLocalDraftThread
           ? "background"
           : "foreground";
+      // SCIENT-FORK:END
       if (
         shouldDockDraftHeroForSubmission({
           isDraftHeroState,
@@ -9818,9 +7430,16 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
-      if (attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null) {
+      if (
+        !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+        attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null
+      ) {
         sendInFlightRef.current = false;
-        setThreadError(threadIdForSend, attachmentCapabilitiesBeforeDispatch.fileBlockReason);
+        setThreadError(
+          threadIdForSend,
+          attachmentCapabilitiesBeforeDispatch.fileBlockReason ??
+            "This connection cannot change threads.",
+        );
         setDockedDraftHeroThreadKey((currentThreadKey) =>
           currentThreadKey === activeThreadKey ? null : currentThreadKey,
         );
@@ -9833,17 +7452,15 @@ function ChatViewContent(props: ChatViewProps) {
           preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
           submissionIntent: resolvedSubmissionIntent,
         });
-        setWorktreeSetupRef(
+        beginWorktreeSetup(
           multipleModelSelections === null && baseBranchForWorktree
-            ? {
-                environmentId: activeThread.environmentId,
-                threadId: threadIdForSend,
-                ownerKey: worktreeSetupOwnerKey,
-              }
+            ? { environmentId: activeThread.environmentId, threadId: threadIdForSend }
             : null,
         );
       }
 
+      // SCIENT-FORK:START — an ordinary send has a durable queue submission identity, so an
+      // ambiguous response cannot submit twice.
       const submissionIdentityResult = await settlePromise(async () => {
         if (options?.steer || directAnnotation) return undefined;
         return queueSubmissionId(submissionTargetKey, {
@@ -9881,6 +7498,7 @@ function ChatViewContent(props: ChatViewProps) {
       const submissionId = submissionIdentityResult.value;
       const messageIdForSend = submissionId ? MessageId.make(submissionId) : newMessageId();
       submittedMessageId = messageIdForSend;
+      // SCIENT-FORK:END
       const messageCreatedAt = new Date().toISOString();
       const turnAttachmentsPromise = Promise.all(
         composerAttachmentsSnapshot.map(async (attachment) => {
@@ -9913,7 +7531,9 @@ function ChatViewContent(props: ChatViewProps) {
         let releasedComposer = false;
         let canRestoreDraft = () => false;
         let startedCount = 0;
-        try {
+        // Anything thrown here (an attachment the server can no longer take)
+        // fails every selection; the draft restore below still runs.
+        const sendResult = await settlePromise(async () => {
           const attachments = await turnAttachmentsPromise;
           const fileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
           if (fileBlockReason !== null) throw new Error(fileBlockReason);
@@ -9936,139 +7556,78 @@ function ChatViewContent(props: ChatViewProps) {
           const clearedDraftSnapshot = useComposerDraftStore
             .getState()
             .getComposerDraft(composerDraftTarget);
-          const submittedSelections = multipleModelSelectionsRef.current;
+          const submittedSelections = readMultipleModelSelections();
           canRestoreDraft = () =>
             currentRouteThreadKeyRef.current === routeThreadKey &&
             composerSendGenerationRef.current === sendGeneration &&
             useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
               clearedDraftSnapshot &&
-            multipleModelSelectionsRef.current === submittedSelections;
+            readMultipleModelSelections() === submittedSelections;
           setThreadError(threadIdForSend, null);
           const starts = Promise.all(
             multipleTargets.map(async (target) => {
-              const retryKey = JSON.stringify([
-                routeThreadKey,
-                target.selection.instanceId,
-                target.selection.model,
-              ]);
-              const uncertainThreadId = uncertainMultipleSubmissionsRef.current.get(retryKey);
-              const targetThreadId = uncertainThreadId ?? newThreadId();
-              let requestMayHaveStarted = false;
-              try {
-                if (uncertainThreadId) {
-                  throw new Error(
-                    "The previous request may have started. Open its thread to check before sending again.",
-                  );
-                }
-                requestMayHaveStarted = true;
-                const result = await startThreadTurn({
-                  environmentId,
-                  input: {
-                    threadId: targetThreadId,
-                    selectedScientSkillNames,
-                    message: {
-                      messageId: newMessageId(),
-                      role: "user",
-                      text: target.text,
-                      attachments,
-                      ...(context ? { context } : {}),
-                    },
-                    modelSelection: target.selection,
-                    titleSeed: title,
-                    runtimeMode,
-                    interactionMode: target.interactionMode,
-                    bootstrap: {
-                      createThread: {
-                        projectId: projectForMultipleModels.id,
-                        title,
-                        modelSelection: target.selection,
-                        runtimeMode,
-                        interactionMode: target.interactionMode,
-                        branch: activeThreadBranch,
-                        worktreePath: null,
-                        createdAt: messageCreatedAt,
+              const started = await startFanoutThread({
+                retryKey: JSON.stringify([
+                  routeThreadKey,
+                  target.selection.instanceId,
+                  target.selection.model,
+                ]),
+                model: target.selection.model,
+                uncertainSubmissions: uncertainMultipleSubmissionsRef.current,
+                start: (targetThreadId) =>
+                  startThreadTurn({
+                    environmentId,
+                    input: {
+                      threadId: targetThreadId,
+                      // SCIENT-FORK:START — selected Scient skills and a named temporary branch.
+                      selectedScientSkillNames,
+                      // SCIENT-FORK:END
+                      message: {
+                        messageId: newMessageId(),
+                        role: "user",
+                        text: target.text,
+                        attachments,
+                        ...(context ? { context } : {}),
                       },
-                      prepareWorktree: {
-                        projectCwd: projectForMultipleModels.workspaceRoot,
-                        baseBranch: activeThreadBranch!,
-                        requireWorktree: true,
-                        branch: buildTemporaryWorktreeBranchName(randomHex),
-                        ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      modelSelection: target.selection,
+                      titleSeed: title,
+                      runtimeMode,
+                      interactionMode: target.interactionMode,
+                      bootstrap: {
+                        createThread: {
+                          projectId: projectForMultipleModels.id,
+                          title,
+                          modelSelection: target.selection,
+                          runtimeMode,
+                          interactionMode: target.interactionMode,
+                          branch: activeThreadBranch,
+                          worktreePath: null,
+                          createdAt: messageCreatedAt,
+                        },
+                        prepareWorktree: {
+                          projectCwd: projectForMultipleModels.workspaceRoot,
+                          baseBranch: activeThreadBranch!,
+                          requireWorktree: true,
+                          // SCIENT-FORK:START
+                          branch: buildTemporaryWorktreeBranchName(randomHex),
+                          // SCIENT-FORK:END
+                          ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                        },
+                        runSetupScript: true,
                       },
-                      runSetupScript: true,
+                      createdAt: messageCreatedAt,
                     },
-                    createdAt: messageCreatedAt,
-                  },
-                });
-                if (result._tag === "Failure") {
-                  const error = squashAtomCommandFailure(result);
-                  if (wasBootstrapThreadDeleted(error) || wasBootstrapThreadNotCreated(error)) {
-                    requestMayHaveStarted = false;
-                  }
-                  throw error;
-                }
-                startedCount += 1;
-              } catch (error) {
-                if (
-                  requestMayHaveStarted &&
-                  !uncertainMultipleSubmissionsRef.current.has(retryKey)
-                ) {
-                  uncertainMultipleSubmissionsRef.current.set(retryKey, targetThreadId);
-                }
-                failedSelections.push(target.selection);
-                const retainedThreadId = uncertainMultipleSubmissionsRef.current.get(retryKey);
-                const failureToastId = toastManager.add(
-                  stackedThreadToast({
-                    type: "error",
-                    title: `Could not start ${target.selection.model}`,
-                    description: error instanceof Error ? error.message : "Failed to send message.",
-                    ...(retainedThreadId
-                      ? {
-                          timeout: 0,
-                          data: {
-                            secondaryActionProps: {
-                              children: "Allow retry",
-                              onClick: () => {
-                                void readLocalApi()
-                                  ?.dialogs.confirm(
-                                    "The previous request may already be running. Check its thread first. Allow another send that could create a duplicate thread?",
-                                  )
-                                  .then(
-                                    (confirmed) => {
-                                      if (
-                                        confirmed &&
-                                        uncertainMultipleSubmissionsRef.current.get(retryKey) ===
-                                          retainedThreadId
-                                      ) {
-                                        uncertainMultipleSubmissionsRef.current.delete(retryKey);
-                                        toastManager.close(failureToastId);
-                                      }
-                                    },
-                                    () => undefined,
-                                  );
-                              },
-                            },
-                          },
-                          actionProps: {
-                            children: "Open thread",
-                            onClick: () => {
-                              void navigate({
-                                to: "/$environmentId/$threadId",
-                                params: buildThreadRouteParams(
-                                  scopeThreadRef(environmentId, retainedThreadId),
-                                ),
-                              });
-                            },
-                          },
-                        }
-                      : {}),
                   }),
-                );
-              }
+                openThread: (threadId) =>
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+                  }),
+              });
+              if (started) startedCount += 1;
+              else failedSelections.push(target.selection);
             }),
           );
-          // Each request now owns its background thread. The original draft is
-          // ready for another prompt while checkout and setup scripts finish.
           sendInFlightRef.current = false;
           if (!sendQueuesBehindSetup) resetLocalDispatch();
           releasedComposer = true;
@@ -10084,86 +7643,84 @@ function ChatViewContent(props: ChatViewProps) {
           if (failedSelections.length === 0 && turnUsesAttachmentUploads) {
             releaseDraftAttachments(composerAttachmentsSnapshot);
           }
-        } catch (error) {
+        });
+        if (sendResult._tag === "Failure") {
+          const error = squashAtomCommandFailure(sendResult);
           failedSelections.push(...multipleModelSelections);
           setThreadError(
             threadIdForSend,
             error instanceof Error ? error.message : "Failed to send messages.",
           );
-        } finally {
-          const restoreFailedDraft = () => {
-            setMultipleModelSelections(failedSelections);
-            if (clearedDraft) {
-              setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
-              addComposerDraftImages(
-                composerDraftTarget,
-                composerImagesSnapshot.map(cloneComposerImageForRetry),
-              );
-              addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
-              setComposerDraftTerminalContexts(
-                composerDraftTarget,
-                composerTerminalContextsSnapshot,
-              );
-              setComposerDraftPreviewAnnotations(
-                composerDraftTarget,
-                composerPreviewAnnotationsSnapshot,
-              );
-              setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-              setComposerDraftThreadContexts(composerDraftTarget, composerThreadContextsSnapshot);
-              if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
-                promptRef.current = messageTextForSend;
-                composerRef.current.resetCursorState({
-                  cursor: collapseExpandedComposerCursor(
-                    messageTextForSend,
-                    messageTextForSend.length,
-                  ),
-                  prompt: messageTextForSend,
-                  detectTrigger: true,
-                });
-              }
+        }
+        const restoreFailedDraft = () => {
+          setMultipleModelSelections(failedSelections);
+          if (clearedDraft) {
+            setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
+            addComposerDraftImages(
+              composerDraftTarget,
+              composerImagesSnapshot.map(cloneComposerImageForRetry),
+            );
+            addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
+            setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
+            setComposerDraftPreviewAnnotations(
+              composerDraftTarget,
+              composerPreviewAnnotationsSnapshot,
+            );
+            setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+            setComposerDraftThreadContexts(composerDraftTarget, composerThreadContextsSnapshot);
+            if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
+              promptRef.current = messageTextForSend;
+              composerRef.current.resetCursorState({
+                cursor: collapseExpandedComposerCursor(
+                  messageTextForSend,
+                  messageTextForSend.length,
+                ),
+                prompt: messageTextForSend,
+                detectTrigger: true,
+              });
             }
-          };
-          if (failedSelections.length > 0) {
-            if (canRestoreDraft() && composerRef.current) {
-              restoreFailedDraft();
-            } else if (clearedDraft) {
-              const recoveryToastId = toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: "A background prompt could not be sent",
-                  description:
-                    "Your newer draft is unchanged. Restore the failed prompt when this composer is empty.",
-                  timeout: 0,
-                  actionProps: {
-                    children: "Restore prompt",
-                    onClick: () => {
-                      if (
-                        !draftId ||
-                        !useComposerDraftStore.getState().getDraftSession(draftId) ||
-                        sendInFlightRef.current ||
-                        composerDraftHasUserContent(
-                          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-                        )
-                      ) {
-                        toastManager.update(recoveryToastId, {
-                          description:
-                            "Return to the original draft and send or clear its current prompt before restoring.",
-                        });
-                        return;
-                      }
-                      restoreFailedDraft();
-                      void navigate({ to: "/draft/$draftId", params: { draftId } });
-                      toastManager.close(recoveryToastId);
-                    },
+          }
+        };
+        if (failedSelections.length > 0) {
+          if (canRestoreDraft() && composerRef.current) {
+            restoreFailedDraft();
+          } else if (clearedDraft) {
+            const recoveryToastId = toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "A background prompt could not be sent",
+                description:
+                  "Your newer draft is unchanged. Restore the failed prompt when this composer is empty.",
+                timeout: 0,
+                actionProps: {
+                  children: "Restore prompt",
+                  onClick: () => {
+                    if (
+                      !draftId ||
+                      !useComposerDraftStore.getState().getDraftSession(draftId) ||
+                      sendInFlightRef.current ||
+                      composerDraftHasUserContent(
+                        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+                      )
+                    ) {
+                      toastManager.update(recoveryToastId, {
+                        description:
+                          "Return to the original draft and send or clear its current prompt before restoring.",
+                      });
+                      return;
+                    }
+                    restoreFailedDraft();
+                    void navigate({ to: "/draft/$draftId", params: { draftId } });
+                    toastManager.close(recoveryToastId);
                   },
-                }),
-              );
-            }
+                },
+              }),
+            );
           }
-          if (!releasedComposer) {
-            sendInFlightRef.current = false;
-            if (!sendQueuesBehindSetup) resetLocalDispatch();
-          }
+        }
+        if (!releasedComposer) {
+          sendInFlightRef.current = false;
+          if (!sendQueuesBehindSetup) resetLocalDispatch();
         }
         return;
       }
@@ -10188,6 +7745,8 @@ function ChatViewContent(props: ChatViewProps) {
               ...(attachment.source ? { source: attachment.source } : {}),
             },
       );
+      // SCIENT-FORK:START — a send the server will queue previews in the queue strip and is
+      // framed only once it starts; a send that starts now is framed immediately.
       const previewQueueAdmission =
         compactBeforeSend ||
         sendQueuesBehindSetup ||
@@ -10200,6 +7759,7 @@ function ChatViewContent(props: ChatViewProps) {
           awaitingCompletion: isServerThread ? hasHeldQueuedRuns : threadQueue.awaitingCompletion,
         });
       if (!previewQueueAdmission) frameSubmittedMessage(messageIdForSend, readingPositionAtSend);
+      // SCIENT-FORK:END
       setOptimisticUserMessages((existing) => [
         ...existing,
         {
@@ -10263,8 +7823,8 @@ function ChatViewContent(props: ChatViewProps) {
       );
 
       let failure: AtomCommandResult<unknown, unknown> | null = null;
-      // Steer retains its explicit settings path. Ordinary settings are committed
-      // by the server only when the submitted payload is admitted to start.
+      // SCIENT-FORK:START — steer retains its explicit settings path. Ordinary settings are
+      // committed by the server only when the submitted payload is admitted to start.
       if ((options?.steer || directAnnotation) && isFirstMessage && isServerThread) {
         const titleResult = await updateThreadMetadata({
           environmentId,
@@ -10306,6 +7866,7 @@ function ChatViewContent(props: ChatViewProps) {
         });
         if (branchResult._tag === "Failure") failure = branchResult;
       }
+      // SCIENT-FORK:END
 
       const turnAttachmentsResult = await settlePromise(async () => {
         const turnAttachments = await turnAttachmentsPromise;
@@ -10337,7 +7898,9 @@ function ChatViewContent(props: ChatViewProps) {
       let turnStartSucceeded = false;
       let backgroundDraftOpened = false;
       if (failure === null && turnAttachmentsResult._tag === "Success") {
+        // SCIENT-FORK:START — a draft without a project starts no project thread.
         const shouldCreateThread = isLocalDraftThread && activeThread.projectId !== null;
+        // SCIENT-FORK:END
         const bootstrap =
           shouldCreateThread || baseBranchForWorktree
             ? {
@@ -10360,7 +7923,9 @@ function ChatViewContent(props: ChatViewProps) {
                       prepareWorktree: {
                         projectCwd: activeProject.workspaceRoot,
                         baseBranch: baseBranchForWorktree,
+                        // SCIENT-FORK:START
                         branch: buildTemporaryWorktreeBranchName(randomHex),
+                        // SCIENT-FORK:END
                         ...(startFromOrigin ? { startFromOrigin: true } : {}),
                       },
                       runSetupScript: true,
@@ -10375,6 +7940,8 @@ function ChatViewContent(props: ChatViewProps) {
         if (backgroundThreadRef) {
           beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
         }
+        // SCIENT-FORK:START — the turn packet carries the extracted intent's durable command id,
+        // its source plan and the selected Scient skills.
         const extractedSourcePlan =
           extractedIntent?.sourceProposedPlan ?? queueEdit?.extractedItem?.sourceProposedPlan;
         const preparedPacket: ExtractedSubmissionPacket = {
@@ -10427,30 +7994,30 @@ function ChatViewContent(props: ChatViewProps) {
           );
         }
         const startPromise = startThreadTurn(preparedPacket);
+        // SCIENT-FORK:END
         if (backgroundThreadRef) {
           markPromotedDraftThreadByRef(backgroundThreadRef);
-          try {
-            backgroundDraftOpened = Boolean(
-              activeThreadTargetRef
-                ? await handleNewThread(
-                    activeThreadTargetRef,
-                    resolveBackgroundDraftWorkspaceOptions({
-                      envMode: sendEnvMode,
-                      branch: activeThreadBranch,
-                      startFromOrigin,
-                    }),
-                  )
-                : null,
-            );
-          } catch (error) {
-            clearBackgroundDraftSubmissionByRef(backgroundThreadRef);
-            toastManager.add(
-              stackedThreadToast({
-                type: "warning",
-                title: "Could not open a fresh composer",
-                description: error instanceof Error ? error.message : undefined,
-              }),
-            );
+          const backgroundProjectRef = activeProjectRef;
+          if (backgroundProjectRef) {
+            const backgroundWorkspaceOptions = resolveBackgroundDraftWorkspaceOptions({
+              envMode: sendEnvMode,
+              branch: activeThreadBranch,
+              startFromOrigin,
+            });
+            try {
+              backgroundDraftOpened = Boolean(
+                await handleNewThread(backgroundProjectRef, backgroundWorkspaceOptions),
+              );
+            } catch (error) {
+              clearBackgroundDraftSubmissionByRef(backgroundThreadRef);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "warning",
+                  title: "Could not open a fresh composer",
+                  description: error instanceof Error ? error.message : undefined,
+                }),
+              );
+            }
           }
         }
         const startResult = await startPromise;
@@ -10459,15 +8026,24 @@ function ChatViewContent(props: ChatViewProps) {
         } else {
           turnStartSucceeded = true;
           setKeepFullHistory(routeThreadKey, false);
+          // SCIENT-FORK:START — an admitted send retires its extracted intent and queue edit, then
+          // clears the draft it was sent from (only if the draft is unchanged since).
           requestAccepted = true;
           if (extractedIntent) await consumeExtractedSubmission(extractedIntent);
           const queued = "queued" in startResult.value && startResult.value.queued === true;
           let canAcknowledge = true;
-          try {
-            if (queueEdit) await finishQueueEdit(queueEdit, draftSnapshotForSend);
-          } catch (cause) {
-            canAcknowledge = false;
-            setThreadError(threadIdForSend, chatActionErrorMessage(cause));
+          const editToFinish = queueEdit;
+          if (editToFinish) {
+            const finishedQueueEdit = await settlePromise(() =>
+              finishQueueEdit(editToFinish, draftSnapshotForSend),
+            );
+            if (finishedQueueEdit._tag === "Failure") {
+              canAcknowledge = false;
+              setThreadError(
+                threadIdForSend,
+                chatActionErrorMessage(squashAtomCommandFailure(finishedQueueEdit)),
+              );
+            }
           }
           if (
             canAcknowledge &&
@@ -10513,6 +8089,7 @@ function ChatViewContent(props: ChatViewProps) {
           if (turnUsesAttachmentUploads && canAcknowledge) {
             releaseDraftAttachments(composerAttachmentsSnapshot);
           }
+          // SCIENT-FORK:END
           if (backgroundThreadRef) {
             if (backgroundDraftOpened || currentRouteThreadKeyRef.current !== routeThreadKey) {
               finalizePromotedDraftThreadByRef(backgroundThreadRef);
@@ -10537,6 +8114,11 @@ function ChatViewContent(props: ChatViewProps) {
                 }),
               );
             }
+          } else if (
+            submissionIntent === "background" &&
+            currentRouteThreadKeyRef.current === routeThreadKey
+          ) {
+            handleNewThreadInActiveProject();
           }
         }
       }
@@ -10552,11 +8134,12 @@ function ChatViewContent(props: ChatViewProps) {
           );
           clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
         }
-        // Nothing has been cleared before admission, including attachment bytes.
-        // Remove the optimistic row without overwriting any typing during flight.
+        // SCIENT-FORK:START — nothing has been cleared before admission, including attachment
+        // bytes. Remove the optimistic row without overwriting any typing during flight.
         setOptimisticUserMessages((existing) =>
           existing.filter((message) => message.id !== messageIdForSend),
         );
+        // SCIENT-FORK:END
         if (!isAtomCommandInterrupted(failure)) {
           const error = squashAtomCommandFailure(failure);
           if (
@@ -10600,12 +8183,6 @@ function ChatViewContent(props: ChatViewProps) {
               }),
             );
           }
-        } else if (
-          submissionIntent === "background" &&
-          currentRouteThreadKeyRef.current === routeThreadKey
-        ) {
-          // An existing thread keeps running; open a fresh composer like a draft does.
-          handleNewThreadInActiveProject();
         }
       }
       if (!turnStartSucceeded) {
@@ -10614,495 +8191,258 @@ function ChatViewContent(props: ChatViewProps) {
         );
         if (!sendQueuesBehindSetup) resetLocalDispatch();
       }
-      if (turnStartSucceeded && submissionId) if (!sendQueuesBehindSetup) resetLocalDispatch();
-    } catch (cause) {
-      if (!requestAccepted && submittedMessageId) {
+      if (turnStartSucceeded && submissionId && !sendQueuesBehindSetup) resetLocalDispatch();
+    });
+    // SCIENT-FORK:START — a thrown attempt removes its unadmitted row and reports the cause.
+    if (sendAttempt._tag === "Failure") {
+      const failedMessageId = submittedMessageId;
+      if (!requestAccepted && failedMessageId !== null) {
         setOptimisticUserMessages((existing) =>
-          existing.filter((message) => message.id !== submittedMessageId),
+          existing.filter((message) => message.id !== failedMessageId),
         );
       }
-      setThreadError(threadIdForSend, chatActionErrorMessage(cause));
+      setThreadError(
+        threadIdForSend,
+        chatActionErrorMessage(squashAtomCommandFailure(sendAttempt)),
+      );
       if (!sendQueuesBehindSetup) resetLocalDispatch();
-    } finally {
-      // Release only this settled attempt. Its durable identity handles an
-      // ambiguous response; navigation does not manufacture another send.
-      if (composerSendGenerationRef.current === sendGeneration) {
-        sendInFlightRef.current = false;
-        setSetupQueueSendThreadKey((current) => (current === activeThreadKey ? null : current));
-      }
     }
+    // Release only this settled attempt. Its durable identity handles an
+    // ambiguous response; navigation does not manufacture another send.
+    if (composerSendGenerationRef.current === sendGeneration) {
+      sendInFlightRef.current = false;
+      setSetupQueueSendThreadKey((current) => (current === activeThreadKey ? null : current));
+    }
+    // SCIENT-FORK:END
   }
 
   // SCIENT-FORK:START — actions mutate the captured thread queue. Only the
   // server worker admits queued messages into orchestration.
-  const editQueuedItem = useCallback(
-    (item: ScientThreadQueueItem) => {
-      if (!isServerThread || !activeThreadId) return;
-      if (activePendingProgress || pendingApprovals.length > 0 || isConnecting || isSendBusy) {
-        setThreadError(
-          activeThreadId,
-          "Finish the current approval or question before editing a queued message.",
-        );
-        return;
-      }
-      void beginQueueEdit(routeThreadRef, item)
-        .then(() => threadQueue.refresh())
-        .catch((cause) => {
-          setThreadError(activeThreadId, chatActionErrorMessage(cause));
-        });
-    },
-    [
-      isServerThread,
-      activeThreadId,
-      routeThreadRef,
-      threadQueue,
-      setThreadError,
-      activePendingProgress,
-      pendingApprovals.length,
-      isConnecting,
-      isSendBusy,
-    ],
-  );
-
-  const deleteQueuedItem = useCallback(
-    (item: ScientThreadQueueItem) => {
-      if (!isServerThread || !activeThreadId) return;
-      void threadQueue.remove(item.queueItemId).catch((cause) => {
+  const editQueuedItem = (item: ScientThreadQueueItem) => {
+    if (!isServerThread || !activeThreadId) return;
+    if (activePendingProgress || pendingApprovals.length > 0 || isConnecting || isSendBusy) {
+      setThreadError(
+        activeThreadId,
+        "Finish the current approval or question before editing a queued message.",
+      );
+      return;
+    }
+    void beginQueueEdit(routeThreadRef, item)
+      .then(() => threadQueue.refresh())
+      .catch((cause) => {
         setThreadError(activeThreadId, chatActionErrorMessage(cause));
       });
-    },
-    [activeThreadId, isServerThread, setThreadError, threadQueue],
-  );
+  };
+
+  const deleteQueuedItem = (item: ScientThreadQueueItem) => {
+    if (!isServerThread || !activeThreadId) return;
+    void threadQueue.remove(item.queueItemId).catch((cause) => {
+      setThreadError(activeThreadId, chatActionErrorMessage(cause));
+    });
+  };
   // SCIENT-FORK:END
-  const onRespondToApproval = useApprovalResponse({
-    environmentId,
-    threadId: activeThreadId,
-    approvals: pendingApprovals,
-    setRespondingRequestIds,
-    onResponseError: setRequestResponseError,
-  });
 
-  const onRespondToUserInput = async (
-    requestId: RuntimeRequestId,
-    answers: Record<string, unknown>,
-  ) => {
-    if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
-      return;
-    const pendingInput = pendingUserInputs.find((input) => input.requestId === requestId);
-    if (!pendingInput || pendingInput.responseCapability === "not_resumable") return;
-    const responseKey = JSON.stringify([environmentId, activeThreadId, requestId]);
-    if (userInputResponsesInFlight.current.has(responseKey)) return;
-    const attachmentsByQuestionId = new Map<
-      string,
-      import("@t3tools/contracts").UserInputAttachments[string]
-    >();
-    const providerAnswers = { ...answers };
-    for (const question of pendingInput.questions) {
-      const target = questionAttachmentDraftId(
-        environmentId,
-        activeThreadId,
-        requestId,
-        question.id,
-      );
-      if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
-      const draft = useComposerDraftStore.getState().getComposerDraft(target);
-      providerAnswers[question.id] = projectPendingUserInputAnswer(
-        answers[question.id],
-        draft?.threadContexts ?? [],
-      );
-      const attachments = draft ? [...draft.images, ...draft.files] : [];
-      if (attachments.length === 0) continue;
-      const uploaded = getUploadedAttachments({ environmentId, images: attachments });
-      if (!uploaded) {
-        setRequestResponseError(
-          requestId,
-          "Wait for attachments to finish uploading, or remove failed uploads.",
-        );
-        return;
-      }
-      attachmentsByQuestionId.set(
-        question.id,
-        uploaded as import("@t3tools/contracts").UserInputAttachments[string],
-      );
+  // SCIENT-FORK:START — a plan follow-up has a durable queue submission identity, carries the
+  // selected Scient skills and its source plan, and is framed like any other send. It resolves
+  // to the submission id once admitted.
+  async function onSubmitPlanFollowUp({
+    text,
+    context,
+    interactionMode: nextInteractionMode,
+    selectedScientSkillNames,
+    readingPositionAtSend,
+    composerSnapshot,
+    sourceProposedPlan,
+  }: {
+    readingPositionAtSend?: ReturnType<typeof captureSendReadingPosition>;
+    text: string;
+    context?: ReturnType<typeof buildMessageContext>;
+    interactionMode: "default" | "plan";
+    selectedScientSkillNames: ReadonlyArray<string>;
+    composerSnapshot?: string;
+    sourceProposedPlan?: ScientThreadQueueItem["sourceProposedPlan"];
+  }): Promise<string | null> {
+    if (!activeThread || !isServerThread || isSendBusy || isConnecting || sendInFlightRef.current) {
+      return null;
     }
-    userInputResponsesInFlight.current.add(responseKey);
 
-    setRespondingUserInputRequestIds((existing) =>
-      existing.includes(requestId) ? existing : [...existing, requestId],
-    );
-    const result = await respondToThreadUserInput({
-      environmentId,
-      input: {
-        threadId: activeThreadId,
-        requestId,
-        answers: providerAnswers,
-        ...(attachmentsByQuestionId.size > 0
-          ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
-          : {}),
-      },
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const sendCtx = composerRef.current?.getSendContext();
+    if (!sendCtx?.providerAvailable || !sendCtx.interactionModeEnabled) {
+      return null;
+    }
+    const {
+      selectedProvider: ctxSelectedProvider,
+      selectedModel: ctxSelectedModel,
+      selectedProviderModels: ctxSelectedProviderModels,
+      selectedPromptEffort: ctxSelectedPromptEffort,
+      selectedModelSelection: ctxSelectedModelSelection,
+    } = sendCtx;
+
+    const followUpThread = activeThread;
+    const threadIdForSend = followUpThread.id;
+    const messageCreatedAt = new Date().toISOString();
+    const outgoingMessageText = formatOutgoingPrompt({
+      provider: ctxSelectedProvider,
+      model: ctxSelectedModel,
+      models: ctxSelectedProviderModels,
+      effort: ctxSelectedPromptEffort,
+      text: trimmed,
     });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      setRequestResponseError(requestId, "Your response could not be sent. Try again.");
-    }
-    userInputResponsesInFlight.current.delete(responseKey);
-    setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
-    return result;
-  };
-
-  // Closes an async question without messaging the agent. The server records
-  // the dismissal so every client releases the composer.
-  const onDismissUserInput = async (requestId: RuntimeRequestId) => {
-    if (!activeThreadId) return;
-
-    setRespondingUserInputRequestIds((existing) =>
-      existing.includes(requestId) ? existing : [...existing, requestId],
-    );
-    const result = await dismissThreadUserInput({
-      environmentId,
-      input: { threadId: activeThreadId, requestId },
-    });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      setRequestResponseError(requestId, "The question could not be dismissed. Try again.");
-    }
-    setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
-    return result;
-  };
-  const onDismissUserInputStable = useStableCallback(onDismissUserInput);
-
-  const setActivePendingUserInputQuestionIndex = (nextQuestionIndex: number) => {
-    if (!activePendingUserInput) {
-      return;
-    }
-    setPendingUserInputQuestionIndexByRequestId((existing) => ({
-      ...existing,
-      [activePendingRequestKey]: nextQuestionIndex,
-    }));
-  };
-
-  const onSelectActivePendingUserInputOption = (questionId: string, optionValue: string) => {
-    if (!activePendingUserInput) {
-      return;
-    }
-    // The option replaces the custom answer. Anything typed there is the
-    // user's text, so it goes back to the thread draft instead of vanishing.
-    const displacedAnswer =
-      pendingUserInputAnswersByRequestId[activePendingRequestKey]?.[questionId]?.customAnswer;
-    const currentPrompt =
-      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
-    const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
-    if (nextPrompt !== currentPrompt) {
-      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-      if (activeThreadId) {
-        const store = useComposerDraftStore.getState();
-        const questionTarget = questionAttachmentDraftId(
-          environmentId,
-          activeThreadId,
-          activePendingUserInput.requestId,
-          questionId,
-        );
-        store.addThreadContexts(
-          composerDraftTarget,
-          store.getComposerDraft(questionTarget)?.threadContexts ?? [],
-          { appendReference: false },
-        );
-      }
-    }
-    setPendingUserInputAnswersByRequestId((existing) => {
-      const question =
-        (activePendingProgress?.activeQuestion?.id === questionId
-          ? activePendingProgress.activeQuestion
-          : undefined) ?? activePendingUserInput.questions.find((entry) => entry.id === questionId);
-      if (!question) {
-        return existing;
-      }
-
-      return {
-        ...existing,
-        [activePendingRequestKey]: {
-          ...existing[activePendingRequestKey],
-          [questionId]: togglePendingUserInputOptionSelection(
-            question,
-            existing[activePendingRequestKey]?.[questionId],
-            optionValue,
-          ),
-        },
-      };
-    });
-    promptRef.current = "";
-    composerRef.current?.resetCursorState({ cursor: 0 });
-  };
-  const onSelectActivePendingUserInputOptionStable = useStableCallback(
-    onSelectActivePendingUserInputOption,
-  );
-
-  const onChangeActivePendingUserInputCustomAnswer = useMemo(
-    () =>
-      makePendingCustomAnswerSetter({
-        activePendingUserInput,
-        activePendingRequestKey,
-        promptRef,
-        setPendingUserInputAnswersByRequestId,
-      }),
-    [activePendingUserInput, activePendingRequestKey],
-  );
-
-  const onAdvanceActivePendingUserInput = () => {
-    if (
-      !activePendingUserInput ||
-      activePendingUserInput.responseCapability === "not_resumable" ||
-      !activePendingProgress
-    ) {
-      return;
-    }
-    if (activePendingProgress.isLastQuestion) {
-      if (activePendingResolvedAnswers) {
-        void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
-      }
-      return;
-    }
-    setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
-  };
-  const onAdvanceActivePendingUserInputStable = useStableCallback(onAdvanceActivePendingUserInput);
-
-  const onPreviousActivePendingUserInputQuestion = () => {
-    if (!activePendingProgress) {
-      return;
-    }
-    setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
-  };
-  const onPreviousActivePendingUserInputQuestionStable = useStableCallback(
-    onPreviousActivePendingUserInputQuestion,
-  );
-
-  const onSubmitPlanFollowUp = useCallback(
-    async ({
-      text,
-      context,
-      interactionMode: nextInteractionMode,
-      selectedScientSkillNames,
-      readingPositionAtSend,
-      composerSnapshot,
-      sourceProposedPlan,
-    }: {
-      readingPositionAtSend?: ReturnType<typeof captureSendReadingPosition>;
-      text: string;
-      context?: ReturnType<typeof buildMessageContext>;
-      interactionMode: "default" | "plan";
-      selectedScientSkillNames: ReadonlyArray<string>;
-      composerSnapshot?: string;
-      sourceProposedPlan?: ScientThreadQueueItem["sourceProposedPlan"];
-    }): Promise<string | null> => {
-      if (
-        !activeThread ||
-        !isServerThread ||
-        isSendBusy ||
-        isConnecting ||
-        sendInFlightRef.current
-      ) {
-        return null;
-      }
-
-      const trimmed = text.trim();
-      if (!trimmed) {
-        return null;
-      }
-
-      const sendCtx = composerRef.current?.getSendContext();
-      if (!sendCtx?.providerAvailable || !sendCtx.interactionModeEnabled) {
-        return null;
-      }
-      const {
-        selectedProvider: ctxSelectedProvider,
-        selectedModel: ctxSelectedModel,
-        selectedProviderModels: ctxSelectedProviderModels,
-        selectedPromptEffort: ctxSelectedPromptEffort,
-        selectedModelSelection: ctxSelectedModelSelection,
-      } = sendCtx;
-
-      const threadIdForSend = activeThread.id;
-      const messageCreatedAt = new Date().toISOString();
-      const outgoingMessageText = formatOutgoingPrompt({
-        provider: ctxSelectedProvider,
-        model: ctxSelectedModel,
-        models: ctxSelectedProviderModels,
-        effort: ctxSelectedPromptEffort,
-        text: trimmed,
-      });
-      sendInFlightRef.current = true;
-      let submittedMessageId: MessageId | null = null;
-      try {
-        const sourcePlan =
-          sourceProposedPlan ??
-          (nextInteractionMode === "default" && activeProposedPlan
-            ? { threadId: activeThread.id, planId: activeProposedPlan.id }
-            : undefined);
-        const identity = await settlePromise(() =>
-          queueSubmissionId(composerTargetKey(scopeThreadRef(environmentId, threadIdForSend)), {
-            threadId: threadIdForSend,
-            text: outgoingMessageText,
-            context,
-            composerSnapshot,
-            modelSelection: ctxSelectedModelSelection,
-            runtimeMode,
-            interactionMode: nextInteractionMode,
-            selectedScientSkillNames,
-            sourceProposedPlan: sourcePlan,
-          }),
-        );
-        if (identity._tag === "Failure") {
-          sendInFlightRef.current = false;
-          setThreadError(
-            threadIdForSend,
-            chatActionErrorMessage(squashAtomCommandFailure(identity)),
-          );
-          return null;
-        }
-        const submissionId = identity.value;
-        const messageIdForSend = MessageId.make(submissionId);
-        submittedMessageId = messageIdForSend;
-        beginLocalDispatch({ preparingWorktree: false });
-        setThreadError(threadIdForSend, null);
-
-        frameSubmittedMessage(
-          messageIdForSend,
-          readingPositionAtSend ?? captureSendReadingPosition(),
-        );
-
-        setOptimisticUserMessages((existing) => [
-          ...existing,
-          {
-            id: messageIdForSend,
-            role: "user",
-            text: outgoingMessageText,
-            ...(context ? { context } : {}),
-            runId: null,
-            createdAt: messageCreatedAt,
-            updatedAt: messageCreatedAt,
-            streaming: false,
-          },
-        ]);
-
-        const settingsResult = await persistThreadSettingsForNextTurn({
+    sendInFlightRef.current = true;
+    let submittedMessageId: MessageId | null = null;
+    // Anything thrown fails the follow-up; the release below still runs.
+    const attempt = await settlePromise(async (): Promise<string | null> => {
+      const sourcePlan =
+        sourceProposedPlan ??
+        (nextInteractionMode === "default" && activeProposedPlan
+          ? { threadId: followUpThread.id, planId: activeProposedPlan.id }
+          : undefined);
+      const identity = await settlePromise(() =>
+        queueSubmissionId(composerTargetKey(scopeThreadRef(environmentId, threadIdForSend)), {
           threadId: threadIdForSend,
-          createdAt: messageCreatedAt,
-          ...(localCheckoutBranchMismatch
-            ? { branch: localCheckoutBranchMismatch.currentBranch }
-            : {}),
+          text: outgoingMessageText,
+          context,
+          composerSnapshot,
+          modelSelection: ctxSelectedModelSelection,
           runtimeMode,
           interactionMode: nextInteractionMode,
-        });
-        let failure: AtomCommandResult<unknown, unknown> | null =
-          settingsResult._tag === "Failure" ? settingsResult : null;
-        let queued = false;
-        if (failure === null && localCheckoutBranchMismatch) {
-          const branchResult = await updateThreadMetadata({
-            environmentId,
-            input: { threadId: threadIdForSend, branch: localCheckoutBranchMismatch.currentBranch },
-          });
-          if (branchResult._tag === "Failure") failure = branchResult;
-        }
-
-        if (failure === null) {
-          const startResult = await startThreadTurn({
-            environmentId,
-            input: {
-              threadId: threadIdForSend,
-              selectedScientSkillNames,
-              message: {
-                messageId: messageIdForSend,
-                role: "user",
-                text: outgoingMessageText,
-                ...(context ? { context } : {}),
-                attachments: [],
-              },
-              modelSelection: ctxSelectedModelSelection,
-              titleSeed: activeThread.title,
-              runtimeMode,
-              interactionMode: nextInteractionMode,
-              ...(sourcePlan
-                ? { sourceProposedPlan: { ...sourcePlan, planId: PlanId.make(sourcePlan.planId) } }
-                : {}),
-              createdAt: messageCreatedAt,
-            },
-          });
-          failure = startResult._tag === "Failure" ? startResult : null;
-          if (startResult._tag === "Success")
-            queued = "queued" in startResult.value && startResult.value.queued === true;
-          if (startResult._tag === "Success") {
-            setComposerDraftInteractionMode(
-              scopeThreadRef(activeThread.environmentId, threadIdForSend),
-              nextInteractionMode,
-            );
-          }
-        }
-
-        if (failure === null) {
-          if (queued) {
-            setOptimisticUserMessages((existing) =>
-              existing.filter((message) => message.id !== messageIdForSend),
-            );
-            resetLocalDispatch();
-            void threadQueue.refresh();
-          } else {
-            clearUsageLimitsFor(routeThreadKey);
-            acknowledgeActiveThreadWoke();
-          }
-          sendInFlightRef.current = false;
-          resetLocalDispatch();
-          return submissionId;
-        }
-
-        setOptimisticUserMessages((existing) =>
-          existing.filter((message) => message.id !== messageIdForSend),
-        );
-        if (!isAtomCommandInterrupted(failure)) {
-          const error = squashAtomCommandFailure(failure);
-          setThreadError(
-            threadIdForSend,
-            error instanceof Error ? error.message : "Failed to send plan follow-up.",
-          );
-        }
+          selectedScientSkillNames,
+          sourceProposedPlan: sourcePlan,
+        }),
+      );
+      if (identity._tag === "Failure") {
         sendInFlightRef.current = false;
-        resetLocalDispatch();
+        setThreadError(threadIdForSend, chatActionErrorMessage(squashAtomCommandFailure(identity)));
         return null;
-      } catch (cause) {
-        if (submittedMessageId)
-          setOptimisticUserMessages((existing) =>
-            existing.filter((message) => message.id !== submittedMessageId),
-          );
-        setThreadError(threadIdForSend, chatActionErrorMessage(cause));
-        resetLocalDispatch();
-        return null;
-      } finally {
-        sendInFlightRef.current = false;
       }
-    },
-    [
-      activeThread,
-      activeProposedPlan,
-      acknowledgeActiveThreadWoke,
-      beginLocalDispatch,
-      isConnecting,
-      isSendBusy,
-      isServerThread,
-      localCheckoutBranchMismatch,
-      persistThreadSettingsForNextTurn,
-      updateThreadMetadata,
-      resetLocalDispatch,
-      runtimeMode,
-      captureSendReadingPosition,
-      frameSubmittedMessage,
-      setComposerDraftInteractionMode,
-      setThreadError,
-      startThreadTurn,
-      environmentId,
-      composerRef,
-      clearUsageLimitsFor,
-      routeThreadKey,
-      composerDraftTarget,
-      threadQueue,
-    ],
-  );
+      const submissionId = identity.value;
+      const messageIdForSend = MessageId.make(submissionId);
+      submittedMessageId = messageIdForSend;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(threadIdForSend, null);
+
+      frameSubmittedMessage(
+        messageIdForSend,
+        readingPositionAtSend ?? captureSendReadingPosition(),
+      );
+
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(context ? { context } : {}),
+          runId: null,
+          createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+
+      const settingsResult = await persistThreadSettingsForNextTurn({
+        threadId: threadIdForSend,
+        createdAt: messageCreatedAt,
+        ...(localCheckoutBranchMismatch
+          ? { branch: localCheckoutBranchMismatch.currentBranch }
+          : {}),
+        runtimeMode,
+        interactionMode: nextInteractionMode,
+      });
+      let failure: AtomCommandResult<unknown, unknown> | null =
+        settingsResult._tag === "Failure" ? settingsResult : null;
+      let queued = false;
+      if (failure === null && localCheckoutBranchMismatch) {
+        const branchResult = await updateThreadMetadata({
+          environmentId,
+          input: { threadId: threadIdForSend, branch: localCheckoutBranchMismatch.currentBranch },
+        });
+        if (branchResult._tag === "Failure") failure = branchResult;
+      }
+
+      if (failure === null) {
+        const startResult = await startThreadTurn({
+          environmentId,
+          input: {
+            threadId: threadIdForSend,
+            selectedScientSkillNames,
+            message: {
+              messageId: messageIdForSend,
+              role: "user",
+              text: outgoingMessageText,
+              ...(context ? { context } : {}),
+              attachments: [],
+            },
+            modelSelection: ctxSelectedModelSelection,
+            titleSeed: followUpThread.title,
+            runtimeMode,
+            interactionMode: nextInteractionMode,
+            ...(sourcePlan
+              ? { sourceProposedPlan: { ...sourcePlan, planId: PlanId.make(sourcePlan.planId) } }
+              : {}),
+            createdAt: messageCreatedAt,
+          },
+        });
+        failure = startResult._tag === "Failure" ? startResult : null;
+        if (startResult._tag === "Success") {
+          queued = "queued" in startResult.value && startResult.value.queued === true;
+          setComposerDraftInteractionMode(
+            scopeThreadRef(followUpThread.environmentId, threadIdForSend),
+            nextInteractionMode,
+          );
+        }
+      }
+
+      if (failure === null) {
+        if (queued) {
+          setOptimisticUserMessages((existing) =>
+            existing.filter((message) => message.id !== messageIdForSend),
+          );
+          resetLocalDispatch();
+          void threadQueue.refresh();
+        } else {
+          clearUsageLimitsFor(routeThreadKey);
+          acknowledgeActiveThreadWoke();
+        }
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+        return submissionId;
+      }
+
+      setOptimisticUserMessages((existing) =>
+        existing.filter((message) => message.id !== messageIdForSend),
+      );
+      if (!isAtomCommandInterrupted(failure)) {
+        const error = squashAtomCommandFailure(failure);
+        setThreadError(
+          threadIdForSend,
+          error instanceof Error ? error.message : "Failed to send plan follow-up.",
+        );
+      }
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      return null;
+    });
+    sendInFlightRef.current = false;
+    if (attempt._tag === "Failure") {
+      const failedMessageId = submittedMessageId;
+      if (failedMessageId !== null) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== failedMessageId),
+        );
+      }
+      setThreadError(threadIdForSend, chatActionErrorMessage(squashAtomCommandFailure(attempt)));
+      resetLocalDispatch();
+      return null;
+    }
+    return attempt.value;
+  }
+  // SCIENT-FORK:END
 
   const onImplementPlanInNewThread = async () => {
     if (
@@ -11245,20 +8585,21 @@ function ChatViewContent(props: ChatViewProps) {
   };
   const onImplementPlanInNewThreadStable = useStableCallback(onImplementPlanInNewThread);
 
-  const getModelDisabledReason = useMemo(
-    () =>
-      makeModelDisabledReason(
-        activeThread
-          ? {
-              providers: providerStatuses,
-              hasStartedSession: activeRuntime !== null,
-              supportsProviderSwitchingViaHandoff,
-              currentModelSelection: activeThread.modelSelection,
-              currentProviderInstanceId: activeRuntime?.providerInstanceId ?? null,
-            }
-          : null,
-      ),
-    [activeRuntime, activeThread, providerStatuses, supportsProviderSwitchingViaHandoff],
+  // Keyed on the fields it reads: the thread and runtime objects change with
+  // every streamed event, and a new function re-renders the whole model picker.
+  const hasStartedSession = activeRuntime !== null;
+  const runtimeProviderInstanceId = activeRuntime?.providerInstanceId ?? null;
+  const currentModelSelection = activeThread?.modelSelection ?? null;
+  const getModelDisabledReason = makeModelDisabledReason(
+    currentModelSelection
+      ? {
+          providers: providerStatuses,
+          hasStartedSession,
+          supportsProviderSwitchingViaHandoff,
+          currentModelSelection,
+          currentProviderInstanceId: runtimeProviderInstanceId,
+        }
+      : null,
   );
 
   const onProviderModelSelect = (
@@ -11267,6 +8608,7 @@ function ChatViewContent(props: ChatViewProps) {
     options?: ReadonlyArray<ProviderOptionSelection> | { focusComposer?: boolean },
   ) => {
     if (!activeThread) return;
+    // SCIENT-FORK:START — the picker can pass the model's options directly.
     const modelOptions = Array.isArray(options)
       ? (options as ReadonlyArray<ProviderOptionSelection>)
       : undefined;
@@ -11275,9 +8617,7 @@ function ChatViewContent(props: ChatViewProps) {
         ? (options as { focusComposer?: boolean })
         : undefined;
     const shouldFocusComposer = focusOptions?.focusComposer !== false;
-    // Look up the configured instance so model normalization and custom
-    // model lookup stay scoped to that exact instance. Unknown instance ids
-    // are rejected by returning early; the server remains authoritative too.
+    // SCIENT-FORK:END
     const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
     const resolvedDriverKind = entry?.driver ?? null;
     if (
@@ -11317,8 +8657,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     // SCIENT-FORK: an explicit options payload from the picker wins; otherwise
-    // restore this model's own remembered options. Without any, start it from
-    // its default rather than carrying the previous model's over.
+    // restore this model's own remembered options.
     const rememberedOptions =
       useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel];
     const selectedOptions =
@@ -11350,8 +8689,6 @@ function ChatViewContent(props: ChatViewProps) {
     setComposerDraftModelSelection(
       scopeThreadRef(activeThread.environmentId, activeThread.id),
       nextModelSelection,
-      // A complete snapshot: an absent options field means "start from the
-      // model default", not "keep the previous model's options".
       { explicit: true, replaceOptions: true },
     );
     setStickyComposerModelSelection(nextModelSelection);
@@ -11361,7 +8698,7 @@ function ChatViewContent(props: ChatViewProps) {
   const onEnvModeChange = (mode: DraftThreadEnvMode) => {
     if (multipleModelSelections !== null) return;
     if (canOverrideServerThreadEnvMode) {
-      setPendingServerThreadEnvMode(mode);
+      if (activeThread) setPendingServerThreadEnvModeEntry({ threadId: activeThread.id, mode });
       scheduleComposerFocus();
       return;
     }
@@ -11379,44 +8716,31 @@ function ChatViewContent(props: ChatViewProps) {
   };
   const onEnvModeChangeStable = useStableCallback(onEnvModeChange);
 
-  // "Work locally" on the setup card: cancel the bootstrap and remember the
-  // draft. The cancelled dispatch deletes the half-made thread and puts the
-  // message back in the composer; the effect below then flips the draft to
-  // local mode and resends. The draft is a server thread for the whole
-  // setup (the bootstrap created it), so this keys off the route, not
-  // `isLocalDraftThread`.
   const onWorktreeSetupWorkLocally = () => {
     if (!worktreeSetup || worktreeSetup.phase !== "running" || !draftId) {
       return;
     }
-    const target = {
-      environmentId: setupTarget.environmentId,
-      input: { threadId: worktreeSetup.threadId },
-    };
-    void (async () => {
-      const result = await cancelWorktreeSetup(target);
-      if (result._tag !== "Success" || !result.value.cancelled) return;
-      setWorkLocallyResendDraftId(draftId);
-    })();
+    void cancelWorktreeSetup().then((cancelled) => {
+      if (cancelled) setWorkLocallyResendDraftId(draftId);
+    });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
-  const onSendRef = useRef(onSend);
-  onSendRef.current = onSend;
-  const onResumeRef = useRef(onResume);
-  onResumeRef.current = onResume;
-  const onCompactContextRef = useRef(onCompactContext);
-  onCompactContextRef.current = onCompactContext;
-  const onComposerSend = (...args: Parameters<typeof onSend>) => onSendRef.current(...args);
-  const onComposerSendStable = useStableCallback(onComposerSend);
-  const onComposerResume = () => onResumeRef.current();
-  const onComposerResumeStable = useStableCallback(onComposerResume);
-  const onComposerCompactContext = () => onCompactContextRef.current();
-  const onComposerCompactContextStable = useStableCallback(onComposerCompactContext);
-  // Resend once the cancelled dispatch has settled and the composer is free.
-  // Every state that makes `onSend` bail and wait is part of the readiness
-  // check, so the flag survives a reconnect, a reverting checkpoint, or a
-  // feedback upload in between. What remains inside `onSend` are the checks
-  // that need the user to change something, and those should not auto retry.
+  const onComposerSendStable = useStableCallback(onSend);
+  const sendPreviewAnnotation = (
+    annotation: PreviewAnnotationPayload,
+    image: ComposerImageAttachment | null,
+  ) => {
+    void onSend(undefined, "auto", "foreground", { annotation, image });
+  };
+  const sendPreviewAnnotationStable = useStableCallback(sendPreviewAnnotation);
+  const onComposerResumeStable = useStableCallback(onResume);
+  const onComposerCompactContextStable = useStableCallback(onCompactContext);
+  // One-shot: the resend "Work locally" queued fires once, then the marker clears.
+  const resendAfterWorkLocally = () => {
+    setWorkLocallyResendDraftId(null);
+    void onComposerSendStable();
+  };
+  const resendAfterWorkLocallyStable = useStableCallback(resendAfterWorkLocally);
   const workLocallyResendReady =
     workLocallyResendDraftId !== null &&
     workLocallyResendDraftId === draftId &&
@@ -11439,15 +8763,15 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     if (sendEnvMode !== "local") {
-      // The draft is back; switch it to the project checkout and let the next
-      // render resend.
       setDraftThreadContext(composerDraftTarget, { envMode: "local", startFromOrigin: false });
       return;
     }
-    setWorkLocallyResendDraftId(null);
-    void onSendRef.current();
+    resendAfterWorkLocallyStable();
   }, [
     composerDraftTarget,
+    feedbackUploadsInFlightRef,
+    resendAfterWorkLocallyStable,
+    sendInFlightRef,
     routeThreadKey,
     sendEnvMode,
     setDraftThreadContext,
@@ -11494,12 +8818,8 @@ function ChatViewContent(props: ChatViewProps) {
     if (!paintOnlyDisplayedTimeline) void onRollbackCheckpoint(input);
   };
   const onTimelineRollbackCheckpointStable = useStableCallback(onTimelineRollbackCheckpoint);
-  // The revert handler is read from a ref at call-time so the callback
-  // reference is fully stable and never busts TimelineRowCtx identity.
-  const onRevertToTurnCountRef = useRef(onRevertToTurnCountStable);
-  onRevertToTurnCountRef.current = onRevertToTurnCountStable;
   const onRevertTimelineTurn = (targetTurnCount: number, messageId: MessageId) => {
-    void onRevertToTurnCountRef.current(targetTurnCount, messageId);
+    void onRevertToTurnCountStable(targetTurnCount, messageId);
   };
   const onRevertTimelineTurnStable = useStableCallback(onRevertTimelineTurn);
   // SCIENT-FORK:START — timeline row fork actions.
@@ -11542,230 +8862,108 @@ function ChatViewContent(props: ChatViewProps) {
     pendingSidebarFileDrops,
   ]);
 
-  // Empty state: no active thread
+  const addDroppedFilesToComposer = useStableCallback(
+    (files: Parameters<ChatComposerHandle["addDroppedFiles"]>[0]) =>
+      composerRef.current?.addDroppedFiles(files),
+  );
+  const addDroppedFoldersToComposer = useStableCallback(
+    (folders: Parameters<ChatComposerHandle["addDroppedFolders"]>[0]) =>
+      composerRef.current?.addDroppedFolders(folders),
+  );
+
   if (!activeThread) {
     // SCIENT-FORK: a landing fork's shell is on its way; the pane stays plain meanwhile.
     return forkLanding.pending ? null : <NoActiveThreadState />;
   }
 
   const rightPanelContent = activeThreadRef ? (
+    // SCIENT-FORK:START — the agents panel and Scient-owned surfaces render from their modules.
     renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
         environmentId={activeThreadRef.environmentId}
         threadId={activeThreadRef.threadId}
       />
-    ) : renderedRightPanelSurface?.kind === "preview" ? (
-      <Suspense fallback={null}>
-        <PreviewPanel
-          mode="embedded"
-          threadRef={activeThreadRef}
-          tabId={renderedRightPanelSurface.resourceId}
-          configuredUrls={configuredPreviewUrls}
-          visible={rightPanelOpen}
-          onSendAnnotation={(annotation, image) => {
-            void onSend(undefined, "auto", "foreground", { annotation, image });
-          }}
-        />
-      </Suspense>
-    ) : renderedRightPanelSurface?.kind === "terminal" ? (
-      <PersistentThreadTerminalPanel
-        visible={rightPanelOpen}
-        threadRef={activeThreadRef}
-        surface={renderedRightPanelSurface}
-        launchContext={activeTerminalLaunchContext ?? null}
-        focusRequestId={terminalFocusRequestId}
-        keybindings={keybindings}
-        onAddTerminalContext={addTerminalContextToDraftStable}
-        onSplitTerminal={splitPanelTerminalStable}
-        onSplitTerminalVertical={splitPanelTerminalVerticalStable}
-        onNewTerminal={addTerminalSurfaceStable}
-        onActiveTerminalChange={activatePanelTerminalStable}
-        onCloseTerminal={closePanelTerminalStable}
-        splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-        splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-        newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-        closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-      />
-    ) : renderedRightPanelSurface?.kind === "diff" ? (
-      <Suspense fallback={null}>
-        <DiffPanel
-          key={activeThreadKey}
-          mode="embedded"
-          composerDraftTarget={composerDraftTarget}
-          workspaceMutationId={workspaceMutationId}
-        />
-      </Suspense>
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
-      <PullRequestDetailGhost />
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
-      <PullRequestsUnavailableState
-        title="Pull requests unavailable"
-        error="Update this environment's Scient server to browse pull requests."
-      />
-    ) : renderedRightPanelSurface?.kind === "pull-request" ? (
-      // No onClose: the surface tab's own X owns closing here, and a second X in the header
-      // would be the same action twice. The thread context also drops the checkout button, so it
-      // is only right for the thread's own pull request, whose branch is already under the
-      // reader's feet. A link the agent wrote can open any other one here, and that one has to be
-      // checkable out like it is anywhere else.
-      <PullRequestDetailPanel
-        getShortcutContext={getShortcutContextStable}
-        shortcutsEnabled={
-          rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
-        }
-        key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
-        environmentId={activeThread.environmentId}
-        onSelectPullRequest={(reference) => {
-          if (activeThreadRef)
-            useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-              projectId: reference.projectId,
-              repository: reference.repository,
-              number: reference.number,
-              ...(reference.host ? { host: reference.host } : {}),
-            });
-        }}
-        threadRef={activeThreadRef}
-        reference={{
-          projectId: renderedRightPanelSurface.projectId as ProjectId,
-          ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
-          repository: renderedRightPanelSurface.repository,
-          number: renderedRightPanelSurface.number,
-        }}
-        context={pullRequestPanelContext(
-          {
-            projectId: activeThread.projectId,
-            pullRequests: visiblePullRequests,
-            linkedPullRequest: linkedThreadPullRequest,
-            branchPullRequest:
-              activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
-          },
-          renderedRightPanelSurface,
-        )}
-        composerDraftTarget={composerDraftTarget}
-        onBack={
-          activeThreadRef !== null && pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
-            ? addPullRequestsSurfaceStable
-            : undefined
-        }
-      />
-    ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
-      <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "scient" ? (
-      <>
-        {/* SCIENT-FORK:START — Scient-owned right-panel surfaces render from their module. */}
-        <ScientRightPanelContent
-          surface={renderedRightPanelSurface}
-          activeThreadRef={activeThreadRef}
-          activeThread={activeThread}
-          activeProject={activeProject}
-          activeWorkspaceRoot={activeWorkspaceRoot}
-          availableEditors={availableEditors}
-          keybindings={keybindings}
-          closeRightPanelSurface={closeRightPanelSurface}
-          openScientSourcePdf={openScientSourcePdf}
-        />
-        {/* SCIENT-FORK:END */}
-      </>
-    ) : renderedRightPanelSurface?.kind === "device" ? (
-      <Suspense fallback={null}>
-        <DevicePanel
-          mode="embedded"
-          threadRef={activeThreadRef}
-          key={renderedRightPanelSurface.id}
-          surface={renderedRightPanelSurface}
-          visible={rightPanelOpen}
-          onDismissSetup={() => {
-            closeRightPanelSurface(renderedRightPanelSurface);
-            useRightPanelStore.getState().show(activeThreadRef);
-          }}
-        />
-      </Suspense>
-    ) : (renderedRightPanelSurface?.kind === "files" ||
-        renderedRightPanelSurface?.kind === "file") &&
-      activeThread &&
-      ((activeProject && activeWorkspaceRoot) ||
-        (renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment)) ? (
-      <Suspense fallback={null}>
-        <FilePreviewPanel
-          key={`${activeThread.environmentId}:${
-            renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-              ? `attachment:${renderedRightPanelSurface.attachment.id}`
-              : activeWorkspaceRoot
-          }`}
-          environmentId={activeThread.environmentId}
-          cwd={activeWorkspaceRoot ?? ""}
-          projectName={activeProject?.title ?? "Project"}
-          threadRef={activeThreadRef}
-          composerDraftTarget={composerDraftTarget}
-          onCiteFile={(citation, anchor) =>
-            composerRef.current?.citeText(citation, anchor) ?? false
-          }
-          fileCitation={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.fileCitation
-              : undefined
-          }
-          keybindings={keybindings}
-          availableEditors={availableEditors}
-          relativePath={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.attachment
-                ? renderedRightPanelSurface.relativePath
-                : resolveFileTabPath(
-                    renderedRightPanelSurface.relativePath,
-                    activeWorkspaceRoot ?? "",
-                  )
-              : null
-          }
-          {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-            ? { attachment: renderedRightPanelSurface.attachment }
-            : {})}
-          revealLine={
-            renderedRightPanelSurface.kind === "file"
-              ? (renderedRightPanelSurface.revealLine ?? null)
-              : null
-          }
-          revealRequestId={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.revealRequestId
-              : 0
-          }
-          htmlPresentationRequest={
-            renderedRightPanelSurface.kind === "file"
-              ? (renderedRightPanelSurface.htmlPresentationRequest ?? null)
-              : null
-          }
-          latexPresentationRequest={
-            renderedRightPanelSurface.kind === "file"
-              ? (renderedRightPanelSurface.latexPresentationRequest ?? null)
-              : null
-          }
-          latexRootRelativePath={
-            renderedRightPanelSurface.kind === "file"
-              ? (renderedRightPanelSurface.latexRootRelativePath ?? null)
-              : null
-          }
-          onOpenFile={openFileSurfaceStable}
-          // SCIENT-FORK:START — an in-place rename moves the tab with its state
-          onFileMoved={(fromPath, toPath) =>
-            useRightPanelStore
-              .getState()
-              .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true })
-          }
+      <ScientRightPanelContent
+        surface={renderedRightPanelSurface}
+        activeThreadRef={activeThreadRef}
+        activeThread={activeThread}
+        activeProject={activeProject}
+        activeWorkspaceRoot={activeWorkspaceRoot}
+        availableEditors={availableEditors}
+        keybindings={keybindings}
+        closeRightPanelSurface={closeRightPanelSurface}
+        openScientSourcePdf={openScientSourcePdf}
+      />
+    ) : (
+      // SCIENT-FORK:END
+      <RightPanelSurfaceContent
+        surface={renderedRightPanelSurface}
+        activeSurfaceId={activeRightPanelSurface?.id ?? null}
+        threadRef={activeThreadRef}
+        environmentId={activeThread.environmentId}
+        visible={rightPanelOpen}
+        composerDraftTarget={composerDraftTarget}
+        keybindings={keybindings}
+        configuredPreviewUrls={configuredPreviewUrls}
+        workspaceMutationId={workspaceMutationId}
+        getShortcutContext={getShortcutContextStable}
+        onSendAnnotation={sendPreviewAnnotationStable}
+        onCloseSurface={closeRightPanelSurface}
+        terminal={{
+          launchContext: activeTerminalLaunchContext ?? null,
+          focusRequestId: terminalFocusRequestId,
+          keybindings,
+          onAddTerminalContext: addTerminalContextToDraftStable,
+          onSplitTerminal: splitPanelTerminalStable,
+          onSplitTerminalVertical: splitPanelTerminalVerticalStable,
+          onNewTerminal: addTerminalSurfaceStable,
+          onActiveTerminalChange: activatePanelTerminalStable,
+          onCloseTerminal: closePanelTerminalStable,
+          splitShortcutLabel: splitTerminalShortcutLabel ?? undefined,
+          splitVerticalShortcutLabel: splitTerminalVerticalShortcutLabel ?? undefined,
+          newShortcutLabel: newTerminalShortcutLabel ?? undefined,
+          closeShortcutLabel: closeTerminalShortcutLabel ?? undefined,
+        }}
+        pullRequest={{
+          capabilityKnown: pullRequestsCapabilityKnown,
+          supported: supportsPullRequests,
+          projectId: activeThread.projectId,
+          pullRequests: visiblePullRequests,
+          linkedPullRequest: linkedThreadPullRequest,
+          branchPullRequest: activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
+          onBack:
+            pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
+              ? addPullRequestsSurfaceStable
+              : undefined,
+        }}
+        files={{
+          projectName: activeProject?.title ?? null,
+          workspaceRoot: activeWorkspaceRoot,
+          availableEditors,
+          pendingSurfaceIds: pendingFileSurfaceIds,
+          onOpenFile: openFileSurfaceStable,
+          onPendingChange: handleFilePendingChangeStable,
+          // SCIENT-FORK:START — citations, presentation requests, in-place renames and sources.
+          scientPanelProps: (surface) =>
+            scientFilePanelProps(surface, {
+              projectName: activeProject?.title ?? null,
+              workspaceRoot: activeWorkspaceRoot,
+              onCiteFile: (citation, anchor) =>
+                composerRef.current?.citeText(citation, anchor) ?? false,
+              onFileMoved: (fromPath, toPath) =>
+                useRightPanelStore
+                  .getState()
+                  .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true }),
+              onOpenFileSource: openFileSourceSurface,
+              onHtmlPresentationRequestHandled: handleHtmlPresentationRequestHandled,
+              onLatexPresentationRequestHandled: handleLatexPresentationRequestHandled,
+            }),
           // SCIENT-FORK:END
-          onOpenFileSource={openFileSourceSurface}
-          onHtmlPresentationRequestHandled={handleHtmlPresentationRequestHandled}
-          onLatexPresentationRequestHandled={handleLatexPresentationRequestHandled}
-          onPendingChange={handleFilePendingChangeStable}
-          selectedFilePending={
-            renderedRightPanelSurface.kind === "file" &&
-            pendingFileSurfaceIds.has(renderedRightPanelSurface.id)
-          }
-          workspaceMutationId={workspaceMutationId}
-        />
-      </Suspense>
-    ) : null
+        }}
+      />
+    )
   ) : null;
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
@@ -11839,8 +9037,6 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const threadPanelHeaderControl = (
     <div
-      // Inset from the chat header's edge, not the window's: --workspace-controls-right also
-      // clears the native window buttons, which sit over the right panel, not this header.
       className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
@@ -11854,8 +9050,6 @@ function ChatViewContent(props: ChatViewProps) {
   const panelLayoutControls = (
     <div
       className={cn(
-        // Keep one viewport anchor inside the header's no-drag region. The
-        // header can shrink behind the right panel without moving the controls.
         "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
       )}
       data-workspace-titlebar-controls
@@ -11867,9 +9061,6 @@ function ChatViewContent(props: ChatViewProps) {
             "flex shrink-0",
             panelAnimationsActive &&
               "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
-            // Closed, the control leaves the flex flow so the cluster is only as wide as the two
-            // toggles the header reserves room for; anchored to the cluster's left edge, it fades
-            // out where it stood rather than over the terminal toggle.
             rightPanelOpen
               ? "pointer-events-auto opacity-100"
               : "pointer-events-none absolute right-full mr-1 opacity-0",
@@ -11887,8 +9078,8 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const workspaceFileDropHandlers = makeWorkspaceFileDropHandlers({
     setDragActive: setIsWorkspaceFileDragActive,
-    addFiles: (files) => composerRef.current?.addDroppedFiles(files),
-    addFolders: (folders) => composerRef.current?.addDroppedFolders(folders),
+    addFiles: addDroppedFilesToComposer,
+    addFolders: addDroppedFoldersToComposer,
   });
 
   const content = (
@@ -11927,7 +9118,6 @@ function ChatViewContent(props: ChatViewProps) {
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
       >
-        {/* Top bar */}
         <header
           ref={threadPanelPopoverAnchorRef}
           data-chat-header
@@ -11974,9 +9164,7 @@ function ChatViewContent(props: ChatViewProps) {
           />
         </header>
 
-        {/* Main content area with optional plan sidebar */}
         <div className="relative flex min-h-0 min-w-0 flex-1">
-          {/* Chat column */}
           <ThreadFindCanvas
             findOptions={{
               skills: timelineSkills,
@@ -12011,7 +9199,6 @@ function ChatViewContent(props: ChatViewProps) {
                 </div>
               </div>
             ) : null}
-            {/* Banners overlay the timeline without changing its content height. */}
             <div className="chat-banner-lane pointer-events-none absolute top-0 z-20 flex flex-col">
               <ProviderStatusBanner
                 status={visibleProviderStatus}
@@ -12036,16 +9223,15 @@ function ChatViewContent(props: ChatViewProps) {
                 }}
               />
             </div>
-            {/* Messages Wrapper */}
+            {/* SCIENT-FORK:START — hidden while a landing fork settles, then shown once. */}
             <div
               inert={forkLanding.pending}
               className={cn(
                 "relative flex min-h-0 flex-1 flex-col bg-background",
-                // SCIENT-FORK: hidden while a landing fork settles, then shown once.
                 forkLandingReveal.messagesClassName,
               )}
             >
-              {/* Messages — LegendList handles virtualization and scrolling internally */}
+              {/* SCIENT-FORK:END */}
               <MessagesTimeline
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
@@ -12107,11 +9293,7 @@ function ChatViewContent(props: ChatViewProps) {
                 contextTransfers={
                   paintOnlyDisplayedTimeline ? undefined : serverProjection?.contextTransfers
                 }
-                providerStatuses={
-                  environmentById.get(
-                    displayedThreadRef?.environmentId ?? activeThread.environmentId,
-                  )?.serverConfig?.providers ?? EMPTY_PROVIDERS
-                }
+                providerStatuses={timelineProviders}
                 runs={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
                 latestRun={paintOnlyDisplayedTimeline ? null : activeActivityRun}
                 runningRunId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
@@ -12177,7 +9359,7 @@ function ChatViewContent(props: ChatViewProps) {
                 }
                 skills={paintOnlyDisplayedTimeline ? EMPTY_PROVIDER_SKILLS : timelineSkills}
                 anchorMessageId={paintOnlyDisplayedTimeline ? null : timelineAnchorMessageId}
-                onAnchorReady={onTimelineAnchorReady}
+                onAnchorReady={onTimelineAnchorReadyStable}
                 onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
                 contentInsetEndAdjustment={composerTimelineInset}
                 // SCIENT-FORK:START — no live-follow flag (the timeline never pins to its end);
@@ -12214,7 +9396,6 @@ function ChatViewContent(props: ChatViewProps) {
                   : { historyControls: threadHistoryControls })}
               />
 
-              {/* scroll to end pill — shown when user has scrolled away from the live edge */}
               {showScrollToBottom && !isThreadFindActive && (
                 <div
                   className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
@@ -12254,7 +9435,6 @@ function ChatViewContent(props: ChatViewProps) {
               )}
             </div>
 
-            {/* Input bar — centered for an empty draft, docked after sending. */}
             <div
               ref={setComposerOverlayElement}
               inert={isRevertingCheckpoint}
@@ -12265,10 +9445,7 @@ function ChatViewContent(props: ChatViewProps) {
                   : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
               }
             >
-              <div
-                ref={draftHeroTransition.transitionGroupRef}
-                className="chat-composer-lane w-full"
-              >
+              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">
                 <div
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
@@ -12285,14 +9462,14 @@ function ChatViewContent(props: ChatViewProps) {
                       >
                         <DraftHeroHeadline
                           draftId={draftId}
-                          activeProjectRef={activeThreadTargetRef}
+                          activeProjectRef={activeProjectRef}
                           activeProjectTitle={activeProject?.title ?? null}
                         />
                       </div>
                     </div>
                   ) : null}
                   <div
-                    ref={draftHeroTransition.composerAnchorRef}
+                    ref={draftHeroComposerAnchorRef}
                     className="relative z-10"
                     style={
                       forceExpandedMobileComposer
@@ -12445,6 +9622,7 @@ function ChatViewContent(props: ChatViewProps) {
                                 activeProject === null
                               }
                               phase={phase}
+                              isCompacting={isCompacting}
                               canInterrupt={canInterruptRunningThread}
                               // SCIENT-FORK:START — explicit Stop acknowledgement.
                               isStopping={isStopping}
@@ -12479,13 +9657,11 @@ function ChatViewContent(props: ChatViewProps) {
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}
                               onToggleKeepFullHistory={toggleKeepFullHistoryStable}
-                              // With attachments or contexts aboard the pick just inserts the
-                              // text, so it sends as a prompt like the typed path would.
                               onUsageLimitsCommand={
                                 usageLimitsOffered &&
                                 usageLimitsKey !== null &&
                                 !composerHasNonPromptContent
-                                  ? openUsageLimitsStable
+                                  ? openUsageLimits
                                   : undefined
                               }
                               environmentUnavailable={activeEnvironmentUnavailableState}
@@ -12557,7 +9733,7 @@ function ChatViewContent(props: ChatViewProps) {
                               onInterrupt={onInterruptStable}
                               onImplementPlanInNewThread={onImplementPlanInNewThreadStable}
                               onForkConversation={onForkConversation}
-                              onRespondToApproval={onRespondToApproval}
+                              onRespondToApproval={onRespondToApprovalStable}
                               onSelectActivePendingUserInputOption={
                                 onSelectActivePendingUserInputOptionStable
                               }
@@ -12735,9 +9911,7 @@ function ChatViewContent(props: ChatViewProps) {
               />
             ) : null}
           </ThreadFindCanvas>
-          {/* end chat column */}
         </div>
-        {/* end horizontal flex container */}
 
         {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
           <PersistentThreadTerminalDrawer
@@ -12799,7 +9973,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddCompute={addComputeSurface}
           onAddDevice={addDeviceSurfaceStable}
           browserAvailable={canOperatePreview && browserAvailable}
-          terminalAvailable={activeTerminalTarget !== null && canOperateTerminal}
+          terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={diffAvailable}
           filesAvailable={activeWorkspaceRoot !== undefined}
           pullRequestAvailable={pullRequestSurfaceAvailable}
@@ -12825,10 +9999,6 @@ function ChatViewContent(props: ChatViewProps) {
             keybindings={keybindings}
             getShortcutContext={getShortcutContextStable}
             inlineSize={previewPanelInlineSize}
-            // Same effective inset as the closed-state titlebar controls
-            // (pr-3 in the tab bar plus this pixel equals the absolute
-            // right inset plus mr-px), so the cluster does not creep when
-            // the sheet opens.
             layoutControls={
               rightPanelOpen ? (
                 <div className="mr-px flex items-center">{panelToggleControls}</div>
@@ -12866,7 +10036,7 @@ function ChatViewContent(props: ChatViewProps) {
             onAddCompute={addComputeSurface}
             onAddDevice={addDeviceSurfaceStable}
             browserAvailable={canOperatePreview && browserAvailable}
-            terminalAvailable={activeTerminalTarget !== null && canOperateTerminal}
+            terminalAvailable={activeProject !== null && canOperateTerminal}
             diffAvailable={diffAvailable}
             filesAvailable={activeWorkspaceRoot !== undefined}
             pullRequestAvailable={pullRequestSurfaceAvailable}
@@ -12962,6 +10132,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
 }
 
+// SCIENT-FORK:START — the chat follows the user's content direction (scient/bidi).
 export default function ChatView(props: ChatViewProps) {
   const contentDirection = useClientSettings((settings) => settings.contentDirection);
 
@@ -12971,8 +10142,8 @@ export default function ChatView(props: ChatViewProps) {
     </ContentDirectionScope>
   );
 }
+// SCIENT-FORK:END
 
-/** Keeps the thread's preview tabs synced while no browser panel is mounted. */
 function PreviewSessionSync(props: { readonly threadRef: ScopedThreadRef }) {
   usePreviewSession(props.threadRef);
   return null;

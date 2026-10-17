@@ -28,6 +28,8 @@
         "scient-divergence-inventory.mjs",
         "scient-divergence-inventory.node-test.mjs",
       ],
+      // The `t3` npm package's files: copied into the package, never imported.
+      "ignore": ["npm-launcher/**"],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.

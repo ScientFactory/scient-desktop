@@ -18,7 +18,6 @@ import {
   shouldBundleCliDependency,
 } from "./cli-external-packages.ts";
 
-// Only the field this test cares about; decoding ignores everything else.
 // optionalDependencies matter as much as dependencies here: every native family
 // in the list declares its actual platform bindings there (ffi-rs -> @yuuang/*,
 // fff-node -> @ff-labs/fff-bin-*), so reading only `dependencies` would check
@@ -82,9 +81,6 @@ describe("shouldBundleCliDependency", () => {
     assert.strictEqual(shouldBundleCliDependency("@effect/sql-sqlite-bun"), false);
   });
 
-  // The real package is `node-gyp-build-optional-packages`, reached by prefix.
-  // It is transitive to a selected dependency root, so the runtime closure test
-  // below ensures it follows that root into the sidecar.
   it("treats prefix-matched siblings as external", () => {
     assert.strictEqual(shouldBundleCliDependency("node-gyp-build-optional-packages"), false);
   });
@@ -123,11 +119,6 @@ describe("selectCliRuntimeExternalDependencies", () => {
   });
 });
 
-// An external package is loaded from the real filesystem, so its own `require`
-// also resolves from the real filesystem. If one of its dependencies was
-// bundled away instead of left external, that dependency does not follow the
-// selected root into the sidecar.
-//
 // Found the hard way: node-gyp-build-optional-packages requires detect-libc,
 // which was bundled. Windows was fine; WSL got MODULE_NOT_FOUND.
 it.layer(NodeServices.layer)("external package dependency closure", (it) => {
@@ -148,9 +139,7 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
     );
 
     // The store holds regular files too (lock.yaml), so a path built under one
-    // raises ENOTDIR rather than reporting absence. That throws on Linux while
-    // Windows quietly returns false, which is exactly the kind of difference
-    // this test exists to catch, so treat any failure as "not there".
+    // raises ENOTDIR rather than reporting absence.
     const isPresent = (candidate: string) =>
       fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
 
@@ -192,7 +181,6 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
         const installed = yield* readInstalledPackages;
         const found = [...installed.keys()].filter(isRuntimeExternal);
 
-        // Without this the closure check below can pass vacuously: if nothing is
         // read, nothing is checked. These are the packages whose closure
         // actually broke WSL, so require them by name.
         for (const required of ["node-pty", "node-gyp-build-optional-packages", "detect-libc"]) {
@@ -210,10 +198,6 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
       const installed = yield* readInstalledPackages;
       const violations: string[] = [];
       const seen = new Set<string>();
-      // Seeded from what is actually installed and matches a prefix, so scoped
-      // prefixes like "@yuuang/" and "@ff-labs/" are covered too. Seeding from
-      // the prefix strings themselves would skip every scoped entry, since a
-      // prefix is not a package name.
       // Cursor's computed imports use its installed JS dependency tree, proved
       // by the isolated packaged-SDK probe. Those names must also remain
       // bundleable when imported by a different provider in the server graph.
@@ -250,8 +234,6 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
   );
 });
 
-// Configuring the bundler is not the same as checking what it emitted. These
-// exercise the scanner against the marker shape rolldown actually produces.
 describe("findInlinedExternalPackages", () => {
   const region = (path: string) => `//#region ${path}
 var x = 1;
@@ -287,11 +269,6 @@ var x = 1;
     assert.strictEqual(result.regionCount, 2);
   });
 
-  // regionCount is what separates "clean" from "this scan went blind because the
-  // marker format changed". A caller that ignores it gets a vacuous pass.
-  // The scan has to answer both directions. Checking only that externals are
-  // absent still passes on a bundle that externalized everything, which is the
-  // failure this whole change prevents.
   it("reports the packages that were inlined, not just the violations", () => {
     const source =
       region("../../node_modules/.pnpm/effect@4.0.0/node_modules/effect/dist/index.js") +
@@ -317,10 +294,6 @@ var x = 1;
   });
 });
 
-// The single-executable build can only `import` built-ins. A file-backed
-// import of an external package passes every bundler check and the regular
-// `node dist/bin.mjs` path, then fails inside the executable, so the scan
-// reads the emitted module graph instead.
 describe("findEsmImportsOfExternalPackages", () => {
   it("flags static and dynamic imports of file-backed packages", () => {
     const source = [

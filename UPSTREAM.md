@@ -492,16 +492,19 @@ work out of storage cleanup, and routes text-generation fallback by provider
 instance. Release remains separate.
 
 The current alignment through
-`86f4a74c5d789f2b4973616775a6adf19525bf4d` is recorded in
+`a7025639c0e16aad3081106c935bf3025f601a1e` is recorded in
 [the 2026-10-16 receipt](docs/internals/t3-upstream-sync-20261016-86f4a74c5d.md)
-([Scient PR #574](https://github.com/ScientFactory/scient-desktop/pull/574)).
-Literal merge `36f81155864a8dec205da90b94f25fc205066360` has exact owned base
-`958267ce1e8984d90301b9a32915e6e4ef466704` and the frozen official target as
-parents, retaining all 86 ordinary donor commits. Scient keeps its labels, product
-name and Stable/Beta channels, archived and queued work out of settled-worktree
-cleanup, mode authority across steering, and older clients' pull-request views by
-gating branch deletion until clients decode actions forward-compatibly. Release
-remains separate.
+([Scient PR #574](https://github.com/ScientFactory/scient-desktop/pull/574)), which
+first integrated through `86f4a74c5d789f2b4973616775a6adf19525bf4d` (literal merge
+`36f81155864a8dec205da90b94f25fc205066360`, 86 donor commits) and was extended by
+literal merge `0ebeec9e509336fc22bb107148dbecf64d9e9163`, whose parents are the
+#574 head `e983657a24a7e75db5920dd1ce8950d1b028ec19` and the frozen official
+target, retaining all 176 further donor commits. Scient keeps its labels, product
+name and Stable/Beta channels, its publication workflows and CI structure, archived
+and queued work out of settled-worktree cleanup, mode authority across steering,
+captured-policy authority for subagent writes, and older clients' pull-request
+views by gating branch deletion until clients decode actions forward-compatibly.
+Release remains separate.
 
 ## Receiving T3 updates
 

@@ -202,7 +202,6 @@ export const make = Effect.gen(function* () {
         return true;
       };
       // Prompt links and thread links (`scient://new?…`, `scient://threads/…`) reach the
-      // renderer through the same queue as web links; it routes them in the app.
       const openAppLink = (value: string | undefined) => {
         if (!value || promptLinkAppPath(value) === null) return false;
         void runPromise(webLinks.receive(value));
@@ -226,7 +225,6 @@ export const make = Effect.gen(function* () {
         )
           event.preventDefault();
       });
-      // A browser opens HTML files too, which macOS hands over by path.
       yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
         if (!DesktopWebLinks.desktopWebLinksEnabled || !DesktopWebLinks.isWebPageFile(path)) return;
         event.preventDefault();

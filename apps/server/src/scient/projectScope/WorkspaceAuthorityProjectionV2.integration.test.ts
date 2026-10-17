@@ -349,6 +349,8 @@ it.effect(
     Effect.gen(function* () {
       yield* createProject();
       yield* writeThread("before-compact", { worktreePath: "/worktrees/owned" });
+      // Compaction deletes superseded metadata; a visit no longer supersedes it.
+      yield* writeThread("updated-before-compact", { worktreePath: "/worktrees/owned" });
       yield* writeThread(
         "visited-before-compact",
         { worktreePath: "/worktrees/owned", lastVisitedAt: now },

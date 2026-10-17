@@ -42,16 +42,9 @@ const run = (shim: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv =
     env: { PATH: process.env.PATH, ...env },
   });
 
-/** An app executable that reports its environment and arguments. */
 const REPORTER =
   '#!/bin/sh\necho "node=$ELECTRON_RUN_AS_NODE cli=$T3CODE_CLI_PATH home=$SCIENT_NEXT_HOME"\nprintf "%s\\n" "$@"\nexit 3\n';
 
-/**
- * A stand-in AppImage whose image holds the reporter. `--appimage-mount`
- * prints the mount and stays up until killed, recording that it was; with
- * `canMount` false it fails like a host without FUSE. `--appimage-extract`
- * unpacks into ./squashfs-root.
- */
 const fakeAppImage = (canMount = true) => {
   const root = tempRoot();
   const image = NodePath.join(root, "image");
@@ -87,7 +80,6 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
       "a b",
       "",
     ]);
-    // The trap kills the mount helper as the launcher exits.
     NodeChildProcess.spawnSync("sh", [
       "-c",
       `i=0; while [ ! -e '${root}/unmounted' ] && [ $i -lt 40 ]; do sleep 0.05; i=$((i+1)); done`,
@@ -97,7 +89,6 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
 
   it("extracts the AppImage where it cannot be mounted", () => {
     const { shim } = fakeAppImage(false);
-    // Extract-and-run is ignored too, so the runtime never starts the app.
     const result = run(shim, ["--version"], { APPIMAGE_EXTRACT_AND_RUN: "1" });
     expect(result.status).toBe(3);
     expect(result.stdout).toMatch(
@@ -118,7 +109,6 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
     expect(run(shim, [], { SCIENT_NEXT_HOME: "/elsewhere" }).stdout).toContain("home=/elsewhere");
     // Ambient T3 state cannot redirect the Scient bundled launcher.
     expect(run(shim, [], { T3CODE_HOME: "/t3-profile" }).stdout).toContain(`home=${root}/home`);
-    // Run by a relative path, it still names itself absolutely.
     const relative = NodeChildProcess.spawnSync("./bin/scient", [], {
       cwd: root,
       encoding: "utf8",
@@ -183,7 +173,7 @@ describe.skipIf(nativePlatform !== "win32")("renderCliShim Windows execution", (
     NodeFS.mkdirSync(NodePath.dirname(entry), { recursive: true });
     NodeFS.writeFileSync(
       entry,
-      "console.log(JSON.stringify({node:process.env.ELECTRON_RUN_AS_NODE,cli:process.env.T3CODE_CLI_PATH,home:process.env.SCIENT_NEXT_HOME,args:process.argv.slice(2)}));process.exitCode=3;",
+      "console.log(JSON.stringify({node:process.env.ELECTRON_RUN_AS_NODE,launcher:process.env.T3CODE_DESKTOP_CLI_LAUNCHER,cli:process.env.T3CODE_CLI_PATH,home:process.env.SCIENT_NEXT_HOME,args:process.argv.slice(2)}));process.exitCode=3;",
     );
     const args = ["app", "space argument", 'single \' and "double" quotes', "", "José"];
     for (const name of ["scient.cmd", "t3.cmd"]) {
@@ -199,12 +189,19 @@ describe.skipIf(nativePlatform !== "win32")("renderCliShim Windows execution", (
       const result = runWindows(shim, args, { T3CODE_HOME: "C:\\unrelated-t3" });
       expect(result.error).toBeUndefined();
       expect(result.status, result.stderr).toBe(3);
-      expect(JSON.parse(result.stdout.trim())).toEqual({ node: "1", cli: shim, home, args });
+      expect(JSON.parse(result.stdout.trim())).toEqual({
+        node: "1",
+        launcher: "1",
+        cli: shim,
+        home,
+        args,
+      });
       const override = NodePath.join(root, "explicit Scient profile");
       const overridden = runWindows(shim, args, { SCIENT_NEXT_HOME: override });
       expect(overridden.status, overridden.stderr).toBe(3);
       expect(JSON.parse(overridden.stdout.trim())).toEqual({
         node: "1",
+        launcher: "1",
         cli: shim,
         home: override,
         args,

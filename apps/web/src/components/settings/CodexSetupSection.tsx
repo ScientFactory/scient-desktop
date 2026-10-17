@@ -56,7 +56,6 @@ interface CodexSetupSectionProps {
   readonly onSignInCancelled?: (() => void) | undefined;
 }
 
-/** Welcome and provider settings run the same environment-owned setup flow. */
 export function CodexSetupSection(props: CodexSetupSectionProps) {
   const changeMode = (mode: "managed" | "existing") => {
     if (props.readOnly || !readEnvironmentScope(props.environmentId, AuthProvidersManageScope))
@@ -169,7 +168,6 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
   return content;
 }
 
-/** All add-Codex entry points use the same managed account setup. */
 export function AddManagedCodexAccountDialog({
   environmentId,
   onClose,
@@ -296,8 +294,6 @@ function ManagedCodexSetup({
     installation?.source !== "local" &&
     installation?.version != null &&
     installation.version !== installation.installedVersion;
-  // Auth receipts and provider snapshots arrive independently. Keep the current
-  // attempt pending until its authenticated snapshot arrives, even after success.
   const finishingSignIn =
     awaitingProvider !== null &&
     !authenticated &&
@@ -1032,7 +1028,6 @@ function ManagedCodexSetup({
   );
 }
 
-/** The server selects the executable for managed instances; local config cannot override it. */
 export function CodexManagedRuntimeFields({
   environmentId,
   instanceId,
@@ -1131,7 +1126,6 @@ function CodexSignInDescription({
   );
 }
 
-/** A single, calm setup row for the first-run welcome screen. */
 function CodexWelcomeCard({
   title,
   description,

@@ -25,7 +25,6 @@ export type UsageChartMetric = "tokens" | "cost";
 
 interface UsageProviderChartProps {
   readonly providers: readonly UsageProviderKind[];
-  /** Providers whose figures are still coming in: their lines are muted. */
   readonly loadingProviders?: ReadonlySet<UsageProviderKind>;
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
@@ -37,7 +36,6 @@ interface UsageProviderChartProps {
   readonly timeZone: string;
 }
 
-/** One day's per-provider values, shared by the paths and the hover readout. */
 export interface DayColumn {
   readonly bands: readonly {
     readonly provider: UsageProviderKind;
@@ -77,11 +75,6 @@ function areaPath(line: string) {
 
 const PLACEHOLDER_TICKS = Array.from({ length: TICK_COUNT + 1 }, (_, index) => index);
 
-/**
- * Scales to the largest single provider-period. With nothing to show yet while
- * providers load, unlabeled placeholder gridlines hold their usual spacing so
- * nothing shifts on arrival.
- */
 export function chartScale(
   columns: readonly DayColumn[],
   loadingProviders: ReadonlySet<UsageProviderKind>,
@@ -103,7 +96,6 @@ function valueToY(value: number, max: number) {
   return max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 }
 
-/** Per-provider paths in paint order, heaviest first. */
 function buildChart(
   periods: readonly string[],
   byPeriod: ReadonlyMap<string, DailyTotals | HourlyTotals>,
@@ -131,7 +123,6 @@ function buildChart(
     };
   });
 
-  // Paint the heavier series first so the lighter one is not buried.
   return { columns, scale, stepX, paths: paths.toSorted((a, b) => b.total - a.total) };
 }
 
@@ -165,7 +156,6 @@ export function UsageProviderChart({
     [byPeriod, loadingProviders, metric, periods, providers],
   );
   const toY = (value: number) => valueToY(value, scale.max);
-  // The delay keeps a quick answer from flashing, as with the page's figures.
   const seriesClassName = (loading: boolean) =>
     cn("transition-opacity", loading && "opacity-40 delay-150");
 
@@ -237,7 +227,6 @@ export function UsageProviderChart({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex gap-2">
-        {/* Axis labels sit outside the plot so they stay aligned to gridlines. */}
         <div className="relative h-56 w-14 shrink-0">
           {scale.labeled
             ? scale.ticks.map((tick) => (
@@ -285,7 +274,6 @@ export function UsageProviderChart({
               );
             })}
 
-            {/* Fills first, then every stroke, so no series covers another's line. */}
             {paths.map(({ provider, loading, area }) => (
               <path
                 key={provider}

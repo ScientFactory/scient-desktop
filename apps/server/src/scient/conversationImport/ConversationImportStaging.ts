@@ -369,10 +369,6 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         );
       });
 
-    // ---------------------------------------------------------------------
-    // Completions
-    // ---------------------------------------------------------------------
-
     const isCurrent = (completion: ConversationImportCompletion, at: number) =>
       DateTime.toEpochMillis(DateTime.makeUnsafe(completion.completedAt)) +
         CONVERSATION_IMPORT_COMPLETION_RETENTION_MS >
@@ -428,10 +424,6 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         ),
       );
 
-    // ---------------------------------------------------------------------
-    // Settling abandoned attempts
-    // ---------------------------------------------------------------------
-
     /** Settles the attempt (if any) and removes the area; an unsettled attempt keeps it. */
     const settleAndRemove = (
       record: ImportRecord,
@@ -464,9 +456,7 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         return "removed" as const;
       });
 
-    // ---------------------------------------------------------------------
     // Startup: every area left from an earlier run is abandoned.
-    // ---------------------------------------------------------------------
 
     yield* fileSystem.makeDirectory(completionsRoot, { recursive: true }).pipe(Effect.orDie);
     const startedAt = yield* now;
@@ -503,10 +493,6 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         yield* removeDirectory(NodePath.join(completionsRoot, name));
       }
     }
-
-    // ---------------------------------------------------------------------
-    // Upload
-    // ---------------------------------------------------------------------
 
     const signingSecret = secrets.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
 
@@ -770,10 +756,6 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         }),
       );
     });
-
-    // ---------------------------------------------------------------------
-    // Validation and preview
-    // ---------------------------------------------------------------------
 
     /** Validates the uploaded file and stages what an import needs; the snapshot goes to disk. */
     const stageUpload = (record: ImportRecord, uploaded: Extract<Phase, { _tag: "uploaded" }>) =>
@@ -1163,10 +1145,6 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
       );
     });
 
-    // ---------------------------------------------------------------------
-    // Confirm
-    // ---------------------------------------------------------------------
-
     const makeLease = (
       record: ImportRecord,
       input: ValidatedConversationImport,
@@ -1405,10 +1383,6 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
       }
     });
 
-    // ---------------------------------------------------------------------
-    // Cancel
-    // ---------------------------------------------------------------------
-
     const cancel: ConversationImportStaging["Service"]["cancel"] = Effect.fn(
       "ConversationImportStaging.cancel",
     )(function* (importId) {
@@ -1504,10 +1478,6 @@ export const make = (options: ConversationImportStagingOptions = {}) =>
         }
       }
     });
-
-    // ---------------------------------------------------------------------
-    // Expiry
-    // ---------------------------------------------------------------------
 
     const sweep: ConversationImportStaging["Service"]["sweep"] = Effect.gen(function* () {
       const at = yield* now;

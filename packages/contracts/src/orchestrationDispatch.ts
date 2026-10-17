@@ -13,10 +13,6 @@ export const ForkDisposition = Schema.Literals([
 ]);
 export type ForkDisposition = typeof ForkDisposition.Type;
 
-/**
- * A command dispatch failure. `bootstrapThreadDisposition` tells a client whether the
- * thread a bootstrap turn would have created was removed or never created.
- */
 export class OrchestrationDispatchCommandError extends Schema.TaggedError<OrchestrationDispatchCommandError>()(
   "OrchestrationDispatchCommandError",
   {

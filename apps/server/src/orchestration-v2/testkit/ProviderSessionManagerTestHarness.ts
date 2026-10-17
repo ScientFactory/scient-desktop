@@ -53,6 +53,7 @@ import {
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
+import { layerProviderRuntimeTestServices } from "./ProviderRuntimeTestServices.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
 
@@ -563,6 +564,9 @@ function makeTestLayer(input: {
       ),
     ),
   ).pipe(
+    Layer.provide(
+      layerProviderRuntimeTestServices(Layer.merge(configuredEventSinkLayer, TestStoresLayer)),
+    ),
     Layer.provide(ThreadCommandExecutor.layer),
     Layer.provide(NodeServices.layer),
     Layer.provideMerge(input.mcpProviderSessionsLayer ?? McpProviderSessions.layer),

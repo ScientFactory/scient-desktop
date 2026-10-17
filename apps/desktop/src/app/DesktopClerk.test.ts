@@ -39,7 +39,6 @@ import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 
-/** Clerk forwards web links; tests that are not about links ignore them. */
 const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
   receive: () => Effect.void,
   setRendererReady: () => Effect.void,
@@ -154,8 +153,6 @@ describe("DesktopClerk", () => {
         events.push("createClerkBridge");
         return { cleanup: vi.fn(), isPrimaryInstance: true };
       });
-      // runSync throws if the layer ever suspends, which would let Electron emit
-      // ready before the bridge exists. main.ts provides the same FileSystem.
       // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- The assertion IS that the layer builds synchronously; it.effect would mask a regression to async.
       Effect.runSync(
         Effect.scoped(
@@ -437,7 +434,6 @@ it.effect("hands Scient app links to the renderer while browser activation stays
       // Scient's default-browser activation is held.
       assert.strictEqual(open("https://example.com/page"), 0);
       assert.strictEqual(open("http://localhost:3000/"), 0);
-      // Prompt and thread links ride the same queue; the renderer routes them in the app.
       assert.strictEqual(open("scient://new?prompt=hi"), 1);
       assert.strictEqual(open("scient-next-dev://threads/env-1/thread-1"), 1);
       assert.strictEqual(open("t3code://new?prompt=hi"), 0);
