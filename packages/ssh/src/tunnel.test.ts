@@ -291,19 +291,19 @@ describe("ssh tunnel scripts", () => {
 
   it("shell-quotes package specs in the remote t3 runner", () => {
     const script = SshTunnel.buildRemoteT3RunnerScript({
-      packageSpec: "scient.tgz; touch /tmp/scient-owned",
+      packageSpec: "t3@nightly; touch /tmp/t3-owned",
     });
 
     assert.include(
       script,
-      "require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 'scient.tgz; touch /tmp/scient-owned'",
+      "require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@nightly; touch /tmp/t3-owned'",
     );
     assert.include(
       script,
-      "require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 'scient.tgz; touch /tmp/scient-owned'",
+      "require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@nightly; touch /tmp/t3-owned'",
     );
     assert.include(script, 'exec "$T3_CLI_PATH" "$@"');
-    assert.notInclude(script, "exec npx --yes scient.tgz; touch /tmp/scient-owned");
+    assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
   });
   // SCIENT-FORK:END
 
@@ -389,10 +389,15 @@ describe("ssh tunnel scripts", () => {
       launch.indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
     // SCIENT-FORK: the pinned package spec reaches both generated scripts.
-    const packageSpec = scientServerPackageSpec("0.6.21");
-    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec }), packageSpec);
-    assert.include(SshTunnel.buildRemotePairingScript(stateKey, { packageSpec }), packageSpec);
-    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec }), "T3_ARCHIVE_MODE=0");
+    assert.include(SshTunnel.buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
+    assert.include(
+      SshTunnel.buildRemotePairingScript(stateKey, { packageSpec: "t3@nightly" }),
+      "t3@nightly",
+    );
+    assert.include(
+      SshTunnel.buildRemoteLaunchScript({ packageSpec: "t3@nightly" }),
+      "T3_ARCHIVE_MODE=0",
+    );
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
@@ -488,9 +493,7 @@ describe("ssh tunnel scripts", () => {
 
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
-        SshTunnel.launchOrReuseRemoteServer(target, undefined, {
-          packageSpec: scientServerPackageSpec("0.6.21"),
-        }),
+        SshTunnel.launchOrReuseRemoteServer(target, undefined, { packageSpec: "t3@nightly" }),
       );
       yield* Effect.yieldNow;
       yield* TestClock.adjust(Duration.seconds(95));

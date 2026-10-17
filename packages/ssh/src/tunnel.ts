@@ -496,7 +496,7 @@ if [ -z "$T3_ARCHIVE_VERSION" ]; then
   printf 'No t3 release version was provided for the remote runtime.\\n' >&2
   exit 1
 fi
-# Unpacked into the pinned-runtime layout that service installs reuse.
+# Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
 T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
 t3_runtime_ready() {
@@ -604,11 +604,11 @@ if [ -z @@T3_PACKAGE_SPEC@@ ]; then
   exit 1
 fi
 # npm extracts a package before it runs the native builds of its dependencies,
-# so a failed build (the server depends on node-pty, which needs a C toolchain)
-# leaves the npx cache without a scient executable. \`npx --yes\` then exits 0
-# without running anything at all, which the caller only ever sees as a server
-# that never becomes ready. Resolve the CLI once up front so that install
-# failure is reported here, with npm's own output on stderr.
+# so a failed build (t3 depends on node-pty, which needs a C toolchain) leaves
+# the npx cache without a scient executable. \`npx --yes\` then exits 0 without
+# running anything at all, which the caller only ever sees as a server that
+# never becomes ready. Resolve the CLI once up front so that install failure is
+# reported here, with npm's own output on stderr.
 # npm puts the package's bin directory first but keeps the inherited PATH, so
 # without a package executable \`command -v\` finds any other scient. Accept only
 # the bin of the package npm's own lockfile records as fetched from the spec.

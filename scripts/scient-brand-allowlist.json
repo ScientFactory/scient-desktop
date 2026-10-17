@@ -553,5 +553,26 @@
     "rules": ["bare-t3"],
     "kind": "upstream-reference",
     "reason": "Upstream comment inside the Pi extension source this file embeds as a string; never shown to users."
+  },
+  {
+    "path": "packages/ssh/src/tunnel.ts",
+    "line": "# Unpacked into the pinned-runtime layout so \\`t3 service install\\` reuses it.",
+    "rules": ["t3-command"],
+    "kind": "upstream-reference",
+    "reason": "Upstream shell comment inside the remote runner script this file embeds as a string; never shown to users."
+  },
+  {
+    "path": "apps/desktop/gnome-extension/captureFeedback.js",
+    "line": "console.warn(`T3 capture effects unavailable: ${error.message}`);",
+    "rules": ["bare-t3"],
+    "kind": "internal",
+    "reason": "Upstream GNOME Shell extension diagnostic in the shell's journal; never shown in Scient."
+  },
+  {
+    "path": "apps/desktop/gnome-extension/extension.js",
+    "line": "console.warn(`T3 capture preview unavailable: ${error.message}`);",
+    "rules": ["bare-t3"],
+    "kind": "internal",
+    "reason": "Upstream GNOME Shell extension diagnostic in the shell's journal; never shown in Scient."
   }
 ]

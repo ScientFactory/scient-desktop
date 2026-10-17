@@ -3,7 +3,7 @@
  * it. Every failure here names that command, so the server log, an agent's tool
  * error, and the viewer all offer the same fix: `sudo scient browser setup`.
  *
- * Scient never turns Chrome's sandbox off by itself. A host that cannot give it one
+ * T3 never turns Chrome's sandbox off by itself. A host that cannot give it one
  * gets the command instead, and only the operator's explicit
  * `T3CODE_SERVER_BROWSER_SANDBOX=0` launches without it.
  */

@@ -3,7 +3,6 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   SCIENT_SERVER_PACKAGE_NAME,
   scientServerAllowedScriptsValue,
-  scientServerPackageSpec,
 } from "@t3tools/shared/scientRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
@@ -65,7 +64,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           const fixture = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-" });
           const bin = path.join(fixture, "bin");
           const callsPath = path.join(fixture, "package-manager-calls.jsonl");
-          const packageSpec = scientServerPackageSpec("0.0.35");
+          const packageSpec = "t3@0.0.35";
           yield* fs.makeDirectory(bin);
           yield* fs.symlink(process.execPath, path.join(bin, "node"));
           const cliPath = yield* writePinnedInstall(
@@ -353,7 +352,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         const fixture = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-install-" });
         const bin = path.join(fixture, "bin");
         const callsPath = path.join(fixture, "installer-calls.jsonl");
-        const packageSpec = scientServerPackageSpec("0.0.39-beta.20260905.1");
+        const packageSpec = "t3@0.0.39-nightly.20260905.1286";
         const args = ["serve", "a path with spaces"];
         yield* fs.makeDirectory(bin);
         yield* fs.symlink(process.execPath, path.join(bin, "node"));
