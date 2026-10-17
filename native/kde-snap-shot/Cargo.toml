@@ -5,6 +5,14 @@ edition = "2024"
 license = "MIT"
 publish = false
 
+# SCIENT-FORK:START — ship the binary under the Scient helper name while the
+# crate keeps T3's package name (and Cargo.lock entry). Keep it equal to
+# SCIENT_HELPER_EXECUTABLES in packages/shared/src/scientDesktopIdentity.ts.
+[[bin]]
+name = "scient-kde-snap-shot"
+path = "src/main.rs"
+# SCIENT-FORK:END
+
 [dependencies]
 async-channel = "2"
 png = "0.18"

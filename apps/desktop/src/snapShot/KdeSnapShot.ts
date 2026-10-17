@@ -7,6 +7,12 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 import type { DesktopCaptureHelperState } from "@t3tools/contracts";
+// SCIENT-FORK:START — Scient helper executable names.
+import {
+  LEGACY_CAPTURE_HELPER_EXECUTABLES,
+  SCIENT_HELPER_EXECUTABLES,
+} from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 
 import { escapeDesktopEntryExecArgument } from "../app/DesktopLinuxUrlHandler.ts";
 import type { LinuxWindowSnapshot } from "./LinuxSnapShot.ts";
@@ -14,7 +20,12 @@ import { readPortalPng } from "./linuxCaptureSession.ts";
 import { startNativeCaptureFeedback } from "./NativeCaptureFeedback.ts";
 export { isKdeCaptureSession } from "./linuxCaptureSession.ts";
 
-export const KDE_CAPTURE_EXECUTABLE = "t3-kde-snap-shot";
+// SCIENT-FORK:START — the helper ships under its Scient name; earlier releases
+// installed it under T3's name in the same directory.
+export const KDE_CAPTURE_EXECUTABLE = SCIENT_HELPER_EXECUTABLES.kdeCapture;
+const legacyExecutable = (executable: string) =>
+  NodePath.join(NodePath.dirname(executable), LEGACY_CAPTURE_HELPER_EXECUTABLES.kdeCapture);
+// SCIENT-FORK:END
 const DESKTOP_FILE = "com.scientfactory.scient.KdeCapture.desktop";
 const MARKER = "X-Scient-Capture-Helper=true";
 const decodeCapabilities = Schema.decodeUnknownSync(
@@ -106,6 +117,13 @@ export class KdeCaptureSetup {
     try {
       const { executable, desktop } = kdeCapturePaths(this.paths);
       const [installed, entry] = await Promise.all([regularFile(executable), regularFile(desktop)]);
+      // SCIENT-FORK:START — reinstall a helper installed under T3's name.
+      if (!installed && entry && (await regularFile(legacyExecutable(executable))))
+        return {
+          status: "update-required",
+          message: "Update the bundled capture helper to continue.",
+        };
+      // SCIENT-FORK:END
       if (!installed || !entry)
         return {
           status: "not-installed",
@@ -153,6 +171,9 @@ export class KdeCaptureSetup {
     if (existing && (!existing.isDirectory() || existing.isSymbolicLink()))
       throw new Error("The capture helper directory is not a regular directory.");
     await regularFile(executable);
+    // SCIENT-FORK:START — drop the helper installed under T3's name.
+    await NodeFSP.rm(legacyExecutable(executable), { force: true }).catch(() => undefined);
+    // SCIENT-FORK:END
     if (action === "remove-kde-helper") {
       if (entry) await NodeFSP.unlink(desktop);
       await NodeFSP.unlink(executable).catch((error: NodeJS.ErrnoException) => {

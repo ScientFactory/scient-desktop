@@ -1336,6 +1336,21 @@ back to `t3@latest`, `t3@nightly`, or a `t3` already on the remote PATH. The
 Codex desktop handoff and its return addresses use Scient's registered
 `scient://` schemes, never `t3code://` or T3's hosted origin.
 
+Native helpers ship as `scient-resource-monitor` (`.exe` on Windows),
+`scient-kde-snap-shot`, `scient-hyprland-snap-shot` and `scient-browser-secret`,
+because process lists such as Windows Task Manager show those names.
+`SCIENT_HELPER_EXECUTABLES` in `packages/shared/src/scientDesktopIdentity.ts`
+owns them for packaging, release staging tests and runtime lookup. The Rust
+crates keep T3's package names and `Cargo.lock` entries; a marked `[[bin]]` in
+each manifest sets the file name, so T3 dependency updates still merge cleanly.
+When an alignment brings a new `t3-*` helper path (for example in `release.yml`),
+use the Scient name. Capture setup reports a helper installed under T3's name
+as needing an update, and deletes it on reinstall or removal. Development
+checkouts look only for the Scient names, so rebuild older local helper builds.
+The Wayland layer namespace `t3-snap-shot` and the portal shortcut id
+`t3-snap-shot-<hash>` keep T3's names: renaming them would drop users'
+compositor rules and approved shortcuts.
+
 The unmounted Overleaf engine owns `apps/server/src/scient/overleaf` and its
 retained mutation implementation in `apps/server/src/scient/workspace`. Its two
 additive `WorkspaceFileSystem` methods reuse the existing file mutation lock map;

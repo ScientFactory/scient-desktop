@@ -472,7 +472,7 @@ jobs:
         id: resource_monitor_cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/scient-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
           key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
 
       - name: Cache Linux capture helpers
@@ -481,8 +481,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
-            native/kde-snap-shot/target/${{ matrix.rust_target }}/release/t3-kde-snap-shot
-            native/hyprland-snap-shot/target/${{ matrix.rust_target }}/release/t3-hyprland-snap-shot
+            native/kde-snap-shot/target/${{ matrix.rust_target }}/release/scient-kde-snap-shot
+            native/hyprland-snap-shot/target/${{ matrix.rust_target }}/release/scient-hyprland-snap-shot
           key: linux-capture-helpers-${{ matrix.rust_target }}-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
 
       - name: Setup Rust
@@ -722,8 +722,8 @@ jobs:
       - name: Collect resource monitor
         shell: bash
         run: |
-          binary=t3-resource-monitor
-          [[ "${{ matrix.platform }}" == "win" ]] && binary=t3-resource-monitor.exe
+          binary=scient-resource-monitor
+          [[ "${{ matrix.platform }}" == "win" ]] && binary=scient-resource-monitor.exe
           source="native/resource-monitor/target/${{ matrix.rust_target }}/release/$binary"
           mkdir -p "resource-monitor/${{ matrix.resource_key }}"
           cp "$source" "resource-monitor/${{ matrix.resource_key }}/$binary"
@@ -785,8 +785,8 @@ jobs:
           for dir in resource-monitors/resource-monitor-*; do
             key="${dir##*/resource-monitor-}"
             mkdir -p "apps/server/dist/resource-monitor/$key"
-            cp "$dir"/t3-resource-monitor* "apps/server/dist/resource-monitor/$key/"
-            chmod +x "apps/server/dist/resource-monitor/$key/t3-resource-monitor" 2>/dev/null || true
+            cp "$dir"/scient-resource-monitor* "apps/server/dist/resource-monitor/$key/"
+            chmod +x "apps/server/dist/resource-monitor/$key/scient-resource-monitor" 2>/dev/null || true
           done
           for dir in synctex-runtimes/synctex-runtime-*; do
             key="${dir##*/synctex-runtime-}"

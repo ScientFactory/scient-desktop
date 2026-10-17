@@ -3,6 +3,9 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
+// SCIENT-FORK:START — Scient helper executable names.
+import { SCIENT_HELPER_EXECUTABLES } from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- The native compiler targets the actual host; this script has no Effect runtime.
 const hostArch = process.arch;
@@ -18,7 +21,11 @@ if (hostPlatform === "linux") {
   if (machine === undefined) throw new Error(`Unsupported Linux architecture: ${values.arch}`);
   const root = NodeURL.fileURLToPath(new URL("../../../native/browser-secret/", import.meta.url));
   const source = NodePath.resolve(root, "main.c");
-  const output = values.output ?? NodePath.resolve(root, "build", values.arch, "t3-browser-secret");
+  // SCIENT-FORK:START — the helper ships under its Scient name.
+  const output =
+    values.output ??
+    NodePath.resolve(root, "build", values.arch, SCIENT_HELPER_EXECUTABLES.browserSecret);
+  // SCIENT-FORK:END
   const matchesArchitecture = (file) => {
     const header = NodeFS.readFileSync(file).subarray(0, 20);
     return header.toString("hex", 0, 6) === "7f454c460201" && header.readUInt16LE(18) === machine;
