@@ -10,8 +10,8 @@ const mapping = JSON.parse(
 const matches = (path, prefix) => path.startsWith(prefix);
 const LIVE_SUITES = "**/*.live.test.ts";
 const WEB_UNIT_LANE_COST =
-  "Opt-in: every web unit suite, about 14 minutes on a Windows 11 workstation. Compare with " +
-  "--web-unit-baseline from the same run on the unmodified base; a flaky test can still appear new.";
+  "Opt-in: every web unit suite, about 14 minutes on a Windows 11 workstation. Fails on any " +
+  "failure; --web-unit-baseline from the unmodified base only labels failures new or pre-existing.";
 
 /**
  * Child environment for local checks. A Scient desktop host gives its agents
@@ -265,31 +265,25 @@ export function main(argv) {
       [...webUnitLane.argv, "--reporter=default", "--reporter=json", `--outputFile.json=${report}`],
       webUnitLane.cwd,
     );
-    const { failures, unavailable } = readVitestReport(report, webUnitLane.cwd, result);
+    const outcome = webUnitOutcome(result, readVitestReport(report, webUnitLane.cwd));
     const failuresPath = NodePath.join(out, "web-unit-failures.json");
-    NodeFS.writeFileSync(
-      failuresPath,
-      `${JSON.stringify({ head, cwd, failures, unavailable }, null, 2)}\n`,
-    );
-    // A run that verified nothing fails outright; a baseline never excuses it.
-    const comparison =
-      baseline && !unavailable ? compareFailures(failures, baseline.failures) : null;
+    NodeFS.writeFileSync(failuresPath, `${JSON.stringify({ head, cwd, ...outcome }, null, 2)}\n`);
+    // The baseline only labels failures for the reader; it never changes the verdict.
+    const labels = baseline ? compareFailures(outcome.failures, baseline.failures) : null;
     console.log(
       JSON.stringify(
         {
           check: "web-unit-lane",
-          failures: failuresPath,
-          unavailable,
+          failuresFile: failuresPath,
+          ...outcome,
           baseline: baseline?.path,
-          ...comparison,
+          ...labels,
         },
         null,
         2,
       ),
     );
-    if (unavailable || (comparison ? comparison.new.length > 0 : failures.length > 0)) {
-      failed.push("web-unit-lane");
-    }
+    if (!outcome.passed) failed.push("web-unit-lane");
   }
   if (failed.length) console.log(`Failed checks: ${failed.join(", ")}`);
   return failed.length ? 1 : 0;
@@ -319,43 +313,31 @@ function runCheck(id, argv, cwd) {
 
 function readBaseline(path) {
   let failures;
-  let unavailable;
   try {
-    ({ failures, unavailable } = JSON.parse(NodeFS.readFileSync(path, "utf8")));
+    ({ failures } = JSON.parse(NodeFS.readFileSync(path, "utf8")));
   } catch (error) {
     throw new Error(`Unreadable --web-unit-baseline ${path}: ${error.message}`, { cause: error });
   }
   if (!Array.isArray(failures) || failures.some((id) => typeof id !== "string")) {
     throw new Error(`--web-unit-baseline ${path} has no failures list from a --web-unit run`);
   }
-  if (unavailable) {
-    throw new Error(`--web-unit-baseline ${path} verified nothing: ${unavailable}`);
-  }
   return { path, failures };
 }
 
 /**
- * Failed tests in a Vitest JSON report as `file > full test name`, and errors a
- * file reported outside its tests (an import or afterAll failure) as
- * `file > (file error)`, so a new hook failure is not hidden behind a known
- * assertion failure. `unavailable` says why a run verified nothing: abnormal
- * termination, no readable report, or a failing exit without a recorded
- * failure. Such a run fails regardless of any baseline.
+ * A Vitest JSON report's test-file count and failures: `file > full test name`
+ * for a failed test and `file > (file error)` for a failed file with an error
+ * of its own or no failed test (an import or hook failure). Null when there is
+ * no readable report.
  */
-export function readVitestReport(reportPath, cwd, { status, signal }) {
-  const unavailable = (reason) => ({ failures: [], unavailable: reason });
-  if (status === null || signal) {
-    return unavailable(`terminated abnormally (${signal ?? "no exit status"})`);
-  }
+export function readVitestReport(reportPath, cwd) {
   let report;
   try {
     report = JSON.parse(NodeFS.readFileSync(reportPath, "utf8"));
   } catch {
-    return unavailable(`no readable Vitest report (exit ${status})`);
+    return null;
   }
-  if (!Array.isArray(report?.testResults)) {
-    return unavailable(`no test results in the Vitest report (exit ${status})`);
-  }
+  if (!Array.isArray(report?.testResults)) return null;
   const failures = report.testResults.flatMap((file) => {
     const path = NodePath.relative(cwd, file.name).split(NodePath.sep).join("/");
     const tests = (file.assertionResults ?? [])
@@ -364,13 +346,36 @@ export function readVitestReport(reportPath, cwd, { status, signal }) {
     const fileError = file.status === "failed" && (Boolean(file.message) || tests.length === 0);
     return fileError ? [...tests, `${path} > (file error)`] : tests;
   });
-  if (failures.length === 0 && status !== 0) {
-    return unavailable(`exit ${status} without a recorded test failure`);
-  }
-  return { failures: [...new Set(failures)].sort(), unavailable: null };
+  return { files: report.testResults.length, failures: [...new Set(failures)].sort() };
 }
 
-/** New failures fail the lane; pre-existing ones and baseline failures no longer reported are listed. */
+/**
+ * The lane passes only when Vitest exited 0 and its readable report covers at
+ * least one test file with no failure; missing evidence never passes.
+ */
+export function webUnitOutcome({ status, signal }, report) {
+  const reason =
+    signal || status === null
+      ? `terminated abnormally (${signal ?? "no exit status"})`
+      : !report
+        ? `no readable Vitest report (exit ${status})`
+        : report.files === 0
+          ? `the Vitest report has no test files (exit ${status})`
+          : report.failures.length > 0
+            ? `${report.failures.length} failure(s) (exit ${status})`
+            : status !== 0
+              ? `exit ${status}`
+              : null;
+  return {
+    passed: reason === null,
+    reason,
+    exit: status,
+    files: report?.files ?? 0,
+    failures: report?.failures ?? [],
+  };
+}
+
+/** Labels failures as new or also in the baseline, and lists baseline failures absent now. */
 export function compareFailures(failures, baseline) {
   const before = new Set(baseline);
   const after = new Set(failures);

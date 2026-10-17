@@ -328,6 +328,7 @@
         "apps/server/src/orchestration-v2/scient-fork/",
         "apps/server/src/orchestration-v2/Adapters/",
         "apps/server/src/persistence/",
+        "packages/effect-acp/",
         "packages/effect-codex-app-server/"
       ],
       "consumers": [

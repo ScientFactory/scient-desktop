@@ -10,6 +10,7 @@ import {
   compareFailures,
   readVitestReport,
   selectBoundaries,
+  webUnitOutcome,
 } from "./scient-alignment-checks.mjs";
 
 const cli = NodeURL.fileURLToPath(new URL("./scient-alignment-checks.mjs", import.meta.url));
@@ -96,6 +97,19 @@ test("adapter, session and ChatView changes include their untouched authority co
     "reader",
   ]);
   NodeAssert.ok(ids(["apps/web/src/components/chat/ModelPickerContent.tsx"]).includes("settings"));
+});
+
+test("ACP protocol changes select the native ACP fork consumer beside the adapters", () => {
+  const selection = selectBoundaries(["packages/effect-acp/src/client.ts"]);
+  NodeAssert.deepEqual(
+    selection.boundaries.map((row) => row.id),
+    ["adapters", "fork"],
+  );
+  NodeAssert.ok(
+    selection.boundaries[1].checks.server.includes(
+      "src/orchestration-v2/scient-fork/ConversationForkNativeAnswer.integration.test.ts",
+    ),
+  );
 });
 
 test("adapter protocol and run-lifecycle changes select every adapter suite", () => {
@@ -403,39 +417,42 @@ test("invalid scope and parent traversal are refused", () => {
   }
 });
 
-test("Vitest failures are named by test, file errors separately, and empty runs verify nothing", () => {
+test("Vitest failures are named by test and file error; only a clean, non-empty exit-0 run passes", () => {
   const cwd = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-web-unit-report-"));
   directories.push(cwd);
-  const report = NodePath.join(cwd, "vitest.json");
-  NodeFS.writeFileSync(report, JSON.stringify(fakeVitestReport(cwd)));
-  NodeAssert.deepEqual(readVitestReport(report, cwd, { status: 1, signal: null }), {
+  const path = NodePath.join(cwd, "vitest.json");
+  const read = (report) => {
+    NodeFS.writeFileSync(path, JSON.stringify(report));
+    return readVitestReport(path, cwd);
+  };
+  const failing = read(fakeVitestReport(cwd));
+  NodeAssert.deepEqual(failing, {
+    files: 3,
     failures: ["src/a.test.ts > a fails", "src/broken.test.ts > (file error)"],
-    unavailable: null,
   });
-  // An afterAll failure beside a known assertion failure keeps its own identity.
+  // A file error of its own is labeled beside the file's failed assertions.
   const hooked = fakeVitestReport(cwd);
   hooked.testResults[0].message = "Error: afterAll cleanup failed";
-  NodeFS.writeFileSync(report, JSON.stringify(hooked));
-  const { failures } = readVitestReport(report, cwd, { status: 1, signal: null });
-  NodeAssert.deepEqual(compareFailures(failures, ["src/a.test.ts > a fails"]).new, [
-    "src/a.test.ts > (file error)",
-    "src/broken.test.ts > (file error)",
-  ]);
-  // Runs that verified nothing are unavailable, never comparable failure IDs.
-  const missing = NodePath.join(cwd, "missing.json");
-  NodeAssert.match(
-    readVitestReport(missing, cwd, { status: 1, signal: null }).unavailable,
-    /no readable Vitest report/u,
-  );
-  NodeAssert.match(
-    readVitestReport(report, cwd, { status: null, signal: "SIGKILL" }).unavailable,
-    /terminated abnormally \(SIGKILL\)/u,
-  );
-  NodeFS.writeFileSync(report, JSON.stringify({ testResults: [] }));
-  NodeAssert.deepEqual(readVitestReport(report, cwd, { status: 1, signal: null }), {
-    failures: [],
-    unavailable: "exit 1 without a recorded test failure",
-  });
+  NodeAssert.ok(read(hooked).failures.includes("src/a.test.ts > (file error)"));
+  const clean = read({ testResults: [fakeVitestReport(cwd).testResults[2]] });
+  const empty = read({ testResults: [] });
+  const outcome = (status, report, signal = null) => webUnitOutcome({ status, signal }, report);
+  NodeAssert.equal(outcome(0, clean).passed, true);
+  for (const [result, reason] of [
+    [outcome(1, failing), /2 failure\(s\) \(exit 1\)/u],
+    // An interrupted run (Ctrl+C: 130, or Windows 0xC000013A) with a partial report.
+    [outcome(130, failing), /exit 130/u],
+    [outcome(3221225786, clean), /exit 3221225786/u],
+    [outcome(0, failing), /2 failure\(s\) \(exit 0\)/u],
+    [outcome(0, empty), /no test files/u],
+    [outcome(0, null), /no readable Vitest report/u],
+    [outcome(null, clean, "SIGKILL"), /terminated abnormally \(SIGKILL\)/u],
+    [outcome(1, clean), /^exit 1$/u],
+  ]) {
+    NodeAssert.equal(result.passed, false);
+    NodeAssert.match(result.reason, reason);
+  }
+  NodeAssert.equal(readVitestReport(NodePath.join(cwd, "missing.json"), cwd), null);
   NodeAssert.deepEqual(compareFailures(["new", "old"], ["old", "gone"]), {
     new: ["new"],
     preexisting: ["old"],
@@ -472,7 +489,7 @@ function fakeVitestReport(cwd) {
   };
 }
 
-/** A fixture checkout whose pnpm writes FAKE_REPORT as the Vitest report (none when empty) and exits 1. */
+/** A fixture checkout whose pnpm writes FAKE_REPORT as the Vitest report (none when empty) and exits FAKE_EXIT. */
 function webUnitFixture() {
   const { cwd } = fixture();
   NodeFS.mkdirSync(NodePath.join(cwd, "apps/web"), { recursive: true });
@@ -483,7 +500,7 @@ function webUnitFixture() {
     `import * as NodeFS from "node:fs";
 const out = process.argv.find((arg) => arg.startsWith("--outputFile.json="));
 if (process.env.FAKE_REPORT) NodeFS.writeFileSync(out.slice("--outputFile.json=".length), process.env.FAKE_REPORT);
-process.exit(1);
+process.exit(Number(process.env.FAKE_EXIT));
 `,
   );
   NodeFS.writeFileSync(
@@ -496,8 +513,8 @@ process.exit(1);
     `@"${process.execPath}" "%~dp0fake-pnpm.mjs" %*\r\n`,
   );
   const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
-  const report = JSON.stringify(fakeVitestReport(NodeFS.realpathSync(cwd) + "/apps/web"));
-  return ({ withReport = true } = {}, ...args) => {
+  const web = `${NodeFS.realpathSync(cwd)}/apps/web`;
+  const run = ({ report = fakeVitestReport(web), exit = 1 } = {}, ...args) => {
     const result = NodeChildProcess.spawnSync(
       process.execPath,
       [cli, "--cwd", cwd, "--web-unit", "--run", ...args],
@@ -506,18 +523,20 @@ process.exit(1);
         env: {
           ...process.env,
           [pathKey]: `${bin}${NodePath.delimiter}${process.env[pathKey]}`,
-          FAKE_REPORT: withReport ? report : "",
+          FAKE_REPORT: report ? JSON.stringify(report) : "",
+          FAKE_EXIT: String(exit),
         },
       },
     );
-    const match = /"failures": "(.+web-unit-failures\.json)"/u.exec(result.stdout)?.[1];
+    const match = /"failuresFile": "(.+web-unit-failures\.json)"/u.exec(result.stdout)?.[1];
     const failuresPath = match && JSON.parse(`"${match}"`);
     if (failuresPath) directories.push(NodePath.dirname(failuresPath));
     return { ...result, failuresPath };
   };
+  return Object.assign(run, { web });
 }
 
-test("the opt-in web unit lane fails only on failures its baseline does not have", () => {
+test("the web unit lane fails on any failure; a baseline only labels new and pre-existing ones", () => {
   const run = webUnitFixture();
   const first = run();
   NodeAssert.equal(first.status, 1, first.stderr);
@@ -527,12 +546,13 @@ test("the opt-in web unit lane fails only on failures its baseline does not have
     "src/a.test.ts > a fails",
     "src/broken.test.ts > (file error)",
   ]);
-  NodeAssert.equal(recorded.unavailable, null);
-  // The same failures on the base are pre-existing.
+  NodeAssert.equal(recorded.passed, false);
+  // The same failures on the base are labeled pre-existing, and the lane still fails.
   const same = run({}, "--web-unit-baseline", first.failuresPath);
-  NodeAssert.equal(same.status, 0, same.stdout);
+  NodeAssert.equal(same.status, 1, same.stdout);
+  NodeAssert.match(same.stdout, /"new": \[\]/u);
   NodeAssert.match(same.stdout, /"preexisting": \[\s+"src\/a\.test\.ts > a fails"/u);
-  // A failure the base did not have fails the lane.
+  // A failure the base did not have is labeled new.
   const baseline = NodePath.join(NodeOS.tmpdir(), `scient-web-unit-baseline-${process.pid}.json`);
   directories.push(baseline);
   NodeFS.writeFileSync(
@@ -545,23 +565,21 @@ test("the opt-in web unit lane fails only on failures its baseline does not have
   NodeAssert.match(worse.stdout, /"noLongerFailing": \[\s+"src\/gone"\s+\]/u);
 });
 
-test("a web unit run without a report fails and cannot serve as a baseline", () => {
+test("only a clean exit-0 web unit run with test files passes", () => {
   const run = webUnitFixture();
-  const base = run({ withReport: false });
-  NodeAssert.equal(base.status, 1, base.stdout);
-  NodeAssert.match(base.stdout, /"unavailable": "no readable Vitest report \(exit 1\)"/u);
-  // Two report-less runs never compare equal: the baseline is refused.
-  const candidate = run({ withReport: false }, "--web-unit-baseline", base.failuresPath);
-  NodeAssert.equal(candidate.status, 2, candidate.stdout);
-  NodeAssert.match(candidate.stderr, /verified nothing: no readable Vitest report/u);
-  // Nor does a valid baseline excuse a candidate that verified nothing.
-  const baseline = NodePath.join(NodeOS.tmpdir(), `scient-web-unit-empty-${process.pid}.json`);
-  directories.push(baseline);
-  NodeFS.writeFileSync(baseline, JSON.stringify({ failures: [], unavailable: null }));
-  const excused = run({ withReport: false }, "--web-unit-baseline", baseline);
-  NodeAssert.equal(excused.status, 1, excused.stdout);
-  NodeAssert.doesNotMatch(excused.stdout, /"new":/u);
-  NodeAssert.match(excused.stdout, /Failed checks: web-unit-lane/u);
+  const passing = { testResults: [fakeVitestReport(run.web).testResults[2]] };
+  const clean = run({ report: passing, exit: 0 });
+  NodeAssert.equal(clean.status, 0, clean.stdout);
+  NodeAssert.match(clean.stdout, /"passed": true/u);
+  const empty = run({ report: { testResults: [] }, exit: 0 });
+  NodeAssert.equal(empty.status, 1, empty.stdout);
+  NodeAssert.match(empty.stdout, /"reason": "the Vitest report has no test files \(exit 0\)"/u);
+  const interrupted = run({ report: passing, exit: 130 });
+  NodeAssert.equal(interrupted.status, 1, interrupted.stdout);
+  NodeAssert.match(interrupted.stdout, /"reason": "exit 130"/u);
+  const missing = run({ report: null });
+  NodeAssert.equal(missing.status, 1, missing.stdout);
+  NodeAssert.match(missing.stdout, /"reason": "no readable Vitest report \(exit 1\)"/u);
 });
 
 test("the web unit lane is opt-in and its baseline needs it", () => {

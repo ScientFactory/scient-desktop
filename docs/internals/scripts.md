@@ -133,10 +133,13 @@ such as `SCIENT_PI_TEST_BINARY` pass through.
 boundary map otherwise samples only through mapped suites (a source-text assertion elsewhere
 in it is otherwise first seen in hosted CI). It runs alone or beside one selection mode. It is
 opt-in because it is slow: about 14 minutes (811 s measured) on a Windows 11 workstation,
-where a few suites also fail or flake on unmodified main. With `--run` it writes the failing
-tests (`file > test name`, and `file > (file error)` for an import or hook failure outside its
-tests) to `web-unit-failures.json` in a new temporary directory. Run it once against an unmodified base checkout with `--cwd`,
-then pass that file to the candidate's run:
+where a few suites also fail or flake on unmodified main. The lane fails on any failure: it
+passes only when Vitest exits 0 with a readable report covering at least one test file, so an
+interrupted, empty or partial run never passes. With `--run` it writes the failing tests
+(`file > test name`, and `file > (file error)` for a file's own import or hook error) to
+`web-unit-failures.json` in a new temporary directory. To tell which failures the candidate
+introduced, run the lane once against an unmodified base checkout with `--cwd` and pass that
+file to the candidate's run:
 
 ```sh
 node /absolute/candidate/scripts/scient-alignment-checks.mjs \
@@ -145,11 +148,10 @@ pnpm alignment:checks --base <owned-base-sha> --web-unit \
   --web-unit-baseline /absolute/tmp/scient-web-unit-lane-XXXX/web-unit-failures.json --run
 ```
 
-With a baseline the lane fails only on failures the baseline lacks, and reports pre-existing
-failures and baseline failures no longer reported (fixed, removed or skipped). A run that
-verified nothing (abnormal termination, no readable report, or a failing exit without a
-recorded failure) fails outright, and such a run's file is refused as a baseline. A flaky test
-can still appear new; rerun its file before attributing it to the candidate.
+The baseline never changes the verdict. It labels each failure as new or pre-existing for the
+reader and lists baseline failures that no longer fail (fixed, removed or skipped). Labels are
+best effort: a hook error inside a suite may appear only as its tests' failures, and a flaky
+test can appear new; rerun its file before attributing it to the candidate.
 
 ## Alignment gates and receipt facts
 
