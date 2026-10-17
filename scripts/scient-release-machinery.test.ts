@@ -258,11 +258,23 @@ describe("Scient release machinery", () => {
   it("leaves T3's helper names only in marked migration code", () => {
     const legacyName =
       /\bt3-(?:resource-monitor|browser-secret|kde-snap-shot|hyprland-snap-shot)\b/u;
-    const files = NodeChildProcess.execFileSync("git", ["ls-files", "-z", ":(exclude).repos"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      maxBuffer: 16 * 1024 * 1024,
-    })
+    const grep = NodeChildProcess.spawnSync(
+      "git",
+      [
+        "grep",
+        "-l",
+        "-z",
+        "-I",
+        "-E",
+        "t3-(resource-monitor|browser-secret|kde-snap-shot|hyprland-snap-shot)",
+        "--",
+        ":(exclude).repos",
+      ],
+      { cwd: repoRoot, encoding: "utf8" },
+    );
+    // git grep exits 1 when nothing matches.
+    assert.include([0, 1], grep.status, grep.stderr);
+    const files = grep.stdout
       .split("\0")
       .filter(
         (file) =>
