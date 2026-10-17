@@ -300,6 +300,22 @@ are in the same classes or path-separator assertions that predate this range.
 The full gate ran on `af81eac823`; later commits change only this receipt,
 `UPSTREAM.md` and `upstream-state.json`.
 
+The first hosted run on `eacfe4d162` failed five server tests that no Windows lane
+had run; all are test-side composition, fixed together:
+
+- Upstream's compaction (#19435) now keeps each entity's first event and lets a
+  visit supersede only other read-state events. Two Scient tests relied on the old
+  deletions: the legacy citation repair now removes the original event itself, as
+  earlier releases' compaction did, and the workspace-authority test adds a
+  superseded metadata update.
+- The compute-bridge location tests read `cli.ts` source; they now compare the
+  runtime layout with the asset list `scientServerAssets.ts` exports.
+- Codex's provider probe waits 20 s (#15945); the Scient timeout test advanced 11 s.
+- Upstream's new node-pty console-list test exercises upstream's node-pty patch.
+  Scient stays on node-pty ^1.1.0 without that patch, so the suite is skipped
+  (marked) and #18519's Windows helper fix is not active in Scient until the
+  node-pty decision is made.
+
 Process notes for the next alignment: concurrent `pnpm install`s in one worktree
 (started implicitly by `pnpm exec` while dependencies were stale) and a stalled
 in-place install cost about two hours; the fresh install took 26 minutes. Lanes

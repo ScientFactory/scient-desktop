@@ -2,6 +2,7 @@
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { SCIENT_COMPUTE_BRIDGES } from "../../../scripts/scientServerAssets.ts";
 import {
   ExecutionProcessError,
   ExecutionRunId,
@@ -210,16 +211,11 @@ describe("python bridge location", () => {
   // the two halves stop agreeing, and nothing else would: the publish gate
   // checks its own constant, so a rename here would pass every lane and ship an
   // app whose compute silently reports no runtime.
-  it.effect("agrees with the build about where a packaged bridge goes", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cli = yield* fileSystem.readFileString(
-        NodePath.join(moduleDirectory(), "..", "..", "..", "scripts", "cli.ts"),
-      );
-
-      expect(cli).toContain(`dist/${STAGED_BRIDGE_DIRECTORY}/${BRIDGE_SCRIPT_NAME}`);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
+  it("agrees with the build about where a packaged bridge goes", () => {
+    expect(SCIENT_COMPUTE_BRIDGES.map((bridge) => bridge.asset)).toContain(
+      `dist/${STAGED_BRIDGE_DIRECTORY}/${BRIDGE_SCRIPT_NAME}`,
+    );
+  });
 
   it.effect("finds a staged bridge when there is no source tree to read", () =>
     Effect.gen(function* () {

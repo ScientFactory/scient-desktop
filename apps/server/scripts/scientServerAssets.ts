@@ -13,7 +13,7 @@ import { ServerCliBuildAssetMissingError } from "./cliErrors.ts";
  * it here. Spelled out rather than imported because a build script that pulled
  * in a server module would pull in its dependencies with it.
  */
-const SCIENT_COMPUTE_BRIDGES = [
+export const SCIENT_COMPUTE_BRIDGES = [
   {
     source: "src/scient/compute/bridge/scient_compute_bridge.py",
     asset: "dist/scient-compute-bridge/scient_compute_bridge.py",
@@ -25,7 +25,7 @@ const SCIENT_COMPUTE_BRIDGES = [
 ] as const;
 const SCIENT_MANAGED_PYTHON_SOURCE = "src/scient/compute/managed-python";
 const SCIENT_MANAGED_PYTHON_ASSET = "dist/scient-managed-python";
-const SCIENT_MANAGED_PYTHON_SPEC_FILES = MANAGED_PYTHON_SPECIFICATIONS.flatMap(
+export const SCIENT_MANAGED_PYTHON_SPEC_FILES = MANAGED_PYTHON_SPECIFICATIONS.flatMap(
   ({ relativeDirectory }) =>
     ["pyproject.toml", "uv.lock"].map((file) =>
       relativeDirectory === "." ? file : `${relativeDirectory}/${file}`,
