@@ -712,16 +712,25 @@ const make = Effect.gen(function* () {
           // Sessions can outlive their run and can be shared across app threads.
           // SCIENT-FORK:START retiring-session-worktree-retention — a session recorded
           // stopped after its physical close timed out can still run its process, and
-          // isLive reports it; ask every stored session, decoding only live ones.
-          const sessionRows = yield* sql<{ provider_session_id: string; payload_json: string }>`
-            SELECT provider_session_id, payload_json
-            FROM orchestration_v2_projection_provider_sessions
+          // isLive reports it; ask every stored session, then read only live payloads.
+          const sessionIds = yield* sql<{ provider_session_id: string }>`
+            SELECT provider_session_id FROM orchestration_v2_projection_provider_sessions
           `;
           // A stored session can stay ready after its runtime was released,
           // for example once every thread detached; only a live one holds it.
-          for (const row of sessionRows) {
-            if (!(yield* providerSessions.isLive(ProviderSessionId.make(row.provider_session_id))))
-              continue;
+          const liveIds: Array<string> = [];
+          for (const row of sessionIds) {
+            if (yield* providerSessions.isLive(ProviderSessionId.make(row.provider_session_id)))
+              liveIds.push(row.provider_session_id);
+          }
+          const liveRows =
+            liveIds.length === 0
+              ? []
+              : yield* sql<{ payload_json: string }>`
+                  SELECT payload_json FROM orchestration_v2_projection_provider_sessions
+                  WHERE provider_session_id IN ${sql.in(liveIds)}
+                `;
+          for (const row of liveRows) {
             const session = yield* decodeCleanupSession(row.payload_json);
             const cwd = path.resolve(session.cwd);
             if (cwd === worktreePath || inside(worktreePath, cwd))
