@@ -306,6 +306,32 @@ rise when an unmarked edit becomes a marked mount or fall when a marked implemen
 Preserve reports and the comparison scope as structural evidence, not as new source-count tests,
 automatic CI activation or behavioral qualification.
 
+### Change upstream-owned lines only where it matters
+
+Every changed line in a file that exists upstream is a future conflict. Change one only for:
+
+1. text users see or agents receive as product copy: UI, errors, CLI help and output, MCP tool
+   descriptions, injected notes, and `docs/user`;
+2. user-typed or user-seen identifiers the owner chose, such as the `scient` command, `scient://`
+   schemes, the `scient/` branch prefix, commit identity, process names and displayed paths;
+3. a required behavior change, inside `SCIENT-FORK:START` … `SCIENT-FORK:END`;
+4. the minimal test edit asserting one of the above, including fixtures and test titles that
+   encode a Scient policy; or
+5. a comment the change would otherwise make false. Prefer a marker comment over rewriting
+   upstream prose; if prose must change, change only the false words and never re-wrap it.
+
+Classify a log by its consumer: operator-facing guidance counts as user-facing; debug and
+diagnostic logs do not. Keep or restore upstream's exact text for everything else: comment
+rewording, reflowed paragraphs, renamed locals, moved code or imports, cosmetic test titles and
+fixtures, formatting, developer-only logs and diagnostics, and internal prose that is still true.
+Telemetry and metric identifiers stay upstream's. Generated files are regenerated from their
+sources, never hand-edited (§5). Never rename compatibility identifiers: environment variables,
+headers, cookies, storage keys, package names, `t3.json` and file formats.
+
+Add a `scripts/scient-brand-allowlist.json` exemption only when `brand:check` flags a retained
+line. Make it narrow, with the exact path, line and rule plus a reason; the checker fails on stale
+entries. Never exempt product copy.
+
 ## 5. Validate progressively
 
 While composing, run focused tests for every touched contract and protected seam. Then audit the

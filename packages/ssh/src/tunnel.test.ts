@@ -305,19 +305,19 @@ describe("ssh tunnel scripts", () => {
 
   it("shell-quotes package specs in the remote t3 runner", () => {
     const script = SshTunnel.buildRemoteT3RunnerScript({
-      packageSpec: "scient.tgz; touch /tmp/scient-owned",
+      packageSpec: "t3@nightly; touch /tmp/t3-owned",
     });
 
     assert.include(
       script,
-      "require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 'scient.tgz; touch /tmp/scient-owned'",
+      "require_installed_t3_cli npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@nightly; touch /tmp/t3-owned'",
     );
     assert.include(
       script,
-      "require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 'scient.tgz; touch /tmp/scient-owned'",
+      "require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@nightly; touch /tmp/t3-owned'",
     );
     assert.include(script, 'exec "$T3_CLI_PATH" "$@"');
-    assert.notInclude(script, "exec npx --yes scient.tgz; touch /tmp/scient-owned");
+    assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
   });
 
   it("keeps remote state in Scient's home and reads ~/.t3 only to copy it once", () => {
