@@ -20,7 +20,7 @@ import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 
 /** How long a saved connection waits; leaves room under the renderer's deadline. */
-export const SSH_PREPARATION_JOIN_BUDGET = Duration.seconds(8);
+const SSH_PREPARATION_JOIN_BUDGET = Duration.seconds(8);
 
 interface PreparationJob<E> {
   readonly done: Deferred.Deferred<void, E>;
