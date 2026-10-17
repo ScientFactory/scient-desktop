@@ -362,6 +362,10 @@ import {
   type OptimisticUserMessage,
 } from "~/scient/threadQueue/optimisticQueuePresentation";
 import { useThreadQueue } from "~/scient/threadQueue/useThreadQueue";
+import {
+  editQueuedMessageShortcut,
+  steerQueuedMessageShortcut,
+} from "~/scient/threadQueue/queueShortcuts";
 import type { ScientThreadQueueItem } from "@t3tools/contracts";
 // SCIENT-FORK:END
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -6363,20 +6367,22 @@ function ChatViewContent(props: ChatViewProps) {
       "composer.previousWorktree": ({ event }) => {
         if (!event.repeat) branchToolbarRef.current?.usePreviousWorktree();
       },
-      // SCIENT-FORK:START — the native queue takes the key first; otherwise Steer acts on the
-      // Scient queue strip's first message. Editing the latest queued message needs no caret.
-      "thread.steerQueuedMessage": ({ event }) => {
-        if (queuedRunsControlRef.current?.steerNext(event.repeat) === true) return;
-        const message = threadQueue.items[0];
-        if (!message) return false;
-        if (!event.repeat) {
-          void threadQueue.control("steer", message.queueItemId).catch((cause) => {
-            if (activeThreadId) setThreadError(activeThreadId, chatActionErrorMessage(cause));
-          });
-        }
-      },
+      // SCIENT-FORK:START — queue shortcuts are decided by the Scient queue (threadQueue/queueShortcuts).
+      "thread.steerQueuedMessage": ({ event }) =>
+        steerQueuedMessageShortcut({
+          repeat: event.repeat,
+          nativeQueue: queuedRunsControlRef.current,
+          stripHead: threadQueue.items[0],
+          steerStripItem: (item) =>
+            void threadQueue.control("steer", item.queueItemId).catch((cause) => {
+              if (activeThreadId) setThreadError(activeThreadId, chatActionErrorMessage(cause));
+            }),
+        }),
       "thread.editQueuedMessage": ({ event }) =>
-        queuedRunsControlRef.current?.editLatest(event.repeat) === true,
+        editQueuedMessageShortcut({
+          repeat: event.repeat,
+          nativeQueue: queuedRunsControlRef.current,
+        }),
       // SCIENT-FORK:END
       "thread.stop": ({ event }) => {
         if (!canInterruptRunningThread) return false;
