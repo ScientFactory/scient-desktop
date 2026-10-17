@@ -1,8 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import {
+  NodeId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  RunAttemptId,
   RunId,
   ThreadId,
   type OrchestrationV2PendingBackgroundTask,
@@ -12,7 +14,6 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -25,94 +26,105 @@ const threadId = ThreadId.make("thread:authority");
 const instanceId = ProviderInstanceId.make("codex");
 const otherInstanceId = ProviderInstanceId.make("codex-other");
 const providerSessionId = ProviderSessionId.make("provider-session:authority");
+const reboundSessionId = ProviderSessionId.make("provider-session:after-restart");
 const providerThreadId = ProviderThreadId.make("provider-thread:authority");
 const credentialId = "mcp-credential:authority";
-const spawningRunId = RunId.make("run:spawning");
-const laterRunId = RunId.make("run:later");
+const rootNodeId = NodeId.make("node:root");
+const attemptId = RunAttemptId.make("attempt:active");
+
+type Modes = {
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+};
+const approvalPlan: Modes = { runtimeMode: "approval-required", interactionMode: "plan" };
+const fullAccess: Modes = { runtimeMode: "full-access", interactionMode: "default" };
+const autoEditsPlan: Modes = { runtimeMode: "auto-accept-edits", interactionMode: "plan" };
 
 const runtime = {
   providerSessionId,
   instanceId,
 } as unknown as ProviderAdapterV2SessionRuntime;
 
-const at = (seconds: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, 17, 0, 0, seconds));
-
-/** Pending work as the thread shell derives it, whatever the adapter's identity scheme. */
 const pendingSubagent = (
-  taskId = "task:subagent",
   providerInstanceId: ProviderInstanceId = instanceId,
-): OrchestrationV2PendingBackgroundTask => ({ taskId, kind: "subagent", providerInstanceId });
+): OrchestrationV2PendingBackgroundTask => ({
+  taskId: "task:subagent",
+  kind: "subagent",
+  providerInstanceId,
+});
 
-const run = (overrides: Partial<OrchestrationV2Run> = {}) =>
+const run = (id: string, overrides: Partial<OrchestrationV2Run> = {}) =>
   ({
-    id: spawningRunId,
+    id: RunId.make(id),
     ordinal: 1,
     status: "completed",
+    rootNodeId,
+    activeAttemptId: null,
     providerInstanceId: instanceId,
     providerThreadId,
-    runtimeMode: "approval-required",
-    interactionMode: "plan",
+    ...fullAccess,
     ...overrides,
   }) as OrchestrationV2Run;
 
-const laterFullAccessRun = (overrides: Partial<OrchestrationV2Run> = {}) =>
-  run({
-    id: laterRunId,
-    ordinal: 2,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    ...overrides,
-  });
-
-/** An attempt that actually started its run on the credential's provider thread. */
-const started = (runId: RunId, seconds: number) => ({
-  runId,
-  providerThreadId,
-  startedAt: at(seconds),
-});
-
-type Records = ProjectionRecords<"runs" | "attempts" | "providerThreads">;
+/** A run the native owner is executing now, with its live attempt. */
+const activeRun = (status: "starting" | "running", captured: Modes) =>
+  run("run:active", { status, activeAttemptId: attemptId, ...captured });
 
 const fixture = (
   input: {
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
-    readonly attempts?: ReadonlyArray<ReturnType<typeof started>>;
+    readonly threadModes?: Modes;
     readonly pending?: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
-    readonly threadModes?: {
-      readonly runtimeMode: RuntimeMode;
-      readonly interactionMode: ProviderInteractionMode;
-    };
+    readonly activeRunId?: RunId | null;
+    readonly shellInstanceId?: ProviderInstanceId;
+    readonly providerThreadSessionId?: ProviderSessionId;
     readonly archived?: boolean;
   } = {},
 ) => {
-  const archivedAt = input.archived === true ? at(0) : null;
+  const archivedAt = input.archived === true ? "2026-10-17T00:00:00.000Z" : null;
+  const runs = input.runs ?? [];
   const projection = {
     thread: { id: threadId, providerInstanceId: instanceId, archivedAt, deletedAt: null },
-    runs: input.runs ?? [run()],
-    attempts: input.attempts ?? [started(spawningRunId, 1)],
-    // Raw rosters are not consulted: Codex keeps pending subagents in turn items.
+    runs,
+    attempts: runs.some((candidate) => candidate.activeAttemptId === attemptId)
+      ? [
+          {
+            id: attemptId,
+            runId: RunId.make("run:active"),
+            rootNodeId,
+            status: "running",
+            providerInstanceId: instanceId,
+            providerThreadId,
+          },
+        ]
+      : [],
     providerThreads: [
       {
         id: providerThreadId,
         appThreadId: threadId,
-        providerSessionId,
+        providerSessionId: input.providerThreadSessionId ?? providerSessionId,
         providerInstanceId: instanceId,
-        pendingBackgroundTasks: [],
       },
     ],
-  } as unknown as Records;
+  } as unknown as ProjectionRecords<"runs" | "attempts" | "providerThreads">;
   const shell = {
     id: threadId,
-    providerInstanceId: instanceId,
+    providerInstanceId: input.shellInstanceId ?? instanceId,
     archivedAt,
-    activeRunId: null,
+    activeRunId:
+      input.activeRunId ??
+      runs.find((candidate) => candidate.activeAttemptId === attemptId)?.id ??
+      null,
     pendingBackgroundTasks: input.pending ?? [pendingSubagent()],
-    ...(input.threadModes ?? { runtimeMode: "full-access", interactionMode: "default" }),
+    ...(input.threadModes ?? approvalPlan),
   } as unknown as OrchestrationV2ThreadShell;
   return { projection, shell };
 };
 
-const resolvePolicy = ({ projection, shell }: ReturnType<typeof fixture>) =>
+const resolvePolicy = (
+  { projection, shell }: ReturnType<typeof fixture>,
+  presentedCredential = credentialId,
+) =>
   Effect.gen(function* () {
     const sessions = yield* Ref.make(
       new Map([
@@ -138,87 +150,94 @@ const resolvePolicy = ({ projection, shell }: ReturnType<typeof fixture>) =>
     return yield* authority.resolveMcpInvocationPolicy({
       threadId,
       providerInstanceId: instanceId,
-      providerSessionId: credentialId,
+      providerSessionId: presentedCredential,
     });
   });
 
 it.effect.each([
   {
-    caseTitle: "the last started run is narrower than the thread",
-    input: {},
-    expected: { runtimeMode: "approval-required", interactionMode: "plan" },
+    caseTitle: "a running run after the thread's modes were lowered gets the lowered modes",
+    input: { runs: [activeRun("running", fullAccess)], threadModes: approvalPlan },
+    expected: approvalPlan,
   },
   {
-    caseTitle: "the thread is narrower than the last started run",
-    input: {
-      runs: [run({ runtimeMode: "full-access", interactionMode: "default" })],
-      threadModes: { runtimeMode: "auto-accept-edits", interactionMode: "plan" },
-    },
-    expected: { runtimeMode: "auto-accept-edits", interactionMode: "plan" },
+    caseTitle: "a starting run after the thread's modes were lowered gets the lowered modes",
+    input: { runs: [activeRun("starting", fullAccess)], threadModes: approvalPlan },
+    expected: approvalPlan,
   },
   {
-    caseTitle: "each mode is capped separately",
+    caseTitle: "an active run under wider thread modes keeps its captured modes",
+    input: { runs: [activeRun("running", approvalPlan)], threadModes: fullAccess },
+    expected: approvalPlan,
+  },
+  {
+    caseTitle: "an active run's captured and current modes are capped separately",
     input: {
-      runs: [run({ runtimeMode: "approval-required", interactionMode: "default" })],
+      runs: [
+        activeRun("running", { runtimeMode: "approval-required", interactionMode: "default" }),
+      ],
       threadModes: { runtimeMode: "full-access", interactionMode: "plan" },
     },
-    expected: { runtimeMode: "approval-required", interactionMode: "plan" },
+    expected: approvalPlan,
   },
   {
-    caseTitle: "a later full-access follow-up cancelled before it started",
-    input: { runs: [run(), laterFullAccessRun({ status: "cancelled" })] },
-    expected: { runtimeMode: "approval-required", interactionMode: "plan" },
+    caseTitle: "a live background subagent gets the thread's current modes",
+    input: { runs: [run("run:spawning", approvalPlan)], threadModes: autoEditsPlan },
+    expected: autoEditsPlan,
   },
   {
-    caseTitle: "a held lower-ordinal run that started after a later-numbered run",
+    caseTitle: "a full-access follow-up cancelled before it started leaves the thread's modes",
     input: {
-      runs: [run(), laterFullAccessRun()],
-      attempts: [started(laterRunId, 1), started(spawningRunId, 2)],
+      runs: [run("run:spawning", approvalPlan), run("run:later", { status: "cancelled" })],
     },
-    expected: { runtimeMode: "approval-required", interactionMode: "plan" },
+    expected: approvalPlan,
   },
   {
-    caseTitle: "a Codex subagent the shell derives from turn items",
-    input: { pending: [pendingSubagent("call_codex_spawn")] },
-    expected: { runtimeMode: "approval-required", interactionMode: "plan" },
+    caseTitle: "a held run that started out of order leaves the thread's modes",
+    input: {
+      runs: [run("run:spawning", approvalPlan), run("run:later", { ordinal: 2 })],
+    },
+    expected: approvalPlan,
   },
   {
-    caseTitle: "a native-session or Muse subagent named by its node or item id",
-    input: { pending: [pendingSubagent("node:subagent"), pendingSubagent("item:muse-agent")] },
-    expected: { runtimeMode: "approval-required", interactionMode: "plan" },
+    caseTitle: "a provider thread rebound by restart leaves the thread's modes",
+    input: { runs: [run("run:before-restart")], providerThreadSessionId: reboundSessionId },
+    expected: approvalPlan,
   },
-] as const)("a live background subagent is capped when $caseTitle", ({ input, expected }) =>
+  {
+    caseTitle: "a preparing run the shell reports as active gets the thread's modes",
+    input: {
+      runs: [run("run:preparing", { status: "preparing" })],
+      activeRunId: RunId.make("run:preparing"),
+      pending: [],
+    },
+    expected: approvalPlan,
+  },
+] as const)("$caseTitle", ({ input, expected }) =>
   Effect.gen(function* () {
     assert.deepEqual(yield* resolvePolicy(fixture(input)), Option.some(expected));
   }),
 );
 
 it.effect.each([
-  { caseTitle: "no run on the session ever started", input: { attempts: [] } },
-  { caseTitle: "the subagent is no longer pending", input: { pending: [] } },
-  {
-    caseTitle: "only a background command is pending",
-    input: { pending: [{ taskId: "task:command", kind: "command" as const }] },
-  },
-  {
-    caseTitle: "the subagent runs on another provider instance",
-    input: { pending: [pendingSubagent("task:subagent", otherInstanceId)] },
-  },
+  { caseTitle: "no run is active and no subagent is pending", input: { pending: [] } },
   { caseTitle: "the thread is archived", input: { archived: true } },
   {
-    caseTitle: "the last started run lacks captured modes",
-    input: { runs: [run({ runtimeMode: undefined })] },
+    caseTitle: "the thread switched to another provider instance",
+    input: { shellInstanceId: otherInstanceId },
   },
   {
-    caseTitle: "the last started run is on another provider instance",
-    input: { runs: [run({ providerInstanceId: otherInstanceId })] },
-  },
-  {
-    caseTitle: "a run is starting without an attempt",
-    input: { runs: [run({ status: "starting" })] },
+    caseTitle: "the pending subagent runs on another provider instance",
+    input: { pending: [pendingSubagent(otherInstanceId)] },
   },
 ])("grants no write authority when $caseTitle", ({ input }) =>
   Effect.gen(function* () {
     assert.isTrue(Option.isNone(yield* resolvePolicy(fixture(input))));
+  }),
+);
+
+it.effect("grants no write authority to a stale credential", () =>
+  Effect.gen(function* () {
+    assert.isTrue(Option.isNone(yield* resolvePolicy(fixture(), "mcp-credential:replaced")));
   }),
 );

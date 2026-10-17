@@ -216,12 +216,10 @@ Meaningful compositions:
   grant access and relay management by default. Relay remains switched off.
 - **Background subagents (#19751).** Adopted by owner decision: a background
   subagent keeps its MCP tools after the parent's turn ends. Write authority
-  still requires the credential's live native session; with no open run, the
-  thread shell must pass upstream's liveness rule for the caller's instance.
-  Writes are never wider than upstream's thread-mode cap or the live provider
-  session's last started turn: each mode is the narrower of the thread's current
-  mode and the mode of the run whose attempt started last on that session. With
-  no started run, nothing is granted.
+  still requires the credential's live native session, and the caller must pass
+  upstream's liveness rule. Write authority is capped by the thread's current
+  modes as upstream does; during an active run Scient additionally caps it at the
+  run's captured modes.
 - **Publication.** Scient publishes no npm package: upstream's npm launcher
   sources are not carried and `cli.ts publish` is not called by any Scient
   workflow. `release.yml` is unchanged from #574. Mobile workflows keep the
