@@ -75,13 +75,14 @@ authenticated.
 The maintained [boundary map](../../scripts/scient-alignment-checks.json) records affected
 owners and untouched consumers, deciding assertions, commands, prerequisites and limits
 for provider guidance/skills/MCP/native input, Stop/Resume ownership, provider adapters and
-native process lifecycle (every suite under `orchestration-v2/Adapters/` and every native
-provider integration suite, including close and shutdown), queue admission and
+native process lifecycle (every suite under `orchestration-v2/Adapters/`, with every native
+provider integration suite mapped to its owning boundary), queue admission and
 restart, settings precedence and instance identity, immutable persistence, native
 conversation-fork capture, one server owner per state directory, and chat reader
 interaction. Maintain the assertions and consumer triggers together when those contracts move.
 This is a bounded impact map, not an exhaustive dependency graph or a qualification policy.
-A check entry ending in `/` runs every suite in a directory the boundary owns.
+A check entry ending in `/` runs every suite in a directory the boundary owns, except
+`*.live.test.ts` suites, which run only as listed native checks behind `--native`.
 
 Print a plan before executing it:
 
@@ -133,8 +134,8 @@ boundary map otherwise samples only through mapped suites (a source-text asserti
 in it is otherwise first seen in hosted CI). It runs alone or beside one selection mode. It is
 opt-in because it is slow: about 14 minutes (811 s measured) on a Windows 11 workstation,
 where a few suites also fail or flake on unmodified main. With `--run` it writes the failing
-tests (`file > test name`, or the file alone when it failed to load) to `web-unit-failures.json`
-in a new temporary directory. Run it once against an unmodified base checkout with `--cwd`,
+tests (`file > test name`, and `file > (file error)` for an import or hook failure outside its
+tests) to `web-unit-failures.json` in a new temporary directory. Run it once against an unmodified base checkout with `--cwd`,
 then pass that file to the candidate's run:
 
 ```sh
@@ -145,8 +146,10 @@ pnpm alignment:checks --base <owned-base-sha> --web-unit \
 ```
 
 With a baseline the lane fails only on failures the baseline lacks, and reports pre-existing
-failures and baseline failures that now pass. A flaky test can still appear new; rerun its
-file before attributing it to the candidate.
+failures and baseline failures no longer reported (fixed, removed or skipped). A run that
+verified nothing (abnormal termination, no readable report, or a failing exit without a
+recorded failure) fails outright, and such a run's file is refused as a baseline. A flaky test
+can still appear new; rerun its file before attributing it to the candidate.
 
 ## Alignment gates and receipt facts
 
@@ -163,7 +166,10 @@ smoke run that leaves its temporary home empty resolved state elsewhere and fail
 
 On Windows the repository-wide test aggregate is reported as not run: the local aggregate
 is not a supported Windows lane yet (see `windows-tests.yml`), so hosted test
-qualification of the pushed candidate remains pending. `--tests` runs it anyway.
+qualification of the pushed candidate remains pending. `--tests` runs it anyway. Run
+Windows-sensitive focused suites by name instead, for example
+`scripts/managed-provider-runtime-workflow.test.ts` (publication guards) from `scripts/`
+with `pnpm exec vp test run --config ../vite.config.ts --dir . managed-provider-runtime-workflow.test.ts`.
 
 `pnpm alignment:facts --merge <upstream-merge>` prints the receipt's boundary facts for
 a committed upstream merge: owned base, previous boundary, target and its exact tags,

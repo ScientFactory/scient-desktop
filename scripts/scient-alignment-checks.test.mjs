@@ -8,7 +8,7 @@ import { afterEach, test } from "vite-plus/test";
 import {
   checkEnvironment,
   compareFailures,
-  readVitestFailures,
+  readVitestReport,
   selectBoundaries,
 } from "./scient-alignment-checks.mjs";
 
@@ -108,20 +108,47 @@ test("adapter protocol and run-lifecycle changes select every adapter suite", ()
   }
 });
 
-test("every native provider integration suite belongs to a boundary", () => {
-  const directory = new URL("../apps/server/src/orchestration-v2/", import.meta.url);
+test("every native provider integration suite, however nested, belongs to a boundary", () => {
+  const server = NodeURL.fileURLToPath(new URL("../apps/server/", import.meta.url));
   const { boundaries } = JSON.parse(
     NodeFS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url), "utf8"),
   );
-  const mapped = new Set(boundaries.flatMap((row) => row.checks.server ?? []));
-  const native = NodeFS.readdirSync(directory).filter((name) =>
-    /(Native\w*|\.native)\.integration\.test\.ts$/u.test(name),
+  const mapped = boundaries.flatMap((row) => row.checks.server ?? []);
+  // A directory entry covers its nested suites; a file entry covers itself.
+  const covered = (path) =>
+    mapped.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
+  const native = NodeFS.readdirSync(NodePath.join(server, "src"), { recursive: true })
+    .map((name) => `src/${String(name).split(NodePath.sep).join("/")}`)
+    .filter((path) => /(Native\w*|\.native)\.integration\.test\.ts$/u.test(path));
+  NodeAssert.ok(
+    native.includes("src/orchestration-v2/testkit/NativeReadingIdentity.integration.test.ts"),
   );
-  NodeAssert.ok(native.includes("PiNativeCloseConjunctions.integration.test.ts"));
   NodeAssert.deepEqual(
-    native.filter((name) => !mapped.has(`src/orchestration-v2/${name}`)),
+    native.filter((path) => !covered(path)),
     [],
   );
+});
+
+test("a directory entry keeps live suites behind --native", () => {
+  const commands = (...args) =>
+    JSON.parse(
+      NodeChildProcess.spawnSync(
+        process.execPath,
+        [cli, "--boundary", "adapters", "--boundary", "provider", ...args],
+        {
+          encoding: "utf8",
+        },
+      ).stdout,
+    ).commands;
+  const server = commands().find((command) => command.id === "server");
+  NodeAssert.ok(server.files.includes("src/orchestration-v2/Adapters/"));
+  NodeAssert.deepEqual(server.argv.slice(-2), ["--exclude", "**/*.live.test.ts"]);
+  const native = commands("--native").find((command) => command.id === "native");
+  NodeAssert.deepEqual(native.files, [
+    "src/orchestration-v2/Adapters/PiNativeRuntime.live.test.ts",
+  ]);
+  NodeAssert.ok(!native.argv.includes("--exclude"));
+  NodeAssert.equal(commands().find((command) => command.id === "native").included, false);
 });
 
 test("composer hosts include settings, Stop and queue consumers and existing client witnesses", () => {
@@ -376,22 +403,43 @@ test("invalid scope and parent traversal are refused", () => {
   }
 });
 
-test("Vitest failures are named by file and test, and import failures by file", () => {
+test("Vitest failures are named by test, file errors separately, and empty runs verify nothing", () => {
   const cwd = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-web-unit-report-"));
   directories.push(cwd);
   const report = NodePath.join(cwd, "vitest.json");
   NodeFS.writeFileSync(report, JSON.stringify(fakeVitestReport(cwd)));
-  NodeAssert.deepEqual(readVitestFailures(report, cwd, 1), [
-    "src/a.test.ts > a fails",
-    "src/broken.test.ts",
+  NodeAssert.deepEqual(readVitestReport(report, cwd, { status: 1, signal: null }), {
+    failures: ["src/a.test.ts > a fails", "src/broken.test.ts > (file error)"],
+    unavailable: null,
+  });
+  // An afterAll failure beside a known assertion failure keeps its own identity.
+  const hooked = fakeVitestReport(cwd);
+  hooked.testResults[0].message = "Error: afterAll cleanup failed";
+  NodeFS.writeFileSync(report, JSON.stringify(hooked));
+  const { failures } = readVitestReport(report, cwd, { status: 1, signal: null });
+  NodeAssert.deepEqual(compareFailures(failures, ["src/a.test.ts > a fails"]).new, [
+    "src/a.test.ts > (file error)",
+    "src/broken.test.ts > (file error)",
   ]);
-  NodeAssert.deepEqual(readVitestFailures(NodePath.join(cwd, "missing.json"), cwd, 1), [
-    "(no Vitest report; exit 1)",
-  ]);
-  NodeAssert.deepEqual(compareFailures(["new", "old"], ["old", "fixed"]), {
+  // Runs that verified nothing are unavailable, never comparable failure IDs.
+  const missing = NodePath.join(cwd, "missing.json");
+  NodeAssert.match(
+    readVitestReport(missing, cwd, { status: 1, signal: null }).unavailable,
+    /no readable Vitest report/u,
+  );
+  NodeAssert.match(
+    readVitestReport(report, cwd, { status: null, signal: "SIGKILL" }).unavailable,
+    /terminated abnormally \(SIGKILL\)/u,
+  );
+  NodeFS.writeFileSync(report, JSON.stringify({ testResults: [] }));
+  NodeAssert.deepEqual(readVitestReport(report, cwd, { status: 1, signal: null }), {
+    failures: [],
+    unavailable: "exit 1 without a recorded test failure",
+  });
+  NodeAssert.deepEqual(compareFailures(["new", "old"], ["old", "gone"]), {
     new: ["new"],
     preexisting: ["old"],
-    nowPassing: ["fixed"],
+    noLongerFailing: ["gone"],
   });
 });
 
@@ -402,32 +450,39 @@ function fakeVitestReport(cwd) {
       {
         name: file("src/a.test.ts"),
         status: "failed",
+        message: "",
         assertionResults: [
           { fullName: "a fails", status: "failed" },
           { fullName: "a passes", status: "passed" },
         ],
       },
-      { name: file("src/broken.test.ts"), status: "failed", assertionResults: [] },
+      {
+        name: file("src/broken.test.ts"),
+        status: "failed",
+        message: "Failed to load",
+        assertionResults: [],
+      },
       {
         name: file("src/b.test.ts"),
         status: "passed",
+        message: "",
         assertionResults: [{ fullName: "b", status: "passed" }],
       },
     ],
   };
 }
 
-test("the opt-in web unit lane fails only on failures its baseline does not have", () => {
+/** A fixture checkout whose pnpm writes FAKE_REPORT as the Vitest report (none when empty) and exits 1. */
+function webUnitFixture() {
   const { cwd } = fixture();
   NodeFS.mkdirSync(NodePath.join(cwd, "apps/web"), { recursive: true });
-  // A fake pnpm writes a Vitest JSON report with two failures and exits 1.
   const bin = NodePath.join(cwd, "fake-bin");
   NodeFS.mkdirSync(bin);
   NodeFS.writeFileSync(
     NodePath.join(bin, "fake-pnpm.mjs"),
     `import * as NodeFS from "node:fs";
 const out = process.argv.find((arg) => arg.startsWith("--outputFile.json="));
-NodeFS.writeFileSync(out.slice("--outputFile.json=".length), process.env.FAKE_REPORT);
+if (process.env.FAKE_REPORT) NodeFS.writeFileSync(out.slice("--outputFile.json=".length), process.env.FAKE_REPORT);
 process.exit(1);
 `,
   );
@@ -441,7 +496,8 @@ process.exit(1);
     `@"${process.execPath}" "%~dp0fake-pnpm.mjs" %*\r\n`,
   );
   const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
-  const run = (...args) => {
+  const report = JSON.stringify(fakeVitestReport(NodeFS.realpathSync(cwd) + "/apps/web"));
+  return ({ withReport = true } = {}, ...args) => {
     const result = NodeChildProcess.spawnSync(
       process.execPath,
       [cli, "--cwd", cwd, "--web-unit", "--run", ...args],
@@ -450,33 +506,62 @@ process.exit(1);
         env: {
           ...process.env,
           [pathKey]: `${bin}${NodePath.delimiter}${process.env[pathKey]}`,
-          FAKE_REPORT: JSON.stringify(fakeVitestReport(NodeFS.realpathSync(cwd) + "/apps/web")),
+          FAKE_REPORT: withReport ? report : "",
         },
       },
     );
-    const failuresPath = /"failures": "(.+web-unit-failures\.json)"/u.exec(result.stdout)?.[1];
-    if (failuresPath) directories.push(NodePath.dirname(JSON.parse(`"${failuresPath}"`)));
-    return { ...result, failuresPath: failuresPath && JSON.parse(`"${failuresPath}"`) };
+    const match = /"failures": "(.+web-unit-failures\.json)"/u.exec(result.stdout)?.[1];
+    const failuresPath = match && JSON.parse(`"${match}"`);
+    if (failuresPath) directories.push(NodePath.dirname(failuresPath));
+    return { ...result, failuresPath };
   };
+}
+
+test("the opt-in web unit lane fails only on failures its baseline does not have", () => {
+  const run = webUnitFixture();
   const first = run();
   NodeAssert.equal(first.status, 1, first.stderr);
   NodeAssert.match(first.stdout, /Failed checks: web-unit-lane/u);
-  NodeAssert.deepEqual(JSON.parse(NodeFS.readFileSync(first.failuresPath, "utf8")).failures, [
+  const recorded = JSON.parse(NodeFS.readFileSync(first.failuresPath, "utf8"));
+  NodeAssert.deepEqual(recorded.failures, [
     "src/a.test.ts > a fails",
-    "src/broken.test.ts",
+    "src/broken.test.ts > (file error)",
   ]);
+  NodeAssert.equal(recorded.unavailable, null);
   // The same failures on the base are pre-existing.
-  const same = run("--web-unit-baseline", first.failuresPath);
+  const same = run({}, "--web-unit-baseline", first.failuresPath);
   NodeAssert.equal(same.status, 0, same.stdout);
   NodeAssert.match(same.stdout, /"preexisting": \[\s+"src\/a\.test\.ts > a fails"/u);
   // A failure the base did not have fails the lane.
   const baseline = NodePath.join(NodeOS.tmpdir(), `scient-web-unit-baseline-${process.pid}.json`);
   directories.push(baseline);
-  NodeFS.writeFileSync(baseline, JSON.stringify({ failures: ["src/broken.test.ts", "src/gone"] }));
-  const worse = run("--web-unit-baseline", baseline);
+  NodeFS.writeFileSync(
+    baseline,
+    JSON.stringify({ failures: ["src/broken.test.ts > (file error)", "src/gone"] }),
+  );
+  const worse = run({}, "--web-unit-baseline", baseline);
   NodeAssert.equal(worse.status, 1, worse.stdout);
   NodeAssert.match(worse.stdout, /"new": \[\s+"src\/a\.test\.ts > a fails"\s+\]/u);
-  NodeAssert.match(worse.stdout, /"nowPassing": \[\s+"src\/gone"\s+\]/u);
+  NodeAssert.match(worse.stdout, /"noLongerFailing": \[\s+"src\/gone"\s+\]/u);
+});
+
+test("a web unit run without a report fails and cannot serve as a baseline", () => {
+  const run = webUnitFixture();
+  const base = run({ withReport: false });
+  NodeAssert.equal(base.status, 1, base.stdout);
+  NodeAssert.match(base.stdout, /"unavailable": "no readable Vitest report \(exit 1\)"/u);
+  // Two report-less runs never compare equal: the baseline is refused.
+  const candidate = run({ withReport: false }, "--web-unit-baseline", base.failuresPath);
+  NodeAssert.equal(candidate.status, 2, candidate.stdout);
+  NodeAssert.match(candidate.stderr, /verified nothing: no readable Vitest report/u);
+  // Nor does a valid baseline excuse a candidate that verified nothing.
+  const baseline = NodePath.join(NodeOS.tmpdir(), `scient-web-unit-empty-${process.pid}.json`);
+  directories.push(baseline);
+  NodeFS.writeFileSync(baseline, JSON.stringify({ failures: [], unavailable: null }));
+  const excused = run({ withReport: false }, "--web-unit-baseline", baseline);
+  NodeAssert.equal(excused.status, 1, excused.stdout);
+  NodeAssert.doesNotMatch(excused.stdout, /"new":/u);
+  NodeAssert.match(excused.stdout, /Failed checks: web-unit-lane/u);
 });
 
 test("the web unit lane is opt-in and its baseline needs it", () => {

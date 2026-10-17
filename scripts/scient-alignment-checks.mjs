@@ -8,6 +8,7 @@ const mapping = JSON.parse(
   NodeFS.readFileSync(new URL("./scient-alignment-checks.json", import.meta.url)),
 );
 const matches = (path, prefix) => path.startsWith(prefix);
+const LIVE_SUITES = "**/*.live.test.ts";
 const WEB_UNIT_LANE_COST =
   "Opt-in: every web unit suite, about 14 minutes on a Windows 11 workstation. Compare with " +
   "--web-unit-baseline from the same run on the unmodified base; a flaky test can still appear new.";
@@ -192,11 +193,13 @@ export function main(argv) {
   const commands = Object.entries(mapping.groups).flatMap(([id, group]) => {
     const files = [...new Set(selection.boundaries.flatMap((row) => row.checks[id] ?? []))];
     if (!files.length) return [];
+    // A directory entry never brings in live suites; they run only as listed native checks.
+    const exclude = files.some((file) => file.endsWith("/")) ? ["--exclude", LIVE_SUITES] : [];
     return [
       {
         id,
         cwd: NodePath.join(cwd, group.cwd),
-        argv: ["pnpm", ...group.args, ...files],
+        argv: ["pnpm", ...group.args, ...files, ...exclude],
         files,
         requiredEnv: group.requiredEnv ?? null,
         included: id !== "native" || args.native,
@@ -262,18 +265,31 @@ export function main(argv) {
       [...webUnitLane.argv, "--reporter=default", "--reporter=json", `--outputFile.json=${report}`],
       webUnitLane.cwd,
     );
-    const failures = readVitestFailures(report, webUnitLane.cwd, result.status);
+    const { failures, unavailable } = readVitestReport(report, webUnitLane.cwd, result);
     const failuresPath = NodePath.join(out, "web-unit-failures.json");
-    NodeFS.writeFileSync(failuresPath, `${JSON.stringify({ head, cwd, failures }, null, 2)}\n`);
-    const comparison = baseline ? compareFailures(failures, baseline.failures) : null;
+    NodeFS.writeFileSync(
+      failuresPath,
+      `${JSON.stringify({ head, cwd, failures, unavailable }, null, 2)}\n`,
+    );
+    // A run that verified nothing fails outright; a baseline never excuses it.
+    const comparison =
+      baseline && !unavailable ? compareFailures(failures, baseline.failures) : null;
     console.log(
       JSON.stringify(
-        { check: "web-unit-lane", failures: failuresPath, baseline: baseline?.path, ...comparison },
+        {
+          check: "web-unit-lane",
+          failures: failuresPath,
+          unavailable,
+          baseline: baseline?.path,
+          ...comparison,
+        },
         null,
         2,
       ),
     );
-    if (comparison ? comparison.new.length > 0 : failures.length > 0) failed.push("web-unit-lane");
+    if (unavailable || (comparison ? comparison.new.length > 0 : failures.length > 0)) {
+      failed.push("web-unit-lane");
+    }
   }
   if (failed.length) console.log(`Failed checks: ${failed.join(", ")}`);
   return failed.length ? 1 : 0;
@@ -303,48 +319,66 @@ function runCheck(id, argv, cwd) {
 
 function readBaseline(path) {
   let failures;
+  let unavailable;
   try {
-    ({ failures } = JSON.parse(NodeFS.readFileSync(path, "utf8")));
+    ({ failures, unavailable } = JSON.parse(NodeFS.readFileSync(path, "utf8")));
   } catch (error) {
     throw new Error(`Unreadable --web-unit-baseline ${path}: ${error.message}`, { cause: error });
   }
   if (!Array.isArray(failures) || failures.some((id) => typeof id !== "string")) {
     throw new Error(`--web-unit-baseline ${path} has no failures list from a --web-unit run`);
   }
+  if (unavailable) {
+    throw new Error(`--web-unit-baseline ${path} verified nothing: ${unavailable}`);
+  }
   return { path, failures };
 }
 
 /**
- * Failed tests in a Vitest JSON report as `file > full test name`, with a file
- * that failed outside its tests (an import error) by its path alone. A failing
- * exit without a readable report or a failed test is itself a failure.
+ * Failed tests in a Vitest JSON report as `file > full test name`, and errors a
+ * file reported outside its tests (an import or afterAll failure) as
+ * `file > (file error)`, so a new hook failure is not hidden behind a known
+ * assertion failure. `unavailable` says why a run verified nothing: abnormal
+ * termination, no readable report, or a failing exit without a recorded
+ * failure. Such a run fails regardless of any baseline.
  */
-export function readVitestFailures(reportPath, cwd, exit) {
+export function readVitestReport(reportPath, cwd, { status, signal }) {
+  const unavailable = (reason) => ({ failures: [], unavailable: reason });
+  if (status === null || signal) {
+    return unavailable(`terminated abnormally (${signal ?? "no exit status"})`);
+  }
   let report;
   try {
     report = JSON.parse(NodeFS.readFileSync(reportPath, "utf8"));
   } catch {
-    return [`(no Vitest report; exit ${exit})`];
+    return unavailable(`no readable Vitest report (exit ${status})`);
+  }
+  if (!Array.isArray(report?.testResults)) {
+    return unavailable(`no test results in the Vitest report (exit ${status})`);
   }
   const failures = report.testResults.flatMap((file) => {
     const path = NodePath.relative(cwd, file.name).split(NodePath.sep).join("/");
-    const tests = file.assertionResults
+    const tests = (file.assertionResults ?? [])
       .filter((test) => test.status === "failed")
       .map((test) => `${path} > ${test.fullName}`);
-    return tests.length === 0 && file.status === "failed" ? [path] : tests;
+    const fileError = file.status === "failed" && (Boolean(file.message) || tests.length === 0);
+    return fileError ? [...tests, `${path} > (file error)`] : tests;
   });
-  if (failures.length === 0 && exit !== 0) return [`(exit ${exit} without a failed test)`];
-  return [...new Set(failures)].sort();
+  if (failures.length === 0 && status !== 0) {
+    return unavailable(`exit ${status} without a recorded test failure`);
+  }
+  return { failures: [...new Set(failures)].sort(), unavailable: null };
 }
 
-/** New failures fail the lane; pre-existing ones and baseline failures that now pass are reported. */
+/** New failures fail the lane; pre-existing ones and baseline failures no longer reported are listed. */
 export function compareFailures(failures, baseline) {
   const before = new Set(baseline);
   const after = new Set(failures);
   return {
     new: failures.filter((id) => !before.has(id)),
     preexisting: failures.filter((id) => before.has(id)),
-    nowPassing: baseline.filter((id) => !after.has(id)),
+    // Fixed, deleted, renamed or skipped: the baseline failure is simply absent.
+    noLongerFailing: baseline.filter((id) => !after.has(id)),
   };
 }
 
