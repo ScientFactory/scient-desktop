@@ -1,7 +1,5 @@
 import { ContextHandoffPolicyOverride } from "../ScientContextHandoffPolicy.ts";
 import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
-import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
   ProviderDriverKind,
@@ -9,10 +7,9 @@ import type {
   ResponseStreamingMode,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
+import type * as PlatformError from "effect/PlatformError";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { MigrationError } from "effect/sql/Migrator";
 import type { SqlError } from "effect/sql/SqlError";
@@ -64,6 +61,7 @@ import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
+import * as ScientReplayRuntimePolicy from "./ScientReplayRuntimePolicy.testkit.ts";
 import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
@@ -86,97 +84,8 @@ import {
   type ProviderReplayGate,
 } from "@t3tools/provider-testing/replayGate";
 
-export function makeReplayServerConfig(
-  scenario: string,
-): Effect.Effect<
-  ServerConfig.ServerConfig["Service"],
-  PlatformError.PlatformError,
-  FileSystem.FileSystem | Path.Path
-> {
-  const safeScenario = scenario.replace(/[^a-z0-9_-]+/gi, "-");
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectory({
-      prefix: `t3-orchestration-v2-replay-${safeScenario}-`,
-    });
-    const stateDir = path.join(baseDir, "userdata");
-    const logsDir = path.join(stateDir, "logs");
-    const providerLogsDir = path.join(logsDir, "provider");
-    const terminalLogsDir = path.join(logsDir, "terminals");
-    const attachmentsDir = path.join(stateDir, "attachments");
-    const environmentThemesDir = path.join(stateDir, "themes");
-    const worktreesDir = path.join(baseDir, "worktrees");
-    const providerStatusCacheDir = path.join(baseDir, "caches");
-
-    for (const directory of [
-      stateDir,
-      logsDir,
-      providerLogsDir,
-      terminalLogsDir,
-      attachmentsDir,
-      environmentThemesDir,
-      worktreesDir,
-      providerStatusCacheDir,
-    ]) {
-      yield* fs.makeDirectory(directory, { recursive: true });
-    }
-
-    return {
-      logLevel: "Error",
-      traceMinLevel: "Info",
-      traceTimingEnabled: true,
-      traceBatchWindowMs: 200,
-      traceMaxBytes: 10 * 1024 * 1024,
-      traceMaxFiles: 10,
-      otelEnvironment: OtelEnvironment.none,
-      otlpTracesUrl: undefined,
-      otlpMetricsUrl: undefined,
-      otlpLogsUrl: undefined,
-      otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
-      otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
-      otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-      mode: "web",
-      port: 0,
-      host: undefined,
-      cwd: process.cwd(),
-      baseDir,
-      staticDir: undefined,
-      devUrl: undefined,
-      devAllowedOrigins: [],
-      noBrowser: false,
-      startupPresentation: "browser",
-      tailscaleServeEnabled: false,
-      tailscaleServePort: 443,
-      desktopBootstrapToken: undefined,
-      autoBootstrapProjectFromCwd: false,
-      logWebSocketEvents: false,
-      stateDir,
-      dbPath: path.join(stateDir, "state.sqlite"),
-      keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
-      settingsPath: path.join(stateDir, "settings.json"),
-      providerStatusCacheDir,
-      worktreesDir,
-      attachmentsDir,
-      browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
-      environmentThemesDir,
-      logsDir,
-      serverLogPath: path.join(logsDir, "server.log"),
-      serverTracePath: path.join(logsDir, "server.trace.ndjson"),
-      providerLogsDir,
-      providerEventLogPath: path.join(providerLogsDir, "events.log"),
-      terminalLogsDir,
-      anonymousIdPath: path.join(stateDir, "anonymous-id"),
-      environmentIdPath: path.join(stateDir, "environment-id"),
-      serverRuntimeStatePath: path.join(stateDir, "server-runtime.json"),
-      secretsDir: path.join(stateDir, "secrets"),
-      analysisDir: path.join(stateDir, "analysis"),
-      computeDir: path.join(stateDir, "compute"),
-      latexDir: path.join(stateDir, "latex"),
-      documentArtifactsDir: path.join(stateDir, "document-artifacts"),
-    };
-  });
-}
+import { makeReplayServerConfig } from "./ScientReplayServerConfig.testkit.ts";
+export { makeReplayServerConfig };
 
 export interface OrchestratorV2ProviderReplayScenario<
   Transcript extends ProviderReplayTranscript = ProviderReplayTranscript,
@@ -423,13 +332,6 @@ export function layerWithRegistry<Error>(
       ServerConfig.ServerConfig,
       makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
     ).pipe(Layer.provide(NodeServices.layer));
-  const layerRuntime =
-    options.runtimePolicyLayer ??
-    (scenario.runtimePolicyOverride === undefined
-      ? RuntimePolicy.layer
-      : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
-          Layer.provide(RuntimePolicy.layer),
-        ));
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   const layerThreadCommandExecutor = ThreadCommandExecutor.layer;
   // One queue shared by the adapters, the orchestrator, and the worker, like
@@ -466,6 +368,16 @@ export function layerWithRegistry<Error>(
     EffectOutbox.layer,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
+  const layerReplayPolicy = ScientReplayRuntimePolicy.layer.pipe(
+    Layer.provide(Layer.merge(layerStores, layerServerConfig)),
+  );
+  const layerRuntime =
+    options.runtimePolicyLayer ??
+    (scenario.runtimePolicyOverride === undefined
+      ? layerReplayPolicy
+      : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
+          Layer.provide(layerReplayPolicy),
+        ));
   const actualEventSink = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
   );

@@ -65,6 +65,8 @@ import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1Th
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
+import { CheckpointStore } from "../../checkpointing/CheckpointStore.ts";
 
 const retainedMessages = Effect.fn("ImportTest.retainedMessages")(function* (
   handoff: OrchestrationV2ContextHandoff,
@@ -722,6 +724,33 @@ describe("native import continuation and forks", () => {
         assert.strictEqual(thread.messages.at(-1)?.id, messageId);
         const contextPreamble = (yield* ImportPeer).prompts[0]!;
         const projection = yield* (yield* ProjectionStoreV2).getThreadProjection(result.threadId);
+        const project = Option.getOrThrow(yield* (yield* ProjectStoreV2).get(PROJECT_ID));
+        assert.isAbove(projection.checkpoints.length, 0);
+        assert.isTrue(
+          projection.checkpointScopes.every((scope) => scope.cwd === project.workspaceRoot),
+        );
+        const checkpoints = yield* CheckpointStore;
+        for (const checkpoint of projection.checkpoints) {
+          assert.equal(checkpoint.status, "ready");
+          assert.isTrue(
+            yield* checkpoints.hasCheckpointRef({
+              cwd: project.workspaceRoot,
+              checkpointRef: checkpoint.ref,
+            }),
+          );
+        }
+        const fs = yield* FileSystem.FileSystem;
+        const readme = NodePath.join(project.workspaceRoot, "README.md");
+        const original = yield* fs.readFileString(readme);
+        yield* fs.writeFileString(readme, "Changed after the completed turn\n");
+        assert.isTrue(
+          yield* checkpoints.restoreCheckpoint({
+            cwd: project.workspaceRoot,
+            checkpointRef: projection.checkpoints.at(-1)!.ref,
+            fallbackToHead: false,
+          }),
+        );
+        assert.equal(yield* fs.readFileString(readme), original);
         assert.isTrue(
           projection.contextHandoffs.every(
             (handoff) => (handoff.history?.omittedItemIds?.length ?? 0) === 0,
@@ -1991,6 +2020,7 @@ it.live(
         let generation = 0;
         const resumed: string[] = [];
         const options = {
+          projectScope: yield* Scope.Scope,
           runtimeOptions,
           nativeIdFactory: () => `uncertain-native-${generation++}`,
           beforeFresh: () =>
