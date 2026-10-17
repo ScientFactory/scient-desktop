@@ -274,11 +274,62 @@ const previousCodexCatalog = (): ManagedRuntimeCatalogData => ({
   ...currentCatalog,
   providers: {
     ...currentCatalog.providers,
-    codex: { ...currentCatalog.providers.codex!, contractRevision: 1 },
+    codex: { ...currentCatalog.providers.codex!, contractRevision: 3 },
   },
 });
 
 describe("managed runtime policy transitions", () => {
+  it("discovers and promotes the zsh-free release over the last qualified Codex contract", async () => {
+    const codex = currentCatalog.providers.codex!;
+    const current = validateManagedRuntimeCatalog({
+      ...currentCatalog,
+      providers: {
+        ...currentCatalog.providers,
+        codex: {
+          ...codex,
+          contractRevision: 3,
+          version: "0.162.1",
+          artifacts: Object.fromEntries(
+            Object.entries(codex.artifacts).map(([key, artifact]) => [
+              key,
+              { ...artifact, url: artifact.url.replace(codex.version, "0.162.1") },
+            ]),
+          ),
+        },
+      },
+    });
+    const result = await refreshManagedRuntimeProvider(current, "codex", async (url, init) => {
+      if (init?.method === "HEAD") {
+        expect(url.pathname).toContain("/rust-v0.163.0/codex-package-");
+        return new Response(null, { headers: { "content-length": "123456" } });
+      }
+      return Response.json({
+        tag_name: "rust-v0.163.0",
+        assets: Object.values(codex.artifacts).map((artifact) => ({
+          name: artifact.artifactName,
+          browser_download_url: artifact.url.replace(codex.version, "0.163.0"),
+          digest: `sha256:${"a".repeat(64)}`,
+        })),
+      });
+    });
+    expect(result.changedProviders).toEqual(["codex"]);
+    expect(validateManagedRuntimeCandidate(result.catalog, "codex")).toMatchObject({
+      version: "0.163.0",
+      contractRevision: 4,
+    });
+    const promoted = mergeQualifiedManagedRuntimeProvider({
+      current,
+      candidate: result.catalog,
+      provider: "codex",
+    });
+    expect(promoted.providers.codex).toEqual(result.catalog.providers.codex);
+    for (const provider of MANAGED_RUNTIME_CATALOG_PROVIDERS) {
+      if (provider !== "codex")
+        expect(promoted.providers[provider]).toEqual(current.providers[provider]);
+    }
+    expect(current.providers.codex).toMatchObject({ version: "0.162.1", contractRevision: 3 });
+  });
+
   it("keeps every bundled family aligned with the shared policy registry", () => {
     for (const provider of MANAGED_RUNTIME_CATALOG_PROVIDERS) {
       const policy = MANAGED_RUNTIME_POLICY[provider];
@@ -292,7 +343,7 @@ describe("managed runtime policy transitions", () => {
 
   it("preserves the old published revision while other providers discover and publish", async () => {
     const current = validateManagedRuntimeCatalog(previousCodexCatalog());
-    expect(current.providers.codex?.contractRevision).toBe(1);
+    expect(current.providers.codex?.contractRevision).toBe(3);
     const { fetch_ } = stableChannelFetch();
     const unchanged = await refreshManagedRuntimeProvider(current, "claudeAgent", fetch_);
     expect(unchanged.changedProviders).toEqual([]);
@@ -331,10 +382,10 @@ describe("managed runtime policy transitions", () => {
       });
     });
     expect(result.changedProviders).toEqual(["codex"]);
-    expect(result.catalog.providers.codex?.contractRevision).toBe(3);
+    expect(result.catalog.providers.codex?.contractRevision).toBe(4);
     expect(result.catalog.providers.codex?.version).toBe(codex.version);
     expect(requested).toHaveLength(2 + Object.keys(codex.artifacts).length);
-    expect(current.providers.codex?.contractRevision).toBe(1);
+    expect(current.providers.codex?.contractRevision).toBe(3);
   });
 
   it("retains historical policy data without qualifying it against today's installer", () => {
@@ -363,7 +414,7 @@ describe("managed runtime policy transitions", () => {
     expect(() =>
       validateManagedRuntimeCatalog({
         ...decoded,
-        providers: { codex: { ...historical, contractRevision: 3 } },
+        providers: { codex: { ...historical, contractRevision: 4 } },
       }),
     ).toThrow(/unapproved target/u);
   });
@@ -414,7 +465,7 @@ describe("managed runtime policy transitions", () => {
     ).toThrow(/every app-approved target/u);
   });
 
-  it.each([0, 4, 999])("rejects unknown Codex contract %s", (contractRevision) => {
+  it.each([0, 5, 999])("rejects unknown Codex contract %s", (contractRevision) => {
     expect(() =>
       validateManagedRuntimeCatalog({
         ...currentCatalog,

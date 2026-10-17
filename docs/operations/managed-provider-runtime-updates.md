@@ -71,7 +71,17 @@ floor until a compatible qualified feed is available. Other release families
 continue updating independently. Remote catalog metadata never changes an app's
 installer policy. Keep the legacy main-branch compatibility snapshot unchanged.
 
-Codex contract 3 accommodates the official voice payload and reserves bounded
+Codex contract 4 resolves required companion executables from app-owned stable-version
+rules. Packages before 0.163.0 still require the patched `codex-resources/zsh/bin/zsh`;
+0.163.0 and newer use OpenAI's standard shell executor and no longer bundle it.
+The code-mode host, ripgrep, Linux bubblewrap and Windows sandbox executables remain
+required. The same rules apply during discovery, qualification, installation and
+receipt-based repair. Feed metadata cannot change them.
+Contract 3 and earlier remain historical, so older Scient builds keep their compatible
+cached or bundled Codex instead of attempting the new layout. The bundled fallback's
+release version and bytes are unchanged by this contract transition.
+
+The Codex extraction policy accommodates the official voice payload and reserves bounded
 headroom for later package growth: all Codex targets allow up to 128 entries
 and retain the 512 MiB expanded-data limit. The shared extraction default
 remains 32 entries for other providers. Changing these Codex-specific

@@ -126,6 +126,11 @@ export function resolveReviewedCodexArtifact(
     extractionLimits: { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
     executablePath: artifact.executablePath,
     auxiliaryExecutablePaths: artifact.auxiliaryExecutablePaths,
+    auxiliaryExecutableRules: artifact.auxiliaryExecutablePaths.map((path) => ({
+      path,
+      // OpenAI retired the patched shell in 0.163. Older packages still require it.
+      ...(path === "codex-resources/zsh/bin/zsh" ? { maximumVersionExclusive: "0.163.0" } : {}),
+    })),
     smokeArgs: ["--version"],
     catalogRevision: `openai-codex:${RELEASE_TAG}:${artifact.sha256}`,
     supportTier: artifact.fullyAssisted ? "fully_assisted" : "external_runtime_supported",
