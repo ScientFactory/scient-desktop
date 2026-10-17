@@ -26,6 +26,47 @@ const policy: ManagedRuntimeArtifact = {
 };
 
 describe("managed runtime artifact hydration", () => {
+  it("resolves source-owned version bounds without trusting receipt packaging fields", () => {
+    const versionedPolicy = {
+      ...policy,
+      auxiliaryExecutableRules: [
+        { path: "always" },
+        { path: "legacy", maximumVersionExclusive: "1.1.0" },
+        { path: "modern", minimumVersion: "1.1.0", maximumVersionExclusive: "2.0.0" },
+      ],
+    };
+    for (const [version, expected] of [
+      ["1.0.0", ["always", "legacy"]],
+      ["1.1.0", ["always", "modern"]],
+      ["2.0.0", ["always"]],
+    ] as const) {
+      const receipt = {
+        ...managedRuntimeArtifactReceipt(policy),
+        version,
+        auxiliaryExecutablePaths: ["unreviewed"],
+        auxiliaryExecutableRules: [],
+      };
+      const hydrated = hydrateManagedRuntimeArtifact(versionedPolicy, receipt)!;
+      expect(hydrated.auxiliaryExecutablePaths).toEqual(expected);
+      expect(hydrated.auxiliaryExecutableRules).toBe(versionedPolicy.auxiliaryExecutableRules);
+      expect(managedRuntimeArtifactReceipt(hydrated)).not.toHaveProperty(
+        "auxiliaryExecutableRules",
+      );
+    }
+  });
+
+  it.each(["latest", "1.1.0-beta.1", "1.1.0+build", "01.1.0"])(
+    "rejects ambiguous version %s for versioned packaging",
+    (version) => {
+      expect(
+        hydrateManagedRuntimeArtifact(
+          { ...policy, auxiliaryExecutableRules: [{ path: "required" }] },
+          { ...managedRuntimeArtifactReceipt(policy), version },
+        ),
+      ).toBeUndefined();
+    },
+  );
+
   it("changes only immutable release facts", () => {
     const hydrated = hydrateManagedRuntimeArtifact(policy, {
       ...managedRuntimeArtifactReceipt(policy),
