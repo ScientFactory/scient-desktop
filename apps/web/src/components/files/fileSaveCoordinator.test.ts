@@ -613,6 +613,8 @@ describe("durable generic file publication", () => {
       conflict: true,
     };
     await indexedDbMarkdownDrafts.replace(destinationKey, undefined, foreign);
+    const storedForeign = await indexedDbMarkdownDrafts.read(destinationKey);
+    expect(storedForeign).toMatchObject(foreign);
     const owner = open({
       journal: { key, store: indexedDbMarkdownDrafts },
       persist: async () => refused(),
@@ -623,7 +625,7 @@ describe("durable generic file publication", () => {
     await expect(
       owner.acknowledgeRename(intent, { destinationRelativePath: "b.txt", revision: "rA" }),
     ).resolves.toBe(false);
-    expect(await indexedDbMarkdownDrafts.read(destinationKey)).toEqual(foreign);
+    expect(await indexedDbMarkdownDrafts.read(destinationKey)).toEqual(storedForeign);
     expect(await indexedDbMarkdownDrafts.read(key)).toMatchObject({
       draftSource: "C",
       renameIntent: {
@@ -918,11 +920,14 @@ describe("durable generic file publication", () => {
       draftSource: "\u0000newer",
       conflict: true,
     };
+    let storedForeign: Awaited<ReturnType<typeof indexedDbMarkdownDrafts.read>>;
     const store: MarkdownDraftCheckpointStore = {
       read: indexedDbMarkdownDrafts.read,
       replace: async (rowKey, token, next) => {
-        if (rowKey === key && next === undefined)
+        if (rowKey === key && next === undefined) {
           await indexedDbMarkdownDrafts.replace(rowKey, token, foreign);
+          storedForeign = await indexedDbMarkdownDrafts.read(rowKey);
+        }
         return indexedDbMarkdownDrafts.replace(rowKey, token, next);
       },
     };
@@ -933,7 +938,8 @@ describe("durable generic file publication", () => {
     await expect(
       owner.acknowledgeRename(intent, { destinationRelativePath: "b.txt", revision: "rA" }),
     ).resolves.toBe(true);
-    expect(await indexedDbMarkdownDrafts.read(key)).toEqual(foreign);
+    expect(storedForeign).toMatchObject(foreign);
+    expect(await indexedDbMarkdownDrafts.read(key)).toEqual(storedForeign);
     expect(await indexedDbMarkdownDrafts.read(destinationKey)).toMatchObject({
       baselineSource: "A",
       draftSource: "C",

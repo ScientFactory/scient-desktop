@@ -81,11 +81,21 @@ describe("DockOverflowRow", () => {
     expect(toolbar.hasAttribute("data-dock-compact-labels")).toBe(true);
     expect(toolbar.querySelectorAll("[data-dock-group]")).toHaveLength(3);
     width = 105;
-    await act(() => TestResizeObserver.callback?.([], {} as ResizeObserver));
+    await act(() =>
+      TestResizeObserver.callback?.(
+        [{ target: toolbar, contentRect: { width, height: 40 } } as ResizeObserverEntry],
+        {} as ResizeObserver,
+      ),
+    );
     expect(toolbar.hasAttribute("data-dock-compact-labels")).toBe(true);
     expect(toolbar.querySelectorAll("[data-dock-group]")).toHaveLength(2);
     width = 500;
-    await act(() => TestResizeObserver.callback?.([], {} as ResizeObserver));
+    await act(() =>
+      TestResizeObserver.callback?.(
+        [{ target: toolbar, contentRect: { width, height: 40 } } as ResizeObserverEntry],
+        {} as ResizeObserver,
+      ),
+    );
     expect(toolbar.hasAttribute("data-dock-compact-labels")).toBe(false);
     expect(toolbar.querySelectorAll("[data-dock-group]")).toHaveLength(3);
   });

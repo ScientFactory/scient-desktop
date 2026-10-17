@@ -90,7 +90,7 @@ export interface NativeFilePublicationRequest {
   /** bound-object is for qualification only and does not satisfy normal-save authority. */
   readonly authority?: NativeFileAuthority;
 }
-export class NativeFilePublicationError extends Error {
+class NativeFilePublicationError extends Error {
   readonly result: NativeFilePublicationResult | null;
   constructor(message: string, result: NativeFilePublicationResult | null) {
     super(message);
@@ -403,7 +403,7 @@ export async function ensureNativePrivateRetentionDirectory(
     );
   return NodePath.join(canonicalParent, NodePath.basename(destination));
 }
-export function nativeFilePublicationArguments(
+function nativeFilePublicationArguments(
   request: NativeFilePublicationRequest,
 ): ReadonlyArray<string> {
   const { binding, operation, sourceName, destinationName } = request;
@@ -436,14 +436,6 @@ export async function runNativeFilePublication(
 ) {
   return parseResult(await invoke(helperPath, nativeFilePublicationArguments(request)));
 }
-
-/** Resources path is the actual desktop resources directory supplied by the host, not process.cwd(). */
-export const nativeFilePublicationHelperPath = (resourcesPath: string, platform: string) =>
-  NodePath.join(
-    resourcesPath,
-    "file-exchange",
-    platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication",
-  );
 
 export type NativeFilePublicationParentBinding = Omit<NativeFileLeaseBinding, "mode">;
 export interface NativeFilePublicationLease {

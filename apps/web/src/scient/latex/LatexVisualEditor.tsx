@@ -2073,7 +2073,7 @@ function LatexInlineCommandView({
               );
             }}
           >
-            Text
+            Link text
           </button>
         )}
         {name === "footnote" && (

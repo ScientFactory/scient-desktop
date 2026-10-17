@@ -367,7 +367,7 @@ export async function inspectGuardedFile(file: string, maxBytes?: number) {
     await handle?.close();
   }
 }
-export async function leadingFileRevision(file: string, maxBytes = 1024 * 1024): Promise<string> {
+async function leadingFileRevision(file: string, maxBytes = 1024 * 1024): Promise<string> {
   const snapshot = await inspectGuardedFile(file, maxBytes);
   if (!snapshot) throw new Error("Captured entry is not a regular file.");
   return snapshot.leadingRevision;
@@ -458,7 +458,7 @@ export async function retainedPaths(directory: string): Promise<string[]> {
   }
   return paths;
 }
-export async function retainedStorageBytes(retention: string): Promise<number> {
+async function retainedStorageBytes(retention: string): Promise<number> {
   let total = 0;
   for (const entry of await NodeFSP.readdir(retention, { withFileTypes: true })) {
     if (!entry.isDirectory() || !/^[a-zA-Z0-9_-]{1,100}$/u.test(entry.name)) continue;
@@ -1190,7 +1190,6 @@ export async function recheckRetainedFile(
   const revision = result.retainedPath ? await fileRevision(result.retainedPath) : null;
   return { ...result, retainedRevision: revision, changed: revision !== expectedRevision };
 }
-export const decodeCurrentRetainedRecord = decodeCurrent;
 
 /** The view name is fixed by the server; a hardlink retains the very same late-writable object. */
 export async function retainedViewPath(

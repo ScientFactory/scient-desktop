@@ -154,23 +154,32 @@ describe("Scient LaTeX file-preview seam", () => {
     // The inherited editor does not expose its cursor on main. Zero is
     // SyncTeX's specified unknown-column value, and avoids guessing visual
     // offsets for wrapped or bidirectional source text.
-    expect(surfaceSource).toContain("column: 0");
+    const navigationSource = NodeFS.readFileSync(
+      new URL("./latexSourceNavigation.ts", import.meta.url),
+      "utf8",
+    );
+    expect(navigationSource).toContain("return { line, column: 0 }");
+    expect(surfaceSource).toContain("sourcePositionFromPointerEvent(event)");
     expect(surfaceSource).toContain("column: position.column");
     expect(surfaceSource).toContain("pageHint: pdfPageRef.current");
     expect(surfaceSource).toContain("onPageChange: handlePdfPageChange");
   });
 
   it("keeps PDF and Split navigation separate from writing", () => {
-    expect(surfaceSource).toContain('if (mode !== "split" || splitPreview !== "pdf") return;');
-    expect(surfaceSource).toMatch(
-      /mode === "pdf" \|\| \(mode === "split" && splitPreview === "pdf"\)[\s\S]*?\? \{ onInverseSearch: handleInverseSync \}/u,
+    expect(surfaceSource).toContain('if (mode !== "split") return;');
+    expect(surfaceSource).toContain('if (splitPreview === "pdf") handleForwardSync(position);');
+    expect(surfaceSource).toContain(
+      'const inverseSyncEnabled = mode === "split" && splitPreview === "pdf";',
+    );
+    expect(surfaceSource).toContain(
+      "inverseSyncEnabled ? { onInverseSearch: handleInverseSync } : {}",
     );
     expect(surfaceSource).not.toContain("renderInteraction: renderVisualInteraction");
     expect(surfaceSource).not.toContain('if (preferredMode === "source") selectMode("split")');
     expect(surfaceSource).toContain('event.key.toLowerCase() === "s"');
     expect(surfaceSource).toContain("registerShortcutClaim(host, ownsSave)");
     expect(surfaceSource).toContain(
-      "void saveAndBuild(false, pdfVisible && !!build.toolchain?.kind)",
+      'void saveAndBuild(false, compilationMode !== "manual" && !!build.toolchain?.kind)',
     );
   });
 

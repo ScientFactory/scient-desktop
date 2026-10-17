@@ -134,15 +134,20 @@ function useLatexEditingSnapshot<T>(
   // Editability can change without replacing EditorState. Include it in the
   // stable snapshot so formatting controls still react to that transition.
   const state = useSyncExternalStore(subscribe, snapshot, snapshot);
-  return { editor, value: state.value };
+  return { editor, value: state.value, editable: state.editable };
 }
 
 const editingState = (editor: Editor | null) => editor?.state ?? null;
 
 /** Read the new target immediately, even before it emits its next transaction. */
 export function useLatexEditingState(owner: Editor | null, deferTyping = false) {
-  const { editor, value } = useLatexEditingSnapshot(owner, deferTyping, editingState, Object.is);
-  return { editor, state: value };
+  const { editor, value, editable } = useLatexEditingSnapshot(
+    owner,
+    deferTyping,
+    editingState,
+    Object.is,
+  );
+  return { editor, state: value, editable };
 }
 
 interface EditingPresentation {

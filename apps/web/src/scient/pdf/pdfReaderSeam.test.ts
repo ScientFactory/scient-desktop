@@ -107,28 +107,19 @@ describe("Scient PDF reader source seam", () => {
     expect(styles).not.toMatch(/\.textLayer\s+::selection\s*\{/u);
   });
 
-  it("teaches inverse source sync without turning the PDF into a hover target", () => {
+  it("routes double-click source sync without intercepting editable controls", () => {
     const source = NodeFS.readFileSync(new URL("./ScientPdfReader.tsx", import.meta.url), "utf8");
-    const styles = NodeFS.readFileSync(new URL("./scientPdfReader.css", import.meta.url), "utf8");
-
-    expect(source).not.toContain(
-      '<ScientTooltip content="Ctrl/Command-double-click the PDF to open the matching source line">',
-    );
-    expect(source).toContain("const PDF_SOURCE_SYNC_HINT_VISIBLE_MS = 4_000;");
-    expect(source).toContain("let pdfSourceSyncHintLearnedThisSession = false;");
-    expect(source).not.toContain("pdfSourceSyncHintShownThisSession");
-    expect(source).toContain("onClick={scheduleSourceSyncHint}");
-    expect(source).toContain("onScrollCapture={dismissSourceSyncHint}");
-    expect(source).toContain("showSourceSyncHint();");
-    expect(source).toContain("Double-click a PDF word to show its matching source line");
+    expect(source).toContain("onDoubleClick={(event) => {");
+    expect(source).toContain("if (!currentPresentation) return;");
     expect(source).toContain("const onInverseSearch = props.syncNavigation?.onInverseSearch;");
-    expect(source).not.toContain(
-      "props.syncNavigation === undefined || (!event.ctrlKey && !event.metaKey)",
+    expect(source).toContain("if (onInverseSearch === undefined) return;");
+    expect(source).toContain(
+      `target.closest("a,button,input,select,textarea,[contenteditable='true']")`,
     );
-    expect(styles).toContain("inset-block-start: 20px;");
-    expect(styles).toMatch(
-      /\.scient-pdf-source-sync-hint \{[^}]*position: absolute;[^}]*pointer-events: none;/su,
+    expect(source).toContain(
+      "onInverseSearch(point, pageElement.ownerDocument.getSelection()?.toString())",
     );
+    expect(source).not.toContain("onMouseMove={");
   });
 
   it("reports the current page and marks a successful forward-sync point", () => {

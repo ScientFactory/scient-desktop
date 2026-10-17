@@ -8,6 +8,7 @@ import { page, userEvent } from "vitest/browser";
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { MarkdownPersistenceRegistry } from "../markdownEditor/persistence/markdownPersistenceRegistry";
+import { createTestCheckpointStore } from "../markdownEditor/persistence/markdownDraftCheckpointTestkit";
 import { StaticTextFileSurface } from "./StaticTextFileSurface";
 
 const threadRef = {
@@ -108,6 +109,7 @@ it("quotes the editable model's exact draft and CRLF range through the real tool
     acknowledgeWrite = resolve;
   });
   const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: createTestCheckpointStore(),
     debounceMs: 60_000,
     createTransport: () => ({
       write: async (intent) => {
@@ -136,7 +138,16 @@ it("quotes the editable model's exact draft and CRLF range through the real tool
   const pendingSave = lease.flushNow();
   const onCite = vi.fn<MarkdownCiteHandler>(() => true);
   try {
-    expect(writes).toEqual([{ source: draft, expectedRevision: "initial", editVersion: 1 }]);
+    await expect
+      .poll(() => writes)
+      .toEqual([
+        {
+          source: draft,
+          expectedRevision: "initial",
+          editVersion: 1,
+          mutationId: expect.any(String),
+        },
+      ]);
     expect(lease.getSnapshot()).toMatchObject({
       baselineSource: source,
       draftSource: draft,

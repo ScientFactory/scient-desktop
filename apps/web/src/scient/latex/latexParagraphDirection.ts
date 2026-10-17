@@ -99,7 +99,7 @@ export function setLatexParagraphDirection(
       environment,
       title: "",
       raw,
-      layout: { kind: "direction", direction, language: null },
+      layout: { kind: "direction", direction, language: null, paragraphDirection: direction },
     };
     const at = tr.doc.resolve(tr.mapping.map(position));
     const parent = at.parent;

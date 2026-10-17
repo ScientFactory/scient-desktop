@@ -793,7 +793,7 @@ describe("the LaTeX surface on a document session", () => {
   });
 
   it("gives the source pane the session, so every keystroke has one owner", async () => {
-    await mount();
+    await mount("source");
     expect(container.querySelector('[data-testid="source-pane"]')).not.toBeNull();
     expect(sourcePane.props?.persistence).toBe(lease);
     for (const retired of ["contents", "revision", "saveResolution", "onContentsChange"])
@@ -1129,6 +1129,7 @@ describe("navigation between LaTeX source and its PDF", () => {
     sync.forward.mockReset();
     sync.inverse.mockReset();
     reader.navigation = null;
+    sourcePane.props = null;
     opened = [];
     cwd = `/synthetic-navigation-${(workspace += 1)}`;
     disk = new Map([
@@ -1241,7 +1242,7 @@ describe("navigation between LaTeX source and its PDF", () => {
     expect(reader.navigation!.forwardTarget).toBeNull();
   });
 
-  it("opens the source a place in the PDF came from", async () => {
+  it("reveals the matching source in Split without opening another file", async () => {
     sync.inverse.mockResolvedValue({
       _tag: "found",
       relativePath: "chapter.tex",
@@ -1249,7 +1250,12 @@ describe("navigation between LaTeX source and its PDF", () => {
       line: 7,
     });
     await act(async () => reader.navigation!.onInverseSearch!({ page: 1, x: 1, y: 1 }));
-    expect(opened).toEqual([["chapter.tex", 7]]);
+    expect(opened).toEqual([]);
+    expect(sourcePane.props?.reveal).toMatchObject({
+      path: "chapter.tex",
+      line: 7,
+      sourceRevision: revisionOf(BASE),
+    });
   });
 
   it.each([
@@ -1265,6 +1271,7 @@ describe("navigation between LaTeX source and its PDF", () => {
     });
     await act(async () => reader.navigation!.onInverseSearch!({ page: 1, x: 1, y: 1 }));
     expect(opened).toEqual([]);
+    expect(sourcePane.props?.reveal).not.toEqual(expect.objectContaining({ line: 7 }));
     expect(container.textContent).toContain("Build required");
   });
 
@@ -1325,6 +1332,7 @@ describe("navigation between LaTeX source and its PDF", () => {
       );
       expect(reader.navigation!.forwardTarget).toBeNull();
       expect(opened).toEqual([]);
+      expect(sourcePane.props?.reveal).not.toEqual(expect.objectContaining({ line: 7 }));
     },
   );
 
@@ -1346,6 +1354,7 @@ describe("navigation between LaTeX source and its PDF", () => {
       }),
     );
     expect(opened).toEqual([]);
+    expect(sourcePane.props?.reveal).not.toEqual(expect.objectContaining({ line: 7 }));
   });
 
   it("drops an inverse target ABA even when it is back at compiled A", async () => {
@@ -1370,6 +1379,7 @@ describe("navigation between LaTeX source and its PDF", () => {
     );
     expect(chapter.getSnapshot().baselineRevision).toBe(revisionOf(BASE));
     expect(opened).toEqual([]);
+    expect(sourcePane.props?.reveal).not.toEqual(expect.objectContaining({ line: 7 }));
   });
 
   it("does not block a current inverse target because another source has a draft", async () => {
@@ -1381,7 +1391,12 @@ describe("navigation between LaTeX source and its PDF", () => {
       line: 7,
     });
     await act(async () => reader.navigation!.onInverseSearch!({ page: 1, x: 1, y: 1 }));
-    expect(opened).toEqual([[relativePath, 7]]);
+    expect(opened).toEqual([]);
+    expect(sourcePane.props?.reveal).toMatchObject({
+      path: relativePath,
+      line: 7,
+      sourceRevision: revisionOf(BASE),
+    });
     expect(chapter.getSnapshot().pending).toBe(true);
   });
 });

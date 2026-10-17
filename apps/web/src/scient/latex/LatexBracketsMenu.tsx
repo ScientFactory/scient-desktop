@@ -134,12 +134,14 @@ export function LatexBracketsMenu({
               />
             </label>
             <label className="grid shrink-0 content-start gap-1">
-              Match
+              <span id={`${ownerId}-match`}>
+                Match<span className="sr-only"> brackets</span>
+              </span>
               <span className="flex h-8 items-center sm:h-7">
                 <Switch
                   size="sm"
                   motion="none"
-                  aria-label="Match brackets"
+                  aria-labelledby={`${ownerId}-match`}
                   checked={draft.match}
                   disabled={disabled}
                   onCheckedChange={(match) =>

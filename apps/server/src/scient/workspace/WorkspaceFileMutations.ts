@@ -3558,7 +3558,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             await syncDirectory(folder);
             await syncDirectory(NodePath.dirname(source.target));
             if (input.removeEmptyFolders) await pruneEmptyParents(source.root, source.target);
-            const done = doneReceipt(id, snapshot.revision);
+            const done = doneReceipt(id, snapshot.leadingRevision);
             rememberPlain(id, fingerprint, done);
             return done;
           });

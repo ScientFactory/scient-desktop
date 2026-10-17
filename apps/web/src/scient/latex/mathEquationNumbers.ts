@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import { mathArrayCellSelector } from "./mathEditingGuides";
 
 /** Match outer equation rows to MathLive's rendered baselines without changing math. */
@@ -68,14 +69,12 @@ function observeEquationNumbers(root: HTMLElement, rowCount: number): (() => voi
   const schedule = () => {
     if (!frame) frame = requestAnimationFrame(update);
   };
-  const resize = new ResizeObserver(schedule);
-  resize.observe(root);
-  if (math) resize.observe(math);
+  const stopResize = observeResize(math ? [root, math] : root, schedule);
   const mutation = new MutationObserver(schedule);
   mutation.observe(shadow, { childList: true, characterData: true, subtree: true });
   schedule();
   return () => {
-    resize.disconnect();
+    stopResize();
     mutation.disconnect();
     cancelAnimationFrame(frame);
   };

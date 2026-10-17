@@ -28,7 +28,7 @@ type CurrentReview =
     });
 
 /** Retained inodes are evidence, not immutable snapshots or restore targets. */
-export function ScientFileVersionHistoryPanel(props: {
+function ScientFileVersionHistoryPanel(props: {
   readonly history: ProjectListFileVersionsResult | null;
   readonly publicationAttention?: ProjectFilePublicationAttention;
   readonly busy: boolean;

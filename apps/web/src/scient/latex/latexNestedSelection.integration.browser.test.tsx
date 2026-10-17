@@ -16,6 +16,7 @@ import { LatexVisualEditor } from "./LatexVisualEditor";
 import { useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { mathEditingScopes } from "./mathLiveSelection";
 import { clearVisualDraft } from "./visualDrafts";
+import "~/index.css";
 import "./scient-latex.css";
 
 let host: HTMLDivElement | undefined;
@@ -28,7 +29,7 @@ const frame = () =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
 const selectScope = async () => {
-  await userEvent.keyboard("{Control>}a{/Control}");
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
   await frame();
 };
 
@@ -158,7 +159,10 @@ it.each([String.raw`\[\mathbf{h}_{i}=z\]`, String.raw`\(\mathbf{h}_{i}=z\)`])(
       await frame();
       expect(math.selection.ranges).toEqual([[...range]]);
       await page.getByRole("menuitem", { name: "Brackets", exact: true }).click();
-      await page.getByRole("switch", { name: "Match brackets", exact: true }).click();
+      const match = page.getByRole("switch", { name: "Match brackets", exact: true });
+      await expect.element(match).toBeChecked();
+      await match.click();
+      await expect.element(match).not.toBeChecked();
       await frame();
       expect(math.selection.ranges).toEqual([[...range]]);
       await userEvent.keyboard("{Escape}");
@@ -179,7 +183,7 @@ it.each([String.raw`\[\mathbf{h}_{i}=\]`, String.raw`\(\mathbf{h}_{i}=\)`])(
     await frame();
     await page.getByRole("button", { name: "Math", exact: true }).click();
     await page.getByRole("menuitem", { name: "Brackets", exact: true }).click();
-    await userEvent.click(document.querySelector<HTMLElement>('[aria-label="Left bracket"]')!);
+    await page.getByRole("combobox", { name: "Left bracket", exact: true }).click();
     await page.getByRole("option", { name: "⟨", exact: true }).click();
     await frame();
     expect(math.selection.ranges).toEqual([[before, before]]);

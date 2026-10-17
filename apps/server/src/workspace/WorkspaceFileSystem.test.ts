@@ -608,30 +608,28 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("writeFile", () => {
-    it.effect.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
-      "saves changed bytes through the real workspace service",
-      () =>
-        Effect.gen(function* () {
-          const api = yield* WorkspaceFileSystem.WorkspaceFileSystem,
-            fs = yield* FileSystem.FileSystem,
-            path = yield* Path.Path;
-          const cwd = yield* makeTempDir;
-          yield* writeTextFile(cwd, "main.tex", "A");
-          const original = yield* api.readFile({ cwd, relativePath: "main.tex" });
-          const result = yield* api.writeFile({
-            cwd,
-            relativePath: "main.tex",
-            contents: "C",
-            expectedRevision: original.revision,
-            mutationId: "ordinary-save",
-          });
-          expect(result.revision).toBe(
-            `sha256:${NodeCrypto.createHash("sha256").update("C").digest("hex")}`,
-          );
-          expect(yield* fs.readFileString(path.join(cwd, "main.tex"))).toBe("C");
-        }),
+    it.effect("saves changed bytes through the real workspace service", () =>
+      Effect.gen(function* () {
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem,
+          fs = yield* FileSystem.FileSystem,
+          path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "main.tex", "A");
+        const original = yield* api.readFile({ cwd, relativePath: "main.tex" });
+        const result = yield* api.writeFile({
+          cwd,
+          relativePath: "main.tex",
+          contents: "C",
+          expectedRevision: original.revision,
+          mutationId: "ordinary-save",
+        });
+        expect(result.revision).toBe(
+          `sha256:${NodeCrypto.createHash("sha256").update("C").digest("hex")}`,
+        );
+        expect(yield* fs.readFileString(path.join(cwd, "main.tex"))).toBe("C");
+      }),
     );
-    it.effect("creates exclusively, or refuses unsupported host authority before creation", () =>
+    it.effect("creates exclusively and refuses to replace an existing file", () =>
       Effect.gen(function* () {
         const api = yield* WorkspaceFileSystem.WorkspaceFileSystem,
           fs = yield* FileSystem.FileSystem,
@@ -646,16 +644,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             mutationId: "create",
           })
           .pipe(Effect.result);
-        if ((yield* HostProcess.Platform) !== "darwin") {
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure")
-            expect(result.failure).toMatchObject({
-              _tag: "WorkspaceFileMutationUnavailableError",
-              publicationOutcome: "unchanged",
-            });
-          expect(yield* fs.exists(path.join(cwd, "nested"))).toBe(false);
-          return;
-        }
         expect(result._tag).toBe("Success");
         expect(yield* fs.readFileString(path.join(cwd, "nested/main.tex"))).toBe("A");
         const refused = yield* api

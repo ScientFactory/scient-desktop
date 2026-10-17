@@ -55,7 +55,10 @@
     "apps/web/src/scient/rightPanel/scientRightPanelStore.ts",
     "apps/web/src/scientPreviewMiniPlayerArtifacts.ts",
     "apps/server/src/scient/ScientAssetUrls.ts",
-    "apps/server/src/scient/ScientWsServices.ts"
+    "apps/server/src/scient/ScientWsServices.ts",
+    "apps/web/src/components/files/FileRenameButton.tsx",
+    "apps/web/src/scient/markdownEditor/persistence/renameOpenDocument.ts",
+    "apps/web/src/scient/markdownEditor/ui/ScientMarkdownPersistenceNotice.tsx"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",

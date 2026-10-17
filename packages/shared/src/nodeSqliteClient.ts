@@ -183,9 +183,19 @@ const classifyError = (cause: unknown, message: string, operation: string) => {
  */
 const LARGE_BINDING_SIZE = 64 * 1024;
 
-// `node:sqlite` binds both buffer views and raw buffers as blobs.
+// Raw buffers must be adapted to views before binding to `node:sqlite`.
 const isBlob = (value: unknown): value is ArrayBufferView | ArrayBufferLike =>
   ArrayBuffer.isView(value) || NodeUtil.types.isAnyArrayBuffer(value);
+
+const normalizeBindings = (params: ReadonlyArray<unknown>) => {
+  const blob = (value: unknown) =>
+    NodeUtil.types.isAnyArrayBuffer(value) ? new Uint8Array(value) : value;
+  return params.map((param) =>
+    (typeof param === "object" || typeof param === "function") && param !== null && !isBlob(param)
+      ? Object.fromEntries(Object.entries(param).map(([name, value]) => [name, blob(value)]))
+      : blob(param),
+  );
+};
 
 const bindingSize = (value: unknown): number => {
   if (typeof value === "string") {
@@ -424,8 +434,19 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
           if (pending.size === 1) worker.ref();
           // The worker's statement cache would pin large parameters the same way.
           const cached = input.cached && !hasLargeBinding(input.params);
-          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-          worker.postMessage({ id, safeIntegers, ...input, cached });
+          try {
+            worker.postMessage({
+              id,
+              safeIntegers,
+              ...input,
+              params: normalizeBindings(input.params),
+              cached,
+            });
+          } catch (cause) {
+            pending.delete(id);
+            if (pending.size === 0) worker.unref();
+            resume(Effect.fail(failed(cause, readerFailureMessages.execute, "execute")));
+          }
         });
       });
 
@@ -716,12 +737,13 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
       Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
         try {
           statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
+          const bindings = normalizeBindings(params);
           if (hasRows(statement)) {
-            const rows = statement.all(...(params as any));
+            const rows = statement.all(...(bindings as any));
             checkpoint?.();
             return Effect.succeed(rows);
           }
-          const result = statement.run(...(params as any));
+          const result = statement.run(...(bindings as any));
           checkpoint?.();
           return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
         } catch (cause) {
@@ -748,16 +770,17 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
               statement.setReadBigInts(
                 Boolean(Context.get(Fiber.getCurrent()!.context, Client.SafeIntegers)),
               );
+              const bindings = normalizeBindings(params);
               if (hasRows(statement)) {
                 statement.setReturnArrays(true);
                 // Safe to cast to array after we've setReturnArrays(true)
-                const rows = statement.all(...(params as any)) as unknown as ReadonlyArray<
+                const rows = statement.all(...(bindings as any)) as unknown as ReadonlyArray<
                   ReadonlyArray<unknown>
                 >;
                 checkpoint?.();
                 return rows;
               }
-              statement.run(...(params as any));
+              statement.run(...(bindings as any));
               checkpoint?.();
               return [];
             },

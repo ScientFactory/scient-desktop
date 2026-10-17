@@ -13,7 +13,7 @@ export interface ScientificStatementViewProps extends NodeViewProps {
   ) => void;
 }
 
-export function isScientificStatement(node: ProseMirrorNode): boolean {
+function isScientificStatement(node: ProseMirrorNode): boolean {
   return node.attrs.environment !== "abstract" && !node.attrs.layout;
 }
 

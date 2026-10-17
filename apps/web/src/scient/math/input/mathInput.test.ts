@@ -164,12 +164,13 @@ describe("shared math commands", () => {
     expect(f.controller.execute("math.fraction")).toBe(false);
     expect(f.edits).toEqual([]);
   });
-  it("restricts operator transformations to equations", () => {
+  it("keeps typed operators literal in both prose and equations", () => {
     const prose = fixture("a-", "markdown");
     expect(prose.controller.handle(key(">"))).toBe(false);
     const math = fixture("a-");
-    expect(math.controller.handle(key(">"))).toBe(true);
-    expect(math.state().source).toBe("a\\to ");
+    expect(math.controller.handle(key(">"))).toBe(false);
+    expect(math.edits).toEqual([]);
+    expect(math.state().source).toBe("a-");
   });
   it("keeps text arguments and comments literal", () => {
     for (const source of ["\\text{a-", "x % a-", "\\text{nested {a}-"]) {

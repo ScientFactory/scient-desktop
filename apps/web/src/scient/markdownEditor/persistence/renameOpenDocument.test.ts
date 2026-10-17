@@ -295,7 +295,7 @@ describe("durable open-document rename", () => {
     expect(await reconstructed.flushNow()).toBe(true);
     expect(h.disk.get(h.from.relativePath)).toBeUndefined();
     expect(h.disk.get(h.destination.relativePath)?.source).toBe("unpublished native source");
-    expect(h.records.get(projectFileOperationKey(h.destination))?.renameIntent).toBeUndefined();
+    expect(h.records.get(projectFileOperationKey(h.destination))?.renameIntent).toBeNull();
     reconstructed.release();
   });
 

@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { createTestCheckpointStore } from "./markdownDraftCheckpointTestkit";
+import type * as MarkdownCheckpointModule from "./markdownDraftCheckpoint";
 import {
   EnvironmentId,
   ProjectReadFileError,
@@ -8,6 +10,11 @@ import { act, StrictMode, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { MarkdownPersistenceTransport } from "./markdownPersistenceTransport";
+
+vi.mock("./markdownDraftCheckpoint", async (importOriginal) => ({
+  ...(await importOriginal<typeof MarkdownCheckpointModule>()),
+  indexedDbMarkdownDrafts: createTestCheckpointStore(),
+}));
 
 const mocks = vi.hoisted(() => ({ createTransport: vi.fn() }));
 vi.mock("./markdownPersistenceTransport", () => ({
@@ -28,6 +35,7 @@ describe("useMarkdownPersistenceLease", () => {
   let initial: ProjectReadFileResult;
 
   beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.useFakeTimers();
     container = document.createElement("div");
     document.body.append(container);
@@ -54,6 +62,7 @@ describe("useMarkdownPersistenceLease", () => {
     container.remove();
     vi.clearAllTimers();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   function Surface(props: {

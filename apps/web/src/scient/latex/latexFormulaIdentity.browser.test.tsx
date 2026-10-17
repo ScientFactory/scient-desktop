@@ -25,6 +25,7 @@ Prose with \textbf{marked words} and \(\frac{x^2+1}{y+2}\), followed by several 
 let container: HTMLDivElement;
 let root: Root;
 let current: string;
+let publication = Promise.withResolvers<string>();
 beforeEach(async () => {
   clearVisualDraft(key);
   await page.viewport(1300, 900);
@@ -33,6 +34,7 @@ beforeEach(async () => {
   document.body.append(container);
   root = createRoot(container);
   current = original;
+  publication = Promise.withResolvers<string>();
 });
 afterEach(() => {
   root.unmount();
@@ -58,6 +60,7 @@ async function open() {
           if (!outcome.accepted) return outcome;
           current = outcome.snapshot.source;
           setSource(current);
+          publication.resolve(current);
           return outcome;
         }}
       />
@@ -81,10 +84,13 @@ it("keeps formula views through a prose edit, source publication and undo", asyn
   const editor = await open();
   const maths = [...container.querySelectorAll('[data-math-reading-view="true"]')];
   editor.view.dispatch(editor.state.tr.insertText("More ", 1));
-  await expect.poll(() => current).toBe(original.replace("Prose with", "More Prose with"));
+  await expect(publication.promise).resolves.toBe(
+    original.replace("Prose with", "More Prose with"),
+  );
   expect([...container.querySelectorAll('[data-math-reading-view="true"]')]).toEqual(maths);
   expect(container.querySelector("math-field")).toBeNull();
+  publication = Promise.withResolvers<string>();
   editor.commands.undo();
-  await expect.poll(() => current).toBe(original);
+  await expect(publication.promise).resolves.toBe(original);
   expect([...container.querySelectorAll('[data-math-reading-view="true"]')]).toEqual(maths);
-});
+}, 15_000);

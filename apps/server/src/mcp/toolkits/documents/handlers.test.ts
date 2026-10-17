@@ -739,8 +739,9 @@ describe("Scient PDF build handler", () => {
     }),
   );
 
-  for (const relativePath of ["documents/report.html", "documents/figure.png"]) {
-    it.effect(`refuses a PDF after first-party A→B→A mutations of ${relativePath}`, () =>
+  it.effect.each(["documents/report.html", "documents/figure.png"])(
+    "refuses a PDF after first-party A→B→A mutations of %s",
+    (relativePath) =>
       Effect.gen(function* () {
         const root = yield* Effect.promise(() => fixture("scient-pdf-epoch-aba-"));
         yield* Effect.promise(() => writeHtml(root));
@@ -809,8 +810,7 @@ describe("Scient PDF build handler", () => {
           ).rejects.toBeDefined();
         });
       }),
-    );
-  }
+  );
 
   it.effect("abandons malformed renderer output and marks publication failures", () =>
     Effect.gen(function* () {

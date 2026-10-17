@@ -1,4 +1,5 @@
 /* Run only against isolated, compiled helpers. No live workspace/profile is opened. */
+import * as HostProcess from "../../packages/shared/src/HostProcess.ts";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -200,7 +201,7 @@ async function fixture(body, base = NodeOS.tmpdir()) {
   await NodeFSP.mkdir(NodePath.join(root, "sub"), { recursive: true });
   await NodeFSP.mkdir(record, { mode: 0o700 });
   await NodeFSP.mkdir(outside);
-  if (NodeOS.platform() === "win32") {
+  if (HostProcess.Platform.defaultValue() === "win32") {
     const account = NodeChildProcess.execFileSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], {
       encoding: "utf8",
     });
@@ -243,7 +244,8 @@ async function qualifyCreation() {
   );
   NodeAssert.equal(
     generic.atomicExchange,
-    NodeOS.platform() === "darwin" || NodeOS.platform() === "linux",
+    HostProcess.Platform.defaultValue() === "darwin" ||
+      HostProcess.Platform.defaultValue() === "linux",
   );
   NodeAssert.equal(generic.atomicPublicationMetadata, false);
   await fixture(async (f) => {
@@ -252,13 +254,13 @@ async function qualifyCreation() {
     NodeAssert.equal(typeof rooted.atomicCreateMetadata, "boolean");
     const recordGroup = (await NodeFSP.stat(f.record)).gid;
     const targetGroup = process.getgroups?.().find((group) => group !== recordGroup);
-    if (NodeOS.platform() === "darwin" && targetGroup !== undefined)
+    if (HostProcess.Platform.defaultValue() === "darwin" && targetGroup !== undefined)
       await NodeFSP.chown(NodePath.join(f.root, "sub"), process.getuid(), targetGroup);
     const missing = NodePath.join(f.root, "missing-parent");
     const unavailable = await run(helper, ["--protocol=1", "capabilities", missing]);
     NodeAssert.equal(unavailable.atomicCreateMetadata, false);
     let linked = null;
-    if (NodeOS.platform() !== "win32") {
+    if (HostProcess.Platform.defaultValue() !== "win32") {
       await NodeFSP.symlink(f.root, NodePath.join(f.outside, "root-link"));
       linked = await run(helper, [
         "--protocol=1",
@@ -269,7 +271,8 @@ async function qualifyCreation() {
     }
     NodeAssert.deepEqual(await NodeFSP.readdir(f.root), before);
     await NodeAssert.rejects(NodeFSP.stat(missing), { code: "ENOENT" });
-    if (NodeOS.platform() !== "darwin") NodeAssert.equal(rooted.atomicCreateMetadata, false);
+    if (HostProcess.Platform.defaultValue() !== "darwin")
+      NodeAssert.equal(rooted.atomicCreateMetadata, false);
     evidence.push({
       case: "root-volume-capability-is-read-only-fails-closed-before-parent-admission",
       rooted,
@@ -362,7 +365,7 @@ async function qualifyCreation() {
       badSource,
     });
   });
-  if (NodeOS.platform() === "darwin") {
+  if (HostProcess.Platform.defaultValue() === "darwin") {
     await fixture(async (f) => {
       const rooted = await run(helper, ["--protocol=1", "capabilities", f.root]);
       if (!rooted.atomicCreateMetadata) return;
@@ -514,7 +517,7 @@ async function qualifyChanged(capabilities) {
       NodeAssert.equal(result.outcome, "applied");
       NodeAssert.equal(result.code, 0, JSON.stringify(result));
       NodeAssert.equal(result.destinationAfter.type, "directory");
-      if (NodeOS.platform() !== "win32")
+      if (HostProcess.Platform.defaultValue() !== "win32")
         NodeAssert.equal((await NodeFSP.stat(privatePath)).mode & 0o777, 0o700);
       const again = await run(
         helper,
@@ -526,13 +529,13 @@ async function qualifyChanged(capabilities) {
     }
     const broad = NodePath.join(f.temporary, "broad");
     await NodeFSP.mkdir(broad, { mode: 0o755 });
-    if (NodeOS.platform() !== "win32") await NodeFSP.chmod(broad, 0o755);
+    if (HostProcess.Platform.defaultValue() !== "win32") await NodeFSP.chmod(broad, 0o755);
     const modeBefore = (await NodeFSP.stat(broad)).mode;
     const refused = await run(helper, directoryOperation(binding, "private-create", "broad"));
     NodeAssert.equal(refused.outcome, "unchanged");
     NodeAssert.notEqual(refused.code, 0);
     NodeAssert.equal((await NodeFSP.stat(broad)).mode, modeBefore);
-    if (NodeOS.platform() !== "win32") {
+    if (HostProcess.Platform.defaultValue() !== "win32") {
       await NodeFSP.symlink(f.outside, NodePath.join(f.temporary, "private-link"));
       const linked = await run(
         helper,
@@ -541,7 +544,7 @@ async function qualifyChanged(capabilities) {
       NodeAssert.equal(linked.outcome, "unchanged");
       NodeAssert.notEqual(linked.code, 0);
       NodeAssert.deepEqual(await NodeFSP.readdir(f.outside), []);
-      if (NodeOS.platform() === "darwin") {
+      if (HostProcess.Platform.defaultValue() === "darwin") {
         const aclDirectory = NodePath.join(f.temporary, "private-mode-broad-acl");
         await NodeFSP.mkdir(aclDirectory, { mode: 0o700 });
         NodeChildProcess.execFileSync("/bin/chmod", ["+a", "everyone allow read", aclDirectory]);
@@ -633,7 +636,7 @@ async function qualifyChanged(capabilities) {
         evidence.push({ case: "private-wrong-owner-refused-without-repair", ownerRefused });
       }
     }
-    if (NodeOS.platform() === "win32" && capabilities.privateRetentionDirectory) {
+    if (HostProcess.Platform.defaultValue() === "win32" && capabilities.privateRetentionDirectory) {
       const deniedDirectory = NodePath.join(f.temporary, "private-child-deny");
       const born = await run(
         helper,
@@ -714,7 +717,7 @@ async function qualifyChanged(capabilities) {
       NodeAssert.equal(copied.outcome, "applied");
       await NodeFSP.rename(target, NodePath.join(f.root, "sub", "preflight"));
       await NodeFSP.writeFile(target, "late outside B", { mode: 0o600 });
-      if (NodeOS.platform() === "darwin") {
+      if (HostProcess.Platform.defaultValue() === "darwin") {
         NodeChildProcess.execFileSync("/usr/bin/xattr", [
           "-w",
           "com.scient.publication",
@@ -729,7 +732,7 @@ async function qualifyChanged(capabilities) {
       NodeAssert.equal(await NodeFSP.readFile(target, "utf8"), "local C");
       NodeAssert.equal(await NodeFSP.readFile(staged, "utf8"), "late outside B");
       NodeAssert.equal((await NodeFSP.stat(target)).mode & 0o777, 0o600);
-      if (NodeOS.platform() === "darwin") {
+      if (HostProcess.Platform.defaultValue() === "darwin") {
         NodeAssert.equal(
           NodeChildProcess.execFileSync(
             "/usr/bin/xattr",
@@ -901,7 +904,7 @@ async function qualifyChanged(capabilities) {
         SCIENT_PUBLICATION_BARRIER: "1",
       });
       await child.next((line) => line === "BOUND");
-      if (NodeOS.platform() === "win32")
+      if (HostProcess.Platform.defaultValue() === "win32")
         await NodeAssert.rejects(
           NodeFSP.rename(NodePath.join(f.root, "sub"), NodePath.join(f.outside, "moved")),
         );
@@ -909,7 +912,8 @@ async function qualifyChanged(capabilities) {
       child.child.stdin.end("\n");
       const result = JSON.parse(await child.next((line) => line.includes('"outcome"')));
       NodeAssert.equal((await child.retired).code, 0);
-      if (NodeOS.platform() === "win32") NodeAssert.equal(result.outcome, "applied");
+      if (HostProcess.Platform.defaultValue() === "win32")
+        NodeAssert.equal(result.outcome, "applied");
       else {
         NodeAssert.equal(result.outcome, "unchanged");
         NodeAssert.notEqual(result.code, 0);
@@ -922,7 +926,11 @@ async function qualifyChanged(capabilities) {
         result,
       });
     });
-  if (probe && capabilities.atomicPublicationMetadata && NodeOS.platform() === "darwin")
+  if (
+    probe &&
+    capabilities.atomicPublicationMetadata &&
+    HostProcess.Platform.defaultValue() === "darwin"
+  )
     for (const relocation of ["parent", "root"])
       await fixture(async (f) => {
         const binding = await bind(probe, f);
@@ -1034,7 +1042,7 @@ try {
             ),
           );
           NodeAssert.equal(await NodeFSP.readFile(target, "utf8"), "local C");
-          if (NodeOS.platform() !== "win32")
+          if (HostProcess.Platform.defaultValue() !== "win32")
             NodeAssert.equal((await NodeFSP.stat(target)).mode & 0o777, 0o600);
           evidence.push({ case: "exchange-retains-actual-entry-and-held-writer", result });
         }
@@ -1102,7 +1110,7 @@ try {
         restored,
       });
     });
-    if (NodeOS.platform() !== "win32")
+    if (HostProcess.Platform.defaultValue() !== "win32")
       await fixture(async (f) => {
         const binding = await bind(helper, f);
         const referent = NodePath.join(f.outside, "referent");
@@ -1156,7 +1164,7 @@ try {
             { SCIENT_PUBLICATION_BARRIER: "1" },
           );
           await process_.next((line) => line === "BOUND");
-          if (NodeOS.platform() === "win32") {
+          if (HostProcess.Platform.defaultValue() === "win32") {
             await NodeAssert.rejects(
               NodeFSP.rename(NodePath.join(f.root, "sub"), NodePath.join(f.outside, "sub")),
             );
@@ -1165,7 +1173,7 @@ try {
           process_.child.stdin.end("\n");
           const result = JSON.parse(await process_.next((line) => line.startsWith("{")));
           NodeAssert.equal((await process_.retired).code, 0);
-          if (NodeOS.platform() !== "win32") {
+          if (HostProcess.Platform.defaultValue() !== "win32") {
             NodeAssert.equal(result.outcome, "unchanged");
             NodeAssert.notEqual(result.code, 0);
             NodeAssert.equal(
@@ -1192,7 +1200,7 @@ try {
           await process_.next((line) => line === "BOUND");
           const source = relocation === "ancestor" ? NodePath.dirname(f.root) : f.root;
           const moved = NodePath.join(f.outside, "moved");
-          if (NodeOS.platform() === "win32")
+          if (HostProcess.Platform.defaultValue() === "win32")
             await NodeAssert.rejects(NodeFSP.rename(source, moved));
           else {
             await NodeFSP.rename(source, moved);
@@ -1204,10 +1212,10 @@ try {
           process_.child.stdin.end("\n");
           const result = JSON.parse(await process_.next((line) => line.startsWith("{")));
           NodeAssert.equal((await process_.retired).code, 0);
-          if (NodeOS.platform() === "darwin") {
+          if (HostProcess.Platform.defaultValue() === "darwin") {
             NodeAssert.equal(result.outcome, "unchanged");
             NodeAssert.notEqual(result.code, 0);
-          } else if (NodeOS.platform() === "linux") {
+          } else if (HostProcess.Platform.defaultValue() === "linux") {
             // Landlock binds authority to the original root object, but changed path binding cannot acknowledge.
             NodeAssert.equal(result.outcome, "applied");
             NodeAssert.notEqual(result.code, 0);
@@ -1266,7 +1274,7 @@ try {
           NodeAssert.equal((await second.retired).code, 0);
           evidence.push({ case: "cross-process-nested-root-identity-lease-serialization" });
         });
-      if (NodeOS.platform() !== "win32")
+      if (HostProcess.Platform.defaultValue() !== "win32")
         await fixture(async (f) => {
           const binding = await bind(probe, f);
           await NodeFSP.writeFile(NodePath.join(f.record, "stage"), "owned C");
@@ -1322,18 +1330,18 @@ try {
   console.log(
     JSON.stringify(
       {
-        platform: NodeOS.platform(),
-        arch: process.arch,
+        platform: HostProcess.Platform.defaultValue(),
+        arch: HostProcess.Architecture.defaultValue(),
         observations: evidence,
         gaps: [
           ...(probe ? [] : ["Relocation and retirement probes require --probe-helper."]),
-          ...(NodeOS.platform() === "win32"
+          ...(HostProcess.Platform.defaultValue() === "win32"
             ? [
                 "Atomic replace-and-retain is unqualified and refused; Windows normal-save cutover remains blocked.",
                 "Reparse/junction, DACL/ADS and directory-flush qualification remains required.",
               ]
             : []),
-          ...(NodeOS.platform() === "linux"
+          ...(HostProcess.Platform.defaultValue() === "linux"
             ? [
                 "Landlock root-object authority does not enforce current-root pathname relocation.",
                 "Landlock does not constrain post-exchange metadata syscalls; ordinary publication is refused before displacement.",

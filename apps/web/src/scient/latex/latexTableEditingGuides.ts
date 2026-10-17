@@ -1,3 +1,5 @@
+import { observeResize } from "~/lib/observeResize";
+
 interface Edge {
   horizontal: boolean;
   at: number;
@@ -18,12 +20,13 @@ export function installLatexTableEditingGuides(root: HTMLElement): () => void {
   root.setAttribute("data-table-guides", "");
   let frame = 0;
   let observedTable: HTMLTableElement | null = null;
+  let stopTableResize: (() => void) | undefined;
   const paint = () => {
     frame = 0;
     const table = root.querySelector<HTMLTableElement>(".scient-latex-rich-table-scroll > table");
     if (table !== observedTable) {
-      if (observedTable) resize.unobserve(observedTable);
-      if (table) resize.observe(table);
+      stopTableResize?.();
+      stopTableResize = table ? observeResize(table, schedule) : undefined;
       observedTable = table;
     }
     const bounds = root.getBoundingClientRect();
@@ -137,13 +140,13 @@ export function installLatexTableEditingGuides(root: HTMLElement): () => void {
   // Page zoom changes rendered geometry without changing the table's layout size.
   const stage = root.closest(".scient-latex-page-stage");
   if (stage) observer.observe(stage, { attributes: true, attributeFilter: ["style"] });
-  const resize = new ResizeObserver(schedule);
-  resize.observe(root);
+  const stopResize = observeResize(root, schedule);
   root.addEventListener("scroll", schedule, true);
   schedule();
   return () => {
     observer.disconnect();
-    resize.disconnect();
+    stopResize();
+    stopTableResize?.();
     root.removeEventListener("scroll", schedule, true);
     cancelAnimationFrame(frame);
     root.removeAttribute("data-table-guides");

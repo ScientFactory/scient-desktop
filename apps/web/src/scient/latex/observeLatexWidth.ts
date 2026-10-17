@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import { afterEditorPaint } from "./afterEditorPaint";
 
 /** Observe the unscaled client width without forcing layout during a React commit. */
@@ -11,7 +12,7 @@ export function observeLatexWidth(element: HTMLElement, onWidth: (width: number)
   if (typeof ResizeObserver === "undefined")
     return afterEditorPaint(() => publish(element.clientWidth));
 
-  const observer = new ResizeObserver((entries) => {
+  const stopResize = observeResize(element, (entries) => {
     const entry = entries.find((entry) => entry.target === element);
     if (!entry || entry.contentRect.width <= 0) return;
     // The content box excludes padding and scrollbars. clientWidth includes
@@ -21,6 +22,5 @@ export function observeLatexWidth(element: HTMLElement, onWidth: (width: number)
       (Number.parseFloat(style.paddingLeft) || 0) + (Number.parseFloat(style.paddingRight) || 0);
     publish(Math.round(entry.contentRect.width + padding));
   });
-  observer.observe(element);
-  return () => observer.disconnect();
+  return stopResize;
 }

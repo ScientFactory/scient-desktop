@@ -106,7 +106,7 @@ function Choice<T extends string>(props: {
             tabIndex={chosen ? 0 : -1}
             disabled={props.disabled}
             className={
-              "relative min-w-0 truncate rounded-[5px] px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring " +
+              "relative min-w-0 truncate rounded-[5px] px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring " +
               (chosen ? "text-accent-foreground" : "text-muted-foreground hover:text-foreground")
             }
             onClick={() => props.onChange(option.value)}

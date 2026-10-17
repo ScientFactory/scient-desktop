@@ -328,7 +328,8 @@ function decode(value: unknown): MarkdownDraftCheckpoint | undefined {
       ? { attentionMutationId: value.attentionMutationId }
       : {}),
     ...("attention" in value &&
-    (value.attention === "recovery_required" ||
+    (value.attention === null ||
+      value.attention === "recovery_required" ||
       value.attention === "target_changed" ||
       value.attention === "mutation_unavailable" ||
       value.attention === "mutation_intent_conflict" ||
@@ -664,10 +665,9 @@ export class MarkdownDraftCheckpointWriter {
     clearTimeout(this.timer);
     this.timer = undefined;
     while (this.writing !== undefined) await this.writing;
-    if (this.keepRecovery || this.extensionsHoldRecovery()) return false;
+    if (this.disabled || this.keepRecovery || this.extensionsHoldRecovery()) return false;
     this.latest = undefined;
     if (this.token === undefined) return true;
-    if (this.disabled) return false;
     try {
       if (await this.store.replace(this.key, this.token, undefined)) {
         this.token = undefined;

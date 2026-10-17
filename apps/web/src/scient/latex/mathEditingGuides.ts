@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import type { MathfieldElement } from "mathlive";
 import {
   mathCaretRect,
@@ -241,14 +242,13 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
   const observer = new MutationObserver(schedule);
   observer.observe(root, { childList: true, characterData: true, subtree: true });
   // Font loading can change the ink bounds without changing MathLive's DOM.
-  const resize = new ResizeObserver(schedule);
-  resize.observe(math);
+  const stopResize = observeResize(math, schedule);
   schedule();
   return () => {
     math.removeEventListener("focusin", schedule);
     math.removeEventListener("selection-change", schedule);
     observer.disconnect();
-    resize.disconnect();
+    stopResize();
     cancelAnimationFrame(frame);
     for (const caret of root.querySelectorAll("[data-scient-accent-body]"))
       caret.removeAttribute("data-scient-accent-body");

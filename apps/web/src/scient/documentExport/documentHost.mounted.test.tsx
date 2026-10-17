@@ -195,7 +195,7 @@ describe("mounted controlled document host", () => {
       { environmentId, threadId },
       "papers/current.tex",
       undefined,
-      { latexPreviewMode: "split" },
+      { latexPreviewMode: "split", latexRootRelativePath: "papers/current.tex" },
     );
     expect(mocks.respond).toHaveBeenCalledExactlyOnceWith({
       environmentId,

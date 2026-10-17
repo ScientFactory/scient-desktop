@@ -42,7 +42,10 @@ import {
   WorkspaceBindingResolver,
   type WorkspaceBindingDiagnosticResolution,
 } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
-import { filePublicationTestHelper } from "../../../scient/workspace/fileExchange.testkit.ts";
+import {
+  filePublicationTestHelper,
+  filePublicationHelperWithout,
+} from "../../../scient/workspace/fileExchange.testkit.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as DocumentHostBroker from "../../../scient/documents/DocumentHostBroker.ts";
 import { buildScientLatexForInvocation } from "./latexHandler.ts";
@@ -55,17 +58,21 @@ const providerInstanceId = ProviderInstanceId.make("claude");
 const defaultInput = { sourcePath: "main.tex", outputPath: "outputs/main.pdf" } as const;
 const pdfBytes = new TextEncoder().encode("%PDF-1.4\n% immutable latex fixture\n%%EOF\n");
 const publicationHelper = await filePublicationTestHelper();
+const plainPublicationHelper =
+  publicationHelper === undefined
+    ? undefined
+    : await filePublicationHelperWithout(publicationHelper, ["strictCurrentRoot"]);
 type DocumentToolWorkspaceLayer = Layer.Layer<
   WorkspaceFileSystem.WorkspaceFileSystem | NodeServices.NodeServices,
   PlatformError.PlatformError
 >;
-const makeWorkspaceLayer = (root: string, stateRoot: string) =>
+const makeWorkspaceLayer = (root: string, stateRoot: string, helper = publicationHelper) =>
   WorkspaceFileSystem.layer.pipe(
     Layer.provide(
       ServerConfig.layerTest(
         root,
         stateRoot,
-        publicationHelper === undefined ? {} : { filePublicationHelperPath: publicationHelper },
+        helper === undefined ? {} : { filePublicationHelperPath: helper },
       ),
     ),
     Layer.provide(WorkspacePaths.layer),
@@ -417,17 +424,21 @@ function runBuild(
   );
 }
 
-async function makeContext(root: string, build: ReturnType<typeof makeBuildService>) {
+const makeContext = Effect.fnUntraced(function* (
+  root: string,
+  build: ReturnType<typeof makeBuildService>,
+) {
   const revisionPath = NodePath.join(root, ".revision.pdf");
-  await NodeFSP.writeFile(revisionPath, pdfBytes);
+  yield* Effect.promise(() => NodeFSP.writeFile(revisionPath, pdfBytes));
   const projectId = ProjectId.make(`project-${NodePath.basename(root)}`);
   const threadId = ThreadId.make(`thread-${NodePath.basename(root)}`);
   const store = makeStore(revisionPath);
   const broker = makeBroker();
-  const workspaceLayer = makeWorkspaceLayer(root, await fixture("scient-latex-pdf-state-"));
-  await Effect.runPromise(
-    build.initializeEvidence(root).pipe(Effect.provide(workspaceLayer), Effect.scoped),
+  const workspaceLayer = makeWorkspaceLayer(
+    root,
+    yield* Effect.promise(() => fixture("scient-latex-pdf-state-")),
   );
+  yield* build.initializeEvidence(root).pipe(Effect.provide(workspaceLayer), Effect.scoped);
   return {
     threadId,
     store,
@@ -444,7 +455,7 @@ async function makeContext(root: string, build: ReturnType<typeof makeBuildServi
       broker: broker.broker,
     },
   };
-}
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -464,7 +475,7 @@ describe("Scient LaTeX build handler", () => {
       );
       const active = snapshot({ state: "running", rootRelativePath: "main.tex" });
       const builds = makeBuildService({ initial: active });
-      const { context } = yield* Effect.promise(() => makeContext(root, builds));
+      const { context } = yield* makeContext(root, builds);
 
       const result = yield* runBuild(
         buildScientLatexForInvocation(
@@ -512,7 +523,7 @@ describe("Scient LaTeX build handler", () => {
                   : Effect.void
                 ).pipe(Effect.as(succeeded)),
         });
-        const { context } = yield* Effect.promise(() => makeContext(root, builds));
+        const { context } = yield* makeContext(root, builds);
         yield* Effect.promise(() =>
           NodeFSP.mkdir(NodePath.dirname(outputPath), { recursive: true }),
         );
@@ -567,7 +578,7 @@ describe("Scient LaTeX build handler", () => {
         descriptor: source,
       });
       const builds = makeBuildService({ initial: succeeded });
-      const { context, broker } = yield* Effect.promise(() => makeContext(root, builds));
+      const { context, broker } = yield* makeContext(root, builds);
 
       const result = yield* runBuild(
         buildScientLatexForInvocation({
@@ -612,7 +623,7 @@ describe("Scient LaTeX build handler", () => {
         descriptor: source,
       });
       const builds = makeBuildService({ initial: succeeded });
-      const { context } = yield* Effect.promise(() => makeContext(root, builds));
+      const { context } = yield* makeContext(root, builds);
 
       const result = yield* runBuild(
         buildScientLatexForInvocation({
@@ -658,7 +669,7 @@ describe("Scient LaTeX build handler", () => {
         descriptor: source,
       });
       const builds = makeBuildService({ initial: succeeded });
-      const { context } = yield* Effect.promise(() => makeContext(root, builds));
+      const { context } = yield* makeContext(root, builds);
 
       const ambiguous = yield* runBuild(
         buildScientLatexForInvocation({ sourcePath: "shared.tex", outputPath: "paper.pdf" }),
@@ -699,7 +710,7 @@ describe("Scient LaTeX build handler", () => {
         initial: succeeded,
         onStatus: (index) => Effect.succeed(index === 0 ? succeeded : queued),
       });
-      const { context, broker } = yield* Effect.promise(() => makeContext(root, builds));
+      const { context, broker } = yield* makeContext(root, builds);
       const outputPath = NodePath.join(root, defaultInput.outputPath);
       yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(outputPath), { recursive: true }));
       yield* Effect.promise(() => NodeFSP.writeFile(outputPath, "previous current output"));
@@ -722,7 +733,7 @@ describe("Scient LaTeX build handler", () => {
       const root = yield* Effect.promise(() => fixture("scient-latex-authority-"));
       yield* Effect.promise(() => writeTex(root));
       const builds = makeBuildService({ initial: snapshot() });
-      const { context, threadId } = yield* Effect.promise(() => makeContext(root, builds));
+      const { context, threadId } = yield* makeContext(root, builds);
 
       const denied = yield* runBuild(buildScientLatexForInvocation(defaultInput), {
         ...context,
@@ -758,7 +769,7 @@ describe("Scient LaTeX build handler", () => {
       yield* Effect.promise(() => NodeFSP.symlink(outsideTex, NodePath.join(root, "linked.tex")));
       yield* Effect.promise(() => NodeFSP.symlink(outside, NodePath.join(root, "linked-output")));
       const builds = makeBuildService({ initial: snapshot() });
-      const { context } = yield* Effect.promise(() => makeContext(root, builds));
+      const { context } = yield* makeContext(root, builds);
 
       for (const sourcePath of [outsideTex, "../outside.tex", "notes.txt", "linked.tex"]) {
         const result = yield* runBuild(
@@ -800,7 +811,7 @@ describe("Scient LaTeX build handler", () => {
         failureSummary: "No LaTeX toolchain found on this computer.",
       });
       const unavailableBuilds = makeBuildService({ initial: unavailable, requested: unavailable });
-      const unavailableContext = yield* Effect.promise(() => makeContext(root, unavailableBuilds));
+      const unavailableContext = yield* makeContext(root, unavailableBuilds);
       const noToolchain = yield* runBuild(
         buildScientLatexForInvocation(defaultInput),
         unavailableContext.context,
@@ -829,7 +840,7 @@ describe("Scient LaTeX build handler", () => {
         ],
       });
       const failedBuilds = makeBuildService({ initial: failed, requested: failed });
-      const failedContext = yield* Effect.promise(() => makeContext(root, failedBuilds));
+      const failedContext = yield* makeContext(root, failedBuilds);
       const compileFailure = yield* runBuild(
         buildScientLatexForInvocation(defaultInput),
         failedContext.context,
@@ -870,7 +881,7 @@ describe("Scient LaTeX build handler", () => {
                 return succeeded;
               }),
       });
-      const { context } = yield* Effect.promise(() => makeContext(root, builds));
+      const { context } = yield* makeContext(root, builds);
 
       const result = yield* runBuild(buildScientLatexForInvocation(defaultInput), context).pipe(
         Effect.result,
@@ -951,79 +962,91 @@ describe("Scient LaTeX build handler", () => {
     }),
   );
 
-  it.effect("keeps two worktrees of one project on separate LaTeX write authorities", () =>
-    Effect.gen(function* () {
-      const firstRoot = yield* Effect.promise(() => fixture("scient-latex-worktree-one-"));
-      const secondRoot = yield* Effect.promise(() => fixture("scient-latex-worktree-two-"));
-      yield* Effect.promise(() => Promise.all([writeTex(firstRoot), writeTex(secondRoot)]));
-      const firstRevision = NodePath.join(firstRoot, ".revision.pdf");
-      const secondRevision = NodePath.join(secondRoot, ".revision.pdf");
-      yield* Effect.promise(() =>
-        Promise.all([
-          NodeFSP.writeFile(firstRevision, pdfBytes),
-          NodeFSP.writeFile(secondRevision, pdfBytes),
-        ]),
-      );
-      const projectId = ProjectId.make("project-latex-two-worktrees");
-      const firstThreadId = ThreadId.make("thread-latex-worktree-one");
-      const secondThreadId = ThreadId.make("thread-latex-worktree-two");
-      const project = makeProject(projectId, firstRoot);
-      const threads = new Map<ThreadId, OrchestrationThreadShell>([
-        [
-          firstThreadId,
-          makeThread({ threadId: firstThreadId, projectId, worktreePath: firstRoot }),
-        ],
-        [
-          secondThreadId,
-          makeThread({ threadId: secondThreadId, projectId, worktreePath: secondRoot }),
-        ],
-      ]);
-      const query = makeDynamicQuery({
-        thread: (threadId) => threads.get(threadId) ?? null,
-        project: (candidate) => (candidate === projectId ? project : null),
-      });
-      const succeeded = snapshot({ state: "succeeded", descriptor: source });
-      const firstOutput = "outputs/first.pdf";
-      const secondOutput = "outputs/second.pdf";
-      const stateRoot = yield* Effect.promise(() => fixture("scient-latex-worktrees-state-"));
-      const firstWorkspace = makeWorkspaceLayer(firstRoot, stateRoot);
-      const secondWorkspace = makeWorkspaceLayer(secondRoot, stateRoot);
-      const firstBuilds = makeBuildService({ initial: succeeded });
-      const secondBuilds = makeBuildService({ initial: succeeded });
-      yield* firstBuilds.initializeEvidence(firstRoot).pipe(Effect.provide(firstWorkspace));
-      yield* secondBuilds.initializeEvidence(secondRoot).pipe(Effect.provide(secondWorkspace));
-
-      yield* runBuild(buildScientLatexForInvocation({ ...defaultInput, outputPath: firstOutput }), {
-        invocation: makeInvocation(firstThreadId),
-        query,
-        builds: firstBuilds.service,
-        store: makeStore(firstRevision).store,
-        broker: makeBroker().broker,
-        workspaceLayer: firstWorkspace,
-      });
-      yield* runBuild(
-        buildScientLatexForInvocation({ ...defaultInput, outputPath: secondOutput }),
-        {
-          invocation: makeInvocation(secondThreadId),
-          query,
-          builds: secondBuilds.service,
-          store: makeStore(secondRevision).store,
-          broker: makeBroker().broker,
-          workspaceLayer: secondWorkspace,
-        },
-      );
-
-      yield* Effect.promise(async () => {
-        expect(await NodeFSP.readFile(NodePath.join(firstRoot, firstOutput))).toEqual(
-          Buffer.from(pdfBytes),
+  it.effect.each(["host", "plain"] as const)(
+    "keeps two worktrees of one project on separate LaTeX write authorities (%s)",
+    (mode) =>
+      Effect.gen(function* () {
+        const firstRoot = yield* Effect.promise(() => fixture("scient-latex-worktree-one-"));
+        const secondRoot = yield* Effect.promise(() => fixture("scient-latex-worktree-two-"));
+        yield* Effect.promise(() => Promise.all([writeTex(firstRoot), writeTex(secondRoot)]));
+        const firstRevision = NodePath.join(firstRoot, ".revision.pdf");
+        const secondRevision = NodePath.join(secondRoot, ".revision.pdf");
+        yield* Effect.promise(() =>
+          Promise.all([
+            NodeFSP.writeFile(firstRevision, pdfBytes),
+            NodeFSP.writeFile(secondRevision, pdfBytes),
+          ]),
         );
-        expect(await NodeFSP.readFile(NodePath.join(secondRoot, secondOutput))).toEqual(
-          Buffer.from(pdfBytes),
+        const projectId = ProjectId.make("project-latex-two-worktrees");
+        const firstThreadId = ThreadId.make("thread-latex-worktree-one");
+        const secondThreadId = ThreadId.make("thread-latex-worktree-two");
+        const project = makeProject(projectId, firstRoot);
+        const threads = new Map<ThreadId, OrchestrationThreadShell>([
+          [
+            firstThreadId,
+            makeThread({ threadId: firstThreadId, projectId, worktreePath: firstRoot }),
+          ],
+          [
+            secondThreadId,
+            makeThread({ threadId: secondThreadId, projectId, worktreePath: secondRoot }),
+          ],
+        ]);
+        const query = makeDynamicQuery({
+          thread: (threadId) => threads.get(threadId) ?? null,
+          project: (candidate) => (candidate === projectId ? project : null),
+        });
+        const succeeded = snapshot({ state: "succeeded", descriptor: source });
+        const firstOutput = "outputs/first.pdf";
+        const secondOutput = "outputs/second.pdf";
+        const stateRoot = yield* Effect.promise(() => fixture("scient-latex-worktrees-state-"));
+        const helper = mode === "plain" ? plainPublicationHelper : publicationHelper;
+        const firstWorkspace = makeWorkspaceLayer(firstRoot, stateRoot, helper);
+        const secondWorkspace = makeWorkspaceLayer(secondRoot, stateRoot, helper);
+        const firstBuilds = makeBuildService({ initial: succeeded });
+        const secondBuilds = makeBuildService({ initial: succeeded });
+        yield* firstBuilds.initializeEvidence(firstRoot).pipe(Effect.provide(firstWorkspace));
+
+        yield* runBuild(
+          buildScientLatexForInvocation({ ...defaultInput, outputPath: firstOutput }),
+          {
+            invocation: makeInvocation(firstThreadId),
+            query,
+            builds: firstBuilds.service,
+            store: makeStore(firstRevision).store,
+            broker: makeBroker().broker,
+            workspaceLayer: firstWorkspace,
+          },
         );
-        await expect(NodeFSP.access(NodePath.join(firstRoot, secondOutput))).rejects.toBeDefined();
-        await expect(NodeFSP.access(NodePath.join(secondRoot, firstOutput))).rejects.toBeDefined();
-      });
-    }),
+        // Plain publication invalidates earlier build epochs across the process.
+        // Prepare the second build after the first publication, as a fresh build would.
+        yield* secondBuilds.initializeEvidence(secondRoot).pipe(Effect.provide(secondWorkspace));
+        yield* runBuild(
+          buildScientLatexForInvocation({ ...defaultInput, outputPath: secondOutput }),
+          {
+            invocation: makeInvocation(secondThreadId),
+            query,
+            builds: secondBuilds.service,
+            store: makeStore(secondRevision).store,
+            broker: makeBroker().broker,
+            workspaceLayer: secondWorkspace,
+          },
+        );
+
+        yield* Effect.promise(async () => {
+          expect(await NodeFSP.readFile(NodePath.join(firstRoot, firstOutput))).toEqual(
+            Buffer.from(pdfBytes),
+          );
+          expect(await NodeFSP.readFile(NodePath.join(secondRoot, secondOutput))).toEqual(
+            Buffer.from(pdfBytes),
+          );
+          await expect(
+            NodeFSP.access(NodePath.join(firstRoot, secondOutput)),
+          ).rejects.toBeDefined();
+          await expect(
+            NodeFSP.access(NodePath.join(secondRoot, firstOutput)),
+          ).rejects.toBeDefined();
+        });
+      }),
   );
 
   it.effect("keeps publication successful when the PDF cannot be presented", () =>
@@ -1032,7 +1055,7 @@ describe("Scient LaTeX build handler", () => {
       yield* Effect.promise(() => writeTex(root));
       const succeeded = snapshot({ state: "succeeded", descriptor: source });
       const builds = makeBuildService({ initial: succeeded });
-      const built = yield* Effect.promise(() => makeContext(root, builds));
+      const built = yield* makeContext(root, builds);
       const broker = makeBroker(true);
 
       const result = yield* runBuild(buildScientLatexForInvocation(defaultInput), {

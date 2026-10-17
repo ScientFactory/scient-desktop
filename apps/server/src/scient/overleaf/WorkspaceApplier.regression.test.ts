@@ -28,8 +28,9 @@ async function put(cwd: string, files: Record<string, string>) {
   }
 }
 
-describe("WorkspaceApplier immutable intent and original receipt regressions", () => {
-  if (HostProcess.Platform.defaultValue() === "darwin") {
+describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
+  "WorkspaceApplier immutable intent and original receipt regressions",
+  () => {
     it.live(
       "resumes a persisted removal plan without replaying its original deletion over outside D",
       () => {
@@ -144,9 +145,12 @@ describe("WorkspaceApplier immutable intent and original receipt regressions", (
             await put(cwd, { "main.tex": "C" });
             const foreign = await fileIdentity(NodePath.join(cwd, "main.tex"));
             await h.restart();
-            await expect(h.apply("create-gap")).rejects.toMatchObject({
-              _tag: "WorkspaceApplyError",
+            const resumed = await h.apply("create-gap");
+            expect(resumed).toMatchObject({
+              outcome: "attention",
+              interrupted: [["main.tex"]],
             });
+            expect(resumed.base).toEqual(new Map());
             expect(await fileIdentity(NodePath.join(cwd, "main.tex"))).toEqual(foreign);
             expect(await NodeFSP.readFile(NodePath.join(cwd, "main.tex"), "utf8")).toBe("C");
             const history = await h.run(
@@ -171,5 +175,5 @@ describe("WorkspaceApplier immutable intent and original receipt regressions", (
         );
       },
     );
-  }
-});
+  },
+);

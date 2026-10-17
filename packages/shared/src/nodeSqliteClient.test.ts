@@ -226,7 +226,7 @@ it.effect("leaves a parameter it cannot measure for the statement to handle", ()
     const error = yield* sql.unsafe("SELECT length($value) AS size", [throwing]).pipe(Effect.flip);
     assert.equal(error.reason.operation, "execute");
 
-    // Only the statement reads a getter, so it runs once as it would natively.
+    // Binding reads a getter once, as the native statement would.
     let reads = 0;
     const counting = {
       get $value(): number {
@@ -234,6 +234,32 @@ it.effect("leaves a parameter it cannot measure for the statement to handle", ()
       },
     };
     assert.deepEqual(yield* sql.unsafe("SELECT $value AS value", [counting]), [{ value: 1 }]);
+    assert.equal(reads, 1);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("preserves raw buffer bytes across prepared, unprepared and named bindings", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const bytes = new Uint8Array([0, 1, 127, 128, 255]).buffer;
+    yield* sql`CREATE TABLE buffers(bytes BLOB NOT NULL)`;
+    yield* sql`INSERT INTO buffers VALUES (${bytes})`;
+    assert.deepEqual(yield* sql`SELECT hex(bytes) AS bytes FROM buffers`, [
+      { bytes: "00017F80FF" },
+    ]);
+    const query = sql`SELECT hex(${bytes}) AS bytes`;
+    assert.deepEqual(yield* query.unprepared, [{ bytes: "00017F80FF" }]);
+    assert.deepEqual(yield* query.valuesUnprepared, [["00017F80FF"]]);
+    let reads = 0;
+    const named = {
+      get $value() {
+        reads++;
+        return bytes;
+      },
+    };
+    assert.deepEqual(yield* sql.unsafe("SELECT hex($value) AS bytes", [named]), [
+      { bytes: "00017F80FF" },
+    ]);
     assert.equal(reads, 1);
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
@@ -540,6 +566,34 @@ it.effect("keeps large parameters off the reader worker's cached statements", ()
       assert.equal(yield* read(largeText).pipe(SqliteClient.readOnly), largeText.length);
       assert.deepEqual(cached, [true, false]);
     }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("binds raw buffers on the reader and recovers from an unreadable named binding", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const bytes = new Uint8Array([0, 1, 127, 128, 255]).buffer;
+      assert.deepEqual(yield* sql`SELECT hex(${bytes}) AS bytes`.pipe(SqliteClient.readOnly), [
+        { bytes: "00017F80FF" },
+      ]);
+      assert.deepEqual(
+        yield* sql
+          .unsafe("SELECT hex($value) AS bytes", [{ $value: bytes }])
+          .values.pipe(SqliteClient.readOnly),
+        [["00017F80FF"]],
+      );
+      const error = yield* sql
+        .unsafe("SELECT $value", [
+          {
+            get $value() {
+              throw new Error("unreadable");
+            },
+          },
+        ])
+        .pipe(SqliteClient.readOnly, Effect.flip);
+      assert.equal(error.reason.operation, "execute");
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+    }),
   ),
 );
 

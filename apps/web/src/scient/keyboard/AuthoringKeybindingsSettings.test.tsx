@@ -157,9 +157,10 @@ it("records a focused sequence and blocks unreachable bindings", async () => {
   const input = host.querySelector<HTMLInputElement>("[data-keybinding-capture]")!;
   expect(document.activeElement).toBe(input);
   expect(input.placeholder).toBe("Press shortcut");
-  await press(" ", { ctrlKey: true });
+  await press("i", { altKey: true });
+  await press("s");
   await press("a");
-  expect(input.value).toMatch(/^(?:mod|ctrl)\+space a$/u);
+  expect(input.value).toBe("alt+i s a");
   expect(host.textContent).not.toContain("Record sequence");
   await act(() => button("Save").click());
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("conflict");

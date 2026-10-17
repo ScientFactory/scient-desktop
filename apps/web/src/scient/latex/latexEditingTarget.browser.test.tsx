@@ -32,9 +32,9 @@ it("layout metadata preserves deferred typing while independent presentation and
     return <output data-layout="">{count}</output>;
   }
   function Toolbar() {
-    const { state } = useLatexEditingState(editor, true);
+    const { state, editable } = useLatexEditingState(editor, true);
     return (
-      <output data-toolbar="" data-editable={editor.isEditable}>
+      <output data-toolbar="" data-editable={editable}>
         {state?.doc.textContent}|{state?.selection.from}|
         {state?.storedMarks?.map((mark) => mark.type.name).join(",")}
       </output>

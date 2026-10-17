@@ -106,6 +106,7 @@ describe("Markdown persistence feedback", () => {
       current = { source: intent.source, revision: "created" };
       return { revision: "created" };
     });
+    const persistAuthorizedCurrentReview = vi.fn(async () => {});
     const coordinator = new MarkdownPersistenceCoordinator({
       source: "A",
       revision: "historical",
@@ -117,6 +118,7 @@ describe("Markdown persistence feedback", () => {
         return current;
       },
       readForReview: async () => current,
+      persistAuthorizedCurrentReview,
       resolve: async () => {
         current = { missing: true, revision: null };
         return { revision: null };
@@ -132,6 +134,15 @@ describe("Markdown persistence feedback", () => {
       draftSource: "A",
       baselineSource: "A",
     });
+    expect(persistAuthorizedCurrentReview).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        authorizedCurrentReview: expect.objectContaining({ recoveryId: attention.recoveryId }),
+      }),
+    );
+    expect(persistAuthorizedCurrentReview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ authorizedCurrentReview: null, attention: null }),
+    );
     expect(write).not.toHaveBeenCalled();
     expect(
       [...host.querySelectorAll("button")].some((button) => button.textContent === "Save it again"),
@@ -320,6 +331,7 @@ describe("Markdown persistence feedback", () => {
       return { revision: disk.revision };
     });
     const write = vi.fn(async () => ({ revision: "unused" }));
+    const persistAuthorizedCurrentReview = vi.fn(async () => {});
     const coordinator = new MarkdownPersistenceCoordinator({
       source: "Baseline",
       revision: "rInitial",
@@ -327,6 +339,7 @@ describe("Markdown persistence feedback", () => {
       initialPublicationAttention: attention,
       read,
       resolve,
+      persistAuthorizedCurrentReview,
       write,
       classifyFailure: () => "terminal",
     });
@@ -357,6 +370,15 @@ describe("Markdown persistence feedback", () => {
       recoveryId: "actual-recovery",
       currentRevision: "rCurrent",
     });
+    expect(persistAuthorizedCurrentReview).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        authorizedCurrentReview: expect.objectContaining({ recoveryId: attention.recoveryId }),
+      }),
+    );
+    expect(persistAuthorizedCurrentReview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ authorizedCurrentReview: null, attention: null }),
+    );
     expect(write).not.toHaveBeenCalled();
     expect(coordinator.getSnapshot()).toMatchObject({
       attention: null,

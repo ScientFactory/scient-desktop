@@ -543,6 +543,7 @@ export const EVENT_DEFINITIONS = {
           "documents",
           "source-control",
           "storage",
+          "diagnostics",
           "connections",
           "archived",
           "other",

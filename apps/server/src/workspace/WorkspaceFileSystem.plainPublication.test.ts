@@ -49,6 +49,30 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
   const plain = (body: Parameters<typeof fileMutationFixture>[0]) =>
     fileMutationFixture(body, {}, null, wrap);
 
+  it.live("keeps a large file's read revision through rename and receipt replay", () =>
+    plain(async (h) => {
+      const contents = "x".repeat(1024 * 1024 + 4096);
+      await NodeFSP.writeFile(NodePath.join(h.cwd, "big.log"), contents);
+      const opened = await h.settledRead("big.log");
+      expect(opened.truncated).toBe(true);
+      const intent = {
+        cwd: h.cwd,
+        relativePath: "big.log",
+        destinationRelativePath: "big-renamed.log",
+        mutationId: "large-file-rename",
+      };
+      const renamed = await h.run(h.methods.renameFile(intent));
+      expect(renamed.revision).toBe(opened.revision);
+      expect(await h.run(h.methods.renameFile(intent))).toEqual(renamed);
+      expect(await NodeFSP.readFile(NodePath.join(h.cwd, "big-renamed.log"), "utf8")).toBe(
+        contents,
+      );
+      await expect(NodeFSP.stat(NodePath.join(h.cwd, "big.log"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }),
+  );
+
   it.live("saves changed bytes, keeps permissions and leaves no temporary file", () =>
     plain(async (h) => {
       const target = NodePath.join(h.cwd, "main.tex");

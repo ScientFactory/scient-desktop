@@ -1,3 +1,4 @@
+import { observeResize } from "~/lib/observeResize";
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
@@ -22,9 +23,7 @@ export function TemplatePreviewDialog(props: {
     if (!element) return;
     const measure = () => setPageWidth(Math.max(1, Math.min(720, element.clientWidth - 8)));
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
+    return observeResize(element, measure);
   }, []);
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
