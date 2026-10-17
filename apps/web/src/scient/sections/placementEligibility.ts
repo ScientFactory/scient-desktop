@@ -1,9 +1,13 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 
-import { resolveSidebarThreadStatus } from "../../components/Sidebar.logic";
+import {
+  resolveSidebarThreadStatus,
+  resolveThreadLastVisitedAt,
+} from "../../components/Sidebar.logic";
 import { hasUnreadAnswer } from "../answerAttention/completion";
 
+/** Whether a thread belongs above inactive ones; it reads visits as the sidebar rows do. */
 export function placementEligible(
   thread: Pick<
     EnvironmentThreadShell,
@@ -14,10 +18,12 @@ export function placementEligible(
     | "latestCompletedAnswer"
     | "snoozedUntil"
     | "snoozedAt"
+    | "lastVisitedAt"
   >,
-  visitedAt: string | undefined,
+  localVisitedAt: string | undefined,
   now: string,
 ): boolean {
+  const visitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localVisitedAt);
   const wokeAt = threadWokeAt(thread, { now });
   const woke =
     wokeAt !== null &&
