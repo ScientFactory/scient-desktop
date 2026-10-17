@@ -57,11 +57,10 @@ another app wrote, or that Scient cannot read, is never changed, and Scient
 starts with an empty `~/.scient-next`.
 
 The copy runs before the server starts, so that first connection can take
-longer; the copy itself may run for up to 15 minutes. While it runs, reopening
-a saved connection can show a setup timeout and retry; the copy continues on
-the host, and the connection succeeds once it finishes. If a long copy fails,
-the timeout can hide its message; check that the host has room for the copy
-and reconnect. Before copying, Scient stops the
+longer; the copy itself may run for up to 15 minutes. While it runs, a saved
+connection reports that Scient is still preparing the host and keeps retrying;
+it connects once the copy finishes, or shows the copy's error if it fails.
+Before copying, Scient stops the
 server it started on `~/.t3` for this connection, once it has confirmed that
 process is that server. The connection fails without copying anything if
 another older Scient server is still using `~/.t3`, if Scient cannot confirm

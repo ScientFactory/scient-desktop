@@ -55,6 +55,7 @@ import {
   migrateRemoteScientHome,
   SCIENT_HOME_MIGRATION_REQUIRED,
 } from "./scientRemoteHome.ts";
+import { makeSharedSshPreparation } from "./scientSshPreparation.ts";
 // SCIENT-FORK:END
 
 const DEFAULT_REMOTE_PORT = 3773;
@@ -1506,6 +1507,19 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnels = new Map<string, SshTunnelEntry>();
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
+  // SCIENT-FORK:START — connection retries share a running host preparation.
+  const preparations = makeSharedSshPreparation<
+    DesktopSshEnvironmentBootstrap,
+    SshEnvironmentEffectError
+  >(
+    () =>
+      new SshLaunchError({
+        message:
+          "Scient is still preparing this SSH host. The first connection after an update can take several minutes; it continues in the background.",
+        stdout: "",
+      }),
+  );
+  // SCIENT-FORK:END
 
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
   const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
@@ -1857,7 +1871,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(runner),
       key,
     });
-    return yield* withTargetLock(
+    const prepare = withTargetLock(
       key,
       Effect.gen(function* () {
         const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
@@ -1890,6 +1904,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         };
       }),
     );
+    // SCIENT-FORK: connection retries share a running preparation (scientSshPreparation.ts).
+    return yield* preparations.run(key, prepare);
   });
 
   const disconnectEnvironment = Effect.fn("ssh/tunnel.disconnectEnvironment")(function* (
