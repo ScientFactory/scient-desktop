@@ -22,7 +22,7 @@ import {
 } from "./updateEverything.logic";
 // SCIENT-FORK:START — a retry rechecks eligibility, like a server step that starts.
 import * as Equal from "effect/Equal";
-import { retryableUpdateRunServers } from "./updateEverything.logic";
+import { currentConfirmedServerTargets } from "./updateEverything.logic";
 // SCIENT-FORK:END
 
 const updateEverythingRunAtom = Atom.make<UpdateEverythingRun | null>(null).pipe(
@@ -93,29 +93,37 @@ export function retryFailedUpdateRunServers(
     options: { readonly quiet: boolean },
   ) => Promise<ServerUpdateOutcome>,
 ): void {
-  // SCIENT-FORK:START — a retry keeps its confirmed version and mechanism, takes the current
-  // flags, and never sends a target that is not qualified now. A withdrawn target stays
-  // failed with its confirmed target, so Retry returns if it becomes eligible again.
-  const machines = appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? [];
-  const failed = retryableUpdateRunServers(
-    machines,
-    appAtomRegistry.get(qualifiedUpdateRunServersAtom),
-  );
-  const eligible = new Set(failed.map(({ target }) => target.environmentId));
-  const withdrawn = new Set(
-    machines.flatMap((machine) =>
-      machine.result === "failed" && machine.server !== null && !eligible.has(machine.environmentId)
-        ? [machine.environmentId]
+  const confirmed = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
+    (machine) =>
+      machine.result === "failed" && machine.server !== null
+        ? [{ target: machine.server, providerFailure: machine.providerFailure }]
         : [],
+  );
+  // SCIENT-FORK:START — a retry keeps its confirmed version and mechanism, takes the current
+  // flags, and never sends a target that is no longer qualified. A withdrawn target settles
+  // as failed with its confirmed target, so Retry returns once it is eligible again.
+  const eligible = new Map(
+    currentConfirmedServerTargets(
+      confirmed.map(({ target }) => target),
+      appAtomRegistry.get(qualifiedUpdateRunServersAtom),
+    ).map((target) => [target.environmentId, target]),
+  );
+  const withdrawn = new Set(
+    confirmed.flatMap(({ target }) =>
+      eligible.has(target.environmentId) ? [] : [target.environmentId],
     ),
   );
   if (withdrawn.size > 0) {
     updateRunMachines((machine) =>
       withdrawn.has(machine.environmentId)
-        ? { ...machine, failure: WITHDRAWN_RETRY_FAILURE }
+        ? { ...machine, result: "failed", failure: WITHDRAWN_RETRY_FAILURE }
         : machine,
     );
   }
+  const failed = confirmed.flatMap(({ target, providerFailure }) => {
+    const current = eligible.get(target.environmentId);
+    return current === undefined ? [] : [{ target: current, providerFailure }];
+  });
   // SCIENT-FORK:END
   const targets = failed.map(({ target }) => target);
   const retried = new Set(targets.map((target) => target.environmentId));

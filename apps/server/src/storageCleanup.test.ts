@@ -284,9 +284,11 @@ const cleanupFixture = (
     let recreateOriginal = false;
     let isolatedPath: string | undefined;
     let openSessionCwd: string | null = null;
-    let openSessionStatus: OrchestrationV2ProviderSession["status"] = "ready";
     let sessionLive = true;
+    // SCIENT-FORK:START retiring-session-worktree-retention
+    let openSessionStatus: OrchestrationV2ProviderSession["status"] = "ready";
     const sessionQueries: Array<string> = [];
+    // SCIENT-FORK:END retiring-session-worktree-retention
     let fullStatusCalls = 0;
     let snapshotReads = 0;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
@@ -362,49 +364,63 @@ const cleanupFixture = (
       Effect.provideService(EffectOutbox.EffectOutboxV2, {
         subscribeCompletions: Effect.succeed(Stream.empty),
       } as unknown as EffectOutbox.EffectOutboxV2["Service"]),
-      Effect.provideService(
+      // SCIENT-FORK:START retiring-session-worktree-retention — wraps the SQL mock below: it
+      // records session reads, gives each row its id, and honors a recorded-status filter, as
+      // the real table would.
+      Effect.provideServiceEffect(
         SqlClient.SqlClient,
-        Object.assign(
-          (strings: TemplateStringsArray) =>
-            Effect.sync(() => {
-              if (strings.join("").includes("projection_provider_sessions"))
-                sessionQueries.push(strings.join(""));
-              return strings.join("").includes("orchestration_v2_projection_runs")
-                ? queuedThreadIds.map((threadId) => ({ thread_id: threadId }))
-                : openSessionCwd !== null &&
-                    strings.join("").includes("projection_provider_sessions") &&
-                    // Honors a recorded-status filter, as the real table would.
-                    !(openSessionStatus === "stopped" && strings.join("").includes("'stopped'"))
-                  ? [
-                      {
-                        provider_session_id: "session-1",
-                        status: openSessionStatus,
-                        payload_json: JSON.stringify({
-                          id: "session-1",
-                          driver: "codex",
-                          providerInstanceId: "codex",
-                          status: openSessionStatus,
-                          cwd: openSessionCwd,
-                          model: null,
-                          capabilities: CodexProviderCapabilitiesV2,
-                          createdAt: "2026-06-01T12:00:00.000Z",
-                          updatedAt: "2026-06-01T12:00:00.000Z",
-                          lastError: null,
-                        }),
-                      },
-                    ]
-                  : strings.join("").includes('AS "worktreePath"')
-                    ? [
-                        ...[...threads, ...archivedThreads].flatMap(
-                          (thread) => thread.worktreePath ?? [],
-                        ),
-                        ...storedWorktreePaths,
-                      ].map((worktreePath) => ({ worktreePath }))
-                    : [];
-            }),
-          { in: (values: ReadonlyArray<string>) => values },
-        ) as unknown as SqlClient.SqlClient,
+        Effect.gen(function* () {
+          const query = (yield* SqlClient.SqlClient) as unknown as (
+            strings: TemplateStringsArray,
+          ) => Effect.Effect<ReadonlyArray<object>>;
+          return Object.assign(
+            (strings: TemplateStringsArray) => {
+              const text = strings.join("");
+              if (!text.includes("projection_provider_sessions")) return query(strings);
+              sessionQueries.push(text);
+              return openSessionStatus === "stopped" && text.includes("'stopped'")
+                ? Effect.succeed([])
+                : query(strings).pipe(
+                    Effect.map((rows) =>
+                      rows.map((row) => ({ provider_session_id: "session-1", ...row })),
+                    ),
+                  );
+            },
+            { in: (values: ReadonlyArray<string>) => values },
+          ) as unknown as SqlClient.SqlClient;
+        }),
       ),
+      // SCIENT-FORK:END retiring-session-worktree-retention
+      Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
+        Effect.sync(() =>
+          strings.join("").includes("orchestration_v2_projection_runs")
+            ? queuedThreadIds.map((threadId) => ({ thread_id: threadId }))
+            : openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
+              ? [
+                  {
+                    payload_json: JSON.stringify({
+                      id: "session-1",
+                      driver: "codex",
+                      providerInstanceId: "codex",
+                      status: "ready",
+                      cwd: openSessionCwd,
+                      model: null,
+                      capabilities: CodexProviderCapabilitiesV2,
+                      createdAt: "2026-06-01T12:00:00.000Z",
+                      updatedAt: "2026-06-01T12:00:00.000Z",
+                      lastError: null,
+                    }),
+                  },
+                ]
+              : strings.join("").includes('AS "worktreePath"')
+                ? [
+                    ...[...threads, ...archivedThreads].flatMap(
+                      (thread) => thread.worktreePath ?? [],
+                    ),
+                    ...storedWorktreePaths,
+                  ].map((worktreePath) => ({ worktreePath }))
+                : [],
+        )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
       } as unknown as GitManager.GitManager["Service"]),

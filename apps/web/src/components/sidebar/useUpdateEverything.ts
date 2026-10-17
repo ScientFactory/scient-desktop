@@ -95,14 +95,12 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const committedServersRef = useRef(servers);
   useLayoutEffect(() => {
     committedServersRef.current = servers;
-    // A failed server's Retry rechecks the same eligibility. `servers` is rebuilt on
-    // every render; publishing an equal list notifies no one.
+    // A failed server's Retry rechecks the same eligibility.
     publishQualifiedUpdateRunServers(servers);
   }, [committedServersRef, servers]);
   useLayoutEffect(
     () => () => {
       // A delayed pass or retry cannot retain eligibility after its sidebar owner leaves.
-      // The ref never changes, so this runs only on unmount.
       committedServersRef.current = [];
       publishQualifiedUpdateRunServers([]);
     },
@@ -222,8 +220,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
           },
           // SCIENT-FORK:START — only servers still eligible after the provider step update. A
           // server withdrawn meanwhile (availability, eligibility, or the sidebar leaving) is
-          // settled as not updated and named in the summary. It keeps its confirmed target, so
-          // Retry is offered only once that target is eligible again.
+          // settled as not updated, named in the summary, and offered Retry once eligible again.
           updateServers: async () => {
             const current = currentConfirmedServerTargets(servers, committedServersRef.current);
             const withdrawn = servers.filter(

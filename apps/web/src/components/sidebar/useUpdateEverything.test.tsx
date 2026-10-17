@@ -11,9 +11,9 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
+import { offerEligibleUpdateRetry } from "~/scient/desktopUpdate/updateEverythingRetry";
 import {
   describeUpdateCapsule,
-  offerEligibleUpdateRetry,
   type UpdateEverythingMachine,
   type UpdateRunMachine,
 } from "./updateEverything.logic";

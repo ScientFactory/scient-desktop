@@ -22,7 +22,7 @@ import {
   retryFailedUpdateRunServers,
 } from "./updateEverythingRun";
 // SCIENT-FORK:START — Retry follows each failed server's current eligibility.
-import { offerEligibleUpdateRetry } from "./updateEverything.logic";
+import { offerEligibleUpdateRetry } from "~/scient/desktopUpdate/updateEverythingRetry";
 import { useQualifiedUpdateRunServers } from "./updateEverythingRun";
 // SCIENT-FORK:END
 

@@ -888,30 +888,33 @@ const make = Effect.gen(function* () {
           // SCIENT-FORK:START retiring-session-worktree-retention — a session recorded
           // stopped after its physical close timed out can still run its process, and
           // isLive reports it; ask every stored session, then read only live payloads.
-          const sessionIds = yield* sql<{ provider_session_id: string }>`
-            SELECT provider_session_id FROM orchestration_v2_projection_provider_sessions
-          `;
-          // A stored session can stay ready after its runtime was released,
-          // for example once every thread detached; only a live one holds it.
-          const liveIds: Array<string> = [];
-          for (const row of sessionIds) {
-            if (yield* providerSessions.isLive(ProviderSessionId.make(row.provider_session_id)))
-              liveIds.push(row.provider_session_id);
-          }
-          const liveRows =
+          const liveIds = (yield* Effect.filter(
+            yield* sql<{ provider_session_id: string }>`
+              SELECT provider_session_id FROM orchestration_v2_projection_provider_sessions
+            `,
+            (row) => providerSessions.isLive(ProviderSessionId.make(row.provider_session_id)),
+          )).map((row) => row.provider_session_id);
+          const sessionRows =
             liveIds.length === 0
               ? []
               : yield* sql<{ payload_json: string }>`
-                  SELECT payload_json FROM orchestration_v2_projection_provider_sessions
-                  WHERE provider_session_id IN ${sql.in(liveIds)}
-                `;
-          for (const row of liveRows) {
-            const session = yield* decodeCleanupSession(row.payload_json);
+            SELECT payload_json FROM orchestration_v2_projection_provider_sessions
+            WHERE provider_session_id IN ${sql.in(liveIds)}
+          `;
+          // SCIENT-FORK:END retiring-session-worktree-retention
+          const sessions = yield* Effect.forEach(sessionRows, (row) =>
+            decodeCleanupSession(row.payload_json),
+          );
+          // A stored session can stay ready after its runtime was released,
+          // for example once every thread detached; only a live one holds it.
+          for (const session of sessions) {
             const cwd = path.resolve(session.cwd);
-            if (cwd === worktreePath || inside(worktreePath, cwd))
+            if (
+              (cwd === worktreePath || inside(worktreePath, cwd)) &&
+              (yield* providerSessions.isLive(session.id))
+            )
               return "provider session is still open";
           }
-          // SCIENT-FORK:END retiring-session-worktree-retention
           return null;
         });
         const blocked = yield* blockedSinceCheck();
