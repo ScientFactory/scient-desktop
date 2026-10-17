@@ -312,10 +312,14 @@ had run; all are test-side composition, fixed together:
 - The compute-bridge location tests read `cli.ts` source; they now compare the
   runtime layout with the asset list `scientServerAssets.ts` exports.
 - Codex's provider probe waits 20 s (#15945); the Scient timeout test advanced 11 s.
-- Upstream's new node-pty console-list test exercises upstream's node-pty patch.
-  Scient stays on node-pty ^1.1.0 without that patch, so the suite is skipped
-  (marked) and #18519's Windows helper fix is not active in Scient until the
-  node-pty decision is made.
+- Upstream's new node-pty console-list test exercises upstream's node-pty patch,
+  which Scient had not applied while it held node-pty at ^1.1.0.
+
+Owner decisions after review (2026-10-18): node-pty moves to upstream's
+`^1.2.0-beta.15` with upstream's patch (`35c3ad482a`), ending a hold carried since
+2026-09-26, so #18519's Windows console-list fix applies and its test runs; server
+terminal tests, build and desktop smoke pass on it. The protocol now adopts upstream
+authorization and dependency changes by default (`d2e22f41a0`).
 
 Process notes for the next alignment: concurrent `pnpm install`s in one worktree
 (started implicitly by `pnpm exec` while dependencies were stale) and a stalled
