@@ -42,10 +42,12 @@ import {
 } from "../../lib/composerContextRecords";
 import {
   producerIdFromComposerContextId,
-  toKindScopedComposerContextId,
   formatInlineContextReference,
 } from "../../lib/composerContextReferences";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  replaceComposerContextReferences,
+  toKindScopedComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 
 const isQueueOperationError = Schema.is(ScientThreadQueueOperationError);
 export const useQueueEditSessions = create<{

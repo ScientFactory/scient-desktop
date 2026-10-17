@@ -482,6 +482,10 @@ function makeReplayQueryRunner(
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.stop_task", taskId });
           }),
+        backgroundTasks: (toolUseId) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({ type: "query.background_tasks", toolUseId });
+          }).pipe(Effect.as(true)),
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });
         }),

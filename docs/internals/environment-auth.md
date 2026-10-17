@@ -72,11 +72,17 @@ authorization. Permission errors likewise retain a legacy `requiredScope` and
 add the exact `requiredPermission`, so a denied RPC stays decodable by old clients.
 Unknown response permissions are ignored; grant inputs stay strict.
 
-Ordinary pairing links grant the four client-operation scopes and read access to
-managed relay connectivity:
-`orchestration:read orchestration:operate terminal:operate review:write relay:read`.
-The desktop bootstrap credential and command-line administrative bootstrap
-credentials additionally grant `access:read access:write relay:write`.
+Pairing delegates a set of scopes. Exchanging a bootstrap credential can narrow
+that grant but cannot widen it. The default grant, used by ordinary pairing links
+and the desktop bootstrap credential alike, includes access and relay management
+(`access:read access:write relay:write`): `terminal:operate` is a shell as the
+server's user and `orchestration:operate` can start a full-access agent, and
+either can mint a session with every scope through `t3 auth session issue`, so
+withholding management from the default would not be a boundary. A narrower
+client gets explicit scopes. Creating another pairing link requires both
+`access:write` and every scope being delegated. The
+[auth handlers](../../apps/server/src/auth/http.ts) enforce this at issuance;
+client labels and device metadata have no authorization role.
 
 ## Reusable dev credential
 
@@ -196,7 +202,7 @@ only to DPoP-bound exchanges, where the token is additionally constrained by a
 proof key. See `SessionStore.ts` and `EnvironmentAuth.ts`.
 
 Requested scopes must be a subset of the one-time bootstrap credential grant.
-An ordinary paired client therefore cannot exchange its grant for
+A link issued with explicit narrower scopes therefore cannot be exchanged for
 `access:read`, `access:write`, or `relay:write`.
 
 ### DPoP-Bound Access Token

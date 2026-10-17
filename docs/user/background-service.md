@@ -133,3 +133,27 @@ terminal and keep that session open.
 
 The status command prints the log path. Keep diagnostic messages when reporting
 failures, but never share pairing credentials or the secrets directory.
+
+## Reclaim database space
+
+Scient removes superseded internal history on its own while it runs; your
+conversations are kept. A database created before this shrank automatically
+still holds the freed space on disk until a one-time offline repair returns it
+and turns on automatic shrinking. **Settings → Storage** suggests the repair
+when at least 1 GiB can be reclaimed and shows the exact command for that
+environment. Copy and run that command on the machine that hosts the
+environment; it names the installation and data directory that reported the
+space.
+
+The command runs `doctor`. It reports the database size and the space it can
+reclaim, then asks which repairs to run; `--fix` runs the recommended ones
+without a prompt, and `--dry-run` only reports. An installed background service
+for the same data directory is stopped for the repair and started again
+afterwards, also when the repair fails. Quit the desktop app or a server you
+started by hand first: the repair refuses to touch a database that is in use.
+
+The repair can take several minutes on a large database. It rebuilds the
+database through a temporary copy, so it needs free space of about the
+database's size twice over: once in the system temporary directory (`TMPDIR`
+or `/tmp` on Linux and macOS) and once next to the database for its
+write-ahead log.

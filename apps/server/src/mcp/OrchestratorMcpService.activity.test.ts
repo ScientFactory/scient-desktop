@@ -30,6 +30,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
@@ -47,7 +48,7 @@ const childRunId = RunId.make("run-mcp-child");
 const taskId = NodeId.make("node-mcp-task-1");
 const now = DateTime.makeUnsafe("2026-08-04T12:00:00.000Z");
 const codexDriver = ProviderDriverKind.make("codex");
-// Distinct from driver kind so a regression that re-derives from driver fails.
+
 const customCodexInstanceId = ProviderInstanceId.make("codex-custom-workspace");
 const parentInstanceId = ProviderInstanceId.make("codex");
 
@@ -385,6 +386,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
 });
 
 it("cross-project reads require a user attachment and writes retain caller authority", async () => {
+  let parentShell: OrchestrationV2ThreadShell | null = null;
   let parentRuns: ReadonlyArray<unknown> = [
     makeRun({ id: RunId.make("run-parent-live"), ordinal: 1, status: "running" }),
   ];
@@ -518,7 +520,9 @@ it("cross-project reads require a user attachment and writes retain caller autho
             Effect.succeed(
               threadId === foreignThreadId || threadId === childThreadId
                 ? (targetProjection(threadId).thread as unknown as OrchestrationV2ThreadShell)
-                : null,
+                : threadId === parentThreadId
+                  ? parentShell
+                  : null,
             ),
           getTimelinePage: (threadId) =>
             Effect.sync(() => {
@@ -667,7 +671,7 @@ it("cross-project reads require a user attachment and writes retain caller autho
       .interruptThread(makeScope(), { threadId: foreignThreadId })
       .pipe(Effect.flip);
     expect(staleInterrupt.code).toBe("parent_not_active");
-    // Nor create, change or remove scheduled work in another project.
+
     const staleSchedule = yield* service
       .scheduleTask(makeScope(), {
         projectId: foreignProjectId,
@@ -687,6 +691,29 @@ it("cross-project reads require a user attachment and writes retain caller autho
       .deleteScheduledTask(makeScope(), { scheduledTaskId: ScheduledTaskId.make("task-foreign") })
       .pipe(Effect.flip);
     expect(staleDelete.code).toBe("parent_not_active");
+    expect(sentInputs).toHaveLength(2);
+
+    // Upstream lets a background subagent keep writing after its parent's turn
+    // ends. Scient grants writes only to a run with a captured execution policy,
+    // so its parent's shell liveness alone still ends in the same refusal.
+    parentShell = {
+      ...liveThreadShell(parentThreadId, { activeRunId: null }),
+      pendingBackgroundTasks: [
+        { taskId: "background-subagent", kind: "subagent", providerInstanceId: parentInstanceId },
+      ],
+    };
+    const backgroundSend = yield* service
+      .sendToThread(makeScope(), { threadId: childThreadId, message: "background" })
+      .pipe(Effect.flip);
+    expect(backgroundSend.code).toBe("parent_not_active");
+    const backgroundDelegate = yield* service
+      .delegateTask(makeScope(), { task: "requires a run" })
+      .pipe(Effect.flip);
+    expect(backgroundDelegate.code).toBe("parent_not_active");
+    const backgroundCreate = yield* service
+      .createThreads(makeScope(), { threads: [{ prompt: "requires a run" }] })
+      .pipe(Effect.flip);
+    expect(backgroundCreate.code).toBe("parent_not_active");
     expect(sentInputs).toHaveLength(2);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

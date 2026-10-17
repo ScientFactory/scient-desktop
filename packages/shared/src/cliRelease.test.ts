@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  cliArchiveTarCommand,
   cliReleaseChannelOf,
   cliReleaseIndexPageUrl,
   newestCliReleaseVersion,
@@ -26,5 +27,15 @@ describe("Scient release channel isolation", () => {
     expect(cliReleaseIndexPageUrl(1)).toBe(
       "https://api.github.com/repos/ScientFactory/scient-desktop/releases?per_page=100&page=1",
     );
+  });
+});
+
+describe("CLI archive extraction", () => {
+  it("extracts with the System32 bsdtar on Windows and plain tar elsewhere", () => {
+    expect(cliArchiveTarCommand("linux", {})).toBe("tar");
+    expect(cliArchiveTarCommand("win32", { SystemRoot: "D:\\Win" })).toBe(
+      "D:\\Win\\System32\\tar.exe",
+    );
+    expect(cliArchiveTarCommand("win32", {})).toBe("C:\\Windows\\System32\\tar.exe");
   });
 });

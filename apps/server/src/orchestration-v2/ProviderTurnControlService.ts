@@ -236,8 +236,6 @@ export const layer: Layer.Layer<
           providerTurnId: loaded.providerTurn.id,
           requestRuntimeRestart: true,
         });
-        // Give native terminal ingestion time to finish before the Stop
-        // follow-up repairs a run whose provider no longer reports on it.
         // The wait is real time: ingestion runs on other fibers and never
         // advances a test clock, so a test clock would hold Stop forever.
         yield* Effect.gen(function* () {

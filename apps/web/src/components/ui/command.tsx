@@ -141,7 +141,6 @@ function CommandList({
   );
 }
 
-// Pair with a LegendList child; the list owns scrolling and spacing.
 function CommandListVirtualized({
   className,
   ...props

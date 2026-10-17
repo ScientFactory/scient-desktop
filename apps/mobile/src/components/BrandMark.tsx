@@ -2,12 +2,15 @@ import Constants from "expo-constants";
 import { Image } from "expo-image";
 import { View } from "react-native";
 
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 import { SCIENT_BRAND_MARK_SOURCE } from "./brandAssets";
 
 const appVariant = Constants.expoConfig?.extra?.appVariant;
+// SCIENT-FORK:START mobile-stage-label
+// Scient keeps its own release-stage label; upstream T3's Alpha-to-Beta rename is not adopted.
 const DEFAULT_STAGE_LABEL =
   appVariant === "development" ? "Dev" : appVariant === "preview" ? "Preview" : "Alpha";
+// SCIENT-FORK:END mobile-stage-label
 
 export function BrandMark(props: { readonly compact?: boolean; readonly stageLabel?: string }) {
   const compact = props.compact ?? false;

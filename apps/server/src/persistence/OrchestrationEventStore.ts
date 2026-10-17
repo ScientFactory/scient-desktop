@@ -8,18 +8,6 @@ import {
   turnItemMetadataSql,
 } from "../orchestration-v2/scient-fork/ContextHistorySql.ts";
 // SCIENT-FORK:END
-/**
- * Historical name for the shared application event store.
- *
- * Owns durable append/replay access for project events and V2 agent-thread
- * events under one global sequence. It does not reduce events into read models
- * or apply command validation rules.
- *
- * Uses Effect `Context.Service` for dependency injection and exposes typed
- * persistence/decode errors for event append and replay operations.
- *
- * @module OrchestrationEventStore
- */
 import {
   ApplicationEventMetadata,
   ApplicationProjectEvent,
@@ -64,14 +52,12 @@ import {
   stampThreadWorkspaceAuthorityRevision,
 } from "./ScientWorkspaceAuthorityRevision.ts";
 
-/** A project event before the store assigns its sequence. */
 export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer Event
   ? Event extends ApplicationProjectEvent
     ? Omit<Event, "sequence">
     : never
   : never;
 
-/** OrchestrationEventStore - Service tag for the shared application event log. */
 export class OrchestrationEventStore extends Context.Service<
   OrchestrationEventStore,
   {
@@ -84,23 +70,16 @@ export class OrchestrationEventStore extends Context.Service<
         Parameters<typeof attachmentPublicationProven>[2],
       ]
     ) => Effect.Effect<boolean, OrchestrationEventStoreError>;
-    /** Append one project event to the shared application log. */
     readonly appendProjectEvent: (
       event: UnsequencedProjectEvent,
     ) => Effect.Effect<ApplicationProjectEvent, OrchestrationEventStoreError>;
 
-    /** Append V2 agent events to the same globally ordered application log. */
     readonly appendAgentEvents: (input: {
       readonly commandId?: CommandId;
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, OrchestrationEventStoreError>;
 
     /**
-     * Read only V2 thread events from the application log.
-     *
-     * Reads in fixed-size sequence pages until the filtered range is exhausted;
-     * `limit` caps raw rows across pages, including skipped unknown types.
-     *
      * A row whose `event_type` this build does not know fails the read unless
      * `skipUnknownEventTypes` is set, which logs and drops it instead. Only
      * client thread replay opts in; anything that builds server state stays strict.
@@ -115,7 +94,6 @@ export class OrchestrationEventStore extends Context.Service<
       readonly skipUnknownEventTypes?: boolean;
     }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestrationEventStoreError>;
 
-    /** Measure one thread's bounded replay without loading or decoding its payloads. */
     readonly getAgentReplayStats: (input: {
       readonly threadId: ThreadId;
       readonly afterSequence: number;
@@ -124,24 +102,18 @@ export class OrchestrationEventStore extends Context.Service<
     }) => Effect.Effect<
       {
         readonly eventCount: number;
-        /** UTF-8 bytes in persisted payload JSON before decoding or wire projection. */
         readonly rawPayloadBytes: number;
         readonly hasCreateEvent: boolean;
       },
       OrchestrationEventStoreError
     >;
 
-    /**
-     * Measure the retained application-event range `(afterSequence, throughSequence]`
-     * without loading or decoding its payloads.
-     */
     readonly getReplayStats: (input: {
       readonly afterSequence: number;
       readonly throughSequence: number;
     }) => Effect.Effect<
       {
         readonly eventCount: number;
-        /** UTF-8 bytes in persisted payload JSON before decoding or wire projection. */
         readonly rawPayloadBytes: number;
       },
       OrchestrationEventStoreError
@@ -154,8 +126,6 @@ export class OrchestrationEventStore extends Context.Service<
     readonly latestApplicationSequence: Effect.Effect<number, OrchestrationEventStoreError>;
 
     /**
-     * Read the finite retained application-event range `(afterSequence, throughSequence]`.
-     *
      * A row whose `event_type` this build does not know fails the read unless
      * `skipUnknownEventTypes` is set, which logs and drops it instead. Only
      * client shell replay opts in; anything that builds server state stays strict.
@@ -171,11 +141,9 @@ export class OrchestrationEventStore extends Context.Service<
       events: ReadonlyArray<ApplicationStoredEvent>,
     ) => Effect.Effect<void>;
 
-    /** Race-free replay-to-live stream for project and V2 thread events. */
     readonly streamApplicationEvents: (input?: {
       readonly afterSequence?: number;
     }) => Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError>;
-    /** Project transport events before bounding replay and the live tail. */
     readonly streamProjectedApplicationEvents: <A extends { readonly sequence: number }>(input: {
       readonly afterSequence?: number;
       readonly project: (event: ApplicationStoredEvent) => A;
@@ -310,7 +278,6 @@ function rowToApplicationStoredEvent(
 
 const isKnownProjectEventType = Schema.is(ProjectEventType);
 
-/** Filter only unknown discriminants; known types still undergo strict payload decoding. */
 const keepReplayRow = (row: ApplicationEventRow, skipUnknownEventTypes?: boolean) =>
   skipUnknownEventTypes !== true ||
   (row.aggregate_kind === "project"
@@ -367,9 +334,7 @@ export type { ApplicationEventRow };
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
-  // Sequence of the latest row storing each subagent's full prompt. The INSERT re-checks it.
   const promptHints = new Map<string, number>();
-  // Puts back a subagent prompt that appendAgentEvents stored once, behind `promptSequence`.
   const restoredPayloadJson = sql`CASE
     WHEN orchestration_events.event_type IN ('subagent.updated', 'turn-item.updated')
       AND json_type(orchestration_events.payload_json, '$.promptSequence') = 'integer'
@@ -542,9 +507,8 @@ const makeEventStore = Effect.gen(function* () {
           const hint = promptKey === undefined ? undefined : promptHints.get(promptKey);
           const payloadJson = yield* encodeJson(encoded.payload);
           // Progress ticks repeat an unchanged prompt, so store it once and point
-          // later rows at it. Keep an empty prompt so older servers still decode
-          // the row. ProjectionMaintenance never deletes these anchor rows. The
-          // hint is re-checked here because its transaction may have rolled back.
+          // later rows at it. ProjectionMaintenance never deletes these anchor
+          // rows.
           const storedPayload =
             hint !== undefined && subagent !== undefined
               ? sql`CASE WHEN EXISTS (
@@ -604,7 +568,6 @@ const makeEventStore = Effect.gen(function* () {
           `;
           const row = rows[0];
           if (promptKey !== undefined && row !== undefined) {
-            // Delete first so Map order tracks recent use and eviction drops idle subagents.
             promptHints.delete(promptKey);
             promptHints.set(
               promptKey,

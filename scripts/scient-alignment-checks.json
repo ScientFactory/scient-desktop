@@ -149,12 +149,12 @@
         "apps/web/src/components/chat/QueuedRunsControl",
         "apps/mobile/src/",
         "apps/web/src/components/ChatView",
-        "apps/web/src/components/chat/queuedRunShortcuts"
+        "apps/web/src/scient/threadQueue/queueShortcuts"
       ],
       "consumers": [
         "Native Orchestrator admission -> EventSink/outbox -> worker start; TerminalQueueHold -> explicit Resume/selected Send/admitted direct Send",
         "Legacy readers/cutover retain inert held queue; web/mobile/client-runtime commands consume same contract",
-        "ChatComposer submission intent -> resolveComposerSteerRequested; queuedRunShortcuts -> actual QueuedRunsControl imperative handle -> exact environment/thread/queuedRun/targetRun command"
+        "ChatComposer submission intent -> resolveComposerSteerRequested; ChatView shortcut map -> scient/threadQueue/queueShortcuts -> actual QueuedRunsControl imperative handle (else the Scient strip head) -> exact environment/thread/queuedRun/targetRun command"
       ],
       "decidingAssertions": [
         "NativeQueueHoldPolicy drains success FIFO once, holds Stop/failure, admits explicit Resume/selected Send/direct Send, refuses active head; continuation/Queue/Steer fallback never release prior held work. Late old terminal/checkpoint cannot re-hold replacement.",
@@ -172,7 +172,7 @@
         ],
         "web-unit": [
           "src/components/chat/ComposerPrimaryActions.test.tsx",
-          "src/components/chat/queuedRunShortcuts.test.tsx",
+          "src/scient/threadQueue/queueShortcuts.test.tsx",
           "src/scient/threadQueue/disposition.test.ts"
         ]
       },

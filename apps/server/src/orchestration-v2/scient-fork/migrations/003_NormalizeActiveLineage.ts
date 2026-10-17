@@ -34,7 +34,7 @@ const encodeEvidencePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.U
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // --- Add all missing columns (conditional ALTER) ---
+  // Add all missing columns (conditional ALTER).
   // This includes columns that migration 2 would have added, so migration 3
   // is self-sufficient even on databases where migrations 1/2 were pre-seeded
   // in the ledger by the legacy ensureScientForkSchema without actually
@@ -68,7 +68,7 @@ export default Effect.gen(function* () {
   yield* addColumn("last_error", "TEXT");
   yield* addColumn("updated_at", "TEXT");
 
-  // --- Quarantine malformed rows ---
+  // Quarantine malformed rows.
 
   yield* sql`
     CREATE TABLE IF NOT EXISTS scient_thread_lineage_quarantine (
@@ -131,7 +131,7 @@ export default Effect.gen(function* () {
     );
   }
 
-  // --- Normalize prototype modes and NULL lifecycle fields ---
+  // Normalize prototype modes and NULL lifecycle fields.
 
   yield* sql`
     UPDATE scient_thread_lineage
@@ -154,8 +154,6 @@ export default Effect.gen(function* () {
       attempt_count = COALESCE(attempt_count, 0),
       updated_at = COALESCE(updated_at, created_at)
   `;
-
-  // --- Create indexes ---
 
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_scient_thread_lineage_forked_from
