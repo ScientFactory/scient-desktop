@@ -99,16 +99,26 @@ test("adapter, session and ChatView changes include their untouched authority co
   NodeAssert.ok(ids(["apps/web/src/components/chat/ModelPickerContent.tsx"]).includes("settings"));
 });
 
-test("ACP protocol changes select the native ACP fork consumer beside the adapters", () => {
-  const selection = selectBoundaries(["packages/effect-acp/src/client.ts"]);
-  NodeAssert.deepEqual(
-    selection.boundaries.map((row) => row.id),
-    ["adapters", "fork"],
+test("provider protocol clients select every boundary, like the provider packages", () => {
+  for (const path of [
+    "packages/effect-acp/src/client.ts",
+    "packages/effect-codex-app-server/src/client.ts",
+    "packages/effect-omp-rpc/src/client.ts",
+  ]) {
+    NodeAssert.deepEqual(ids([path]), all, path);
+  }
+  const selected = selectBoundaries(["packages/effect-omp-rpc/src/client.ts"]).boundaries;
+  NodeAssert.ok(
+    selected
+      .find((row) => row.id === "fork")
+      .checks.server.includes(
+        "src/orchestration-v2/scient-fork/ConversationForkNativeAnswer.integration.test.ts",
+      ),
   );
   NodeAssert.ok(
-    selection.boundaries[1].checks.server.includes(
-      "src/orchestration-v2/scient-fork/ConversationForkNativeAnswer.integration.test.ts",
-    ),
+    selected
+      .find((row) => row.id === "provider")
+      .checks.server.some((check) => check.includes("OmpNativeConjunctions")),
   );
 });
 

@@ -19,6 +19,9 @@
     "apps/mobile/src/",
     "apps/server/src/provider/",
     "packages/provider-",
+    "packages/effect-acp/",
+    "packages/effect-codex-app-server/",
+    "packages/effect-omp-rpc/",
     "apps/web/src/components/chat/ChatComposer",
     "apps/web/src/components/chat/ComposerPrimaryActions"
   ],
