@@ -1,106 +1,148 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeSharedSshPreparation } from "./scientSshPreparation.ts";
 
 const KEY = "user@host:22";
+const BOUNDED = true;
+const FULL = false;
 
-// Counts how often the shared preparation actually runs.
-function harness() {
-  const preparations = makeSharedSshPreparation<string, string>(() => "still preparing");
+// Counts how often a preparation job actually starts.
+const harness = Effect.gen(function* () {
+  const scope = yield* Scope.Scope;
+  const preparations = makeSharedSshPreparation<string>(scope, () => "still preparing");
   let runs = 0;
-  const prepare = (outcome: Effect.Effect<string, string>) =>
+  const job = (outcome: Effect.Effect<void, string>) =>
     Effect.suspend(() => {
       runs += 1;
       return outcome;
     });
-  return { run: preparations.run, prepare, runs: () => runs };
-}
+  return { await: preparations.await, job, runs: () => runs };
+});
+
+const failAfter = (duration: Duration.Input, error: string) =>
+  Effect.sleep(duration).pipe(Effect.andThen(Effect.fail(error)));
 
 describe("shared SSH preparation", () => {
-  it.effect("returns a lone caller's failure without replaying it", () =>
+  it.effect("lets a full-wait caller wait for the whole preparation", () =>
     Effect.gen(function* () {
-      const { run, prepare, runs } = harness();
-      assert.equal(yield* Effect.flip(run(KEY, prepare(Effect.fail("disk full")))), "disk full");
-      assert.equal(yield* run(KEY, prepare(Effect.succeed("ready"))), "ready");
-      assert.equal(runs(), 2);
-    }),
-  );
-
-  it.effect("answers a retry within its budget and replays the later failure once", () =>
-    Effect.gen(function* () {
-      const { run, prepare, runs } = harness();
-      const slowFailure = Effect.sleep("60 seconds").pipe(Effect.andThen(Effect.fail("disk full")));
-      const abandoned = yield* Effect.forkChild(run(KEY, prepare(slowFailure)));
-      yield* Effect.yieldNow;
-      const retry = yield* Effect.forkChild(run(KEY, prepare(Effect.succeed("unused"))));
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust("8 seconds");
-      assert.equal(yield* Effect.flip(Fiber.join(retry)), "still preparing");
-
+      const prep = yield* harness;
+      const onboarding = yield* Effect.forkChild(
+        prep.await(KEY, prep.job(failAfter("60 seconds", "disk full")), FULL),
+      );
       yield* TestClock.adjust("60 seconds");
-      assert.equal(yield* Effect.flip(Fiber.join(abandoned)), "disk full");
-      assert.equal(yield* Effect.flip(run(KEY, prepare(Effect.succeed("unused")))), "disk full");
-      assert.equal(runs(), 1);
-
-      assert.equal(yield* run(KEY, prepare(Effect.succeed("ready"))), "ready");
-      assert.equal(runs(), 2);
-    }),
+      assert.equal(yield* Effect.flip(Fiber.join(onboarding)), "disk full");
+      yield* prep.await(KEY, prep.job(Effect.void), FULL);
+      assert.equal(prep.runs(), 2);
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("lets a retry prepare again after the preparation it waited for succeeds", () =>
+  it.effect(
+    "answers a saved connection within its budget and keeps a later failure for the next one",
+    () =>
+      Effect.gen(function* () {
+        const prep = yield* harness;
+        const first = yield* Effect.forkChild(
+          prep.await(KEY, prep.job(failAfter("15500 millis", "disk full")), BOUNDED),
+        );
+        yield* TestClock.adjust("8 seconds");
+        assert.equal(yield* Effect.flip(Fiber.join(first)), "still preparing");
+        // The preparation fails while no attempt is waiting, during the retry backoff.
+        yield* TestClock.adjust("8 seconds");
+        assert.equal(
+          yield* Effect.flip(prep.await(KEY, prep.job(Effect.void), BOUNDED)),
+          "disk full",
+        );
+        assert.equal(prep.runs(), 1);
+        yield* prep.await(KEY, prep.job(Effect.void), BOUNDED);
+        assert.equal(prep.runs(), 2);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("gives an outcome inside the budget to the waiting caller, once", () =>
     Effect.gen(function* () {
-      const { run, prepare, runs } = harness();
-      const slowSuccess = Effect.sleep("3 seconds").pipe(Effect.as("first"));
-      const first = yield* Effect.forkChild(run(KEY, prepare(slowSuccess)));
-      yield* Effect.yieldNow;
-      const retry = yield* Effect.forkChild(run(KEY, prepare(Effect.succeed("reused"))));
-      yield* Effect.yieldNow;
+      const prep = yield* harness;
+      const waiting = yield* Effect.forkChild(
+        prep.await(KEY, prep.job(failAfter("3 seconds", "refused")), BOUNDED),
+      );
       yield* TestClock.adjust("3 seconds");
-      assert.equal(yield* Fiber.join(first), "first");
-      assert.equal(yield* Fiber.join(retry), "reused");
-      assert.equal(runs(), 2);
-    }),
+      assert.equal(yield* Effect.flip(Fiber.join(waiting)), "refused");
+      yield* prep.await(KEY, prep.job(Effect.void), BOUNDED);
+      assert.equal(prep.runs(), 2);
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("gives a failure within the budget to the waiting retry and does not replay it", () =>
+  it.effect("lets a full-wait caller join a running preparation beyond the budget", () =>
     Effect.gen(function* () {
-      const { run, prepare, runs } = harness();
-      const quickFailure = Effect.sleep("3 seconds").pipe(Effect.andThen(Effect.fail("refused")));
-      const first = yield* Effect.forkChild(run(KEY, prepare(quickFailure)));
+      const prep = yield* harness;
+      const saved = yield* Effect.forkChild(
+        prep.await(KEY, prep.job(Effect.sleep("60 seconds")), BOUNDED),
+      );
       yield* Effect.yieldNow;
-      const retry = yield* Effect.forkChild(run(KEY, prepare(Effect.succeed("unused"))));
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust("3 seconds");
-      assert.equal(yield* Effect.flip(Fiber.join(first)), "refused");
-      assert.equal(yield* Effect.flip(Fiber.join(retry)), "refused");
-      assert.equal(yield* run(KEY, prepare(Effect.succeed("ready"))), "ready");
-      assert.equal(runs(), 2);
-    }),
+      const onboarding = yield* Effect.forkChild(prep.await(KEY, prep.job(Effect.void), FULL));
+      yield* TestClock.adjust("60 seconds");
+      assert.equal(yield* Effect.flip(Fiber.join(saved)), "still preparing");
+      yield* Fiber.join(onboarding);
+      assert.equal(prep.runs(), 1);
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("lets a waiting retry prepare itself when the preparation is interrupted", () =>
+  it.effect("keeps the preparation running when its caller is interrupted", () =>
     Effect.gen(function* () {
-      const { run, prepare, runs } = harness();
-      const first = yield* Effect.forkChild(run(KEY, prepare(Effect.never)));
+      const prep = yield* harness;
+      const caller = yield* Effect.forkChild(
+        prep.await(KEY, prep.job(failAfter("30 seconds", "disk full")), FULL),
+      );
       yield* Effect.yieldNow;
-      const retry = yield* Effect.forkChild(run(KEY, prepare(Effect.succeed("ready"))));
+      yield* Fiber.interrupt(caller);
+      yield* TestClock.adjust("30 seconds");
+      assert.equal(
+        yield* Effect.flip(prep.await(KEY, prep.job(Effect.void), BOUNDED)),
+        "disk full",
+      );
+      assert.equal(prep.runs(), 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("starts one preparation per host for concurrent callers, and a newer one after", () =>
+    Effect.gen(function* () {
+      const prep = yield* harness;
+      const callers = yield* Effect.forkChild(
+        Effect.all(
+          [1, 2, 3].map(() =>
+            Effect.flip(prep.await(KEY, prep.job(failAfter("2 seconds", "refused")), BOUNDED)),
+          ),
+          { concurrency: "unbounded" },
+        ),
+      );
+      yield* TestClock.adjust("2 seconds");
+      assert.deepEqual(yield* Fiber.join(callers), ["refused", "refused", "refused"]);
+      assert.equal(prep.runs(), 1);
+      // The delivered outcome retires that job: the next caller starts a new one,
+      // and a caller after it joins the new one rather than starting a third.
+      const next = yield* Effect.forkChild(
+        prep.await(KEY, prep.job(Effect.sleep("5 seconds")), BOUNDED),
+      );
       yield* Effect.yieldNow;
-      yield* Fiber.interrupt(first);
-      assert.equal(yield* Fiber.join(retry), "ready");
-      assert.equal(runs(), 2);
-    }),
+      const joiner = yield* Effect.forkChild(prep.await(KEY, prep.job(Effect.void), BOUNDED));
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(next);
+      yield* Fiber.join(joiner);
+      assert.equal(prep.runs(), 2);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("keeps hosts independent", () =>
     Effect.gen(function* () {
-      const { run, prepare } = harness();
-      const busy = yield* Effect.forkChild(run(KEY, prepare(Effect.never)));
+      const prep = yield* harness;
+      yield* Effect.forkChild(prep.await(KEY, prep.job(Effect.never), FULL));
       yield* Effect.yieldNow;
-      assert.equal(yield* run("user@other:22", prepare(Effect.succeed("ready"))), "ready");
-      yield* Fiber.interrupt(busy);
-    }),
+      yield* prep.await("user@other:22", prep.job(Effect.void), BOUNDED);
+      assert.equal(prep.runs(), 2);
+    }).pipe(Effect.scoped),
   );
 });

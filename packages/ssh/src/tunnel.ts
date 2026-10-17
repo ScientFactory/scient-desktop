@@ -189,7 +189,8 @@ interface SshAuthAttemptInput<T> extends SshAuthOperationInput<T> {
 export interface SshEnvironmentManagerShape {
   readonly ensureEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { readonly issuePairingToken?: boolean },
+    // SCIENT-FORK: boundedWait — a retrying saved connection (scientSshPreparation.ts).
+    options?: { readonly issuePairingToken?: boolean; readonly boundedWait?: boolean },
   ) => Effect.Effect<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -1507,11 +1508,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnels = new Map<string, SshTunnelEntry>();
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
-  // SCIENT-FORK:START — connection retries share a running host preparation.
-  const preparations = makeSharedSshPreparation<
-    DesktopSshEnvironmentBootstrap,
-    SshEnvironmentEffectError
-  >(
+  // SCIENT-FORK:START — host preparations run as manager-owned jobs.
+  const preparations = makeSharedSshPreparation<SshEnvironmentEffectError>(
+    managerScope,
     () =>
       new SshLaunchError({
         message:
@@ -1843,7 +1842,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 
   const ensureEnvironment = Effect.fn("ssh/tunnel.ensureEnvironment")(function* (
     target: DesktopSshEnvironmentTarget,
-    requestOptions?: { readonly issuePairingToken?: boolean },
+    // SCIENT-FORK: boundedWait — a retrying saved connection (scientSshPreparation.ts).
+    requestOptions?: { readonly issuePairingToken?: boolean; readonly boundedWait?: boolean },
   ): Effect.fn.Return<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -1871,7 +1871,15 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(runner),
       key,
     });
-    const prepare = withTargetLock(
+    // SCIENT-FORK:START — a long host preparation outlives a retried saved
+    // connection; it runs as a manager-owned job (scientSshPreparation.ts).
+    yield* preparations.await(
+      key,
+      Effect.asVoid(withTargetLock(key, ensureTunnelEntry(key, resolvedTarget, runner))),
+      requestOptions?.boundedWait === true,
+    );
+    // SCIENT-FORK:END
+    return yield* withTargetLock(
       key,
       Effect.gen(function* () {
         const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
@@ -1904,8 +1912,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         };
       }),
     );
-    // SCIENT-FORK: connection retries share a running preparation (scientSshPreparation.ts).
-    return yield* preparations.run(key, prepare);
   });
 
   const disconnectEnvironment = Effect.fn("ssh/tunnel.disconnectEnvironment")(function* (

@@ -297,6 +297,8 @@ const layerCapabilities = Layer.effectContext(
           try: () =>
             bridge.ensureSshEnvironment(input.target, {
               issuePairingToken: true,
+              // SCIENT-FORK: the supervisor retries, so a long host preparation answers in time.
+              boundedWait: true,
             }),
           catch: sshPreparationError,
         });

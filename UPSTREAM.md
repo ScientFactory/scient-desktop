@@ -1343,7 +1343,11 @@ copies an earlier Scient home's `userdata` out of `~/.t3` once
 when the migration ledger records a Scient-only migration, after stopping the
 server this launcher started there (once its process identity is confirmed),
 while holding that home's ownership lock, through SQLite's backup API, and
-never through symbolic links.
+never through symbolic links. A host's preparation runs as a job the SSH
+environment manager owns (`packages/ssh/src/scientSshPreparation.ts`); saved
+connections pass the `boundedWait` ensure option so a retry is answered within
+the renderer's attempt deadline, while adding a host still waits for the whole
+preparation.
 Worktrees, projects and scratch folders stay in place because the database and
 Git refer to them by absolute path; the data in `~/.t3` is left in place. Upstream
 merges must not restore `~/.t3` paths in these scripts. The
