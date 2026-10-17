@@ -8,10 +8,15 @@ import {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
-import type { UpdateEverythingMachine, UpdateRunMachine } from "./updateEverything.logic";
+import {
+  describeUpdateCapsule,
+  offerEligibleUpdateRetry,
+  type UpdateEverythingMachine,
+  type UpdateRunMachine,
+} from "./updateEverything.logic";
 
 type TestEnvironment = {
   environmentId: EnvironmentId;
@@ -28,10 +33,11 @@ const testState = vi.hoisted(() => ({
   updateStateAtom: undefined as Atom.Atom<{ status: "idle" }> | undefined,
   availability: undefined as AsyncResult.AsyncResult<boolean, string> | undefined,
   updateProviders: vi.fn<() => Promise<ReadonlyArray<never>>>(),
+  setRun: vi.fn<(typeof import("./updateEverythingRun"))["setUpdateEverythingRun"]>(),
   settleMachine:
     vi.fn<
       (
-        environmentId: string,
+        environmentId: EnvironmentId,
         failure: string | null,
         options?: { readonly serverUpdated?: boolean; readonly providerFailure?: string | null },
       ) => void
@@ -64,6 +70,7 @@ vi.mock("~/rpc/atomRegistry", () => ({
     get: (atom: Atom.Atom<unknown>) => testState.registry!.get(atom),
     update: <R, W>(atom: Atom.Writable<R, W>, f: (value: R) => W) =>
       testState.registry!.update(atom, f),
+    set: <R, W>(atom: Atom.Writable<R, W>, value: W) => testState.registry!.set(atom, value),
   },
 }));
 vi.mock("~/state/server", () => ({
@@ -95,7 +102,7 @@ vi.mock("./updateEverythingRun", async (importOriginal) => {
   const original = await importOriginal<typeof import("./updateEverythingRun")>();
   testState.runModule = original;
   return {
-    setUpdateEverythingRun: () => {},
+    setUpdateEverythingRun: testState.setRun,
     settleUpdateRunMachine: testState.settleMachine,
     showUpdateEverythingResult: testState.showResult,
     saveUpdateEverythingResult: () => {},
@@ -179,6 +186,7 @@ beforeEach(() => {
   testState.availability = AsyncResult.success(true);
   testState.updateProviders.mockReset().mockResolvedValue([]);
   testState.settleMachine.mockReset();
+  testState.setRun.mockReset();
   testState.showResult.mockReset();
   testState.updateServer
     .mockReset()
@@ -436,9 +444,131 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
     }
     const machines = run.useUpdateEverythingRun()?.machines ?? [];
     expect(machines.find((machine) => machine.environmentId === "service")).toMatchObject({
-      server: null,
+      server: savedService,
       result: "failed",
       failure: "Not retried; it is no longer eligible for this update.",
     });
   },
 );
+
+// SCIENT-FORK:START — a withdrawn server keeps its confirmed target, so Retry returns once
+// that target is eligible again, and never sends a stale one.
+describe("a server withdrawn when its step starts", () => {
+  /** Runs a pass whose service goes offline during the provider step, recording the real run. */
+  async function passWithOfflineService() {
+    const run = testState.runModule!;
+    testState.setRun.mockImplementation(run.setUpdateEverythingRun);
+    testState.settleMachine.mockImplementation(run.settleUpdateRunMachine);
+    const pass = await holdPass();
+    const [service, desktop] = testState.environments;
+    testState.environments = [{ ...service!, connection: { phase: "offline" } }, desktop!];
+    await act(() => renderer!.update(<Probe />));
+    await pass.finish();
+    expect(testState.updateServer.mock.calls.map(([request]) => request.environmentId)).toEqual([
+      "desktop",
+    ]);
+    testState.updateServer.mockClear();
+    return { run, service: service! };
+  }
+
+  function capsuleAction(run: typeof import("./updateEverythingRun")) {
+    const current = run.useUpdateEverythingRun()!;
+    return offerEligibleUpdateRetry(
+      describeUpdateCapsule(
+        current,
+        current.machines.map((machine) => ({ machine, status: machine.result ?? "waiting" })),
+        null,
+        0,
+      ),
+      current.machines,
+      run.useQualifiedUpdateRunServers(),
+    ).action;
+  }
+
+  it("offers Retry once it is back online and retries its current eligible target", async () => {
+    const { run, service } = await passWithOfflineService();
+    expect(run.useUpdateEverythingRun()?.machines).toMatchObject([
+      {
+        environmentId: "service",
+        result: "failed",
+        failure: "Not updated; it was no longer eligible when servers updated.",
+        server: { environmentId: "service", targetVersion: "0.6.2", selfUpdate: "boot-service" },
+      },
+      { environmentId: "desktop", result: "done", server: null },
+    ]);
+    // While it stays offline, nothing is retried.
+    expect(capsuleAction(run)).toBe("dismiss");
+    const update = vi.fn<(target: ServerUpdateTarget) => Promise<ServerUpdateOutcome>>(
+      async () => ({ status: "updated" }),
+    );
+    await act(async () => {
+      run.retryFailedUpdateRunServers(update);
+    });
+    expect(update).not.toHaveBeenCalled();
+    expect(capsuleAction(run)).toBe("dismiss");
+
+    // Back online with a changed flag: Retry returns and takes the current flags.
+    testState.environments = [
+      {
+        ...service,
+        serverConfig: {
+          ...service.serverConfig,
+          settings: { continueThreadsAfterServerUpdate: false },
+        },
+      },
+      testState.environments[1]!,
+    ];
+    await act(() => renderer!.update(<Probe />));
+    expect(capsuleAction(run)).toBe("retry");
+    await act(async () => {
+      run.retryFailedUpdateRunServers(update);
+    });
+    expect(update.mock.calls).toEqual([
+      [
+        expect.objectContaining({
+          environmentId: "service",
+          selfUpdate: "boot-service",
+          targetVersion: "0.6.2",
+          continueThreadsAfterServerUpdate: false,
+        }),
+        { quiet: true },
+      ],
+    ]);
+  });
+
+  it.each(["version", "mechanism"] as const)(
+    "never retries a target whose confirmed %s was replaced",
+    async (change) => {
+      const { run, service } = await passWithOfflineService();
+      const capabilities = { ...service.serverConfig.environment.capabilities };
+      if (change === "mechanism") {
+        capabilities.serverSelfUpdate = "desktop-managed";
+        capabilities.desktopAppUpdate = true;
+      }
+      testState.environments = [
+        {
+          ...service,
+          serverConfig: {
+            ...service.serverConfig,
+            environment: { ...service.serverConfig.environment, capabilities },
+          },
+        },
+        testState.environments[1]!,
+      ];
+      // Online and behind again, but for a different version or mechanism than confirmed.
+      await act(() => renderer!.update(<Probe version={change === "version" ? "0.6.3" : null} />));
+      expect(run.useQualifiedUpdateRunServers()).toContainEqual(
+        expect.objectContaining({ environmentId: "service" }),
+      );
+      expect(capsuleAction(run)).toBe("dismiss");
+      const update = vi.fn<(target: ServerUpdateTarget) => Promise<ServerUpdateOutcome>>(
+        async () => ({ status: "updated" }),
+      );
+      await act(async () => {
+        run.retryFailedUpdateRunServers(update);
+      });
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
+});
+// SCIENT-FORK:END
