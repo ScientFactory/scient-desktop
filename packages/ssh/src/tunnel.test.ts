@@ -1,4 +1,7 @@
 import * as NodeNet from "node:net";
+// SCIENT-FORK:START
+import * as NodeSqlite from "node:sqlite";
+// SCIENT-FORK:END
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -25,6 +28,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as SshAuth from "./auth.ts";
 import { SshCommandError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
+// SCIENT-FORK:START
+import {
+  buildRemoteScientHomeMigrationScript,
+  SCIENT_HOME_MIGRATION_REQUIRED,
+} from "./scientRemoteHome.ts";
+// SCIENT-FORK:END
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
@@ -116,7 +125,12 @@ describe("ssh tunnel scripts", () => {
       script,
       `T3_RELEASE_BASE_URL='https://github.com/${SCIENT_DESKTOP_RELEASE_REPOSITORY}/releases/download'`,
     );
-    assert.include(script, 'T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"');
+    // SCIENT-FORK: runtimes unpack under Scient's remote home, never T3's ~/.t3.
+    assert.include(
+      script,
+      'T3_RUNTIME_DIR="$HOME/.scient-next/runtime/versions/$T3_ARCHIVE_VERSION"',
+    );
+    assert.notInclude(script, "$HOME/.t3");
     assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"');
     assert.include(script, "SHA256SUMS");
     assert.include(script, 'exec "$T3_RUNTIME_DIR/t3" "$@"');
@@ -128,7 +142,7 @@ describe("ssh tunnel scripts", () => {
     // the completion marker after acquiring it.
     assert.include(
       script,
-      'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
+      'T3_LOCK="$HOME/.scient-next/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
     );
     // mkdir is the exclusive create; the pid follows atomically. A dead owner
     // is reclaimed at once, a never-published owner after a short grace.
@@ -304,6 +318,71 @@ describe("ssh tunnel scripts", () => {
     );
     assert.include(script, 'exec "$T3_CLI_PATH" "$@"');
     assert.notInclude(script, "exec npx --yes scient.tgz; touch /tmp/scient-owned");
+  });
+
+  it("keeps remote state in Scient's home and reads ~/.t3 only to copy it once", () => {
+    const stateKey = "711bc738002d72fd";
+    const packageSpec = scientServerPackageSpec("0.6.21");
+    const launch = SshTunnel.buildRemoteLaunchScript({ packageSpec });
+    const pairing = SshTunnel.buildRemotePairingScript(stateKey, { packageSpec });
+    const stop = SshTunnel.buildRemoteStopScript(stateKey);
+
+    assert.include(launch, 'DEFAULT_SERVER_HOME="$HOME/.scient-next"');
+    assert.include(launch, 'STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/$STATE_KEY"');
+    assert.include(pairing, 'DEFAULT_SERVER_HOME="$HOME/.scient-next"');
+    assert.include(pairing, `STATE_DIR="$DEFAULT_SERVER_HOME/ssh-launch/${stateKey}"`);
+    assert.include(stop, `STATE_DIR="$HOME/.scient-next/ssh-launch/${stateKey}"`);
+    assert.notInclude(pairing, "$HOME/.t3");
+    assert.notInclude(stop, "$HOME/.t3");
+    // The launch hands over to the copy before anything can create the new
+    // home, and that check is the only part of the launch that reads ~/.t3.
+    const handover = launch.indexOf(`printf '%s\\n' '{"scientHomeMigration":"required"}'`);
+    assert.isAbove(handover, 0);
+    assert.isBelow(handover, launch.indexOf('mkdir -p "$STATE_DIR"'));
+    assert.lengthOf(launch.match(/\$HOME\/\.t3/gu) ?? [], 1);
+    // The archive runner has no Node, so it never copies.
+    assert.notInclude(SshTunnel.buildRemoteLaunchScript(ARCHIVE), "$HOME/.t3");
+  });
+
+  it.effect("copies an earlier Scient home as its own step, then launches again", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const spawnedCommands: Array<ReadonlyArray<string>> = [];
+    // The copy outlasts the launch budget; it has its own.
+    const outputs = [
+      makeSuccessfulProcess('loaded nvm default\n{"scientHomeMigration":"required"}\n'),
+      makeDelayedSuccessfulProcess("", 600_000),
+      makeSuccessfulProcess('{"remotePort":3774,"serverKind":"managed"}\n'),
+    ];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        spawnedCommands.push(commandArgs(command));
+        return outputs[spawnedCommands.length - 1] ?? makeSuccessfulProcess("");
+      }),
+    );
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner, TestClock.layer());
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+          packageSpec: scientServerPackageSpec("0.6.21"),
+        }),
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.minutes(10));
+
+      const result = yield* Fiber.join(fiber);
+      assert.deepEqual(result, { remotePort: 3774, remoteServerKind: "managed" });
+      assert.lengthOf(spawnedCommands, 3);
+      for (const args of spawnedCommands) {
+        assert.deepEqual(args.slice(-5, -1), ["sh", "-l", "-s", "--"]);
+      }
+    }).pipe(Effect.provide(layerProcess));
   });
   // SCIENT-FORK:END
 
@@ -1001,7 +1080,7 @@ describe("archive runner script", () => {
         "#!/bin/sh",
         'case "$0" in',
         "  */.staging-*)",
-        `    owner="$(cat "$HOME/.t3/runtime/versions/.${archiveVersion}.install.lock/pid" 2>/dev/null || true)"`,
+        `    owner="$(cat "$HOME/.scient-next/runtime/versions/.${archiveVersion}.install.lock/pid" 2>/dev/null || true)"`,
         '    case "$owner" in ""|*[!0-9]*) echo "Invalid installer PID: $owner" >&2; exit 1 ;; esac',
         '    kill -0 "$owner" || exit 1',
         '    printf "%s\\n" "$owner" >> "$HOME/install-owner"',
@@ -1051,7 +1130,7 @@ describe("archive runner script", () => {
         const racedOwners = yield* installOwners;
         assert.lengthOf(racedOwners, 1, "concurrent launches installed more than once");
         assert.match(racedOwners[0] ?? "", /^[0-9]+$/);
-        const versionsDir = `${home}/.t3/runtime/versions`;
+        const versionsDir = `${home}/.scient-next/runtime/versions`;
         assert.deepEqual(yield* fs.readDirectory(versionsDir), [archiveVersion]);
         assert.equal(
           (yield* fs.readFileString(`${versionsDir}/${archiveVersion}/.install-complete`)).trim(),
@@ -1107,7 +1186,13 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
   fs.mkdirSync(userdata, { recursive: true });
   fs.writeFileSync(
     path.join(userdata, "server-runtime.json"),
-    JSON.stringify({ version: 1, pid: process.pid, port, origin: "http://127.0.0.1:" + port }),
+    JSON.stringify({
+      version: 1,
+      pid: process.pid,
+      port,
+      origin: "http://127.0.0.1:" + port,
+      startedAt: new Date().toISOString(),
+    }),
   );
   console.log(port);
 });
@@ -1153,7 +1238,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launch-script-" });
     const home = `${root}/home`;
-    const stateDir = `${home}/.t3/ssh-launch/test-state`;
+    const stateDir = `${home}/.scient-next/ssh-launch/test-state`;
     const fakeServer = `${root}/fake-t3.cjs`;
     const launch = `${root}/launch.sh`;
     yield* fs.makeDirectory(stateDir, { recursive: true });
@@ -1198,13 +1283,15 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     // Starts a separate server on the default home, as a service would, and
     // returns the port it reports. An unreaped server runs under a parent that
     // never waits on it, so once it exits it lingers as a zombie.
+    // SCIENT-FORK: `baseDir` starts it on another home, such as T3's ~/.t3.
     const startDefaultHomeServer = (
       flags: ReadonlyArray<string>,
-      options?: { readonly unreaped?: boolean },
+      options?: { readonly unreaped?: boolean; readonly baseDir?: string },
     ) =>
       Effect.gen(function* () {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const args = [fakeServer, "serve", "--port", "0", "--base-dir", `${home}/.t3`, ...flags];
+        const baseDir = options?.baseDir ?? `${home}/.scient-next`;
+        const args = [fakeServer, "serve", "--port", "0", "--base-dir", baseDir, ...flags];
         const server = yield* spawner.spawn(
           options?.unreaped
             ? ChildProcess.make("sh", ["-c", 'node "$@" & exec sleep 600', "sh", ...args])
@@ -1361,7 +1448,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         assert.include((yield* runScript(home, ["-c", `ps -o stat= -p ${zombie}`])).stdout, "Z");
         yield* fs.writeFileString(`${stateDir}/pid`, `${zombie}\n`);
         yield* fs.writeFileString(
-          `${home}/.t3/userdata/server-runtime.json`,
+          `${home}/.scient-next/userdata/server-runtime.json`,
           JSON.stringify({
             version: 1,
             pid: zombie,
@@ -1439,4 +1526,80 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
   );
+
+  // SCIENT-FORK:START — Scient adopts only a server on its own home, and copies
+  // an earlier Scient home out of T3's ~/.t3 once.
+  it.effect.skipIf(windowsHost)(
+    "never adopts a server running on T3's ~/.t3",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home, launchManaged, startDefaultHomeServer } = yield* prepareLaunch;
+        const t3Port = yield* startDefaultHomeServer([], { baseDir: `${home}/.t3` });
+
+        const { launched } = yield* launchManaged;
+        assert.notEqual(launched.remotePort, t3Port);
+        assert.isTrue(yield* isListening(t3Port));
+        assert.isFalse(yield* fs.exists(`${home}/.t3/ssh-launch`));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    60_000,
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "copies an earlier Scient home out of ~/.t3 after stopping its managed server",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home, runLaunchScript, launchManaged, startDefaultHomeServer } =
+          yield* prepareLaunch;
+        yield* fs.remove(`${home}/.scient-next`, { recursive: true });
+        const legacyState = `${home}/.t3/userdata`;
+        const legacyLaunch = `${home}/.t3/ssh-launch/test-state`;
+        yield* fs.makeDirectory(legacyState, { recursive: true });
+        yield* fs.makeDirectory(legacyLaunch, { recursive: true });
+        // Only Scient's ledger records ProjectlessThreads.
+        const db = new NodeSqlite.DatabaseSync(`${legacyState}/statev2.sqlite`);
+        db.exec(`CREATE TABLE effect_sql_migrations (
+  migration_id integer PRIMARY KEY NOT NULL,
+  created_at datetime NOT NULL DEFAULT current_timestamp,
+  name VARCHAR(255) NOT NULL
+);
+INSERT INTO effect_sql_migrations (migration_id, name) VALUES (41, 'ProjectlessThreads');`);
+        db.close();
+        yield* fs.writeFileString(`${legacyState}/settings.json`, '{"fixture":true}\n');
+        // The managed server an earlier Scient launcher left on ~/.t3.
+        const legacyPort = yield* startDefaultHomeServer([], { baseDir: `${home}/.t3` });
+        const legacyRuntime = JSON.parse(
+          yield* fs.readFileString(`${legacyState}/server-runtime.json`),
+        );
+        yield* fs.writeFileString(`${legacyLaunch}/pid`, `${legacyRuntime.pid}\n`);
+        yield* fs.writeFileString(`${legacyLaunch}/port`, `${legacyPort}\n`);
+        yield* fs.writeFileString(`${legacyLaunch}/managed`, "managed\n");
+
+        // The launch hands over before creating anything; the copy runs as
+        // its own step, and the launch then runs again.
+        const handover = yield* runLaunchScript;
+        assert.equal(handover.exitCode, 0, handover.stderr);
+        assert.equal(handover.stdout.trim(), SCIENT_HOME_MIGRATION_REQUIRED);
+        assert.isFalse(yield* fs.exists(`${home}/.scient-next`));
+        const migration = `${home}/../migrate.sh`;
+        yield* fs.writeFileString(
+          migration,
+          buildRemoteScientHomeMigrationScript(SshTunnel.buildRemoteNodeEnvScript()),
+        );
+        const migrated = yield* runScript(home, [migration, "test-state"]);
+        assert.equal(migrated.exitCode, 0, migrated.stderr);
+        yield* launchManaged;
+        assert.isFalse(yield* isListening(legacyPort));
+        assert.equal(
+          yield* fs.readFileString(`${home}/.scient-next/userdata/settings.json`),
+          '{"fixture":true}\n',
+        );
+        assert.isTrue(yield* fs.exists(`${home}/.scient-next/userdata/statev2.sqlite`));
+        // A copy, so an older Scient app still finds its data in ~/.t3.
+        assert.isTrue(yield* fs.exists(`${legacyState}/settings.json`));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    60_000,
+  );
+  // SCIENT-FORK:END
 });

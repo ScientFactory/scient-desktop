@@ -38,6 +38,39 @@ If Scient started the remote server for this SSH connection, disconnecting
 stops that process. A compatible server that was already running is left
 running.
 
+### Where remote data lives
+
+On the remote host, Scient keeps its server data in `~/.scient-next`, the same
+folder Scient desktop uses on that computer. If the host also runs Scient
+desktop, an SSH connection uses that computer's own Scient server. Scient never
+connects to a server that uses the `~/.t3` folder, which other apps share.
+
+Earlier Scient versions kept remote data in `~/.t3`. The first connection from
+a newer version copies that data to `~/.scient-next` once, when
+`~/.scient-next` does not exist yet and the data in `~/.t3` was written by
+Scient. The copy holds threads, settings, attachments, and the server's
+credentials. Worktrees, projects, and scratch folders stay where they are and
+keep working from there; installed tools and runtimes download again when
+needed. The data in `~/.t3` stays as it was so an older Scient version can
+still use it, but the two folders do not share later changes. A `~/.t3` that
+another app wrote, or that Scient cannot read, is never changed, and Scient
+starts with an empty `~/.scient-next`.
+
+The copy runs before the server starts, so that first connection can take
+longer; the copy itself may run for up to 15 minutes. While it runs, reopening
+a saved connection can show a setup timeout and retry; the copy continues on
+the host, and the connection succeeds once it finishes. If a long copy fails,
+the timeout can hide its message; check that the host has room for the copy
+and reconnect. Before copying, Scient stops the
+server it started on `~/.t3` for this connection, once it has confirmed that
+process is that server. The connection fails without copying anything if
+another older Scient server is still using `~/.t3`, if Scient cannot confirm
+which process its old server is, or if `~/.t3/userdata` contains a symbolic
+link, which the copy would share with the old folder. Disconnect older Scient
+apps from the host or stop that server, then reconnect. To start fresh instead
+of copying, create an empty `~/.scient-next` folder on the host before
+connecting.
+
 ## Direct and private-network access
 
 Advanced deployments can run a separately managed
